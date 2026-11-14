@@ -1,4 +1,4 @@
-import { AuthError, type NamespaceAccess, type NamespaceStore, type OrgMembership } from '../auth';
+import { AuthError, type NamespaceAccess, type NamespaceStore, type OrgMembers } from '../auth';
 import type { TokenServiceV2 } from '../auth/tokens-v2';
 import { RegistryError } from '../errors';
 import type { CreateService } from '../publish/create';
@@ -7,7 +7,7 @@ import type { HttpRequest, HttpResponse, RouterDeps } from './router';
 import { getHealth } from './router';
 import { routePublish } from './publish-routes';
 import { errorViewV2 } from './v2-catalogue';
-import { createNamespaceV2 } from './v2-namespaces';
+import { createNamespaceV2, listMembersV2, pollNamespaceV2, removeMemberV2, setMemberV2 } from './v2-namespaces';
 import { getNamespaceV2, getPackageV2, getVersionV2, listVersionsV2, searchPackagesV2 } from './v2-reads';
 
 /**
@@ -23,8 +23,8 @@ export interface V2Deps {
   /** Who may write in a namespace, and `NamespaceInfo`. */
   access: NamespaceAccess;
   namespaces: NamespaceStore;
-  /** `createNamespace` binds the App's installation. Absent (no GitHub App configured): it answers `unavailable`. */
-  membership?: OrgMembership;
+  /** `listMembers`, `setMember` and `removeMember`. Absent: they answer `unavailable`. */
+  members?: OrgMembers;
   /** `createPackage` (`PUT`). Absent (no publish wiring): it answers `unavailable`. */
   creates?: CreateService;
   /** `getMe` (`MeV2`) and `createToken` with full names. Absent: those answer `unavailable`. */
@@ -126,10 +126,27 @@ export async function routeV2(req: HttpRequest, deps: RouterDeps, requestId: str
 
     if (seg[0] === 'namespaces') {
       if (method === 'POST' && seg.length === 1) {
-        const r = await guarded(() => createNamespaceV2(needAuth(), needV2(), authorization, req.body));
+        const r = await guarded(() => createNamespaceV2(needAuth(), authorization, req.body));
+        return respond(r.status, requestId, r.body);
+      }
+      // `poll` is a reserved namespace: a POST to it is this operation, a GET is a read of the namespace of that name.
+      if (method === 'POST' && seg.length === 2 && seg[1] === 'poll') {
+        const r = await guarded(() => pollNamespaceV2(needAuth(), needV2(), authorization, req.body));
         return respond(r.status, requestId, r.body);
       }
       if (method === 'GET' && seg.length === 2) return respond(200, requestId, await guarded(() => getNamespaceV2(needV2(), seg[1]!)));
+      if (method === 'GET' && seg.length === 3 && seg[2] === 'members') {
+        const r = await guarded(() => listMembersV2(needAuth(), needV2(), authorization, seg[1]!));
+        return respond(r.status, requestId, r.body);
+      }
+      if (method === 'PUT' && seg.length === 4 && seg[2] === 'members') {
+        const r = await guarded(() => setMemberV2(needAuth(), needV2(), authorization, seg[1]!, seg[3]!, req.body));
+        return respond(r.status, requestId, r.body);
+      }
+      if (method === 'DELETE' && seg.length === 4 && seg[2] === 'members') {
+        const r = await guarded(() => removeMemberV2(needAuth(), needV2(), authorization, seg[1]!, seg[3]!));
+        return respond(r.status, requestId, r.body);
+      }
       throw notFound();
     }
 

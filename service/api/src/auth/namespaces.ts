@@ -14,8 +14,11 @@ export const NAMESPACE_MAX_LENGTH = 39;
 /** The shape of a conda subdir: a namespace of that shape would make a channel URL ambiguous. */
 export const CONDA_SUBDIR_SHAPE = /^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$/;
 
-/** The channel bucket's other top-level prefixes (service/infra/stacks/lib/channel-stack.ts). */
-export const RESERVED_NAMESPACES: readonly string[] = ['index', 'quarantine', 'native-mirror'];
+/**
+ * The channel bucket's other top-level prefixes (service/infra/stacks/lib/channel-stack.ts), and `poll`, the path segment of
+ * `POST /api/v2/namespaces/poll`, which would otherwise read as a namespace.
+ */
+export const RESERVED_NAMESPACES: readonly string[] = ['index', 'quarantine', 'native-mirror', 'poll'];
 
 /** Why a string is not a namespace anyone may get, or undefined when it may be one. */
 export type NamespaceProblem = 'invalid' | 'reserved';
@@ -34,13 +37,31 @@ export interface NamespaceRecord {
   /** The user's or the organization's GitHub numeric id: the binding. It never changes. */
   github_id: number;
   created_at: string;
-  /** Organization namespaces only: the bound installation of the registry's GitHub App. */
-  installation_id?: number;
+  /** Organization namespaces only: the GitHub account that registered it (its first owner). */
+  created_by?: number;
+}
+
+/** `owner` manages the members and may do everything a `member` may; a `member` creates packages and publishes. */
+export type MemberRole = 'owner' | 'member';
+
+/** One account's membership of one organization namespace. */
+export interface NamespaceMember {
+  /** An organization namespace. */
+  namespace: string;
+  /** The member account's GitHub numeric id. */
+  github_id: number;
+  role: MemberRole;
+  /** GitHub id of the owner who added the account (the registrant, for the first owner). */
+  added_by: number;
+  /** ISO time of the add, or of the last change of role. */
+  added_at: string;
 }
 
 /**
- * Persistence for namespaces. The memory adapter defines the rules; the DynamoDB adapter keeps them
- * (test/auth-namespaces.test.ts runs one suite over both). No operation deletes a namespace or changes its GitHub id.
+ * Persistence for namespaces and the members of organization namespaces. The memory adapter defines the rules; the DynamoDB
+ * adapter keeps them (test/auth-namespaces.test.ts runs one suite over both). No operation deletes a namespace or changes
+ * its GitHub id. An organization namespace always has at least one owner: it is created with one, and no operation leaves
+ * it with none.
  */
 export interface NamespaceStore {
   getNamespace(namespace: string): Promise<NamespaceRecord | undefined>;
@@ -52,17 +73,50 @@ export interface NamespaceStore {
   /** Every namespace bound to the GitHub id, in namespace order. */
   listNamespaces(github_id: number): Promise<NamespaceRecord[]>;
   /**
-   * Bind another installation of the registry's GitHub App to an organization namespace (section 2.2: the App installed
-   * again). Only `installation_id` changes, and only on an `org` row bound to `github_id`: the answer is the stored row,
-   * or undefined when there is no such row (absent, a user namespace, or bound to another id), and nothing is written.
+   * Create an organization namespace (`rec.kind` is `org`, `owner.namespace` is `rec.namespace`) and its first owner in one
+   * atomic step. When a row already has the string, nothing is written and the answer is `created: false` with the held row.
    */
-  bindInstallation(namespace: string, github_id: number, installation_id: number): Promise<NamespaceRecord | undefined>;
+  createOrgNamespace(rec: NamespaceRecord, owner: NamespaceMember): Promise<{ created: boolean; record: NamespaceRecord }>;
+  /** The account's membership of an organization namespace, or undefined when it is not a member. Strongly consistent. */
+  getMember(namespace: string, github_id: number): Promise<NamespaceMember | undefined>;
+  /** Every member of an organization namespace, sorted by GitHub id. Strongly consistent. */
+  listMembers(namespace: string): Promise<NamespaceMember[]>;
+  /** Every organization namespace the account is a member of, sorted by namespace. May lag a change briefly in DynamoDB (an index). */
+  listMemberships(github_id: number): Promise<NamespaceMember[]>;
+  /**
+   * Add the account, or change its role. `added`: it was not a member; `changed`: its role is now `m.role`; `same`: it already
+   * had that role (nothing is written); `last_owner`: it would leave the namespace with no owner (demoting the only owner;
+   * nothing is written). Throws when `m.namespace` is not an organization namespace.
+   */
+  setMember(m: NamespaceMember): Promise<'added' | 'changed' | 'same' | 'last_owner'>;
+  /**
+   * Remove the account. `not_member`: it is not one; `last_owner`: it is the only owner. Nothing is written in either case.
+   * `removed_by` and `at` say who removed it and when (kept by the DynamoDB adapter, which cannot delete a row).
+   */
+  removeMember(namespace: string, github_id: number, removed_by: number, at: string): Promise<'removed' | 'not_member' | 'last_owner'>;
+}
+
+/** What setMember and removeMember decide from the members of one namespace; both adapters use it. */
+export function decideSet(members: NamespaceMember[], m: NamespaceMember): 'added' | 'changed' | 'same' | 'last_owner' {
+  const held = members.find((x) => x.github_id === m.github_id);
+  if (!held) return 'added';
+  if (held.role === m.role) return 'same';
+  if (held.role === 'owner' && members.filter((x) => x.role === 'owner').length === 1) return 'last_owner';
+  return 'changed';
+}
+
+export function decideRemove(members: NamespaceMember[], github_id: number): 'removed' | 'not_member' | 'last_owner' {
+  const held = members.find((x) => x.github_id === github_id);
+  if (!held) return 'not_member';
+  if (held.role === 'owner' && members.filter((x) => x.role === 'owner').length === 1) return 'last_owner';
+  return 'removed';
 }
 
 const copy = <T>(v: T): T => structuredClone(v);
 
 export class MemoryNamespaceStore implements NamespaceStore {
   private rows = new Map<string, NamespaceRecord>();
+  private members = new Map<string, Map<number, NamespaceMember>>();
 
   async getNamespace(namespace: string) {
     const r = this.rows.get(namespace);
@@ -80,11 +134,38 @@ export class MemoryNamespaceStore implements NamespaceStore {
       .sort((a, b) => (a.namespace < b.namespace ? -1 : 1)) // keys are unique: never equal
       .map(copy);
   }
-  async bindInstallation(namespace: string, github_id: number, installation_id: number) {
-    const r = this.rows.get(namespace);
-    if (!r || r.kind !== 'org' || r.github_id !== github_id) return undefined;
-    r.installation_id = installation_id;
-    return copy(r);
+  async createOrgNamespace(rec: NamespaceRecord, owner: NamespaceMember) {
+    const held = this.rows.get(rec.namespace);
+    if (held) return { created: false, record: copy(held) };
+    this.rows.set(rec.namespace, copy(rec));
+    this.members.set(rec.namespace, new Map([[owner.github_id, copy(owner)]]));
+    return { created: true, record: copy(rec) };
+  }
+  async getMember(namespace: string, github_id: number) {
+    const m = this.members.get(namespace)?.get(github_id);
+    return m && copy(m);
+  }
+  async listMembers(namespace: string) {
+    return [...(this.members.get(namespace)?.values() ?? [])].sort((a, b) => a.github_id - b.github_id).map(copy);
+  }
+  async listMemberships(github_id: number) {
+    return [...this.members.values()]
+      .flatMap((byId) => byId.get(github_id) ?? [])
+      .sort((a, b) => (a.namespace < b.namespace ? -1 : 1))
+      .map(copy);
+  }
+  async setMember(m: NamespaceMember) {
+    const byId = this.members.get(m.namespace);
+    if (!byId) throw new Error(`namespace ${m.namespace} is not an organization namespace`);
+    const outcome = decideSet([...byId.values()], m);
+    if (outcome === 'added' || outcome === 'changed') byId.set(m.github_id, copy(m));
+    return outcome;
+  }
+  async removeMember(namespace: string, github_id: number, _removed_by: number, _at: string) {
+    const byId = this.members.get(namespace);
+    const outcome = decideRemove([...(byId?.values() ?? [])], github_id);
+    if (outcome === 'removed') byId!.delete(github_id);
+    return outcome;
   }
 }
 
@@ -109,19 +190,27 @@ export interface UserNamespaceOutcome {
  * grammar, is not reserved and no namespace has that string. GitHub logins ignore case and mopm has one spelling, so the
  * string is the login in lower case. An account's earlier namespaces are untouched: a rename adds one, never moves one.
  */
-export async function ensureUserNamespace(
-  store: NamespaceStore,
-  github_id: number,
-  login: string,
-  now: string,
-): Promise<UserNamespaceOutcome> {
+export async function ensureUserNamespace(store: NamespaceStore, github_id: number, login: string, now: string): Promise<UserNamespaceOutcome> {
   const namespace = login.toLowerCase();
   const problem = namespaceProblem(namespace);
   if (problem) return { status: problem, namespace };
   const held = await store.getNamespace(namespace);
-  if (held) return { status: held.github_id === github_id ? 'held' : 'taken', namespace };
-  const r = await store.createNamespace({ namespace, kind: 'user', github_id, created_at: now });
+  if (held)
+    return {
+      status: held.github_id === github_id ? 'held' : 'taken',
+      namespace,
+    };
+  const r = await store.createNamespace({
+    namespace,
+    kind: 'user',
+    github_id,
+    created_at: now,
+  });
   // Lost a race with another create of the same string: the winner's binding decides, as if it had been there first.
-  if (!r.created) return { status: r.record.github_id === github_id ? 'held' : 'taken', namespace };
+  if (!r.created)
+    return {
+      status: r.record.github_id === github_id ? 'held' : 'taken',
+      namespace,
+    };
   return { status: 'created', namespace };
 }

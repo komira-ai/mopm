@@ -35,7 +35,7 @@ live specs repeat for the client) and the state of `/api/v1` once v2 is served.
 - Lower case only, one spelling. Nothing normalises a namespace; `Komira-AI` is refused, with the lower-case form in
   the message.
 - Reserved namespaces, never created: those matching `^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$`
-  (the shape of a conda subdir), and `index`, `quarantine`, `native-mirror`.
+  (the shape of a conda subdir), and `index`, `quarantine`, `native-mirror`, `poll`.
 
 ## Live already
 
@@ -48,6 +48,39 @@ staged set's `plan.json` version 2, its `--artifacts` layout and the creation of
 `spec/index.md`, `spec/channel.md`, `spec/package-metadata.schema.json`, `spec/lock.md`, `spec/unit-graph.md` and
 `spec/staged-set.md`, with their schemas. The optional `namespace` of a registry's entry in `credentials.json` is described in
 `docs/configuration.md`.
+
+## Organization namespaces and their members
+
+Live in `spec/api/openapi-v2.yaml`; the command line side (`mopm org`) is the text below.
+
+GitHub is asked about an organization once, when a user registers it. `mopm org create <org>` needs a stored login. It
+calls `createNamespace` (`POST /namespaces`), which refuses a namespace outside the grammar (`invalid_namespace`), a reserved
+one (`namespace_reserved`) and one already held by any account (`namespace_taken`), and a caller that holds no user namespace (`user_not_found`: it could not be named as a member), and otherwise starts a GitHub device flow
+for the scope `read:org` and answers 202 with the code to enter. The command prints where to open and the code, then polls
+`pollNamespace` (`POST /namespaces/poll`, the same pause and deadline as the login) until the answer is `created` (the
+namespace and its GitHub organization id; the caller is its first owner), `denied` or `expired`. The registry accepts the
+approval only when the GitHub account that approved is the logged-in account (`github_account_mismatch`) and is an active admin
+of the GitHub organization whose current login in lower case is the namespace (`not_org_admin` for every other answer of GitHub,
+including an organization that restricts OAuth apps). The GitHub token is used for that one read and discarded. After that
+nothing is checked against GitHub: members are kept in mopm, and a write in `<org>/*` reads only that list, so a removed
+member is refused at once.
+
+Members are named by mopm username, the user namespace of the account (its lower-case GitHub login, made at its first login):
+
+```text
+mopm org create <org>
+mopm org add <org> <user> [--owner]      PUT    /namespaces/<org>/members/<user>   {"role": "member" | "owner"}
+mopm org remove <org> <user>             DELETE /namespaces/<org>/members/<user>
+mopm org list <org>                      GET    /namespaces/<org>/members
+```
+
+- Roles: `owner` adds and removes members and changes roles; `owner` and `member` both create packages and publish.
+- `add` sets the role: without `--owner` it makes an owner a member. It answers 201 for a new member and 200 for a change.
+- The only owner cannot be demoted or removed (`last_owner`); an owner may remove themselves while another owner remains.
+- A name that is no user namespace is `user_not_found`; an account that is not a member is `member_not_found`; a caller who
+  is a member but not an owner is `not_namespace_owner`, and one who is neither is `not_namespace_member`.
+- A renamed organization keeps its old namespace, its id and its members; registering its new login makes a second, separate
+  namespace.
 
 ## api/openapi.yaml
 

@@ -37,21 +37,16 @@ pub fn find(ctx: *Ctx, key: []const u8) Allocator.Error!Found {
     return .{ .ok = p };
 }
 
-/// The detail of `namespace_unverified` for a namespace that is frozen.
-pub const frozen_detail = "no installation of the mopm registry GitHub App is bound to it";
-
-/// The answer when `u` may not write in `n`, or null when it may: `namespace_unverified` while the namespace is frozen,
-/// else `not_namespace_member`.
+/// The answer when `u` may not write in `n`, or null when it may: `not_namespace_member`.
 pub fn namespaceRefusal(ctx: *Ctx, n: *const st.Namespace, u: *const st.User) Allocator.Error!?Response {
     return switch (n.right(u)) {
         .write => null,
-        .frozen => try ns_errors.fail(ctx.arena, .namespace_unverified, &.{ .{ "namespace", n.name }, .{ "detail", frozen_detail } }),
         .not_member => try ns_errors.fail(ctx.arena, .not_namespace_member, &.{.{ "namespace", n.name }}),
     };
 }
 
 /// The answer when `u` may not write `p` now, or null when it may. A package in a namespace is checked against the
-/// namespace when it is used (a token stops working once its account leaves the organization); a v1 package keeps its
+/// namespace when it is used (a token stops working once its account is removed from the namespace); a v1 package keeps its
 /// owners' rule, `not_owner`.
 pub fn ownerRefusal(ctx: *Ctx, p: *const st.Package, u: *const st.User) Allocator.Error!?Response {
     if (p.namespace) |n| return namespaceRefusal(ctx, n, u);

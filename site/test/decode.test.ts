@@ -145,19 +145,19 @@ describe('the namespace of a package (there are no owners in version 2)', () => 
     const p = pkg();
     const d = decodePackageInfo(p);
     expect(d.name).toBe('komira-ai/json');
-    expect(d.namespace).toEqual({ namespace: 'komira-ai', kind: 'org', github_id: 77, login: 'komira-ai', frozen: false });
+    expect(d.namespace).toEqual({ namespace: 'komira-ai', kind: 'org', github_id: 77, login: 'komira-ai' });
     expect(d).not.toHaveProperty('owners');
   });
 
   test('a user namespace whose login differs from the namespace keeps both', () => {
     const p = bodyOf('getPackage', (b) => (b.namespace as { kind: string }).kind === 'user');
-    expect(decodePackageInfo(p).namespace).toMatchObject({ namespace: 'alice', kind: 'user', login: 'Alice', frozen: false });
+    expect(decodePackageInfo(p).namespace).toMatchObject({ namespace: 'alice', kind: 'user', login: 'Alice' });
   });
 
-  test('a frozen namespace decodes as frozen', () => {
+  test('a namespace field this build does not know is ignored', () => {
     const p = pkg();
     ns(p).frozen = true;
-    expect(decodePackageInfo(p).namespace.frozen).toBe(true);
+    expect(decodePackageInfo(p).namespace).toEqual({ namespace: 'komira-ai', kind: 'org', github_id: 77, login: 'komira-ai' });
   });
 
   test.each(['org', 'user'] as const)('kind %s decodes as itself', (kind) => {
@@ -172,7 +172,7 @@ describe('the namespace of a package (there are no owners in version 2)', () => 
     expect(decodePackageInfo(p).namespace.kind).toBe('unknown');
   });
 
-  test.each(['namespace', 'kind', 'github_id', 'login', 'frozen'])('a namespace without %s is an error naming it', (field) => {
+  test.each(['namespace', 'kind', 'github_id', 'login'])('a namespace without %s is an error naming it', (field) => {
     const p = pkg();
     delete ns(p)[field];
     expect(() => decodePackageInfo(p)).toThrow(DecodeError);
@@ -184,7 +184,6 @@ describe('the namespace of a package (there are no owners in version 2)', () => 
     ['kind', 1],
     ['github_id', '77'],
     ['login', null],
-    ['frozen', 'no'],
   ] as const)('a mistyped %s is an error', (field, value) => {
     const p = pkg();
     ns(p)[field] = value;

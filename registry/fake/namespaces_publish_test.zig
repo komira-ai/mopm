@@ -104,32 +104,31 @@ test "config.json lists both index versions and the v2 API; a namespace's channe
     );
 }
 
-test "a rights check at use: a token of an account that left the organization cannot upload, commit or yank" {
+test "a rights check at use: a token of an account removed from the namespace cannot upload, commit or yank, and works again when it is added back" {
     var nx: Nx = undefined;
     try nx.setup();
     defer nx.deinit();
     const alice = try nx.session("alice");
     const bob = try nx.session("bob");
-    try nx.control("/_fake/org", "{\"login\":\"acme\",\"installed\":true,\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"},{\"handle\":\"bob\",\"role\":\"member\"}]}");
-    try expectStatus(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"acme\"}", alice), 201);
+    try nx.org("acme", "[{\"handle\":\"alice\",\"role\":\"admin\"}]");
+    try nx.registered(alice, "acme");
+    try expectStatus(try nx.setMember(alice, "acme", "bob", "member"), 201);
     const token = try nx.apiToken(bob, "[\"publish\",\"yank\"]", "[\"acme/lib\"]");
-    const admin_token = try nx.apiToken(alice, "[\"publish\",\"yank\"]", "[\"acme/lib\"]");
     try expectStatus(try nx.call(.PUT, "/api/v2/packages/acme/lib", "", token), 201);
     const done = try publishOne(&nx, token, "acme/lib", "1.0.0", "mojo-acme.lib-1.0.0-mojo1.0.0_0.conda", "lib");
     try std.testing.expectEqualStrings("published", str(done.value, "status"));
     try std.testing.expect(contains(try nx.file("index/v2/ac/me/acme/lib"), "\"name\":\"acme/lib\""));
-    try nx.control("/_fake/org", "{\"login\":\"acme\",\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"}]}");
+    try expectStatus(try nx.removeMember(alice, "acme", "bob"), 204);
     const body = try nx.fmt("{{\"subdir\":\"noarch\",\"filename\":\"mojo-acme.lib-1.0.1-mojo1.0.0_0.conda\",\"sha256\":\"{s}\",\"size\":3}}", .{try nx.sha("lib")});
     try expectCode(try nx.call(.POST, "/api/v2/packages/acme/lib/1.0.1/files", body, token), 403, "not_namespace_member");
     try expectCode(try nx.call(.POST, "/api/v2/packages/acme/lib/1.0.1/publish", "{\"upload_ids\":[\"x\"]}", token), 403, "not_namespace_member");
     try expectCode(try nx.call(.PUT, "/api/v2/packages/acme/lib/1.0.0/yank", "{\"yanked\":true,\"reason\":\"x\"}", token), 403, "not_namespace_member");
     // A session never publishes or yanks a single version.
     try expectCode(try nx.call(.PUT, "/api/v2/packages/acme/lib/1.0.0/yank", "{\"yanked\":true,\"reason\":\"x\"}", alice), 403, "scope_missing");
-    // The frozen namespace refuses every write of an admin's token, by its own error.
-    try nx.control("/_fake/org", "{\"login\":\"acme\",\"installed\":false}");
-    try expectCode(try nx.call(.POST, "/api/v2/packages/acme/lib/1.0.1/files", body, admin_token), 403, "namespace_unverified");
-    try expectCode(try nx.call(.POST, "/api/v2/packages/acme/lib/1.0.1/publish", "{\"upload_ids\":[\"x\"]}", admin_token), 403, "namespace_unverified");
-    try expectCode(try nx.call(.PUT, "/api/v2/packages/acme/lib/1.0.0/yank", "{\"yanked\":true,\"reason\":\"x\"}", admin_token), 403, "namespace_unverified");
+    // Added back, the same token publishes again.
+    try expectStatus(try nx.setMember(alice, "acme", "bob", "member"), 201);
+    const again = try publishOne(&nx, token, "acme/lib", "1.0.1", "mojo-acme.lib-1.0.1-mojo1.0.0_0.conda", "lib");
+    try std.testing.expectEqualStrings("published", str(again.value, "status"));
     // v2 paths refuse a path whose namespace or version is malformed.
     try expectCode(try nx.call(.GET, "/api/v2/packages/Acme/lib/1.0.0", "", null), 400, "invalid_namespace");
     try expectCode(try nx.call(.GET, "/api/v2/packages/acme/lib/1.0", "", null), 400, "invalid_version");
@@ -156,8 +155,9 @@ test "a group through v2: members are full names in two namespaces, visible toge
     try nx.setup();
     defer nx.deinit();
     const alice = try nx.session("alice");
-    try nx.control("/_fake/org", "{\"login\":\"acme\",\"installed\":true,\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"}]}");
-    try expectStatus(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"acme\"}", alice), 201);
+    const bob = try nx.session("bob");
+    try nx.org("acme", "[{\"handle\":\"alice\",\"role\":\"admin\"}]");
+    try nx.registered(alice, "acme");
     const members: []const []const u8 = &.{ "acme/core", "alice/app" };
     const token = try nx.apiToken(alice, "[\"publish\",\"yank\"]", "[\"acme/core\",\"alice/app\"]");
     for (members) |k| try expectStatus(try nx.call(.PUT, try nx.fmt("/api/v2/packages/{s}", .{k}), "", token), 201);
@@ -201,9 +201,11 @@ test "a group through v2: members are full names in two namespaces, visible toge
     try expectStatus(try nx.call(.GET, "/channel/alice/noarch/mojo-alice.app-1.0.0-mojo1.0.0_0.conda", "", null), 410);
     try std.testing.expect(!contains(try nx.file("index/v2/al/ic/alice/app"), "\"url\""));
 
-    // The group's yank needs the namespaces to be writable now: frozen, it is refused by the namespace's error.
-    try nx.control("/_fake/org", "{\"login\":\"acme\",\"installed\":false}");
-    try expectCode(try nx.call(.PUT, try nx.fmt("/api/v2/groups/{s}/yank", .{id}), "{\"yanked\":true,\"reason\":\"x\"}", token), 403, "namespace_unverified");
+    // The group's yank needs the namespaces to be writable now: once another owner has removed alice from acme, it is
+    // refused by the namespace's error.
+    try expectStatus(try nx.setMember(alice, "acme", "bob", "owner"), 201);
+    try expectStatus(try nx.removeMember(bob, "acme", "alice"), 204);
+    try expectCode(try nx.call(.PUT, try nx.fmt("/api/v2/groups/{s}/yank", .{id}), "{\"yanked\":true,\"reason\":\"x\"}", token), 403, "not_namespace_member");
 }
 
 test "the v2 OIDC exchange is matched to a namespace's publishers and creates nothing; its token creates and publishes" {
@@ -211,8 +213,8 @@ test "the v2 OIDC exchange is matched to a namespace's publishers and creates no
     try nx.setup();
     defer nx.deinit();
     const alice = try nx.session("alice");
-    try nx.control("/_fake/org", "{\"login\":\"acme\",\"installed\":true,\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"}]}");
-    try expectStatus(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"acme\"}", alice), 201);
+    try nx.org("acme", "[{\"handle\":\"alice\",\"role\":\"admin\"}]");
+    try nx.registered(alice, "acme");
     try nx.control("/_fake/trusted", "{\"namespace\":\"acme\",\"repository\":\"acme/release\"}");
     const jwt = try t.jwtFor(&nx, "acme/release");
     const other = try t.jwtFor(&nx, "someone/else");

@@ -36,10 +36,9 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         if (try s.loginNamespace(u) != null) try files.rewrite(ctx.arena, s);
         return resp.json(ctx.arena, .ok, .{ .token = t.secret });
     }
-    // {"login", "installed"?, "members"?: [{"handle", "role", "state"?}]} -> {"github_id", "login"}: a GitHub
-    // organization (made on first use). "installed" installs the mopm registry App (a new installation each time it goes
-    // from false to true) or removes it; "members" replaces the members: role admin, member or billing_manager, state
-    // active (the default) or pending.
+    // {"login", "members"?: [{"handle", "role", "state"?}]} -> {"github_id", "login"}: a GitHub organization (made on
+    // first use), the stand-in for what GitHub says when an organization namespace is registered. "members" replaces
+    // the members: role admin, member or billing_manager, state active (the default) or pending.
     if (std.mem.eql(u8, path, "/org")) return org(ctx, obj);
     // {"login", "to"}: the GitHub account or organization `login` is called `to` from now on. Namespaces keep their name.
     if (std.mem.eql(u8, path, "/rename")) {
@@ -61,15 +60,19 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         s.v1_creation = util.getBool(obj, "enabled") orelse return resp.invalid(ctx.arena, "'enabled' must be a boolean");
         return resp.json(ctx.arena, .ok, .{});
     }
-    // {"user_code", "decision": "approve"|"deny", "handle"}: the person's
-    // answer on the approval page.
+    // {"user_code", "decision": "approve"|"deny", "handle"?}: the person's answer on the approval page. A login needs the
+    // handle; the registration of an organization namespace is approved by the account that started it unless a
+    // handle names another GitHub account.
     if (std.mem.eql(u8, path, "/device")) {
         const code = util.getStr(obj, "user_code") orelse return resp.invalid(ctx.arena, "'user_code' must be a string");
         const login = s.loginByUserCode(code) orelse return resp.invalid(ctx.arena, "no device login has that user code");
         const decision = util.getStr(obj, "decision") orelse return resp.invalid(ctx.arena, "'decision' must be a string");
         if (std.mem.eql(u8, decision, "approve")) {
-            const who = util.getStr(obj, "handle") orelse return resp.invalid(ctx.arena, "approving needs a 'handle'");
-            login.user = try s.ensureUser(who);
+            if (util.getStr(obj, "handle")) |who| {
+                login.user = try s.ensureUser(who);
+            } else if (login.account) |starter| {
+                login.user = starter;
+            } else return resp.invalid(ctx.arena, "approving needs a 'handle'");
             login.decision = .approved;
         } else if (std.mem.eql(u8, decision, "deny")) {
             login.decision = .denied;
@@ -210,18 +213,6 @@ fn org(ctx: *Ctx, obj: std.json.ObjectMap) anyerror!Response {
         s.next_github_id += 1;
         break :blk made;
     };
-    if (obj.get("installed")) |v| {
-        const installed = switch (v) {
-            .bool => |b| b,
-            else => return resp.invalid(ctx.arena, "'installed' must be a boolean"),
-        };
-        if (!installed) {
-            o.installation_id = 0;
-        } else if (o.installation_id == 0) {
-            o.installation_id = s.next_installation_id;
-            s.next_installation_id += 1;
-        }
-    }
     if (obj.get("members")) |v| {
         const list = switch (v) {
             .array => |a| a.items,

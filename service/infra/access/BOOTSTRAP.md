@@ -158,9 +158,9 @@ everything else (the read API, token management, CI exchange) is unaffected, so 
    | Enable Device Flow | checked | checked | checked |
 
    The callback URL is required by GitHub's form but the device flow never uses it (the API has no callback route).
-   The API asks for the scopes `read:user` (the account and its two-factor flag) and `read:org` (the organizations the
-   account is an active member of, recorded at login for `whoami`; it never grants a write). Scopes are asked for
-   at login, not set on the app: there is nothing to tick.
+   The API asks for the scope `read:user` (the account and its two-factor flag) at login. Registering an organization
+   namespace runs one more device flow that asks for `read:org`, to read the caller's membership once; the token is
+   discarded. Scopes are asked for per flow, not set on the app: there is nothing to tick.
 2. On the app's page, "Generate a new client secret". GitHub shows it once.
 3. Store both with the held script, run with that stage's admin credentials. Preview first; nothing is read or called
    without `--apply`. The client secret is read from standard input (hidden prompt on a terminal), never from a flag:
@@ -174,7 +174,7 @@ everything else (the read API, token management, CI exchange) is unaffected, so 
 4. Check on beta first: `curl -sS -X POST https://api.beta.mopm.dev/api/v1/auth/device -H 'content-type: application/json'
    -d '{"client":"check"}'` must answer with a `user_code` and a GitHub `verification_uri` (a `503` means the secret is
    missing or unreadable; the API logs only the reason). The API requires the account to have two-factor authentication on (`MOPM_REQUIRE_2FA`, default on, set by `require2fa` on the
-   API stack) and fails closed if GitHub does not show that field for a token of the scopes the login asks for (`read:user read:org`): confirm on beta with a real
+   API stack) and fails closed if GitHub does not show that field for a token of the scopes the login asks for (`read:user`): confirm on beta with a real
    account before relying on it in prod (`service/api/src/auth/github.ts` says why).
 
 The Lambda role may read exactly this one secret (`secretsmanager:GetSecretValue` on `mopm/<stage>/github-oauth-??????`,
@@ -182,27 +182,6 @@ the six characters being the suffix Secrets Manager adds to every ARN) and use t
 `AUTH_GRANTS` in `service/infra/stacks/lib/api-stack.ts`; the stacks tests pin both. The secret is created by hand, not
 by CloudFormation, so no stack holds its value. It uses the account's default Secrets Manager key, which the Lambda
 role can use without a separate grant.
-
-## GitHub App (once per stage)
-
-Writes in an organization namespace and the creation of a namespace need the registry's GitHub App, "mopm registry"
-(`docs/design/namespaces.md` 2.2: one organization permission, Members read-only, no repository permission). The API reads
-its id and private key from Secrets Manager at runtime (`mopm/<stage>/github-app`, JSON `{"app_id", "private_key"}`), never
-from a file, a flag or an environment variable, and never writes them to a log. Until the secret exists those routes answer
-`503 unavailable` and everything else, user namespaces included, is unaffected, so automatic deployments stay green.
-
-1. In GitHub: create the App (one per stage, as for the OAuth apps), generate a private key (a `.pem` file) and note the App id.
-2. Store both with the held script, run with that stage's admin credentials. Preview first; nothing is read or called
-   without `--apply`. The key is read from the file named by `--key-file`, only with `--apply`, never from a flag value, and
-   staged for the AWS CLI in a mode-700 directory under `--scratch` (the workspace scratch directory), removed at the end:
-   ```sh
-   npm --prefix service/infra/access run -s app-secret -- --stage beta --profile <your profile> --app-id <app id> --key-file <key.pem> --scratch <workspace scratch dir>
-   npm --prefix service/infra/access run -s app-secret -- --stage beta --profile <your profile> --app-id <app id> --key-file <key.pem> --scratch <workspace scratch dir> --apply
-   ```
-   It creates the secret, or stores a new version when it exists (rotation: generate a new key, run it again; the API picks
-   it up within five minutes, with no redeploy). Delete the `.pem` file afterwards.
-3. The Lambda role may read exactly this secret (`secretsmanager:GetSecretValue` on `mopm/<stage>/github-app-??????`) beside
-   the OAuth one; the stacks tests pin both. The API derives the secret's name from its stage; no setting names it.
 
 ## Verification
 

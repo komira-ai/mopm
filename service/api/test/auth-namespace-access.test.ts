@@ -1,85 +1,74 @@
-import { AuthError, MemoryAuthStore, MemoryNamespaceStore, NamespaceAccess, NamespaceError, type NamespaceRecord, type OrgMembership } from '../src/auth';
+import { MemoryAuthStore, MemoryNamespaceStore, NamespaceAccess, type MemberRole, type NamespaceMember, type NamespaceRecord } from '../src/auth';
 import type { UserRecord } from '../src/auth/types';
 
-// NamespaceAccess over memory stores and a scripted membership check: which namespaces an account may write in and how they
-// are ordered, the roles, and the answers for a namespace that is missing, invalid, reserved, frozen or unreachable.
+// NamespaceAccess over memory stores: which namespaces an account may write in and how they are ordered, the roles taken from the
+// member table alone, and the answers for a namespace that is missing, invalid or reserved.
 
 const AT = '2026-11-14T12:00:00Z';
 const row = (namespace: string, github_id: number, over: Partial<NamespaceRecord> = {}): NamespaceRecord => ({ namespace, kind: 'user', github_id, created_at: AT, ...over });
-const org = (namespace: string, github_id: number, installation_id: number | null = 1) => row(namespace, github_id, { kind: 'org', ...(installation_id === null ? {} : { installation_id }) });
+const member = (namespace: string, github_id: number, role: MemberRole): NamespaceMember => ({ namespace, github_id, role, added_by: 1, added_at: AT });
 
-type Check = (rec: NamespaceRecord, account: number) => Promise<'admin' | 'member'>;
-
-async function rig(rows: NamespaceRecord[], check?: Check) {
+/** User namespaces `rows`, and organization namespaces with their members: `{ 'komira-ai': [[account, role], ...] }` (the first is the owner that creates it). */
+async function rig(rows: NamespaceRecord[], orgs: Record<string, Array<[number, MemberRole]>> = {}) {
   const namespaces = new MemoryNamespaceStore();
   for (const r of rows) await namespaces.createNamespace(r);
+  let id = 100;
+  for (const [ns, members] of Object.entries(orgs)) {
+    const [first, ...rest] = members;
+    await namespaces.createOrgNamespace(row(ns, id++, { kind: 'org', created_by: first![0] }), member(ns, first![0], first![1]));
+    for (const [account, role] of rest) await namespaces.setMember(member(ns, account, role));
+  }
   const users = new MemoryAuthStore();
-  const calls: string[] = [];
-  const membership = check ? ({ check: async (rec: NamespaceRecord, account: number) => (calls.push(rec.namespace), check(rec, account)) } as unknown as OrgMembership) : undefined;
-  const access = new NamespaceAccess({ namespaces, users, ...(membership ? { membership } : {}) });
-  return { access, users, calls, namespaces };
+  const access = new NamespaceAccess({ namespaces, users });
+  return { access, users, namespaces };
 }
 
-const user = (github_id: number, handle: string, orgs?: number[]): UserRecord =>
-  ({ github_id, handle, created_at: AT, last_login_at: AT, ...(orgs ? { orgs: orgs.map((id) => ({ github_id: id, login: `org${id}` })) } : {}) }) as unknown as UserRecord;
-
-const notMember = (rec: NamespaceRecord) => new NamespaceError('not_namespace_member', 'no', { namespace: rec.namespace });
+const user = (github_id: number, handle: string): UserRecord => ({ github_id, handle, created_at: AT, last_login_at: AT });
 
 describe('writable', () => {
-  test('user namespaces first, then organizations, each kind sorted by namespace; an organization listed twice is checked once', async () => {
-    const { access, calls } = await rig(
-      [row('zed', 9), row('amy', 9), org('zeta-org', 20), org('alpha-org', 10), org('beta-org', 10)],
-      async (_rec, _account) => 'member',
-    );
-    const out = await access.writable(user(9, 'amy', [20, 10, 20, 10]));
-    expect(out.map((w) => [w.record.namespace, w.role])).toEqual([
-      ['amy', 'owner'],
-      ['zed', 'owner'],
-      ['alpha-org', 'member'],
-      ['beta-org', 'member'],
-      ['zeta-org', 'member'],
+  test('user namespaces first, then the organizations the account has a member row in, each kind sorted by namespace, with the row roles', async () => {
+    const { access } = await rig([row('zed', 9), row('amy', 9)], {
+      'zeta-org': [[9, 'member']],
+      'alpha-org': [[9, 'owner']],
+      'beta-org': [[1, 'owner'], [9, 'member']],
+    });
+    const out = await access.writable(user(9, 'amy'));
+    expect(out.map((w) => [w.record.namespace, w.record.kind, w.role])).toEqual([
+      ['amy', 'user', 'owner'],
+      ['zed', 'user', 'owner'],
+      ['alpha-org', 'org', 'owner'],
+      ['beta-org', 'org', 'member'],
+      ['zeta-org', 'org', 'member'],
     ]);
-    // Organization ids are visited in ascending order, once each: 10 (two rows), then 20.
-    expect(calls).toEqual(['alpha-org', 'beta-org', 'zeta-org']);
   });
 
   test('the order does not depend on the order the store lists them in', async () => {
-    const { access, namespaces } = await rig([row('amy', 9), row('zed', 9), org('a-org', 10), org('z-org', 10)], async () => 'member');
-    const backwards = Object.create(namespaces, { listNamespaces: { value: async (id: number) => (await namespaces.listNamespaces(id)).reverse() } });
-    const flipped = new NamespaceAccess({ namespaces: backwards, users: new MemoryAuthStore(), membership: (access as unknown as { d: { membership: OrgMembership } }).d.membership });
-    expect((await flipped.writable(user(9, 'amy', [10]))).map((w) => w.record.namespace)).toEqual(['amy', 'zed', 'a-org', 'z-org']);
-  });
-
-  test('an organization namespace the check refuses is left out while the others are listed with their roles', async () => {
-    const { access } = await rig([org('closed', 10), org('open', 20), org('frozen', 30, null)], async (rec) => {
-      if (rec.namespace === 'closed') throw notMember(rec);
-      if (rec.namespace === 'frozen') throw new NamespaceError('namespace_unverified', 'frozen', { namespace: 'frozen' });
-      return 'admin';
+    const { namespaces } = await rig([row('amy', 9), row('zed', 9)], { 'a-org': [[9, 'owner']], 'z-org': [[9, 'owner']] });
+    const backwards = Object.create(namespaces, {
+      listNamespaces: { value: async (id: number) => (await namespaces.listNamespaces(id)).reverse() },
+      listMemberships: { value: async (id: number) => (await namespaces.listMemberships(id)).reverse() },
     });
-    const out = await access.writable(user(9, 'amy', [10, 20, 30]));
-    expect(out.map((w) => [w.record.namespace, w.role])).toEqual([['open', 'admin']]);
+    const flipped = new NamespaceAccess({ namespaces: backwards, users: new MemoryAuthStore() });
+    expect((await flipped.writable(user(9, 'amy'))).map((w) => w.record.namespace)).toEqual(['amy', 'zed', 'a-org', 'z-org']);
   });
 
-  test('unavailable from the check is not skipped: it propagates', async () => {
-    const { access } = await rig([org('closed', 10)], async () => {
-      throw new AuthError('unavailable', 'GitHub is down');
-    });
-    await expect(access.writable(user(9, 'amy', [10]))).rejects.toMatchObject({ code: 'unavailable' });
+  test('an organization the account is not in is not listed, and a user namespace of another account is not either', async () => {
+    const { access } = await rig([row('amy', 9), row('bob', 8)], { 'closed-org': [[8, 'owner']], 'open-org': [[8, 'owner'], [9, 'member']] });
+    expect((await access.writable(user(9, 'amy'))).map((w) => w.record.namespace)).toEqual(['amy', 'open-org']);
   });
 
-  test('without a membership check no organization is listed', async () => {
-    const { access } = await rig([row('amy', 9), org('some-org', 10)]);
-    const out = await access.writable(user(9, 'amy', [10]));
+  test('a removed member no longer lists the organization', async () => {
+    const { access, namespaces } = await rig([row('amy', 9)], { 'some-org': [[1, 'owner'], [9, 'member']] });
+    expect((await access.writable(user(9, 'amy'))).map((w) => w.record.namespace)).toEqual(['amy', 'some-org']);
+    await namespaces.removeMember('some-org', 9, 1, AT);
+    expect((await access.writable(user(9, 'amy'))).map((w) => w.record.namespace)).toEqual(['amy']);
+  });
+
+  test('a membership whose namespace row is not an organization one is not listed', async () => {
+    const { namespaces } = await rig([row('amy', 9)], { 'some-org': [[9, 'owner']] });
+    const stray = Object.create(namespaces, { getNamespace: { value: async (ns: string) => (ns === 'some-org' ? undefined : namespaces.getNamespace(ns)) } });
+    const out = await new NamespaceAccess({ namespaces: stray, users: new MemoryAuthStore() }).writable(user(9, 'amy'));
     expect(out.map((w) => w.record.namespace)).toEqual(['amy']);
-  });
-
-  test('a user with no recorded organizations lists its own namespaces only, and a user namespace filed under a recorded organization id is not listed as one', async () => {
-    const { access, calls } = await rig([row('amy', 9), row('shared-id', 10)], async () => 'member');
-    const out = await access.writable(user(9, 'amy'));
-    expect(out.map((w) => w.record.namespace)).toEqual(['amy']);
-    const viaOrgId = await access.writable(user(9, 'amy', [10]));
-    expect(viaOrgId.map((w) => w.record.namespace)).toEqual(['amy']);
-    expect(calls).toEqual([]);
   });
 });
 
@@ -90,19 +79,24 @@ describe('roleIn and require', () => {
     await expect(access.require('amy', 8)).rejects.toMatchObject({ code: 'not_namespace_member', detail: { namespace: 'amy' } });
   });
 
-  test('an organization write without a GitHub App is unavailable and names GitHub', async () => {
-    const { access } = await rig([org('some-org', 10)]);
-    await expect(access.require('some-org', 9)).rejects.toMatchObject({ code: 'unavailable', detail: { namespace: 'some-org', service: 'GitHub' } });
+  test('an organization write answers the role of the member row, with no GitHub involved', async () => {
+    const { access } = await rig([], { 'some-org': [[1, 'owner'], [9, 'member']] });
+    expect((await access.require('some-org', 1)).role).toBe('owner');
+    expect((await access.require('some-org', 9)).role).toBe('member');
   });
 
-  test('an organization write answers the role of the membership check', async () => {
-    const { access } = await rig([org('some-org', 10)], async () => 'admin');
-    expect((await access.require('some-org', 9)).role).toBe('admin');
+  test('an account with no member row is not_namespace_member, and so is one whose row was removed, on the very next call', async () => {
+    const { access, namespaces } = await rig([], { 'some-org': [[1, 'owner'], [9, 'member']] });
+    await expect(access.require('some-org', 7)).rejects.toMatchObject({ code: 'not_namespace_member', detail: { namespace: 'some-org' } });
+    await access.require('some-org', 9);
+    await namespaces.removeMember('some-org', 9, 1, AT);
+    await expect(access.require('some-org', 9)).rejects.toMatchObject({ code: 'not_namespace_member' });
   });
 
   test.each([
     ['Not_Valid', 'invalid_namespace'],
     ['index', 'namespace_reserved'],
+    ['poll', 'namespace_reserved'],
     ['nobody', 'namespace_not_found'],
   ])('%s is %s', async (namespace, code) => {
     const { access } = await rig([]);
@@ -112,11 +106,10 @@ describe('roleIn and require', () => {
 });
 
 describe('requireCi', () => {
-  test('a user namespace and an organization with its installation bound answer the row; a frozen organization is namespace_unverified', async () => {
-    const { access } = await rig([row('amy', 9), org('some-org', 10), org('frozen', 11, null)]);
+  test('a user namespace and an organization namespace answer their row; none asks about members', async () => {
+    const { access } = await rig([row('amy', 9)], { 'some-org': [[1, 'owner']] });
     expect((await access.requireCi('amy')).github_id).toBe(9);
-    expect((await access.requireCi('some-org')).github_id).toBe(10);
-    await expect(access.requireCi('frozen')).rejects.toMatchObject({ code: 'namespace_unverified', detail: { namespace: 'frozen' } });
+    expect((await access.requireCi('some-org')).kind).toBe('org');
   });
 });
 
@@ -128,11 +121,10 @@ describe('handleOf and info', () => {
     expect(await access.handleOf(77)).toBe('u:77');
   });
 
-  test('info of a user namespace whose account has no user row falls back to the namespace; of an organization it is the namespace', async () => {
-    const { access } = await rig([row('amy', 9), org('some-org', 10), org('frozen', 11, null)]);
-    expect(await access.info(row('amy', 9))).toEqual({ namespace: 'amy', kind: 'user', github_id: 9, login: 'amy', frozen: false });
-    expect(await access.info(org('some-org', 10))).toEqual({ namespace: 'some-org', kind: 'org', github_id: 10, login: 'some-org', frozen: false });
-    expect((await access.info(org('frozen', 11, null))).frozen).toBe(true);
+  test('info has no frozen state; a user namespace whose account has no user row falls back to the namespace, an organization shows its namespace', async () => {
+    const { access } = await rig([row('amy', 9)], { 'some-org': [[1, 'owner']] });
+    expect(await access.info(row('amy', 9))).toEqual({ namespace: 'amy', kind: 'user', github_id: 9, login: 'amy' });
+    expect(await access.info(row('some-org', 10, { kind: 'org' }))).toEqual({ namespace: 'some-org', kind: 'org', github_id: 10, login: 'some-org' });
   });
 
   test('info of a user namespace shows the handle of the last login in its own case, which may differ from the namespace', async () => {

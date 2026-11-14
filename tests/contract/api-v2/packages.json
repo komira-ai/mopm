@@ -172,8 +172,7 @@
             "namespace": "komira-ai",
             "kind": "org",
             "github_id": 77,
-            "login": "komira-ai",
-            "frozen": false
+            "login": "komira-ai"
           },
           "latest": "1.1.0",
           "repository": null,
@@ -217,8 +216,7 @@
             "namespace": "alice",
             "kind": "user",
             "github_id": 1001,
-            "login": "Alice",
-            "frozen": false
+            "login": "Alice"
           },
           "latest": "0.3.0",
           "repository": "https://github.com/alice/json",
@@ -262,8 +260,7 @@
             "namespace": "alice",
             "kind": "user",
             "github_id": 1001,
-            "login": "Alice",
-            "frozen": false
+            "login": "Alice"
           },
           "latest": null,
           "repository": null,
@@ -296,8 +293,7 @@
             "namespace": "alice",
             "kind": "user",
             "github_id": 1001,
-            "login": "Alice",
-            "frozen": false
+            "login": "Alice"
           },
           "latest": null,
           "repository": null,
@@ -330,8 +326,7 @@
             "namespace": "komira-ai",
             "kind": "org",
             "github_id": 77,
-            "login": "komira-ai",
-            "frozen": false
+            "login": "komira-ai"
           },
           "latest": null,
           "repository": null,
@@ -697,8 +692,7 @@
             "namespace": "komira-ai",
             "kind": "org",
             "github_id": 77,
-            "login": "komira-ai",
-            "frozen": false
+            "login": "komira-ai"
           },
           "latest": "1.1.0",
           "repository": null,
@@ -825,8 +819,7 @@
             "namespace": "alice",
             "kind": "user",
             "github_id": 1001,
-            "login": "Alice",
-            "frozen": false
+            "login": "Alice"
           },
           "latest": null,
           "repository": null,

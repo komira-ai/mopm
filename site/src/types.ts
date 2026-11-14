@@ -33,8 +33,6 @@ export interface NamespaceInfo {
   github_id: number;
   /** The GitHub login the account has now; differs from namespace after a rename on GitHub. Untrusted text. */
   login: string;
-  /** No GitHub App installation of this account is bound: reads work, publishing is refused. */
-  frozen: boolean;
 }
 
 export type VersionState = 'published' | 'yanked' | 'tombstoned' | Unknown;

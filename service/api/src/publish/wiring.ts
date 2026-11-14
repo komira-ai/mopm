@@ -1,6 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { Authenticator, authTablesFor, DynamoAuthStore, DynamoNamespaceStore, NamespaceAccess, type OrgMembership } from '../auth';
+import { Authenticator, authTablesFor, DynamoAuthStore, DynamoNamespaceStore, NamespaceAccess } from '../auth';
 import { DynamoStore, tablesFor, type DocClient } from '../dynamo-store';
 import { S3Channel, S3Presigner, SqsFifoQueue } from './aws';
 import { ClaimService } from './claim';
@@ -41,13 +41,11 @@ export function flagsFor(env: Env, doc: ReturnType<typeof documentClient>, stage
 }
 
 /**
- * Who may write in a namespace (src/auth/namespace-access.ts), from the stage's namespaces and users tables. The registry's
- * `membership` is the organization check (src/auth/org-membership.ts), given when the stage has a GitHub App secret; without it,
- * writes in an organization namespace answer `unavailable` and user namespaces work.
+ * Who may write in a namespace (src/auth/namespace-access.ts), from the stage's namespaces, members and users tables.
  */
-export function namespaceAccessFor(doc: DocClient, stage: string, membership?: OrgMembership): NamespaceAccess {
+export function namespaceAccessFor(doc: DocClient, stage: string): NamespaceAccess {
   const tables = authTablesFor(stage);
-  return new NamespaceAccess({ namespaces: new DynamoNamespaceStore(doc, tables.namespaces), users: new DynamoAuthStore(doc, tables), ...(membership ? { membership } : {}) });
+  return new NamespaceAccess({ namespaces: new DynamoNamespaceStore(doc, tables.namespaces, tables.namespace_members), users: new DynamoAuthStore(doc, tables) });
 }
 
 /**

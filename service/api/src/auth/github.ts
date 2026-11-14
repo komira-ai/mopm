@@ -1,6 +1,6 @@
 /**
- * GitHub, as far as login needs it: the OAuth device flow, the authenticated-user lookup and the user's active organization
- * memberships (scope `read:org`, recorded for `whoami`: the list never grants a write, docs/design/namespaces.md 2.2).
+ * GitHub, as far as the registry needs it: the OAuth device flow, the authenticated-user lookup, and the caller's membership of
+ * one organization (scope `read:org`), read once when an organization namespace is registered with a token that is then dropped.
  *
  * What GitHub exposes (documented here because the 2FA rule depends on it):
  * - `GET /user` returns the numeric `id` and `login` for any token.
@@ -9,7 +9,7 @@
  *   enough to see it must be confirmed against live GitHub before the requirement is switched on in prod.
  *   When the field is absent we cannot know, and the login layer treats absent as "not satisfied" while the
  *   requirement is on (fail closed).
- *   The login asks for `read:user read:org`; that confirmation is of the field under these scopes.
+ *   The login asks for `read:user`; that confirmation is of the field under that scope.
  * - The device flow needs the OAuth app's client id only; the client secret is not used and not read.
  *   The client id comes from Secrets Manager at runtime and is passed to the constructor.
  */
@@ -41,13 +41,15 @@ export interface GitHubUser {
   two_factor?: boolean;
 }
 
-/** One organization the user is an active member of, as GitHub showed it at login. */
+/** The caller's membership of one organization, as `GET /user/memberships/orgs/{org}` shows it. */
 export interface GitHubOrgMembership {
-  /** The organization's numeric id. */
-  id: number;
-  /** The organization's login at the time of the lookup. */
-  login: string;
-  role: 'admin' | 'member';
+  /** GitHub's `state`: `active` or `pending`. */
+  state: string;
+  /** GitHub's `role`: `admin`, `member` or `billing_manager`. */
+  role: string;
+  organization: { id: number; login: string };
+  /** The numeric id of the account the membership is of, when GitHub shows it. */
+  user_id?: number;
 }
 
 export interface GitHubApi {
@@ -55,16 +57,11 @@ export interface GitHubApi {
   pollDeviceFlow(deviceCode: string): Promise<GitHubPoll>;
   getUser(accessToken: string): Promise<GitHubUser>;
   /**
-   * `GET /user/memberships/orgs?state=active`, every page. An organization that restricts OAuth apps is left out by GitHub
-   * itself. A membership GitHub shows with another state or role (a billing manager) is left out here.
+   * `GET /user/memberships/orgs/{org}` with the token's own account. `null` when GitHub answers 404 (not a member) or 403 (the
+   * organization restricts OAuth apps and has not approved this one); any other failure is GitHubUnavailable.
    */
-  listOrgMemberships(accessToken: string): Promise<GitHubOrgMembership[]>;
+  getOrgMembership(accessToken: string, org: string): Promise<GitHubOrgMembership | null>;
 }
-
-/** Page size of the membership list, GitHub's largest. */
-export const ORG_PAGE_SIZE = 100;
-/** Pages read at most: an account in more than this many organizations gets the first ones listed (whoami only). */
-export const ORG_PAGES_MAX = 10;
 
 /** GitHub could not be reached or answered something unusable. The router maps it to `unavailable`. */
 export class GitHubUnavailable extends Error {
@@ -138,7 +135,7 @@ export class HttpGitHubApi implements GitHubApi {
       method: 'GET',
       headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${accessToken}`, 'user-agent': UA, 'x-github-api-version': '2022-11-28' },
     });
-    if (!res.ok) throw new GitHubUnavailable(`GitHub answered ${res.status} for the ${what}`);
+    if (!res.ok) throw new GitHubUnavailable(`GitHub answered ${res.status} for the ${what}`, res.status);
     return res.json();
   }
 
@@ -152,28 +149,25 @@ export class HttpGitHubApi implements GitHubApi {
     return u;
   }
 
-  async listOrgMemberships(accessToken: string): Promise<GitHubOrgMembership[]> {
-    const out: GitHubOrgMembership[] = [];
-    for (let page = 1; page <= ORG_PAGES_MAX; page++) {
-      let b: unknown;
-      try {
-        b = await this.get(`/user/memberships/orgs?state=active&per_page=${ORG_PAGE_SIZE}&page=${page}`, accessToken, 'organization memberships');
-      } catch (e) {
-        // Unreachable (a rejected fetch) or a body that is not JSON: GitHub unavailable, as an error status is.
-        if (e instanceof GitHubUnavailable) throw e;
-        throw new GitHubUnavailable(`GitHub could not be read for the organization memberships: ${(e as Error)?.name}`);
-      }
-      if (!Array.isArray(b)) throw new GitHubUnavailable('GitHub answered an unusable membership list');
-      for (const m of b as Array<Record<string, unknown>>) {
-        const org = (m && typeof m === 'object' ? m.organization : undefined) as Record<string, unknown> | undefined;
-        if (!org || !Number.isInteger(org.id) || (org.id as number) < 1 || typeof org.login !== 'string' || !org.login) {
-          throw new GitHubUnavailable('GitHub answered an unusable membership');
-        }
-        if (m.state !== 'active' || (m.role !== 'admin' && m.role !== 'member')) continue;
-        out.push({ id: org.id as number, login: org.login, role: m.role });
-      }
-      if (b.length < ORG_PAGE_SIZE) break;
+  async getOrgMembership(accessToken: string, org: string): Promise<GitHubOrgMembership | null> {
+    let b: unknown;
+    try {
+      b = await this.get(`/user/memberships/orgs/${encodeURIComponent(org)}`, accessToken, 'organization membership');
+    } catch (e) {
+      // GitHub shows no such membership: not a member, or the organization restricts OAuth apps.
+      if (e instanceof GitHubUnavailable && (e.status === 404 || e.status === 403)) return null;
+      if (e instanceof GitHubUnavailable) throw e;
+      // Unreachable (a rejected fetch) or a body that is not JSON: GitHub unavailable, as an error status is.
+      throw new GitHubUnavailable(`GitHub could not be read for the organization membership: ${(e as Error)?.name}`);
     }
+    const m = b as Record<string, unknown> | null;
+    const o = (m && typeof m === 'object' ? m.organization : undefined) as Record<string, unknown> | undefined;
+    const u = (m && typeof m === 'object' ? m.user : undefined) as Record<string, unknown> | null | undefined;
+    if (!o || !Number.isInteger(o.id) || (o.id as number) < 1 || typeof o.login !== 'string' || !o.login || typeof m!.state !== 'string' || typeof m!.role !== 'string') {
+      throw new GitHubUnavailable('GitHub answered an unusable membership');
+    }
+    const out: GitHubOrgMembership = { state: m!.state as string, role: m!.role as string, organization: { id: o.id as number, login: o.login } };
+    if (u && Number.isInteger(u.id)) out.user_id = u.id as number;
     return out;
   }
 }

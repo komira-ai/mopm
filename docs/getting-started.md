@@ -289,8 +289,30 @@ mopm publish ... --registry beta                                       # prod (d
 holds it, it is reserved, or it is not a valid namespace) it says so and stores none. If the registry cannot be asked,
 the token is stored all the same and mopm warns `mopm: could not read your namespace from prod; 'mopm whoami' shows it`.
 `mopm whoami` prints `<handle> (GitHub id <id>) on <registry>`, then `namespaces:` with one line for each, `  <namespace>
-(<kind>, <role>): <packages>` (kind `user` or `org`; role `owner`, `admin` or `member`), and the line about an
+(<kind>, <role>): <packages>` (kind `user` or `org`; role `owner` or `member`), and the line about an
 unavailable login when there is one.
+
+An organization's namespace is shared by its members. An admin of the GitHub organization registers it once, and
+the registry then manages its members itself:
+
+```sh
+mopm org create komira-ai                    # an active GitHub admin of komira-ai; you become its first owner
+mopm org add komira-ai alice                 # alice (her mopm username) may publish in komira-ai
+mopm org add komira-ai bob --owner           # bob may also manage the members
+mopm org remove komira-ai alice              # alice is refused from the next request on
+mopm org list komira-ai                      # one line per member: `  alice (member)`
+```
+
+`mopm org create` needs a stored login. It prints `To register the GitHub organization komira-ai on prod, open
+<verification_uri> and enter the code <user_code>`, and waits while you approve on GitHub; the approval asks GitHub for
+the `read:org` scope for that one step, and the registry discards the token. The GitHub account that approves must be
+the one you are logged in as, and an active admin of the organization whose current login is the namespace; otherwise
+the registry answers `not_org_admin` or `github_account_mismatch`. An organization that restricts OAuth apps must
+approve the mopm registry first. GitHub is asked only then: afterwards members are the registry's own list, a person
+leaving the GitHub organization is not removed from it, and an owner runs `mopm org remove`. A member is named by their
+mopm username, which is their lower-case GitHub login and exists after their first `mopm login`. `add` sets the role,
+so `mopm org add <org> <user>` makes an owner a member. The last owner cannot be removed or demoted. Every verb takes
+`--registry` and `--config-dir`.
 
 `mopm publish` first makes the package: it sends `PUT /packages/<namespace>/<name>` with no body, after reading the
 token and before any upload. A 201 prints `created <full name> on <registry>`; a 200 (the package exists) prints nothing;
@@ -360,7 +382,7 @@ archive of each platform with `--native <id>=<subdir>:<file>` (see [configuratio
 
 ### Registries and credentials
 
-- `--registry prod|gamma|beta|<url>` on `login`, `logout`, `whoami`, `publish`, `lock`, `update`, `sync`,
+- `--registry prod|gamma|beta|<url>` on `login`, `logout`, `whoami`, `org`, `publish`, `lock`, `update`, `sync`,
   `add` and `remove`. The default is `prod` (`https://api.mopm.dev`). A URL must be `https`, or plain `http`
   to `127.0.0.1`, `[::1]` or `localhost` with a port (for a local or test registry).
 - Credentials are in `credentials.json` under `$XDG_CONFIG_HOME/mopm`, else `~/.config/mopm`; override with

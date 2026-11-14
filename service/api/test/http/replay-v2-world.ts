@@ -3,12 +3,11 @@ import {
   DeviceLogin,
   GithubJwtVerifier,
   HttpGitHubApi,
-  HttpGitHubAppApi,
-  MemoryMembershipPassStore,
   MemoryNamespaceStore,
   NamespaceAccess,
   OidcExchange,
-  OrgMembership,
+  OrgMembers,
+  OrgRegistration,
   TokenService,
   mintToken,
   type CiPublisher,
@@ -27,29 +26,25 @@ import { CreateService } from '../../src/publish/create';
 import { GroupService } from '../../src/publish/group-service';
 import { MemoryPresigner, MemoryQueue } from '../../src/publish/memory';
 import { fakeGitHub, goodClaims, newKey, signJwt } from '../auth-helpers';
-import { APP_ID, APP_PRIVATE_KEY, fakeGitHubApp } from '../github-app-fake';
 import { Harness } from '../publish/harness';
 
 // The registry as /api/v2 sees it, on memory ports, for the replay of tests/contract/api-v2: the router with its auth, publish,
-// group and namespace services, a fake GitHub (device login) and a fake GitHub App (organizations), and a clock that only the
+// group and namespace services, a fake GitHub (device login, organization registration), and a clock that only the
 // recipes move. The fixed state every recipe starts from is `seedWorld`; a recipe adds what its case describes.
 
 /** The instant every recipe starts at. */
 export const START = Date.parse('2026-11-14T12:00:00Z');
 
-/** Accounts. ALICE owns the user namespace `alice` and is an admin of `komira-ai`; BOB owns `bob`; CAROL is a member of `komira-ai`. */
+/** Accounts. ALICE owns the user namespace `alice` and is an owner of `komira-ai`; BOB owns `bob`; CAROL is a member of `komira-ai` and holds no user namespace. */
 export const ALICE = 1001;
 export const BOB = 1002;
 export const CAROL = 2001;
-export const DAVE = 2002; // an admin of komira-ai, with no user namespace
+export const DAVE = 2002; // owns the user namespace `dave`, in no organization
 export const ERIN = 2003; // in no organization; her login `alice` is held by ALICE
 export const OCTO = 4242; // the account of the fake device login
-/** Organizations: `komira-ai` has the App installed, `frozen-org` has not, `acme-labs` is not a namespace yet but has the App installed. */
+/** Organizations: `komira-ai` is registered; `acme-labs` (GitHub id NEW_ORG) is not a namespace yet. */
 export const ORG = 77;
-export const INST = 5555;
-export const FROZEN_ORG = 88;
 export const NEW_ORG = 99;
-export const NEW_INST = 6666;
 
 /** The CI identity of the publisher of `komira-ai`. */
 export const CI_REPO = '111';
@@ -72,8 +67,6 @@ const CONFIGURED: CiPublisher = {
 export interface WorldOptions {
   stage?: Stage;
   readOnly?: boolean;
-  /** No GitHub App wiring: createNamespace is `unavailable`. */
-  app?: boolean;
 }
 
 export type World = Awaited<ReturnType<typeof buildWorld>>;
@@ -82,14 +75,11 @@ export async function buildWorld(opts: WorldOptions = {}) {
   const h = new Harness();
   h.clock.t = START;
   const now = h.clock.now;
-  const gh = fakeGitHubApp(now);
   const device = fakeGitHub();
   const namespaces = new MemoryNamespaceStore();
-  const app = new HttpGitHubAppApi({ appId: APP_ID, privateKey: APP_PRIVATE_KEY }, now, gh.fetchFn);
-  const membership = opts.app === false ? undefined : new OrgMembership({ app, passes: new MemoryMembershipPassStore(), now });
-  const access = new NamespaceAccess({ namespaces, users: h.authStore, ...(membership ? { membership } : {}) });
+  const access = new NamespaceAccess({ namespaces, users: h.authStore });
   h.namespaces = access;
-  const v2: V2Deps = { access, namespaces, ...(membership ? { membership } : {}) };
+  const v2: V2Deps = { access, namespaces, members: new OrgMembers({ namespaces, access, users: h.authStore, now }) };
   h.v2 = v2;
   h.build();
   h.flags.groupsAll = true;
@@ -125,6 +115,7 @@ export async function buildWorld(opts: WorldOptions = {}) {
     tokens: new TokenService({ store: h.authStore, ownedPackages: async () => [], now }),
     oidc: new OidcExchange({ store: h.authStore, verifier, now, registry: h.registry, namespaces, ciPublishers: [CONFIGURED] }),
     devices: async () => new DeviceLogin({ store: h.authStore, namespaces, github: new HttpGitHubApi('Iv1.testclientid', device.fetchFn), now }),
+    registration: async () => new OrgRegistration({ store: h.authStore, namespaces, github: new HttpGitHubApi('Iv1.testclientid', device.fetchFn), now }),
   };
   const deps: RouterDeps = { ...h.deps, stage: opts.stage ?? 'beta', version: 'test', commit: 'test', readOnly: opts.readOnly ?? false, auth: services, v2 };
 
@@ -170,26 +161,24 @@ export async function buildWorld(opts: WorldOptions = {}) {
       }),
     );
 
-  /** The fixed state: accounts, namespaces, the fake App's installations and memberships. No package yet. */
+  /** The fixed state: accounts, user namespaces, the organization `komira-ai` with its members. No package yet. */
   const seed = async () => {
-    const orgs = [{ github_id: ORG, login: 'komira-ai', role: 'admin' as const }];
-    await h.authStore.upsertUser(ALICE, 'Alice', at(), true, orgs);
+    await h.authStore.upsertUser(ALICE, 'Alice', at(), true);
     await h.authStore.upsertUser(BOB, 'bob', at(), true);
-    await h.authStore.upsertUser(CAROL, 'carol', at(), true, [{ github_id: ORG, login: 'komira-ai', role: 'member' }]);
-    await h.authStore.upsertUser(DAVE, 'dave', at(), true, orgs);
+    await h.authStore.upsertUser(CAROL, 'carol', at(), true);
+    await h.authStore.upsertUser(DAVE, 'dave', at(), true);
     await h.authStore.upsertUser(ERIN, 'alice', at(), true);
     const rows: NamespaceRecord[] = [
       { namespace: 'alice', kind: 'user', github_id: ALICE, created_at: at() },
       { namespace: 'bob', kind: 'user', github_id: BOB, created_at: at() },
-      { namespace: 'komira-ai', kind: 'org', github_id: ORG, created_at: at(), installation_id: INST },
-      { namespace: 'frozen-org', kind: 'org', github_id: FROZEN_ORG, created_at: at() },
+      { namespace: 'dave', kind: 'user', github_id: DAVE, created_at: at() },
     ];
     for (const r of rows) await namespaces.createNamespace(r);
-    gh.install(INST, { id: ORG, login: 'komira-ai' });
-    gh.user(ALICE, 'alice').member('komira-ai', 'alice', ALICE, 'admin');
-    gh.user(CAROL, 'carol').member('komira-ai', 'carol', CAROL, 'member');
-    gh.user(DAVE, 'dave').member('komira-ai', 'dave', DAVE, 'admin');
-    gh.user(ERIN, 'erin');
+    await namespaces.createOrgNamespace(
+      { namespace: 'komira-ai', kind: 'org', github_id: ORG, created_at: at(), created_by: ALICE },
+      { namespace: 'komira-ai', github_id: ALICE, role: 'owner', added_by: ALICE, added_at: at() },
+    );
+    await namespaces.setMember({ namespace: 'komira-ai', github_id: CAROL, role: 'member', added_by: ALICE, added_at: at() });
     const publisher: TrustedPublisher = {
       id: 'tp1',
       name: 'komira-ai/',
@@ -208,8 +197,8 @@ export async function buildWorld(opts: WorldOptions = {}) {
     h.registry.createPackage({ name, state, created_at: at(), ...extra });
 
   /** What a recipe's setup made that the request has to name: the uploads begun and the publish committed. */
-  const ids: { uploads: string[]; publish?: string } = { uploads: [] };
-  const world = { ids, h, gh, device, namespaces, access, v2, deps, authn, services, send, mint, session, api, ci, jwt, seed, makePackage, clock: h.clock };
+  const ids: { uploads: string[]; publish?: string; device?: string } = { uploads: [] };
+  const world = { ids, h, device, namespaces, access, v2, deps, authn, services, send, mint, session, api, ci, jwt, seed, makePackage, clock: h.clock };
   await seed();
   return world;
 }

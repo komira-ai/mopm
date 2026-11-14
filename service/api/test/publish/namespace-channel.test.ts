@@ -1,11 +1,10 @@
-import { HttpGitHubAppApi, MemoryMembershipPassStore, MemoryNamespaceStore, NamespaceAccess, OrgMembership, type NamespaceRecord } from '../../src/auth';
+import { MemoryNamespaceStore, NamespaceAccess, type NamespaceRecord } from '../../src/auth';
 import { channelFileKey } from '../../src/channel-paths';
 import { indexKey, TAKEDOWNS_KEY, TAKEDOWNS_V2_KEY } from '../../src/index-files';
 import { condaNameOf } from '../../src/names';
 import { indexSubdir, parseIndexMessage } from '../../src/publish/indexer';
 import { queueTakedownIndex } from '../../src/publish/takedown';
 import { SUBDIRS_V1 } from '../../src/types';
-import { APP_ID, APP_PRIVATE_KEY, fakeGitHubApp } from '../github-app-fake';
 import { Harness, pkg, type Pkg } from './harness';
 
 // One package published, yanked and taken down in a namespace: the files, the repodata and the index file land in that namespace's
@@ -18,7 +17,6 @@ const lines = (text: string | undefined) => text!.trim().split('\n').map((l) => 
 
 async function rig() {
   const h = new Harness();
-  const gh = fakeGitHubApp(h.clock.now);
   const store = new MemoryNamespaceStore();
   const at = h.clock.now().toISOString();
   const rows: NamespaceRecord[] = [
@@ -26,8 +24,7 @@ async function rig() {
     { namespace: 'bob', kind: 'user', github_id: BOB, created_at: at },
   ];
   for (const r of rows) await store.createNamespace(r);
-  const app = new HttpGitHubAppApi({ appId: APP_ID, privateKey: APP_PRIVATE_KEY }, h.clock.now, gh.fetchFn);
-  const access = new NamespaceAccess({ namespaces: store, users: h.authStore, membership: new OrgMembership({ app, passes: new MemoryMembershipPassStore(), now: h.clock.now }) });
+  const access = new NamespaceAccess({ namespaces: store, users: h.authStore });
   h.namespaces = access;
   h.v2 = { access, namespaces: store };
   h.build();

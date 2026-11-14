@@ -1,11 +1,12 @@
-//! The operations `/api/v2` adds or changes (spec/proposed/namespaces.md, "api/openapi.yaml"): a namespace and its
-//! creation for an organization, the caller with its namespaces, a package with its namespace instead of owners,
+//! The operations `/api/v2` adds or changes (spec/api/openapi-v2.yaml): a namespace and the registration of an
+//! organization's, its members, the caller with its namespaces, a package with its namespace instead of owners,
 //! creating a package with `PUT`, and the CI identity exchange matched to a namespace's publishers. The operations that
 //! only take full names where v1 takes names are v1's handlers, which check names by the request's prefix (keys.zig).
 //!
-//! GitHub is the fake's own: accounts (`/_fake/users`), organizations with their members and the App installation
-//! (`/_fake/org`), renames (`/_fake/rename`). Every write checks the namespace live (state.zig `Namespace.right`); the
-//! fake keeps no cache of a membership pass, so a removal takes effect at once.
+//! GitHub is the fake's own: accounts (`/_fake/users`), organizations with their members (`/_fake/org`), renames
+//! (`/_fake/rename`). GitHub is asked about an organization once, when its namespace is registered (`pollNamespace`);
+//! after that a write checks only the namespace's member table (state.zig `Namespace.right`), so a member removed is
+//! refused at once.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -24,15 +25,16 @@ const ns_errors = @import("ns_errors.zig");
 const files = @import("files.zig");
 
 /// `NamespaceInfo`.
-pub const Info = struct { namespace: []const u8, kind: []const u8, github_id: u64, login: []const u8, frozen: bool };
+pub const Info = struct { namespace: []const u8, kind: []const u8, github_id: u64, login: []const u8 };
 
-/// `n` as `NamespaceInfo`: `login` is what its account is called on GitHub now.
+/// `n` as `NamespaceInfo`: `login` of a user namespace is what its account is called on GitHub now, of an organization
+/// namespace the namespace itself.
 pub fn info(s: *st.State, n: *const st.Namespace) Info {
     const login = switch (n.kind) {
         .user => if (s.userById(n.github_id)) |u| u.handle else n.name,
-        .org => if (n.org) |o| o.login else n.name,
+        .org => n.name,
     };
-    return .{ .namespace = n.name, .kind = @tagName(n.kind), .github_id = n.github_id, .login = login, .frozen = n.frozen() };
+    return .{ .namespace = n.name, .kind = @tagName(n.kind), .github_id = n.github_id, .login = login };
 }
 
 /// `value` as JSON with null fields left out, not written as null.
@@ -64,10 +66,9 @@ pub fn getNamespace(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     return resp.json(ctx.arena, .ok, info(ctx.state, n));
 }
 
-/// `POST /namespaces {"namespace"}`, a fresh session: creates the organization namespace of the GitHub organization
-/// whose login it is, bound to the App's installation there, for an active admin of the organization (201); or binds the
-/// installation again to the existing namespace of that organization's GitHub id, which unfreezes it (200). A namespace
-/// another account holds, or an organization without the App, is `namespace_unverified`.
+/// `POST /namespaces {"namespace"}`, a fresh session: starts the registration of an organization namespace (202). It
+/// refuses a string outside the grammar, a reserved one, one any namespace holds already, and a caller that holds no user
+/// namespace (`user_not_found`: it could not be named as a member), before GitHub is asked; otherwise it opens a device flow bound to the caller, which `pollNamespace` ends.
 pub fn createNamespace(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     const t = switch (try auth.freshSession(ctx)) {
         .ok => |t| t,
@@ -77,34 +78,218 @@ pub fn createNamespace(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     const name = util.getStr(obj, "namespace") orelse return resp.invalid(ctx.arena, "'namespace' must be a string");
     if (!names.isNamespace(name)) return ns_errors.fail(ctx.arena, .invalid_namespace, &.{.{ "namespace", name }});
     if (names.isReservedNamespace(name)) return ns_errors.fail(ctx.arena, .namespace_reserved, &.{.{ "namespace", name }});
-    const s = ctx.state;
-    const org = s.orgByLogin(name) orelse return unverified(ctx, name, "GitHub has no organization of that login");
-    if (org.installation_id == 0) return unverified(ctx, name, "the mopm registry GitHub App is not installed on the organization");
-    const m = org.membership(t.user);
-    if (m == null or !m.?.active or m.?.role != .admin) return ns_errors.fail(ctx.arena, .not_namespace_member, &.{.{ "namespace", name }});
-    if (s.namespaceByName(name)) |n| {
-        if (n.github_id != org.github_id) return unverified(ctx, name, "it belongs to another GitHub account");
-        // The same GitHub id: an organization that installed the App again, or a user account converted to one.
-        n.kind = .org;
-        n.org = org;
-        n.installation_id = org.installation_id;
-        try files.rewrite(ctx.arena, s);
-        return resp.json(ctx.arena, .ok, info(s, n));
+    if (ctx.state.namespaceByName(name) != null) return ns_errors.fail(ctx.arena, .namespace_taken, &.{.{ "namespace", name }});
+    if (usernameOf(ctx.state, t.user) == null) {
+        const user = try std.ascii.allocLowerString(ctx.arena, t.user.handle);
+        return ns_errors.fail(ctx.arena, .user_not_found, &.{.{ "user", user }});
     }
-    const n = try s.add(st.Namespace, &s.namespaces, .{
-        .name = try s.alloc.dupe(u8, name),
-        .kind = .org,
-        .github_id = org.github_id,
-        .created_at = s.now(),
-        .org = org,
-        .installation_id = org.installation_id,
-    });
-    try files.rewrite(ctx.arena, s);
-    return resp.json(ctx.arena, .created, info(s, n));
+    const login = try auth.openDevice(ctx.state, name, t.user);
+    return auth.deviceStarted(ctx, .accepted, login);
 }
 
-fn unverified(ctx: *Ctx, name: []const u8, detail: []const u8) Allocator.Error!Response {
-    return ns_errors.fail(ctx.arena, .namespace_unverified, &.{ .{ "namespace", name }, .{ "detail", detail } });
+fn notOrgAdmin(ctx: *Ctx, name: []const u8) Allocator.Error!Response {
+    return ns_errors.fail(ctx.arena, .not_org_admin, &.{.{ "namespace", name }});
+}
+
+/// `POST /namespaces/poll {"device_code"}`, a token of the account that started the registration: `pending`, `denied` or
+/// `expired` as a login's poll answers; once the person approved, `created` with the namespace (200) when the approving
+/// account is the caller's and is an active admin of the GitHub organization whose current login is the namespace, which
+/// is when the fake's GitHub is asked. The caller becomes its first owner. The device row is gone after any answer but
+/// `pending`.
+pub fn pollNamespace(ctx: *Ctx, _: []const []const u8) anyerror!Response {
+    const t = switch (try auth.userToken(ctx)) {
+        .ok => |t| t,
+        .fail => |r| return r,
+    };
+    const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
+    const code = util.getStr(obj, "device_code") orelse return resp.invalid(ctx.arena, "'device_code' must be a string");
+    if (code.len < 16) return resp.invalid(ctx.arena, "'device_code' is at least 16 characters");
+    const s = ctx.state;
+    const login = s.loginByDeviceCode(code) orelse return resp.fail(ctx.arena, .device_code_unknown, &.{});
+    const name = login.org_namespace orelse return resp.fail(ctx.arena, .device_code_unknown, &.{});
+    if ((login.account orelse return resp.fail(ctx.arena, .device_code_unknown, &.{})) != t.user) {
+        return resp.fail(ctx.arena, .device_code_unknown, &.{});
+    }
+    switch (login.decision) {
+        .denied => {
+            s.removeLogin(login);
+            return resp.json(ctx.arena, .ok, .{ .status = "denied" });
+        },
+        .pending => {
+            if (s.now() >= login.expires_at) {
+                s.removeLogin(login);
+                return resp.json(ctx.arena, .ok, .{ .status = "expired" });
+            }
+            return resp.json(ctx.arena, .ok, .{ .status = "pending", .interval = s.poll_secs });
+        },
+        .approved => {},
+    }
+    s.removeLogin(login);
+    const approver = login.user.?;
+    if (approver != t.user) return ns_errors.fail(ctx.arena, .github_account_mismatch, &.{});
+    const org = s.orgByLogin(name) orelse return notOrgAdmin(ctx, name);
+    const m = org.membership(approver) orelse return notOrgAdmin(ctx, name);
+    if (!m.active or m.role != .admin) return notOrgAdmin(ctx, name);
+    if (s.namespaceByName(name) != null) return ns_errors.fail(ctx.arena, .namespace_taken, &.{.{ "namespace", name }});
+    const now = s.now();
+    const n = try s.add(st.Namespace, &s.namespaces, .{
+        .name = name,
+        .kind = .org,
+        .github_id = org.github_id,
+        .created_at = now,
+        .created_by = approver.github_id,
+    });
+    try n.members.append(s.alloc, .{ .user = approver, .role = .owner, .added_by = approver.github_id, .added_at = now });
+    try files.rewrite(ctx.arena, s);
+    return resp.json(ctx.arena, .ok, .{ .status = "created", .namespace = info(s, n) });
+}
+
+// ---------------------------------------------------------------------------
+// Members
+// ---------------------------------------------------------------------------
+
+const OrgFound = union(enum) { ok: *st.Namespace, fail: Response };
+
+/// The organization namespace a members path names: `findNamespace`'s answers, and `invalid_request` for a user namespace.
+fn orgNamespace(ctx: *Ctx, name: []const u8) Allocator.Error!OrgFound {
+    const n = switch (try findNamespace(ctx, name)) {
+        .ok => |n| n,
+        .fail => |r| return .{ .fail = r },
+    };
+    if (n.kind == .user) {
+        const detail = try std.fmt.allocPrint(ctx.arena, "'{s}' is a user namespace; it has no members", .{name});
+        return .{ .fail = try resp.invalid(ctx.arena, detail) };
+    }
+    return .{ .ok = n };
+}
+
+/// The answer when `u` is not an owner of the organization namespace `n`, or null when it is: `not_namespace_member` for
+/// an account with no row, `not_namespace_owner` for a member.
+fn ownerRefusal(ctx: *Ctx, n: *const st.Namespace, u: *const st.User) Allocator.Error!?Response {
+    const m = n.member(u) orelse return try ns_errors.fail(ctx.arena, .not_namespace_member, &.{.{ "namespace", n.name }});
+    if (m.role != .owner) return try ns_errors.fail(ctx.arena, .not_namespace_owner, &.{.{ "namespace", n.name }});
+    return null;
+}
+
+const UserFound = union(enum) { ok: *st.User, fail: Response };
+
+/// The account whose mopm username (the name of its user namespace) is `name`, or `user_not_found`; an organization's
+/// namespace and a string no namespace has are not usernames.
+fn mopmUser(ctx: *Ctx, name: []const u8) Allocator.Error!UserFound {
+    if (ctx.state.namespaceByName(name)) |n| {
+        if (n.kind == .user) {
+            if (ctx.state.userById(n.github_id)) |u| return .{ .ok = u };
+        }
+    }
+    return .{ .fail = try ns_errors.fail(ctx.arena, .user_not_found, &.{.{ "user", name }}) };
+}
+
+/// The mopm username of `u`: its user namespace equal to its handle in lower case, else the first of its user namespaces.
+fn usernameOf(s: *st.State, u: *const st.User) ?[]const u8 {
+    var first: ?[]const u8 = null;
+    for (s.namespaces.items) |n| {
+        if (n.kind != .user or n.github_id != u.github_id) continue;
+        if (std.ascii.eqlIgnoreCase(n.name, u.handle)) return n.name;
+        if (first == null) first = n.name;
+    }
+    return first;
+}
+
+/// `Member`.
+const MemberOut = struct { user: []const u8, handle: []const u8, github_id: u64, role: []const u8, added_at: []const u8 };
+
+fn memberOut(ctx: *Ctx, m: st.Member) Allocator.Error!MemberOut {
+    return .{
+        .user = usernameOf(ctx.state, m.user) orelse m.user.handle,
+        .handle = m.user.handle,
+        .github_id = m.user.github_id,
+        .role = @tagName(m.role),
+        .added_at = try util.rfc3339(ctx.arena, m.added_at),
+    };
+}
+
+fn lessMember(_: void, a: MemberOut, b: MemberOut) bool {
+    return std.mem.order(u8, a.user, b.user) == .lt;
+}
+
+/// `GET /namespaces/{namespace}/members`: the members of an organization namespace by username, for an owner or a member
+/// of it.
+pub fn listMembers(ctx: *Ctx, params: []const []const u8) anyerror!Response {
+    const t = switch (try auth.userToken(ctx)) {
+        .ok => |t| t,
+        .fail => |r| return r,
+    };
+    const n = switch (try orgNamespace(ctx, params[0])) {
+        .ok => |n| n,
+        .fail => |r| return r,
+    };
+    if (n.member(t.user) == null) return ns_errors.fail(ctx.arena, .not_namespace_member, &.{.{ "namespace", n.name }});
+    var out = std.ArrayList(MemberOut).init(ctx.arena);
+    for (n.members.items) |m| try out.append(try memberOut(ctx, m));
+    std.mem.sort(MemberOut, out.items, {}, lessMember);
+    return resp.json(ctx.arena, .ok, .{ .namespace = n.name, .members = out.items });
+}
+
+/// `PUT /namespaces/{namespace}/members/{user} {"role"}`, a fresh session of an owner: adds the account (201) or sets its
+/// role (200, also when it already is that). Making the only owner a member is `last_owner`.
+pub fn setMember(ctx: *Ctx, params: []const []const u8) anyerror!Response {
+    const t = switch (try auth.freshSession(ctx)) {
+        .ok => |t| t,
+        .fail => |r| return r,
+    };
+    const n = switch (try orgNamespace(ctx, params[0])) {
+        .ok => |n| n,
+        .fail => |r| return r,
+    };
+    if (try ownerRefusal(ctx, n, t.user)) |r| return r;
+    const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
+    const word = util.getStr(obj, "role") orelse return resp.invalid(ctx.arena, "'role' must be a string");
+    const role = std.meta.stringToEnum(st.MemberRole, word) orelse return resp.invalid(ctx.arena, "'role' is owner or member");
+    const user = switch (try mopmUser(ctx, params[1])) {
+        .ok => |u| u,
+        .fail => |r| return r,
+    };
+    const now = ctx.state.now();
+    if (n.member(user)) |m| {
+        if (m.role != role) {
+            if (m.role == .owner and n.ownerCount() == 1) {
+                return ns_errors.fail(ctx.arena, .last_owner, &.{ .{ "user", params[1] }, .{ "namespace", n.name } });
+            }
+            m.role = role;
+            m.added_by = t.user.github_id;
+            m.added_at = now;
+        }
+        return resp.json(ctx.arena, .ok, try memberOut(ctx, m.*));
+    }
+    try n.members.append(ctx.state.alloc, .{ .user = user, .role = role, .added_by = t.user.github_id, .added_at = now });
+    return resp.json(ctx.arena, .created, try memberOut(ctx, n.member(user).?.*));
+}
+
+/// `DELETE /namespaces/{namespace}/members/{user}`, a fresh session of an owner (204): the account's next write is
+/// refused. An owner may remove themselves while another owner remains; the last owner is `last_owner`.
+pub fn removeMember(ctx: *Ctx, params: []const []const u8) anyerror!Response {
+    const t = switch (try auth.freshSession(ctx)) {
+        .ok => |t| t,
+        .fail => |r| return r,
+    };
+    const n = switch (try orgNamespace(ctx, params[0])) {
+        .ok => |n| n,
+        .fail => |r| return r,
+    };
+    if (try ownerRefusal(ctx, n, t.user)) |r| return r;
+    const user = switch (try mopmUser(ctx, params[1])) {
+        .ok => |u| u,
+        .fail => |r| return r,
+    };
+    for (n.members.items, 0..) |m, i| {
+        if (m.user != user) continue;
+        if (m.role == .owner and n.ownerCount() == 1) {
+            return ns_errors.fail(ctx.arena, .last_owner, &.{ .{ "user", params[1] }, .{ "namespace", n.name } });
+        }
+        _ = n.members.orderedRemove(i);
+        return resp.empty(.no_content);
+    }
+    return ns_errors.fail(ctx.arena, .member_not_found, &.{ .{ "user", params[1] }, .{ "namespace", n.name } });
 }
 
 // ---------------------------------------------------------------------------

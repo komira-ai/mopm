@@ -2,12 +2,9 @@ import {
   AuthError,
   Authenticator,
   MemoryAuthStore,
-  MemoryMembershipPassStore,
   MemoryNamespaceStore,
-  HttpGitHubAppApi,
   NamespaceAccess,
   NamespaceError,
-  OrgMembership,
   mintToken,
 } from '../src/auth';
 import type { AuthServices } from '../src/http/auth-routes';
@@ -15,31 +12,30 @@ import { route, type HttpResponse, type RouterDeps } from '../src/http/router';
 import { MemoryStore } from '../src/memory-store';
 import { TokenServiceV2 } from '../src/auth/tokens-v2';
 import { TestClock } from './auth-helpers';
-import { APP_ID, APP_PRIVATE_KEY, fakeGitHubApp } from './github-app-fake';
 
 // GET /api/v2/me and POST /api/v2/me/tokens (src/auth/tokens-v2.ts): the namespaces an account can write in now and the
 // full-name packages of an API token, directly and through route() with RouterDeps.v2 and RouterDeps.auth.
 
 const ALICE = 4242;
 const ORG_ID = 77;
-const INST = 5555;
+const OWNER2 = 99;
 
-async function rig(opts: { app?: boolean } = {}) {
+async function rig() {
   const clock = new TestClock();
   const store = new MemoryAuthStore();
   const namespaces = new MemoryNamespaceStore();
-  const gh = fakeGitHubApp(clock.now);
-  gh.install(INST, { id: ORG_ID, login: 'komira-ai' }).user(ALICE, 'alice').member('komira-ai', 'alice', ALICE, 'admin');
-  const app = new HttpGitHubAppApi({ appId: APP_ID, privateKey: APP_PRIVATE_KEY }, clock.now, gh.fetchFn);
-  const membership = opts.app === false ? undefined : new OrgMembership({ app, passes: new MemoryMembershipPassStore(), now: clock.now });
-  const access = new NamespaceAccess({ namespaces, users: store, membership });
+  const access = new NamespaceAccess({ namespaces, users: store });
   const packages: Record<string, string[]> = { alice: ['alice/zeta', 'alice/alpha'], 'komira-ai': ['komira-ai/json'] };
   const svc = new TokenServiceV2({ store, access, packagesIn: async (ns) => [...(packages[ns] ?? [])].sort(), now: clock.now });
   const at = clock.now().toISOString();
   await namespaces.createNamespace({ namespace: 'alice', kind: 'user', github_id: ALICE, created_at: at });
-  await namespaces.createNamespace({ namespace: 'komira-ai', kind: 'org', github_id: ORG_ID, created_at: at, installation_id: INST });
-  await store.upsertUser(ALICE, 'Alice', at, true, [{ github_id: ORG_ID, login: 'komira-ai', role: 'admin' }]);
-  return { clock, store, namespaces, gh, access, svc, packages };
+  await namespaces.createOrgNamespace(
+    { namespace: 'komira-ai', kind: 'org', github_id: ORG_ID, created_at: at, created_by: ALICE },
+    { namespace: 'komira-ai', github_id: ALICE, role: 'owner', added_by: ALICE, added_at: at },
+  );
+  await namespaces.setMember({ namespace: 'komira-ai', github_id: OWNER2, role: 'owner', added_by: ALICE, added_at: at });
+  await store.upsertUser(ALICE, 'Alice', at, true);
+  return { clock, store, namespaces, access, svc, packages };
 }
 
 async function refusal(p: Promise<unknown>) {
@@ -55,29 +51,25 @@ async function refusal(p: Promise<unknown>) {
 const input = (over: Record<string, unknown> = {}) => ({ name: 'ci', scopes: ['publish'], packages: ['alice/alpha'], expires_in_days: 30, ...over });
 
 describe('me', () => {
-  test('a user namespace and an organization namespace the check passes: user first, each with its sorted packages and role', async () => {
+  test('a user namespace and an organization namespace the account has a member row in: user first, each with its sorted packages and role', async () => {
     const r = await rig();
     expect(await r.svc.me(ALICE)).toEqual({
       github_id: ALICE,
       handle: 'Alice',
       namespaces: [
         { namespace: 'alice', kind: 'user', role: 'owner', packages: ['alice/alpha', 'alice/zeta'] },
-        { namespace: 'komira-ai', kind: 'org', role: 'admin', packages: ['komira-ai/json'] },
+        { namespace: 'komira-ai', kind: 'org', role: 'owner', packages: ['komira-ai/json'] },
       ],
     });
   });
 
-  test('an organization the check refuses is left out', async () => {
+  test('an organization the account was removed from is left out on the next call; a plain member is listed with role member', async () => {
     const r = await rig();
-    r.gh.removeMember('komira-ai', 'alice');
-    const me = await r.svc.me(ALICE);
-    expect(me.namespaces.map((n) => n.namespace)).toEqual(['alice']);
-  });
-
-  test('GitHub unreachable during the organization check propagates as unavailable', async () => {
-    const r = await rig();
-    r.gh.state.faults.push({ path: /./, reject: true });
-    expect((await refusal(r.svc.me(ALICE))).code).toBe('unavailable');
+    await r.namespaces.setMember({ namespace: 'komira-ai', github_id: 5, role: 'member', added_by: ALICE, added_at: r.clock.now().toISOString() });
+    await r.store.upsertUser(5, 'Bob', r.clock.now().toISOString(), true);
+    expect((await r.svc.me(5)).namespaces).toEqual([{ namespace: 'komira-ai', kind: 'org', role: 'member', packages: ['komira-ai/json'] }]);
+    await r.namespaces.removeMember('komira-ai', ALICE, OWNER2, r.clock.now().toISOString());
+    expect((await r.svc.me(ALICE)).namespaces.map((n) => n.namespace)).toEqual(['alice']);
   });
 
   test('an account with no user namespace and a free login lists nothing and reports no unavailable_namespace', async () => {
@@ -103,11 +95,6 @@ describe('me', () => {
   test('an account with no user row is token_unknown', async () => {
     const r = await rig();
     expect((await refusal(r.svc.me(1))).code).toBe('token_unknown');
-  });
-
-  test('without a GitHub App no organization is listed', async () => {
-    const r = await rig({ app: false });
-    expect((await r.svc.me(ALICE)).namespaces.map((n) => n.namespace)).toEqual(['alice']);
   });
 });
 

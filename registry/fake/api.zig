@@ -89,7 +89,7 @@ const routes = [_]Route{
     .{ .method = .PUT, .pattern = &.{ "groups", "{}", "yank" }, .operation = "yankGroup", .handler = groups.yankGroup },
 };
 
-/// `/api/v2` (spec/proposed/namespaces.md, "api/openapi.yaml"). A package is `{namespace}/{name}`, two segments that
+/// `/api/v2` (spec/api/openapi-v2.yaml). A package is `{namespace}/{name}`, two segments that
 /// `handle` joins into one full name before matching, so the handlers v1 shares see one key. Owners, invitations and
 /// claims are not here: the namespace is the owner, and `PUT /packages/{namespace}/{name}` creates.
 const routes_v2 = [_]Route{
@@ -102,7 +102,11 @@ const routes_v2 = [_]Route{
     .{ .method = .GET, .pattern = &.{ "me", "tokens" }, .operation = "listTokens", .handler = auth.listTokens },
     .{ .method = .DELETE, .pattern = &.{ "me", "tokens", "{}" }, .operation = "revokeToken", .handler = auth.revokeToken },
     .{ .method = .POST, .pattern = &.{"namespaces"}, .operation = "createNamespace", .handler = ns.createNamespace },
+    .{ .method = .POST, .pattern = &.{ "namespaces", "poll" }, .operation = "pollNamespace", .handler = ns.pollNamespace },
     .{ .method = .GET, .pattern = &.{ "namespaces", "{}" }, .operation = "getNamespace", .handler = ns.getNamespace },
+    .{ .method = .GET, .pattern = &.{ "namespaces", "{}", "members" }, .operation = "listMembers", .handler = ns.listMembers },
+    .{ .method = .PUT, .pattern = &.{ "namespaces", "{}", "members", "{}" }, .operation = "setMember", .handler = ns.setMember },
+    .{ .method = .DELETE, .pattern = &.{ "namespaces", "{}", "members", "{}" }, .operation = "removeMember", .handler = ns.removeMember },
     .{ .method = .GET, .pattern = &.{"packages"}, .operation = "searchPackages", .handler = packages.searchPackages },
     .{ .method = .PUT, .pattern = &.{ "packages", "{}" }, .operation = "createPackage", .handler = ns.createPackage },
     .{ .method = .GET, .pattern = &.{ "packages", "{}", "versions" }, .operation = "listVersions", .handler = packages.listVersions },

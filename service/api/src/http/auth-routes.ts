@@ -4,6 +4,7 @@ import {
   type DeviceLogin,
   type OidcExchange,
   type OidcExchangeInput,
+  type OrgRegistration,
   type Principal,
   type TokenService,
 } from '../auth';
@@ -19,6 +20,8 @@ export interface AuthServices {
    * needed. Rejects with AuthError('unavailable') while the secret is not there.
    */
   devices(): Promise<DeviceLogin>;
+  /** Registering an organization namespace needs the same client id; rejects with AuthError('unavailable') while the secret is not there. */
+  registration(): Promise<OrgRegistration>;
 }
 
 /** What the router needs of a request, and what an auth operation answers with. */

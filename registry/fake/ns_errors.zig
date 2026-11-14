@@ -8,15 +8,33 @@ const Allocator = std.mem.Allocator;
 const errors = @import("errors.zig");
 const resp = @import("resp.zig");
 
-pub const Code = enum { invalid_namespace, not_namespace_member, namespace_unverified, namespace_reserved, namespace_not_found };
+pub const Code = enum {
+    invalid_namespace,
+    not_namespace_member,
+    not_namespace_owner,
+    not_org_admin,
+    github_account_mismatch,
+    namespace_taken,
+    last_owner,
+    member_not_found,
+    user_not_found,
+    namespace_reserved,
+    namespace_not_found,
+};
 
 const Entry = struct { status: std.http.Status, message: []const u8, hint: []const u8 };
 
 pub fn entry(code: Code) Entry {
     return switch (code) {
         .invalid_namespace => .{ .status = .bad_request, .message = "'{namespace}' is not a valid namespace.", .hint = "A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters." },
-        .not_namespace_member => .{ .status = .forbidden, .message = "You cannot write in '{namespace}'.", .hint = "Ask an owner of the GitHub organization for membership." },
-        .namespace_unverified => .{ .status = .forbidden, .message = "'{namespace}' cannot be verified on GitHub: {detail}.", .hint = "An owner of the organization installs the mopm registry GitHub App, then an admin runs the namespace creation again." },
+        .not_namespace_member => .{ .status = .forbidden, .message = "You cannot write in '{namespace}'.", .hint = "Ask an owner of '{namespace}' to run 'mopm org add {namespace} <your mopm username>'." },
+        .not_namespace_owner => .{ .status = .forbidden, .message = "You are not an owner of '{namespace}'.", .hint = "Ask an owner of '{namespace}'; 'mopm org list {namespace}' shows them." },
+        .not_org_admin => .{ .status = .forbidden, .message = "You are not an active admin of the GitHub organization '{namespace}'.", .hint = "An admin of the GitHub organization runs 'mopm org create {namespace}'; an organization that restricts OAuth apps approves the mopm registry first." },
+        .github_account_mismatch => .{ .status = .forbidden, .message = "The GitHub account that approved is not the one logged in to mopm.", .hint = "Approve with the GitHub account you logged in with, or run 'mopm login' with the other one." },
+        .namespace_taken => .{ .status = .conflict, .message = "'{namespace}' is taken.", .hint = "Choose the namespace of another GitHub organization." },
+        .last_owner => .{ .status = .conflict, .message = "'{user}' is the last owner of '{namespace}'.", .hint = "Make another member an owner first." },
+        .member_not_found => .{ .status = .not_found, .message = "'{user}' is not a member of '{namespace}'.", .hint = "List the members with 'mopm org list {namespace}'." },
+        .user_not_found => .{ .status = .not_found, .message = "There is no mopm user '{user}'.", .hint = "A user gets their name at their first 'mopm login'." },
         .namespace_reserved => .{ .status = .forbidden, .message = "'{namespace}' is reserved.", .hint = "Publish in an organization's namespace." },
         .namespace_not_found => .{ .status = .not_found, .message = "There is no namespace '{namespace}'.", .hint = "A user's namespace is made at their first 'mopm login'; an organization's by one of its admins." },
     };
@@ -49,12 +67,23 @@ test "the v2 codes answer with the status, message and hint of the proposed spec
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const r = try fail(a, .namespace_unverified, &.{ .{ "namespace", "komira-ai" }, .{ "detail", "the App is not installed" } });
+    const r = try fail(a, .not_org_admin, &.{.{ "namespace", "komira-ai" }});
     try std.testing.expectEqual(std.http.Status.forbidden, r.status);
     try std.testing.expectEqualStrings(
-        "{\"error\":{\"code\":\"namespace_unverified\",\"message\":\"'komira-ai' cannot be verified on GitHub: the App is not installed.\",\"hint\":\"An owner of the organization installs the mopm registry GitHub App, then an admin runs the namespace creation again.\"}}",
+        "{\"error\":{\"code\":\"not_org_admin\",\"message\":\"You are not an active admin of the GitHub organization 'komira-ai'.\",\"hint\":\"An admin of the GitHub organization runs 'mopm org create komira-ai'; an organization that restricts OAuth apps approves the mopm registry first.\"}}",
         r.body,
     );
+    const last = try fail(a, .last_owner, &.{ .{ "user", "alice" }, .{ "namespace", "komira-ai" } });
+    try std.testing.expectEqual(std.http.Status.conflict, last.status);
+    try std.testing.expectEqualStrings(
+        "{\"error\":{\"code\":\"last_owner\",\"message\":\"'alice' is the last owner of 'komira-ai'.\",\"hint\":\"Make another member an owner first.\"}}",
+        last.body,
+    );
+    try std.testing.expectEqual(std.http.Status.conflict, (try fail(a, .namespace_taken, &.{.{ "namespace", "x" }})).status);
+    try std.testing.expectEqual(std.http.Status.forbidden, (try fail(a, .github_account_mismatch, &.{})).status);
+    try std.testing.expectEqual(std.http.Status.forbidden, (try fail(a, .not_namespace_owner, &.{.{ "namespace", "x" }})).status);
+    try std.testing.expectEqual(std.http.Status.not_found, (try fail(a, .member_not_found, &.{ .{ "user", "u" }, .{ "namespace", "x" } })).status);
+    try std.testing.expectEqual(std.http.Status.not_found, (try fail(a, .user_not_found, &.{.{ "user", "u" }})).status);
     try std.testing.expectEqual(std.http.Status.bad_request, (try fail(a, .invalid_namespace, &.{.{ "namespace", "A" }})).status);
     try std.testing.expectEqual(std.http.Status.not_found, (try fail(a, .namespace_not_found, &.{.{ "namespace", "x" }})).status);
     const flat = try flatCreationRefused(a, "json");

@@ -1,6 +1,6 @@
 import { GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import type { DocClient } from '../dynamo-store';
-import type { AuthStore, DeviceLoginRecord, TokenRecord, TrustedPublisher, UserOrg, UserRecord } from './types';
+import type { AuthStore, DeviceLoginRecord, TokenRecord, TrustedPublisher, UserRecord } from './types';
 
 /** Table names (service/infra/stacks/lib/config.ts: `mopm-<stage>-<table>`). */
 export interface AuthTables {
@@ -9,7 +9,7 @@ export interface AuthTables {
   device_logins: string;
   trusted_publishers: string;
   namespaces: string;
-  membership_passes: string;
+  namespace_members: string;
 }
 
 export const authTablesFor = (stage: string): AuthTables => ({
@@ -18,7 +18,7 @@ export const authTablesFor = (stage: string): AuthTables => ({
   device_logins: `mopm-${stage}-device_logins`,
   trusted_publishers: `mopm-${stage}-trusted_publishers`,
   namespaces: `mopm-${stage}-namespaces`,
-  membership_passes: `mopm-${stage}-membership_passes`,
+  namespace_members: `mopm-${stage}-namespace_members`,
 });
 
 /** The tokens table's index by account (service/infra/stacks/lib/data-stack.ts): partition github_id, sort id. */
@@ -71,12 +71,10 @@ export class DynamoAuthStore implements AuthStore {
     private readonly tables: AuthTables,
   ) {}
 
-  async upsertUser(github_id: number, handle: string, now: string, two_factor?: boolean, orgs?: UserOrg[]): Promise<UserRecord> {
+  async upsertUser(github_id: number, handle: string, now: string, two_factor?: boolean): Promise<UserRecord> {
     const old = await this.getUser(github_id);
     const rec: UserRecord = { github_id, handle, created_at: old?.created_at ?? now, last_login_at: now };
     if (two_factor !== undefined) rec.two_factor = two_factor;
-    const keep = orgs ?? old?.orgs;
-    if (keep !== undefined) rec.orgs = keep;
     await this.doc.send(
       new PutCommand({ TableName: this.tables.users, Item: { ...rec, github_id: String(github_id), github_id_num: github_id } }),
     );
@@ -86,7 +84,8 @@ export class DynamoAuthStore implements AuthStore {
   async getUser(github_id: number): Promise<UserRecord | undefined> {
     const r = await this.doc.send(new GetCommand({ TableName: this.tables.users, Key: { github_id: String(github_id) } }));
     if (!r.Item) return undefined;
-    return { ...strip(r.Item, 'github_id_num'), github_id: r.Item.github_id_num } as UserRecord;
+    // A row written when logins still recorded `orgs` keeps that attribute; it is not read.
+    return { ...strip(r.Item, 'github_id_num', 'orgs'), github_id: r.Item.github_id_num } as UserRecord;
   }
 
   async putToken(rec: TokenRecord): Promise<void> {

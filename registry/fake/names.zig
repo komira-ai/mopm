@@ -22,10 +22,10 @@ pub fn isNamespace(s: []const u8) bool {
 /// Platform words of a conda subdir: a namespace `<word>-<anything>` would look like a subdir of the channel root.
 const subdir_platforms = [_][]const u8{ "linux", "osx", "win", "freebsd", "zos", "wasi", "emscripten" };
 /// The channel bucket's other top-level prefixes.
-const reserved_namespaces = [_][]const u8{ "noarch", "index", "quarantine", "native-mirror" };
+const reserved_namespaces = [_][]const u8{ "noarch", "index", "quarantine", "native-mirror", "poll" };
 
 /// Whether the namespace `s` (in the grammar) is one nobody gets: the shape of a conda subdir,
-/// `^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$`, and `index`, `quarantine`, `native-mirror`.
+/// `^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$`, and `index`, `quarantine`, `native-mirror`, `poll`.
 pub fn isReservedNamespace(s: []const u8) bool {
     for (reserved_namespaces) |r| {
         if (std.mem.eql(u8, r, s)) return true;
@@ -130,7 +130,7 @@ test "namespaces: the lower-case GitHub login grammar, at most 39 characters" {
 }
 
 test "reserved namespaces: conda subdir shapes and the bucket's prefixes" {
-    for ([_][]const u8{ "noarch", "linux-64", "linux-aarch64", "osx-arm64", "win-32", "freebsd-x", "zos-z", "wasi-wasm32", "emscripten-wasm32", "index", "quarantine", "native-mirror" }) |s| {
+    for ([_][]const u8{ "noarch", "linux-64", "linux-aarch64", "osx-arm64", "win-32", "freebsd-x", "zos-z", "wasi-wasm32", "emscripten-wasm32", "index", "quarantine", "native-mirror", "poll" }) |s| {
         try std.testing.expect(isReservedNamespace(s));
     }
     for ([_][]const u8{ "linux", "linux-64-x", "osx", "komira-ai", "noarch-x", "indexes", "mirror" }) |s| try std.testing.expect(!isReservedNamespace(s));

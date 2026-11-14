@@ -5,7 +5,8 @@ import { groupAudit } from '../../src/publish/group-lifecycle';
 import { madeVisible } from '../../src/publish/group-chain';
 import type { PublishRecord } from '../../src/publish/types';
 import type { VersionRecord } from '../../src/types';
-import { ALICE, CAROL, DAVE, ERIN, FROZEN_ORG, NEW_INST, NEW_ORG, OCTO, type World } from './replay-v2-world';
+import { orgMembership } from '../auth-helpers';
+import { ALICE, BOB, CAROL, DAVE, ERIN, NEW_ORG, OCTO, type World } from './replay-v2-world';
 import type { Recipe } from './replay-v2';
 
 // One recipe per case of tests/contract/api-v2: the state the case describes, the token it sends, and the few rewrites of the
@@ -26,6 +27,34 @@ const call = (w: World, method: string, path: string, bearer?: string, body?: un
   });
 
 const asJson = (r: HttpResponse) => JSON.parse(r.body) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+// ---- organization registration and members -------------------------------------------------------------------------------
+
+/** CAROL's user namespace: the fixed world gives her none (she is only a member of `komira-ai`). */
+const carolNamespace = async (w: World): Promise<void> => {
+  await w.namespaces.createNamespace({ namespace: 'carol', kind: 'user', github_id: CAROL, created_at: iso(w) });
+};
+
+/**
+ * A recipe for `POST /namespaces/poll`: DAVE started the registration of `acme-labs` (his own `createNamespace` call makes the
+ * device row), then GitHub answers the poll as `script` says. The default script approves with a token; the token's account is
+ * `approvedBy` (DAVE) and its membership of the organization has `role`. `minutes` moves the clock after the start.
+ */
+function registrationPoll(o: { script?: Array<Record<string, unknown>>; role?: string; approvedBy?: number; minutes?: number }): Recipe {
+  return {
+    bearer: session(DAVE),
+    setup: async (w) => {
+      if (o.script) w.device.state.pollScript = o.script;
+      w.device.state.user = { id: o.approvedBy ?? DAVE, login: 'dave', two_factor_authentication: true };
+      w.device.state.memberships['acme-labs'] = { body: orgMembership({ id: NEW_ORG, login: 'acme-labs' }, o.role ?? 'admin', 'active', o.approvedBy ?? DAVE) };
+      const started = await call(w, 'POST', '/namespaces', await w.session(DAVE), { namespace: 'acme-labs' });
+      if (started.statusCode !== 202) throw new Error(`start: ${started.statusCode} ${started.body}`);
+      w.ids.device = asJson(started).device_code as string;
+      if (o.minutes) w.clock.advance(minutes(o.minutes));
+    },
+    prepare: async (req, w) => ({ ...req, body: JSON.stringify({ device_code: w.ids.device }) }),
+  };
+}
 
 // ---- tokens of the fixed accounts ------------------------------------------------------------------------------------------
 
@@ -284,28 +313,49 @@ export const RECIPES: Record<string, Recipe> = {
   'error token_not_found': { bearer: session(ALICE) },
 
   // ---- tests/contract/api-v2/namespaces.json
-  'create an organization namespace': {
-    bearer: session(DAVE),
-    setup: async (w) => {
-      w.gh.install(NEW_INST, { id: NEW_ORG, login: 'acme-labs' }).member('acme-labs', 'dave', DAVE, 'admin');
-    },
-  },
-  'create a namespace that exists': { bearer: session(DAVE) },
-  'create a namespace that is frozen, binding the new installation': {
-    bearer: session(DAVE),
-    setup: async (w) => {
-      w.gh.install(NEW_INST, { id: FROZEN_ORG, login: 'frozen-org' }).member('frozen-org', 'dave', DAVE, 'admin');
-    },
-  },
+  'start the registration of an organization namespace': { bearer: session(DAVE) },
+  'create a namespace outside the grammar': { bearer: session(DAVE) },
+  'create a reserved namespace': { bearer: session(DAVE) },
+  'create a namespace a user holds': { bearer: session(DAVE) },
+  'poll a registration while pending': registrationPoll({ script: [{ error: 'authorization_pending' }] }),
+  'poll a registration that was created': registrationPoll({}),
+  'poll a registration that was denied': registrationPoll({ script: [{ error: 'access_denied' }] }),
+  'poll a registration that expired': registrationPoll({ script: [{ error: 'authorization_pending' }], minutes: 11 }),
+  'poll a registration approved by a plain member of the organization': registrationPoll({ role: 'member' }),
+  'poll a registration approved by another GitHub account': registrationPoll({ approvedBy: 9999 }),
   'get a user namespace': {},
   'get an organization namespace': {},
-  'get a frozen namespace': {},
   'error invalid_namespace': {},
   'error namespace_not_found': {},
   'error namespace_reserved': {},
-  'error namespace_unverified': { bearer: session(DAVE), setup: async (w) => void w.gh.user(DAVE, 'dave') },
+  'error namespace_taken': { bearer: session(DAVE) },
+  'error not_org_admin': registrationPoll({ role: 'member' }),
+  'error github_account_mismatch': registrationPoll({ approvedBy: 9999 }),
   'error not_namespace_member': { bearer: session(ERIN) },
-  'error unavailable': { bearer: session(DAVE), world: { app: false } },
+  'error unavailable': registrationPoll({ script: [{ error: 'incorrect_device_code' }] }),
+  'list the members of an organization namespace': { bearer: session(ALICE) },
+  'list the members as an account that is not one': { bearer: session(ERIN) },
+  'list the members of a user namespace': { bearer: session(ALICE) },
+  'add a member': { bearer: session(ALICE) },
+  'make a member an owner': { bearer: session(ALICE), setup: carolNamespace },
+  'set the role a member already has': { bearer: session(ALICE), setup: carolNamespace },
+  'set a member as a member of the namespace': { bearer: session(CAROL) },
+  'set a member as an account that is not one': { bearer: session(BOB) },
+  'demote the only owner': { bearer: session(ALICE) },
+  'set an account that has no mopm username': { bearer: session(ALICE) },
+  'set an organization namespace as a user': { bearer: session(ALICE) },
+  'remove a member': { bearer: session(ALICE), setup: carolNamespace },
+  'an owner removes themselves while another owner remains': {
+    bearer: session(ALICE),
+    setup: async (w) => void (await w.namespaces.setMember({ namespace: 'komira-ai', github_id: CAROL, role: 'owner', added_by: ALICE, added_at: iso(w) })),
+  },
+  'remove an account that is not a member': { bearer: session(ALICE) },
+  'remove the only owner': { bearer: session(ALICE) },
+  'remove a member as a member of the namespace': { bearer: session(CAROL), setup: carolNamespace },
+  'error not_namespace_owner': { bearer: session(CAROL) },
+  'error last_owner': { bearer: session(ALICE) },
+  'error member_not_found': { bearer: session(ALICE) },
+  'error user_not_found': { bearer: session(ALICE) },
 
   // ---- tests/contract/api-v2/packages.json
   'search by name prefix in every namespace': { setup: catalogue },

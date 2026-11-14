@@ -9,6 +9,7 @@ const core = @import("mopm_core");
 const mojo_cmd = core.mojo_cmd;
 const test_cmd = @import("test_cmd.zig");
 const registry_cmd = @import("registry_cmd.zig");
+const org_cmd = @import("org_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
 const install_cmd = @import("install_cmd.zig");
 const plan_cmd = @import("plan_cmd.zig");
@@ -76,6 +77,14 @@ const usage =
     \\                          an account on a registry (device login through
     \\                          GitHub; the token is kept in credentials.json,
     \\                          mode 0600, and never printed)
+    \\  org create <org> | add <org> <user> [--owner] | remove <org> <user> | list <org>
+    \\                          [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                          an organization's namespace and its members: create
+    \\                          registers the namespace of a GitHub organization
+    \\                          you are an admin of (a device approval on GitHub
+    \\                          that reads your membership once; you become its
+    \\                          owner); add, remove and list manage who may write
+    \\                          in it by mopm username, with no GitHub involved
     \\  pack --compiler <mojo version> --mojoc [<subdir>=]<file>... [-o <dir>]
     \\                          write the package as a .conda per subdir
     \\                          (noarch, linux-64, linux-aarch64, osx-arm64) and
@@ -505,6 +514,7 @@ fn run(arena: std.mem.Allocator) u8 {
     if (std.mem.eql(u8, cmd, "login") or std.mem.eql(u8, cmd, "logout") or std.mem.eql(u8, cmd, "whoami")) {
         return registry_cmd.main(arena, cmd, args[2..], version);
     }
+    if (std.mem.eql(u8, cmd, "org")) return org_cmd.main(arena, args[2..], version);
     if (std.mem.eql(u8, cmd, "pack") or std.mem.eql(u8, cmd, "publish")) {
         return publish_cmd.main(arena, cmd, args[2..], version);
     }
@@ -535,6 +545,7 @@ pub fn main() void {
 
 test {
     _ = registry_cmd;
+    _ = org_cmd;
     _ = publish_cmd;
     _ = install_cmd;
     _ = plan_cmd;

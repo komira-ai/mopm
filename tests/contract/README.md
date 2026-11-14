@@ -70,8 +70,8 @@ by area: `meta`, `auth` (device login, CI exchange), `me`, `tokens`,
 commit, status, yank), `groups` and `errors` (the catalogue, one case per
 code). Counter-examples (`expect: invalid`) carry one defect each, among them
 a flat name where a full name is required, a `name_reserved` hint of v1's flat
-creation under v2's template, a `MeV2` without `namespaces` and a
-`NamespaceInfo` without `frozen`.
+creation under v2's template, a `MeV2` without `namespaces`, a `NamespaceInfo` without `login`, a role that
+is not `owner` or `member`, and a registration poll that is `created` without its namespace.
 
 A few values a registry makes at random (a token secret, a token id, a device
 code, an upload id, a publish id, a cursor) are examples here; the replay

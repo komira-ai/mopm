@@ -81,7 +81,13 @@ pub fn startDeviceLogin(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
     const client = util.getStr(obj, "client") orelse return resp.invalid(ctx.arena, "'client' must be a string");
     if (client.len == 0 or client.len > 80) return resp.invalid(ctx.arena, "'client' must be 1 to 80 characters");
-    const s = ctx.state;
+    const login = try openDevice(ctx.state, null, null);
+    return deviceStarted(ctx, .ok, login);
+}
+
+/// A new device row. A login passes no namespace and no account; the registration of an organization namespace passes
+/// the namespace it asks for and the account that asked.
+pub fn openDevice(s: *st.State, org_namespace: ?[]const u8, account: ?*st.User) std.mem.Allocator.Error!*st.DeviceLogin {
     var code_bytes: [20]u8 = undefined;
     std.crypto.random.bytes(&code_bytes);
     var user_bytes: [4]u8 = undefined;
@@ -92,17 +98,23 @@ pub fn startDeviceLogin(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         user_code[5 + i] = '0' + (user_bytes[i] >> 3) % 10;
     }
     user_code[4] = '-';
-    const login = try s.addLogin(.{
+    return s.addLogin(.{
         .device_code = try std.fmt.allocPrint(s.alloc, "{s}", .{std.fmt.fmtSliceHexLower(&code_bytes)}),
         .user_code = try s.alloc.dupe(u8, &user_code),
         .expires_at = s.now() + st.device_secs,
+        .org_namespace = if (org_namespace) |n| try s.alloc.dupe(u8, n) else null,
+        .account = account,
     });
-    return resp.json(ctx.arena, .ok, .{
+}
+
+/// `DeviceStartResponse` of `login`, with `status`.
+pub fn deviceStarted(ctx: *Ctx, status: std.http.Status, login: *const st.DeviceLogin) anyerror!Response {
+    return resp.json(ctx.arena, status, .{
         .device_code = login.device_code,
         .user_code = login.user_code,
-        .verification_uri = try std.fmt.allocPrint(ctx.arena, "{s}/device", .{s.base_url}),
+        .verification_uri = try std.fmt.allocPrint(ctx.arena, "{s}/device", .{ctx.state.base_url}),
         .expires_in = st.device_secs,
-        .interval = s.poll_secs,
+        .interval = ctx.state.poll_secs,
     });
 }
 
@@ -112,6 +124,8 @@ pub fn pollDeviceLogin(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     if (code.len < 16) return resp.invalid(ctx.arena, "'device_code' is at least 16 characters");
     const s = ctx.state;
     const login = s.loginByDeviceCode(code) orelse return resp.fail(ctx.arena, .device_code_unknown, &.{});
+    // The device row of an organization registration is polled at `pollNamespace`, by the account that started it.
+    if (login.org_namespace != null) return resp.fail(ctx.arena, .device_code_unknown, &.{});
     switch (login.decision) {
         .denied => return resp.json(ctx.arena, .ok, .{ .status = "denied" }),
         .pending => {

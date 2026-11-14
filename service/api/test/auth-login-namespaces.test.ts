@@ -4,14 +4,11 @@ import {
   HttpGitHubApi,
   MemoryAuthStore,
   MemoryNamespaceStore,
-  ORG_PAGE_SIZE,
-  ORG_PAGES_MAX,
-  type GitHubApi,
 } from '../src/auth';
-import { fakeGitHub, TestClock } from './auth-helpers';
+import { fakeGitHub, orgMembership, TestClock } from './auth-helpers';
 
 // Login and namespaces (docs/design/namespaces.md 2.1 to 2.3): the user namespace made at login, renames, reserved and
-// out-of-grammar logins, and the organization memberships read with `read:org` for whoami.
+// out-of-grammar logins, and the login's scope.
 
 function setup(gh: Parameters<typeof fakeGitHub>[0] = {}, require2fa?: boolean) {
   const clock = new TestClock();
@@ -31,12 +28,6 @@ function setup(gh: Parameters<typeof fakeGitHub>[0] = {}, require2fa?: boolean) 
   return { clock, store, namespaces, fake, login, as };
 }
 
-const membership = (id: number, login: string, role = 'member', state = 'active') => ({
-  state,
-  role,
-  organization: { id, login, url: `https://api.github.com/orgs/${login}` },
-  user: { id: 4242, login: 'octo' },
-});
 const orgCalls = <C extends { url: string }>(calls: C[]) => calls.filter((c) => c.url.includes('/user/memberships/orgs'));
 
 describe('the user namespace at login', () => {
@@ -153,127 +144,18 @@ describe('the user namespace at login', () => {
   });
 });
 
-describe('the organization memberships read at login (read:org, for whoami only)', () => {
-  test('the login asks for read:user and read:org', async () => {
+describe('the login asks for read:user only and reads no organization', () => {
+  test('the login asks for read:user alone', async () => {
     const { login, fake } = setup();
     await login.start({ client: 'mopm' });
-    expect(new URLSearchParams(fake.state.calls[0]!.body).get('scope')).toBe('read:user read:org');
+    expect(new URLSearchParams(fake.state.calls[0]!.body).get('scope')).toBe('read:user');
   });
 
-  test('active admin and member memberships are recorded; pending and billing-manager ones are not', async () => {
-    const { as, store, fake } = setup({
-      orgPages: [[membership(77, 'komira-ai', 'admin'), membership(78, 'acme'), membership(79, 'pending-org', 'member', 'pending'), membership(80, 'billing', 'billing_manager')]],
-    });
+  test('a login makes no organization call and records no organization on the user row', async () => {
+    const { as, store, fake } = setup({ memberships: { 'komira-ai': { body: orgMembership({ id: 77, login: 'komira-ai' }) } } });
     await as({ id: 4242, login: 'octo' });
-    expect((await store.getUser(4242))?.orgs).toEqual([
-      { github_id: 77, login: 'komira-ai', role: 'admin' },
-      { github_id: 78, login: 'acme', role: 'member' },
-    ]);
-    const call = orgCalls(fake.state.calls)[0]!;
-    expect(call).toMatchObject({ method: 'GET', url: 'https://api.github.com/user/memberships/orgs?state=active&per_page=100&page=1' });
-    expect(call.headers.authorization).toBe('Bearer gho_faketoken');
-    expect(JSON.stringify(store.dumpTokens())).not.toContain('gho_faketoken');
-    expect(JSON.stringify(await store.getUser(4242))).not.toContain('gho_faketoken');
-  });
-
-  test('no membership is an empty list, read in one call', async () => {
-    const { as, store, fake } = setup();
-    await as({ id: 4242, login: 'octo' });
-    expect((await store.getUser(4242))?.orgs).toEqual([]);
-    expect(orgCalls(fake.state.calls)).toHaveLength(1);
-  });
-
-  test('a full page is followed by the next; a short page ends the list', async () => {
-    const full = Array.from({ length: ORG_PAGE_SIZE }, (_, i) => membership(1000 + i, `org-${i}`));
-    const { as, store, fake } = setup({ orgPages: [full, [membership(5, 'last')]] });
-    await as({ id: 4242, login: 'octo' });
-    const orgs = (await store.getUser(4242))!.orgs!;
-    expect(orgs).toHaveLength(ORG_PAGE_SIZE + 1);
-    expect(orgs[ORG_PAGE_SIZE]).toEqual({ github_id: 5, login: 'last', role: 'member' });
-    expect(orgCalls(fake.state.calls).map((c) => c.url.split('&page=')[1])).toEqual(['1', '2']);
-  });
-
-  test('a full page exactly at the end costs one more call, answered empty', async () => {
-    const full = Array.from({ length: ORG_PAGE_SIZE }, (_, i) => membership(1000 + i, `org-${i}`));
-    const { as, store, fake } = setup({ orgPages: [full] });
-    await as({ id: 4242, login: 'octo' });
-    expect((await store.getUser(4242))!.orgs).toHaveLength(ORG_PAGE_SIZE);
-    expect(orgCalls(fake.state.calls)).toHaveLength(2);
-  });
-
-  test(`at most ${ORG_PAGES_MAX} pages are read`, async () => {
-    const pages = Array.from({ length: ORG_PAGES_MAX + 2 }, (_, p) => Array.from({ length: ORG_PAGE_SIZE }, (_, i) => membership(p * 1000 + i + 1, `org-${p}-${i}`)));
-    const { as, store, fake } = setup({ orgPages: pages });
-    await as({ id: 4242, login: 'octo' });
-    expect(orgCalls(fake.state.calls)).toHaveLength(ORG_PAGES_MAX);
-    expect((await store.getUser(4242))!.orgs).toHaveLength(ORG_PAGES_MAX * ORG_PAGE_SIZE);
-  });
-
-  test('a later login replaces the list: an organization left is gone', async () => {
-    const { as, store, fake } = setup({ orgPages: [[membership(77, 'komira-ai'), membership(78, 'acme')]] });
-    await as({ id: 4242, login: 'octo' });
-    fake.state.orgPages = [[membership(78, 'acme-renamed', 'admin')]];
-    await as({ id: 4242, login: 'octo' });
-    expect((await store.getUser(4242))?.orgs).toEqual([{ github_id: 78, login: 'acme-renamed', role: 'admin' }]);
-  });
-
-  test.each([
-    ['GitHub answers 500', { orgStatus: 500 }],
-    ['GitHub answers 403 (the scope was not granted)', { orgStatus: 403 }],
-    ['the answer is not a list', { orgPages: [{ message: 'no' }] }],
-    ['a membership has no organization', { orgPages: [[{ state: 'active', role: 'member' }]] }],
-    ['a membership is null', { orgPages: [[null]] }],
-    ['an organization id is not a positive integer', { orgPages: [[{ ...membership(77, 'x'), organization: { id: 0, login: 'x' } }]] }],
-    ['an organization id is not a number', { orgPages: [[{ ...membership(77, 'x'), organization: { id: '77', login: 'x' } }]] }],
-    ['an organization login is empty', { orgPages: [[{ ...membership(77, 'x'), organization: { id: 77, login: '' } }]] }],
-  ])('%s: the login still succeeds and keeps the list of the last good read', async (_what, broken) => {
-    const { as, store, fake } = setup({ orgPages: [[membership(77, 'komira-ai', 'admin')]] });
-    await as({ id: 4242, login: 'octo' });
-    Object.assign(fake.state, broken);
-    await as({ id: 4242, login: 'octo' });
-    expect((await store.getUser(4242))?.orgs).toEqual([{ github_id: 77, login: 'komira-ai', role: 'admin' }]);
-  });
-
-  test.each([
-    ['the request is rejected (GitHub unreachable)', async () => Promise.reject(new TypeError('fetch failed'))],
-    ['the body is not JSON', async () => ({ ok: true, status: 200, json: async () => JSON.parse('<html>') })],
-  ])('%s on the membership read: the login still succeeds and keeps the last list', async (_what, broken) => {
-    const { as, store, fake } = setup({ orgPages: [[membership(77, 'komira-ai', 'admin')]] });
-    await as({ id: 4242, login: 'octo' });
-    const real = fake.fetchFn;
-    const login = new DeviceLogin({
-      store,
-      namespaces: new MemoryNamespaceStore(),
-      github: new HttpGitHubApi('Iv1.testclientid', async (url, init) => (url.includes('/user/memberships/orgs') ? broken() : real(url, init))),
-    });
-    const r = await login.poll({ device_code: (await login.start({ client: 'mopm' })).device_code });
-    expect(r.status).toBe('approved');
-    expect((await store.getUser(4242))?.orgs).toEqual([{ github_id: 77, login: 'komira-ai', role: 'admin' }]);
-  });
-
-  test('a first login whose membership read fails records no list, and the namespace is still made', async () => {
-    const { as, store, namespaces } = setup({ orgStatus: 502 });
-    await as({ id: 4242, login: 'octo' });
+    expect(orgCalls(fake.state.calls)).toEqual([]);
     expect(await store.getUser(4242)).not.toHaveProperty('orgs');
-    expect((await namespaces.listNamespaces(4242)).map((n) => n.namespace)).toEqual(['octo']);
-  });
-
-  test('an unexpected error from the membership read is not swallowed', async () => {
-    const clock = new TestClock();
-    const store = new MemoryAuthStore();
-    const fake = fakeGitHub();
-    const http = new HttpGitHubApi('Iv1.testclientid', fake.fetchFn);
-    const github: GitHubApi = {
-      startDeviceFlow: (s) => http.startDeviceFlow(s),
-      pollDeviceFlow: (c) => http.pollDeviceFlow(c),
-      getUser: (t) => http.getUser(t),
-      listOrgMemberships: async () => {
-        throw new TypeError('a bug');
-      },
-    };
-    const login = new DeviceLogin({ store, namespaces: new MemoryNamespaceStore(), github, now: clock.now });
-    const s = await login.start({ client: 'mopm' });
-    await expect(login.poll({ device_code: s.device_code })).rejects.toThrow('a bug');
-    expect(store.dumpTokens()).toEqual([]);
+    expect(JSON.stringify(store.dumpTokens())).not.toContain('gho_faketoken');
   });
 });

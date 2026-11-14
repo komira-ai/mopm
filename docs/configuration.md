@@ -47,7 +47,7 @@ Any key other than these is refused, including `workspace`, `tool` and `profile`
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
-| `name` | string | none, required | a full name, `<namespace>/<name>`: the namespace is a GitHub login in lower case (letters, digits and single hyphens, 1 to 39 characters; not a conda subdir such as `linux-64`, nor `index`, `quarantine` or `native-mirror`); the name, which Mojo code imports, is a lowercase letter, then lowercase letters, digits and `_`, 2 to 64 characters in all, and not a Mojo keyword (`for`, `fn`, `struct`, ...), a builtin it would shadow (`len`, `print`, `range`, ...), a top-level module of the Mojo standard library (`collections`, `memory`, `os`, ...) or `mopm`, `mojo`, `max`, `modular`, `std`, `stdlib`. A name without a namespace is refused with the full form in the message | `name = "example/http_client"` |
+| `name` | string | none, required | a full name, `<namespace>/<name>`: the namespace is a GitHub login in lower case (letters, digits and single hyphens, 1 to 39 characters; not a conda subdir such as `linux-64`, nor `index`, `quarantine`, `native-mirror` or `poll`); the name, which Mojo code imports, is a lowercase letter, then lowercase letters, digits and `_`, 2 to 64 characters in all, and not a Mojo keyword (`for`, `fn`, `struct`, ...), a builtin it would shadow (`len`, `print`, `range`, ...), a top-level module of the Mojo standard library (`collections`, `memory`, `os`, ...) or `mopm`, `mojo`, `max`, `modular`, `std`, `stdlib`. A name without a namespace is refused with the full form in the message | `name = "example/http_client"` |
 | `version` | string | none, required | semantic versioning: `MAJOR.MINOR.PATCH` with an optional `-pre.release` and `+build`. `pack` and `publish` accept exactly `MAJOR.MINOR.PATCH` | `version = "0.4.0"` |
 | `description` | string | none | any string; mopm checks only that it is a string | `description = "HTTP/1.1 client"` |
 | `license` | string | none | any string; mopm checks only that it is a string | `license = "Apache-2.0"` |
@@ -241,7 +241,7 @@ mopm keeps one file for the user, the login, and takes the rest from flags and f
 
 ### credentials.json
 
-`credentials.json` is in the config directory: the one `--config-dir <dir>` names (on `login`, `logout`, `whoami`, `publish`, `new` and `init`), else `$XDG_CONFIG_HOME/mopm` when `XDG_CONFIG_HOME` is set and not empty, else `$HOME/.config/mopm`. It is written by `mopm login`, to a temporary name with mode 0600 and then renamed, so it is never readable by others; `mopm logout` removes the entry. mopm never prints the token. The file is a JSON object from a registry's API URL (the `api_url` of the registry's index configuration, which is how `--registry` is told apart) to its entry:
+`credentials.json` is in the config directory: the one `--config-dir <dir>` names (on `login`, `logout`, `whoami`, `org`, `publish`, `new` and `init`), else `$XDG_CONFIG_HOME/mopm` when `XDG_CONFIG_HOME` is set and not empty, else `$HOME/.config/mopm`. It is written by `mopm login`, to a temporary name with mode 0600 and then renamed, so it is never readable by others; `mopm logout` removes the entry. mopm never prints the token. The file is a JSON object from a registry's API URL (the `api_url` of the registry's index configuration, which is how `--registry` is told apart) to its entry:
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
@@ -261,9 +261,9 @@ mopm keeps one file for the user, the login, and takes the rest from flags and f
 
 ### Registries
 
-`--registry` takes `prod` (the default, `https://api.mopm.dev`), `gamma` (`https://api.gamma.mopm.dev`), `beta` (`https://api.beta.mopm.dev`) or a URL. A URL is `https://`, or `http://` only to `127.0.0.1`, `[::1]` or `localhost` with a port, for a local registry. It is accepted by `login`, `logout`, `whoami`, `publish`, `new`, `init`, `lock`, `update`, `sync`, `add` and `remove`. A project with no registry dependency is locked without contacting the registry at all, and the channel its lock lists is `https://conda.mopm.dev/`.
+`--registry` takes `prod` (the default, `https://api.mopm.dev`), `gamma` (`https://api.gamma.mopm.dev`), `beta` (`https://api.beta.mopm.dev`) or a URL. A URL is `https://`, or `http://` only to `127.0.0.1`, `[::1]` or `localhost` with a port, for a local registry. It is accepted by `login`, `logout`, `whoami`, `org`, `publish`, `new`, `init`, `lock`, `update`, `sync`, `add` and `remove`. A project with no registry dependency is locked without contacting the registry at all, and the channel its lock lists is `https://conda.mopm.dev/`.
 
-The registry's `config.json` must list index version 2 in `index_versions` and give an `api_v2_url`; otherwise mopm stops with `the registry at <url> serves no namespaced packages (index version 2); it is older than this mopm`. mopm reads the index at `/index/v2/<aa>/<bb>/<namespace>/<name>` and sends every request that names a package (publish, groups, yank, the CI identity exchange) to `api_v2_url`, with `/packages/<namespace>/<name>/...`. `login`, `logout`, `whoami` and tokens use the registry's `api_url`.
+The registry's `config.json` must list index version 2 in `index_versions` and give an `api_v2_url`; otherwise mopm stops with `the registry at <url> serves no namespaced packages (index version 2); it is older than this mopm`. mopm reads the index at `/index/v2/<aa>/<bb>/<namespace>/<name>` and sends every request that names a package (publish, groups, yank, the CI identity exchange) to `api_v2_url`, with `/packages/<namespace>/<name>/...`. `login`, `logout`, `whoami` and tokens use the registry's `api_url`; `mopm org` uses `api_v2_url`, with `/namespaces`.
 
 ### Environment variables
 

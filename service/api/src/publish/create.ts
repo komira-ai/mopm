@@ -52,8 +52,8 @@ export class CreateService {
     const full = `${namespace}/${name}`;
     const account = this.requireNamed(p, namespace, full);
 
-    // A CI token's right is the namespace publisher it was minted for (a frozen organization refuses it, as every write);
-    // an account's is the live check of the namespace.
+    // A CI token's right is the namespace publisher it was minted for (the namespace must exist);
+    // an account's is its right in the namespace now.
     if (account === undefined) await this.d.access.requireCi(namespace);
     else await this.d.access.require(namespace, account);
 

@@ -70,11 +70,16 @@ info:
 
     A package belongs to its namespace; there are no package owners, no
     ownership invitations and no claim. In a `user` namespace the account bound
-    to it may write; in an `org` namespace an account that is an active member
-    of the GitHub organization (checked live, a pass reused for at most five
-    minutes; `createNamespace` needs the role `admin`, checked without reuse). A
-    trusted publisher of a namespace may write in it, and its token is minted
-    for that namespace. `createPackage` checks the right to write before it
+    to it may write; in an `org` namespace an account that is a member of it
+    (an `owner` or a `member`, a list kept in mopm and read at each write, with
+    no call to GitHub). GitHub is asked about an organization once, when its
+    namespace is registered: the account that registers it (`createNamespace`,
+    then `pollNamespace`, a GitHub device flow that asks for `read:org` for that
+    one call, and the token is not kept) must be an active admin of the GitHub
+    organization, and becomes the first `owner`. An `owner` adds and removes
+    members and changes roles (`setMember`, `removeMember`); a `member` may
+    create packages and publish. A trusted publisher of a namespace may write in
+    it, and its token is minted for that namespace. `createPackage` checks the right to write before it
     answers: a session of an account that can write the namespace, an API token
     with `publish` whose `packages` names the full name, or a trusted
     publisher's token minted for it.
@@ -295,15 +300,18 @@ paths:
     post:
       operationId: createNamespace
       tags: [namespaces]
-      summary: Create an organization namespace, or bind a new GitHub App installation to a frozen one.
+      summary: Start registering an organization namespace.
       description: |
-        Needs a fresh session of an account that is an `admin` of the GitHub organization (checked live, without reusing
-        an earlier pass). The registry GitHub App must be installed on the organization; otherwise the call is
-        `namespace_unverified`. A user's namespace is not made here: it is made at the user's first login.
+        Needs a fresh session. The namespace string is the lower-case login of a GitHub organization. A user's
+        namespace is not made here: it is made at the user's first login. The call refuses a namespace outside the
+        grammar (`invalid_namespace`), a reserved one (`namespace_reserved`) and one that any account, user or
+        organization, already holds (`namespace_taken`). A caller that holds no user namespace of its own, which happens when
+        its login is outside the grammar, is reserved or is held by another account, is `user_not_found`, because it could
+        not be named as a member. None of these asks GitHub.
 
-        Answers 201 with the namespace it made, or 200 with the namespace it already holds. A namespace that is frozen
-        (no App installation of its GitHub id is bound) is bound to the new installation when that installation's
-        account has the same GitHub id; a namespace whose GitHub id differs is never taken over.
+        Otherwise it starts a GitHub device flow that asks for the scope `read:org` and answers 202 with the code to show
+        the person, as `startDeviceLogin` does. The flow is bound to the caller; it lives ten minutes. Nothing is created
+        until `pollNamespace` answers `created`.
       security:
         - freshSession: []
       requestBody:
@@ -312,20 +320,49 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/CreateNamespaceRequest" }
       responses:
-        "201":
-          description: The namespace was created.
+        "202":
+          description: The registration was started; the person approves on GitHub and the caller polls.
           headers:
             x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/NamespaceInfo" }
+              schema: { $ref: "#/components/schemas/DeviceStartResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /namespaces/poll:
+    post:
+      operationId: pollNamespace
+      tags: [namespaces]
+      summary: Poll a started organization registration.
+      description: |
+        Poll no faster than `interval` seconds, with a session or a user token of the account that started the
+        registration (another account's `device_code` is `device_code_unknown`). While the person has not decided,
+        `status` is `pending`; `denied` and `expired` end the flow.
+
+        When GitHub approves, the registry reads, with the one-time token, the account that approved (its id must be
+        the caller's: otherwise `github_account_mismatch`) and that account's membership of the organization. The
+        namespace is created only when the membership is `active`, its role is `admin` and the organization's current
+        login in lower case is the namespace; any other answer of GitHub (no membership, a pending invitation, the
+        role `member` or `billing_manager`, an organization that restricts OAuth apps, another current login) is
+        `not_org_admin`. The organization's GitHub id is stored on the namespace and the caller becomes its first
+        `owner`. The token is discarded and nothing about the organization is asked of GitHub afterwards.
+
+        `created` answers once; the string taken in the meantime is `namespace_taken`.
+      security:
+        - userToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DevicePollRequest" }
+      responses:
         "200":
-          description: The namespace exists; it is returned as it is (bound to the new installation if it was frozen).
+          description: The state of the registration.
           headers:
             x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/NamespaceInfo" }
+              schema: { $ref: "#/components/schemas/NamespacePollResponse" }
         default: { $ref: "#/components/responses/Error" }
 
   /namespaces/{namespace}:
@@ -338,12 +375,91 @@ paths:
         - { $ref: "#/components/parameters/Namespace" }
       responses:
         "200":
-          description: The namespace, its kind, GitHub account and whether it is frozen.
+          description: The namespace, its kind and its GitHub account.
           headers:
             x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/NamespaceInfo" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /namespaces/{namespace}/members:
+    get:
+      operationId: listMembers
+      tags: [namespaces]
+      summary: The members of an organization namespace.
+      description: |
+        Readable by an owner or a member of the namespace; any other account is `not_namespace_member`. A user
+        namespace has no members (`invalid_request`). Sorted by `user`.
+      security:
+        - userToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+      responses:
+        "200":
+          description: The members.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemberList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /namespaces/{namespace}/members/{user}:
+    put:
+      operationId: setMember
+      tags: [namespaces]
+      summary: Add a member to an organization namespace, or change its role.
+      description: |
+        Needs a fresh session of an `owner` of the namespace (a `member` is `not_namespace_owner`; an account that is
+        is not in it at all is `not_namespace_member`). `user` is a mopm username: the user namespace of the account, which an
+        account gets at its first login; any other string is `user_not_found`. Answers 201 when the account was
+        added, 200 when its role changed or already was the one asked. Making the only owner a `member` is
+        `last_owner`.
+      security:
+        - freshSession: []
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/User" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetMemberRequest" }
+      responses:
+        "201":
+          description: The account was added.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "200":
+          description: The account was a member; its role is now the one asked.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: removeMember
+      tags: [namespaces]
+      summary: Remove a member from an organization namespace.
+      description: |
+        Needs a fresh session of an `owner`. The removal takes effect at once: the next write of that account in the
+        namespace is `not_namespace_member`. An owner may remove themselves while another owner remains; the only
+        owner is `last_owner`. An account that is not a member is `member_not_found`.
+      security:
+        - freshSession: []
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/User" }
+      responses:
+        "204":
+          description: The account is no longer a member.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
         default: { $ref: "#/components/responses/Error" }
 
   /packages:
@@ -929,6 +1045,12 @@ components:
       required: true
       description: The namespace of the package, a GitHub login in lower case.
       schema: { $ref: "#/components/schemas/Namespace" }
+    User:
+      name: user
+      in: path
+      required: true
+      description: A mopm username, the user namespace of an account (its GitHub login in lower case).
+      schema: { $ref: "#/components/schemas/Namespace" }
     Name:
       name: name
       in: path
@@ -1139,9 +1261,15 @@ components:
         - route_not_found
         - invalid_namespace
         - not_namespace_member
-        - namespace_unverified
         - namespace_reserved
         - namespace_not_found
+        - namespace_taken
+        - not_org_admin
+        - github_account_mismatch
+        - not_namespace_owner
+        - last_owner
+        - member_not_found
+        - user_not_found
     RejectionCode:
       description: |
         Why a publish was rejected after it was accepted (`PublishStatus`).
@@ -1351,13 +1479,51 @@ components:
         namespace: { $ref: "#/components/schemas/Namespace" }
     NamespaceInfo:
       type: object
-      required: [namespace, kind, github_id, login, frozen]
+      required: [namespace, kind, github_id, login]
       properties:
         namespace: { $ref: "#/components/schemas/Namespace" }
         kind: { type: string, enum: [user, org] }
         github_id: { type: integer, minimum: 1 }
-        login: { type: string, minLength: 1, description: The GitHub login the account has now; differs from namespace after a rename. }
-        frozen: { type: boolean, description: "True when no App installation of this GitHub id is bound; reads work, writes are refused." }
+        login: { type: string, minLength: 1, description: "A user namespace: the GitHub login of the account as of its last login, which differs from namespace after a rename. An organization namespace: the namespace." }
+    NamespacePollResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, created, denied, expired]
+        interval: { type: integer, minimum: 1 }
+        namespace: { $ref: "#/components/schemas/NamespaceInfo" }
+      if:
+        properties:
+          status: { const: created }
+      then:
+        required: [namespace]
+    MemberRole:
+      type: string
+      enum: [owner, member]
+    Member:
+      type: object
+      required: [user, handle, github_id, role, added_at]
+      properties:
+        user: { $ref: "#/components/schemas/Namespace" }
+        handle: { type: string, minLength: 1, description: The GitHub login of the account at its last mopm login. }
+        github_id: { type: integer, minimum: 1 }
+        role: { $ref: "#/components/schemas/MemberRole" }
+        added_at: { $ref: "#/components/schemas/Timestamp", description: When the account was added or its role last changed. }
+    MemberList:
+      type: object
+      required: [namespace, members]
+      properties:
+        namespace: { $ref: "#/components/schemas/Namespace" }
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/Member" }
+    SetMemberRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { $ref: "#/components/schemas/MemberRole" }
     MeV2:
       type: object
       required: [github_id, handle, namespaces]
@@ -1373,9 +1539,9 @@ components:
               namespace: { $ref: "#/components/schemas/Namespace" }
               kind: { type: string, enum: [user, org] }
               role:
-                description: owner for a user namespace of the caller; GitHub's admin or member for an organization namespace.
+                description: owner for a user namespace of the caller and for an organization namespace the caller owns; member for an organization namespace the caller is a member of.
                 type: string
-                enum: [owner, admin, member]
+                enum: [owner, member]
               packages: { type: array, items: { $ref: "#/components/schemas/FullName" } }
         unavailable_namespace:
           description: The caller's GitHub login when it cannot be the caller's namespace (another account holds it, it is reserved, or it is outside the grammar). Absent otherwise.
@@ -1970,8 +2136,14 @@ x-mopm-errors:
   unavailable:           { status: 503, message: "The registry is temporarily unavailable.", hint: "Try again shortly." }
   route_not_found:       { status: 404, message: "There is no such operation.", hint: "Check the request against the API documentation; update mopm if it is old." }
   invalid_namespace:     { status: 400, message: "'{namespace}' is not a valid namespace.", hint: "A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters." }
-  not_namespace_member:  { status: 403, message: "You cannot write in '{namespace}'.", hint: "Ask an owner of the GitHub organization for membership." }
-  namespace_unverified:  { status: 403, message: "'{namespace}' cannot be verified on GitHub: {detail}.", hint: "An owner of the organization installs the mopm registry GitHub App, then an admin runs the namespace creation again." }
+  not_namespace_member:  { status: 403, message: "You cannot write in '{namespace}'.", hint: "Ask an owner of '{namespace}' to run 'mopm org add {namespace} <your mopm username>'." }
+  not_namespace_owner:   { status: 403, message: "You are not an owner of '{namespace}'.", hint: "Ask an owner of '{namespace}'; 'mopm org list {namespace}' shows them." }
+  not_org_admin:         { status: 403, message: "You are not an active admin of the GitHub organization '{namespace}'.", hint: "An admin of the GitHub organization runs 'mopm org create {namespace}'; an organization that restricts OAuth apps approves the mopm registry first." }
+  github_account_mismatch: { status: 403, message: "The GitHub account that approved is not the one logged in to mopm.", hint: "Approve with the GitHub account you logged in with, or run 'mopm login' with the other one." }
+  namespace_taken:       { status: 409, message: "'{namespace}' is taken.", hint: "Choose the namespace of another GitHub organization." }
+  last_owner:            { status: 409, message: "'{user}' is the last owner of '{namespace}'.", hint: "Make another member an owner first." }
+  member_not_found:      { status: 404, message: "'{user}' is not a member of '{namespace}'.", hint: "List the members with 'mopm org list {namespace}'." }
+  user_not_found:        { status: 404, message: "There is no mopm user '{user}'.", hint: "A user gets their name at their first 'mopm login'." }
   namespace_reserved:    { status: 403, message: "'{namespace}' is reserved.", hint: "Publish in an organization's namespace." }
   namespace_not_found:   { status: 404, message: "There is no namespace '{namespace}'.", hint: "A user's namespace is made at their first 'mopm login'; an organization's by one of its admins." }
 

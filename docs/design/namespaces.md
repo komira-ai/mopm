@@ -104,15 +104,16 @@ anyway):
 - Reserved namespaces, never created, so that a channel URL is never ambiguous: every conda subdir shape,
   `^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$`, and the channel bucket's other top-level
   prefixes, `index`, `quarantine` and `native-mirror` (all the prefixes `service/infra/stacks/lib/channel-stack.ts`
-  uses). A GitHub account with such a login can still publish in an organization's namespace.
+  uses), and `poll`, which is the path of the registration's poll. A GitHub account with such a login can still publish in an organization's namespace.
 - A GitHub login outside the grammar (an enterprise-managed login holds `_`) gets no user namespace; login still works,
   `whoami` says why, and the account can publish in organization namespaces.
 
 ## 2. Namespaces and GitHub identity
 
 Accounts and namespaces are keyed by GitHub numeric id, never by login, and no namespace string is ever sent to GitHub.
-A namespace is `{namespace, kind: user | org, github_id, created_at}`, plus `installation_id` for an organization;
-`github_id` is the user's or the organization's id.
+A namespace is `{namespace, kind: user | org, github_id, created_at}`, plus `created_by` (the registrant's account id)
+for an organization; `github_id` is the user's or the organization's id. An organization namespace also has members
+(section 2.2).
 
 ### 2.1 User namespaces
 
@@ -124,53 +125,63 @@ credentials file, and `mopm new` and `mopm init` default to it.
 
 ### 2.2 Organization namespaces
 
-The registry gets a second GitHub integration: a GitHub App, "mopm registry", with one organization permission,
-Members: read-only, and no repository permission. An organization owner installs it; installing it is itself an
-owner's act on GitHub. The App never acts for users and holds no user token.
+GitHub is asked about an organization once: when a user registers its namespace. After that the registry decides from
+its own tables, with no GitHub call and nothing stored from GitHub except the organization's numeric id.
 
-The membership check, used for every write in an organization namespace, works from ids only:
+Registering, `mopm org create komira-ai`:
 
-1. `GET /app/installations/{installation_id}`, as the App. The installation's `account.id` must equal the namespace's
-   `github_id`; it gives the organization's current login. A missing installation or another id: refused with
-   `namespace_unverified`, and the namespace is frozen.
-2. `GET /user/{account id}`, with the installation token: the caller's current GitHub login.
-3. `GET /orgs/{current org login}/memberships/{current user login}`, with the installation token. It passes only with
-   `user.id` equal to the caller's id, `state: active` and `role` `admin` or `member`. 404 (not a member, an outside
-   collaborator), `state: pending` or `role: billing_manager` is `not_namespace_member`, naming the namespace. Any other
-   answer, or GitHub unreachable or rate limited, is `unavailable` naming GitHub.
+1. The caller has a fresh session. `POST /api/v2/namespaces {"namespace": "komira-ai"}` refuses an invalid string
+   (`invalid_namespace`), a reserved one (`namespace_reserved`) and one that any namespace, user or organization,
+   already holds (`namespace_taken`); the registrant must hold a user namespace so that they can be named as a member
+   (`user_not_found`). Otherwise the registry starts a GitHub device flow for the scope `read:org` and
+   answers 202 with the code to enter, as the login does. The device row is bound to the caller and lives 10 minutes.
+2. The person approves on GitHub. The client polls `POST /api/v2/namespaces/poll` (the session or any token of the same
+   account; another account gets `device_code_unknown`). Pending, slow-down, expired and denied answer as at login.
+3. On approval the registry, with that one token, reads `GET /user`: its `id` must equal the caller's id, else
+   `github_account_mismatch`. Then it reads `GET /user/memberships/orgs/komira-ai`. It passes only with `state: active`,
+   `role: admin`, and an `organization.login` whose lower-case form equals the namespace. A 404, a 403 (the organization
+   restricts OAuth apps), `state: pending`, `role: member` or `billing_manager`, or another current login is
+   `not_org_admin`; the hint says an organization that restricts OAuth apps approves the mopm registry first. GitHub
+   unreachable or any other answer is `unavailable` naming GitHub.
+4. The registry stores the namespace with the organization's numeric id as `github_id` and the caller as `created_by`,
+   and the caller as its first owner, in one atomic step. If the string was taken meanwhile it writes nothing and
+   answers `namespace_taken`. The token is dropped: it is never stored, as at login, and the device row is deleted once
+   GitHub answered.
 
-- A pass is cached for 5 minutes per (organization id, account id) in a table with an expiry, so a removal from the
-  organization takes effect within 5 minutes. A refusal is not cached, so a new member can publish at once. Writes
-  are rare (a publish is a few calls); an installation token allows thousands of calls an hour.
-- Creating the namespace: `POST /api/v2/namespaces {"namespace": "komira-ai"}` with a fresh session. The registry finds
-  the App's installation on that login (`GET /orgs/komira-ai/installation`, the one call that takes a string, made
-  only here), binds the installation's `account.id` and `installation_id`, and runs the check with role `admin`
-  required and no cache.
-- Renames on GitHub change nothing: every check goes from ids to current logins, so a renamed organization or member
-  keeps writing in the namespace with no action, and a stranger who takes an old login never passes step 3, whose
-  `user.id` is compared.
-- The App uninstalled, or the organization deleted: step 1 fails, the namespace is frozen. Its packages keep resolving
-  and installing; every write is refused. An admin unfreezes it by installing the App again and repeating
-  `POST /api/v2/namespaces`, which binds the new installation only if its `account.id` is the namespace's
-  `github_id`; an organization that took the old name has another id and is refused.
-- Reads (index, channel, API reads) never call GitHub. No webhooks: every check is made at write time.
+Login asks for `read:user` only and records no organization.
 
-Why an App and not the login token: the login token is discarded on purpose (a stored token that reads every user's
-organizations is a liability), and organizations may restrict OAuth apps' access to their data, which the App's own
-installation is not subject to. The login stays an OAuth app because its `GET /user` carries the two-factor flag that
-the login requires; whether a GitHub App's user token carries it is not established.
+Members live in mopm: a table of `(namespace, GitHub id, role)`, `role` being `owner` or `member`, with who added the
+row and when. A member is named by a mopm username, the account's user namespace (its lower-case GitHub login, section
+2.1), so a person must have logged in to mopm once to be added; a string that is not a user namespace is
+`user_not_found`. Owners manage the members: `mopm org add <org> <user> [--owner]` sets the role (so `add` without
+`--owner` turns an owner into a member), `mopm org remove <org> <user>` removes, `mopm org list <org>` shows them. An
+owner may remove themselves while another owner remains. The last owner can be neither demoted nor removed
+(`last_owner`), so a namespace always has an owner; the check and the change are one atomic step. Members and owners
+may read the member list.
 
-For `whoami` only, the login asks for `read:org` as well and records the organizations the user is an active member of
-(`GET /user/memberships/orgs?state=active`, then the token is discarded as today). `GET /api/v2/me` lists the
-organization namespaces among those, each checked live as above. An organization that restricts OAuth apps is missing
-from that list, so `whoami` can omit a namespace the user can write; it never grants anything, and a write always runs
-the check.
+- A write in an organization namespace checks only that table. There is no GitHub call and no cache, so a member
+  removed from the table is refused with the next request, and a member added can write at once.
+- Nothing follows GitHub afterwards. A person who leaves the GitHub organization keeps their row until an owner removes
+  it; an organization deleted on GitHub keeps its namespace. The owners are responsible for the table, as they are for
+  the trusted publishers of 2.4.
+- Renames on GitHub change nothing: the namespace is bound to the organization's id and the members to account ids. A
+  renamed organization keeps its old namespace and its members. Registering its new login makes a second namespace with
+  the same `github_id`, its own members, and the registrant as first owner.
+- Reads (index, channel, API reads) never call GitHub.
+
+Why asked once, and by device flow: the login token is discarded on purpose (a stored token that reads every user's
+organizations is a liability), so the check uses a token that lives for one call and holds `read:org` only for that
+call. Registering is rare, and an organization admin is present at the screen. A GitHub App would need an installation,
+a private key held by the registry, and a call to GitHub on every write; the member table needs none of them.
+
+`whoami` and `GET /api/v2/me` list the organization namespaces the account is a member of, from the table, with the
+role `owner` or `member`.
 
 ### 2.3 Renames: the old namespace stays reserved, never redirected
 
 When a user or organization renames itself on GitHub, its namespace keeps its old string and stays bound to its numeric
 id. The account keeps every right in it; `alice/json` stays `alice/json`. At the user's next login (for an
-organization, when an admin creates it) the new login becomes a second namespace of the same account if it is free.
+organization, when an admin runs `mopm org create` for it) the new login becomes a second namespace of the same account if it is free.
 Packages never move between namespaces: a different full name is a different package. Whoever later takes the old
 login on GitHub does not get the namespace, even an empty one: a rule that hands over empty namespaces needs a
 "never used" test that a short-lived package defeats, and the old holder still owns it.
@@ -186,19 +197,21 @@ Why reserved and not redirected:
 3. Reserved namespaces cost little: a renamed account keeps its old namespace and gains the new one; only the next
    holder of an old login is without that one namespace, and the message says why.
 
-A user account converted to an organization on GitHub keeps its id; its user namespace has nobody who can log in as it
-and is frozen until an admin of the organization creates it as an organization namespace (same id, kind changed).
+A user account converted to an organization on GitHub keeps its id; its user namespace has nobody who can log in as it,
+and its string stays a user namespace: `mopm org create` for that string is `namespace_taken`. An admin registers the
+organization under a different string only if the login changed.
 
 ### 2.4 Who may do what
 
 | action | user namespace | organization namespace |
 |---|---|---|
-| create the namespace | automatic at login | an active admin, with the App installed |
-| create a package, publish, yank, unyank | the bound account | an active member or admin |
+| create the namespace | automatic at login | an active GitHub admin of the organization, once (`mopm org create`); becomes its first owner |
+| create a package, publish, yank, unyank | the bound account | an owner or member in the registry's member table |
+| add, remove or change the role of a member | not applicable | owners |
 | CI publishing (trusted publisher) | operator configuration, as today | operator configuration, as today |
 | takedown | operators | operators |
 
-`role` in `GET /api/v2/me` is `owner` for the user's own namespace and GitHub's `admin` or `member` for an
+`role` in `GET /api/v2/me` is `owner` for the user's own namespace and `owner` or `member`, from the member table, for an
 organization's. Per-package owners and invitations do not exist in `/api/v2`: the namespace is the owner. Several
 people maintaining a package use an organization.
 
@@ -212,7 +225,7 @@ prod. A route to register publishers stays out of scope, as today.
 API tokens keep their form: a `packages` list or `all_current`, now of full names. The list may name a package that does
 not exist yet, in a namespace the account can write, so that a CI job holding an API token can publish a new package
 (the token authorises the `PUT` of section 8; it creates nothing itself). Rights are checked when the token is used, so
-a token stops working in an organization within 5 minutes of the account leaving it.
+a token stops working in an organization at once when an owner removes the account from it.
 
 ## 3. mopm.toml
 
@@ -351,7 +364,7 @@ starts with a digit, so `/versions` and `/{version}` stay apart.
 | v1 | v2 |
 |---|---|
 | `GET /packages?q=` | `GET /packages?q=`: `q` is a name prefix, or `<namespace>/` with an optional name prefix; results are full names |
-| `GET /packages/{name}` | `GET /packages/{namespace}/{name}`; `owners` is replaced by `namespace` (`NamespaceInfo`: namespace, kind, GitHub id, current login, `frozen`) |
+| `GET /packages/{name}` | `GET /packages/{namespace}/{name}`; `owners` is replaced by `namespace` (`NamespaceInfo`: namespace, kind, GitHub id, login) |
 | `POST /packages/{name}/claim` | `PUT /packages/{namespace}/{name}`, no body: create in a namespace the caller can write; 201 created, 200 if it exists |
 | `GET /packages/{name}/versions` | `GET /packages/{namespace}/{name}/versions` |
 | `GET, PUT /packages/{name}/owners`, `DELETE .../owners/{github_id}` | removed: the namespace is the owner (2.4) |
@@ -362,15 +375,16 @@ starts with a digit, so `/versions` and `/{version}` stay apart.
 | `POST /me/tokens` | the same; `packages` holds full names |
 | `POST /auth/oidc/exchange` | the same; `name` and `packages[].name` are full names, matched to the namespace's publishers; it mints a token and creates nothing |
 | `POST /groups`, `GET /groups/{id}`, commit, yank | the same; members' `name` are full names |
-| (none) | `POST /namespaces` (create or re-verify an organization namespace), `GET /namespaces/{namespace}` |
+| (none) | `GET /namespaces/{namespace}`; `POST /namespaces` and `POST /namespaces/poll` (register an organization namespace); `GET /namespaces/{namespace}/members`, `PUT` and `DELETE /namespaces/{namespace}/members/{user}` |
 
 - Creating a package: `PUT` is the only way. It checks the caller's right to write the namespace first (a session, an
   API token whose `packages` names it, or a trusted publisher's token minted for it), then answers 201, or 200 when it
   exists. No 30-day expiry, no similarity check; the per-account limit of 50 a day stays. `mopm publish` sends it when
   the package does not exist, so publishing a new package is one command.
-- New error codes: `invalid_namespace` (400), `namespace_not_found` (404), `not_namespace_member` (403),
-  `namespace_unverified` (403, the App is not installed, or its account is not the namespace's), `namespace_reserved`
-  (403).
+- New error codes: `invalid_namespace` (400), `namespace_not_found` (404), `namespace_reserved` (403),
+  `namespace_taken` (409), `not_org_admin` (403), `github_account_mismatch` (403), `not_namespace_member` (403),
+  `not_namespace_owner` (403), `last_owner` (409), `member_not_found` (404), `user_not_found` (404). `poll` is a
+  reserved namespace, so `/namespaces/poll` is never a namespace's path.
 - `/api/v1` after v2 ships: reads answer as before; creating a flat package (`claimPackage`, and the OIDC `packages`
   form for a name nobody has) is refused with the existing `name_reserved` (403), hint "package names are in namespaces
   now; update mopm". Publishing new versions of existing flat names keeps working until the deletion, so the komira
@@ -386,7 +400,8 @@ starts with a digit, so `/versions` and `/{version}` stay apart.
 | (no stored namespace, bare name) | | refused: "mopm new json needs a namespace: run 'mopm login' (your GitHub login is your namespace) or name it, as in 'mopm new <your login>/json'". The full form works offline |
 | `mopm add <name>` | adds `<name>` | `mopm add komira-ai/json[@0.1]`; a bare name is refused with up to 5 full names whose name part is it, from `GET /api/v2/packages?q=` (a suggestion, never a substitute) |
 | `mopm login` | stores token and handle | also stores the user namespace (one more optional key in `credentials.json`) |
-| `mopm whoami` | handle, packages | handle, then each namespace with its kind and role, then its packages |
+| `mopm whoami` | handle, packages | handle, then each namespace with its kind and role (`owner` or `member`), then its packages |
+| `mopm org create <org>`, `add <org> <user> [--owner]`, `remove <org> <user>`, `list <org>` | (none) | register an organization namespace (GitHub device flow, once), set or remove a member by mopm username, list the members |
 | `mopm publish` | uploads | creates the package if it does not exist (`PUT`), then uploads |
 | `mopm stage` | members by name | members by full name; `--artifacts <dir>/<subdir>/<namespace>/<name>.mojoc` |
 | `mopm tree`, `plan`, errors | names | full names |
@@ -842,21 +857,25 @@ live spec, and its tests. Task ids are prefixed `ns-` so they read apart from ru
 
 Registry:
 
-- ns-R1 (M) Namespaces store; user namespace at login; `read:org` and the login-time membership list; rename and
-  reserved rules. Tests: create at login; a renamed account keeps the old namespace and gains the new one; a new holder
+- ns-R1 (M) Namespaces store; user namespace at login (the login asks `read:user` only and records no organization);
+  rename and reserved rules. Tests: create at login; a renamed account keeps the old namespace and gains the new one; a new holder
   of an old login gets none; reserved and out-of-grammar logins get none and log in.
-- ns-R2 (M) The GitHub App and the membership check of 2.2. Tests against a fake GitHub: active admin and member;
-  pending, billing manager, outside collaborator refused; a login reused by another id refused (`user.id` differs); an
-  organization renamed keeps writing; a pass cached, a refusal not; App missing or on another account (frozen); GitHub
-  down (`unavailable`, never a stale pass).
+- ns-R2 (M) Organization namespaces: registration by a `read:org` device flow, the member table, owners and members,
+  and the rights of 2.2. Tests against a fake GitHub and the memory and DynamoDB stores: an active admin registers and
+  becomes the first owner; pending, member, billing manager, a 404, a 403 and another current login are
+  `not_org_admin`; a different GitHub account than the logged-in one is `github_account_mismatch`; a taken string is
+  `namespace_taken`; a denied or expired flow creates nothing; GitHub down is `unavailable`; the token is not stored; a
+  member and an owner write, a stranger gets `not_namespace_member`, a member managing members gets
+  `not_namespace_owner`; a removed member is refused at once; the last owner cannot be demoted or removed
+  (`last_owner`), also under two concurrent changes; a renamed organization keeps writing and its new login is a
+  second namespace; a name that is not a user namespace is `user_not_found`.
 - ns-R3 (L) `/api/v2`: routes, `PUT` create, `/me`, tokens, namespace publishers (a namespace key on the publisher
   store; `ci-publishers.ts` accepts a namespace publisher without `acts_for` on prod), new errors; `/api/v1` stops
   creating; the standard-library refusal of 1.1 at `PUT` (`name_reserved`), from the checked-in lists, with a test
   that the service's list equals the union of `toolchain/mojo-<version>.std-modules.txt`. Contract examples for every
   v2 operation in `tests/contract/`, among them a refused `collections`.
 - ns-R4 (M) Index v2 and the per-namespace channel writer: index paths, records, per-namespace repodata, conda names,
-  `config.json` keys, the root repodata with only the kept `kci_*` entries. Infra: the App's secret beside the OAuth
-  secret.
+  `config.json` keys, the root repodata with only the kept `kci_*` entries. Infra: the `namespace_members` table.
 
 Client:
 
@@ -874,7 +893,8 @@ Client:
   packages; two clashing import names at once.
 - ns-C3 (L) Index v2, lock 3, per-namespace channels and conda names, `config.json` keys; metadata schema 2; unit
   graph 6; plan.json 2.
-- ns-C4 (M) Commands: `new`, `init`, `add`, `login`, `whoami`, `publish` (create), `stage`. Goldens `tests/new/`,
+- ns-C4 (M) Commands: `new`, `init`, `add`, `login`, `whoami` (from the registry's member table), `publish` (create),
+  `stage`, and `mopm org create | add | remove | list`. Goldens `tests/new/`,
   `tests/golden/`, examples and docs (`docs/`, `README.md`, `spec/` from proposed to live).
 - ns-C6 (M) The cross-version test of section 11.
 - ns-C7 A mopm release with ns-C1 to ns-C6 (automatic from main).
@@ -888,8 +908,9 @@ Channel and site:
 
 Migration:
 
-- ns-M0 (operator) Register the GitHub App; install it on `komira-ai`; an admin creates the `komira-ai` namespace;
-  the `PROD_CI_PUBLISHERS` entry moves to `komira-ai`. These need the organization owner's and the operator's hands.
+- ns-M0 (operator) An admin of the GitHub organization `komira-ai` runs `mopm org create komira-ai` on each stage and
+  adds the release maintainers with `mopm org add komira-ai <user>`; the `PROD_CI_PUBLISHERS` entry moves to
+  `komira-ai`. There is no App to register or install. These need the organization admin's and the operator's hands.
 - ns-M1 (M) The held deletion tool (12.4) and its tests against fake stores: the order, the digest refusal, a run
   stopped part way and finished by the next; `kci_*` names listed as kept and left untouched in every store (rows,
   version 1 index, root repodata, channel objects); a `kci_*` package published after the dry run changes the digest.
@@ -909,11 +930,12 @@ removes data.
 Choices this design makes that the settled points leave open, one line of reasoning each.
 
 1. Namespace grammar is the lower-case GitHub login: one spelling, as versions and names have.
-2. A GitHub App with Members: read for organizations, the OAuth app kept for login: the login's two-factor check works
-   today, and the App is not subject to an organization's OAuth app restrictions.
-3. The membership check goes from ids to current logins and compares `user.id`: a reused login never passes.
-4. Live check at write time, a pass cached 5 minutes, a refusal not cached, no webhooks: removal takes effect quickly,
-   a new member at once, with no event machinery.
+2. GitHub is asked once, when an organization namespace is registered, with a `read:org` device flow whose token is
+   discarded: the registry then holds no GitHub integration beyond login, no key and no installation.
+3. Members are managed in mopm, by mopm username (the user namespace): the registry's table is the one list of who may
+   write, and no GitHub setting changes it.
+4. A write checks the registry's member table only: no GitHub call, no cache, so a removal is effective at once and the
+   check cannot be down because GitHub is.
 5. Old namespaces reserved, never redirected, empty or not: section 2.3.
 6. No per-package owners in v2: the namespace is the owner; one way to share a package (an organization).
 7. Creation is `PUT` alone, which `mopm publish` sends itself; the OIDC exchange only mints a token.

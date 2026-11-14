@@ -13,7 +13,7 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     expect(tables.map((r) => r.Properties.TableName).sort()).toEqual(
       TABLES.map((d) => `mopm-${stage}-${d.id}`).sort(),
     );
-    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'device_logins', 'trusted_publishers', 'audit', 'namespaces', 'membership_passes']) {
+    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'device_logins', 'trusted_publishers', 'audit', 'namespaces', 'namespace_members']) {
       expect(TABLES.map((d) => d.id)).toContain(id);
     }
   });
@@ -54,11 +54,21 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     expect(ns.Properties.TimeToLiveSpecification).toBeUndefined();
   });
 
-  test('membership_passes is keyed on the pair, with TTL on expires_at and no index', () => {
-    const t2 = tables.find((r) => r.Properties.TableName === `mopm-${stage}-membership_passes`);
-    expect(t2.Properties.KeySchema).toEqual([{ AttributeName: 'key', KeyType: 'HASH' }]);
-    expect(t2.Properties.TimeToLiveSpecification).toEqual({ AttributeName: 'expires_at', Enabled: true });
-    expect(t2.Properties.GlobalSecondaryIndexes).toBeUndefined();
+  test('namespace_members is keyed on namespace and member, with an index by member sorted by namespace, and no TTL', () => {
+    t.hasResourceProperties('AWS::DynamoDB::Table', {
+      TableName: `mopm-${stage}-namespace_members`,
+      KeySchema: [{ AttributeName: 'namespace', KeyType: 'HASH' }, { AttributeName: 'member', KeyType: 'RANGE' }],
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: 'by_member',
+          KeySchema: [{ AttributeName: 'member', KeyType: 'HASH' }, { AttributeName: 'namespace', KeyType: 'RANGE' }],
+          Projection: { ProjectionType: 'ALL' },
+        },
+      ],
+    });
+    const nm = tables.find((r) => r.Properties.TableName === `mopm-${stage}-namespace_members`);
+    expect(nm.Properties.TimeToLiveSpecification).toBeUndefined();
+    expect(tables.find((r) => r.Properties.TableName === `mopm-${stage}-membership_passes`)).toBeUndefined();
   });
 
   test('deletion protection and retention only on prod', () => {
@@ -142,7 +152,7 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     // The index is additive: the table's key, billing and TTL are as they were. The tables with an index are pinned: an
     // existing table gaining one shows here (the namespaces table was created with its index).
     const indexed = tables.filter((r) => r.Properties.GlobalSecondaryIndexes).map((r) => r.Properties.TableName.replace(`mopm-${stage}-`, '')).sort();
-    expect(indexed).toEqual(['namespaces', 'owners', 'packages', 'publishes', 'tokens']);
+    expect(indexed).toEqual(['namespace_members', 'namespaces', 'owners', 'packages', 'publishes', 'tokens']);
   });
 
   test('the index keys are the names the code writes on a group header, and a header carries them only while its group is not over', () => {

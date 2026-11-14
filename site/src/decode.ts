@@ -128,7 +128,6 @@ function decodeNamespace(v: unknown, path: string): NamespaceInfo {
     kind: enumOf(o, 'kind', path, ['user', 'org'] as const),
     github_id: num(o, 'github_id', path),
     login: str(o, 'login', path),
-    frozen: bool(o, 'frozen', path),
   };
 }
 

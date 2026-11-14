@@ -214,7 +214,7 @@ function kindLabel(kind: NamespaceInfo['kind']): string {
 /**
  * The namespace section of the side panel: the namespace (a link to its packages), its kind, and its GitHub account,
  * linked by its current login. A login that is no longer the namespace's spelling (the account was renamed on GitHub)
- * says so; a frozen namespace says publishing there is refused.
+ * says so.
  */
 export function namespaceSection<N>(doc: Doc<N>, ns: NamespaceInfo): N {
   const href = githubHref(ns.login);
@@ -231,7 +231,6 @@ export function namespaceSection<N>(doc: Doc<N>, ns: NamespaceInfo): N {
     h(doc, 'h2', { id: 'side-namespace' }, 'Namespace'),
     meta,
     ns.login.toLowerCase() !== ns.namespace ? h(doc, 'p', { class: 'muted small' }, `The GitHub account is now ${ns.login}; the namespace keeps the name ${ns.namespace}.`) : null,
-    ns.frozen ? h(doc, 'p', { class: 'muted small' }, 'Frozen: the registry’s GitHub App is not installed for this account, so nothing new can be published here. Installing works as before.') : null,
   );
 }
 
