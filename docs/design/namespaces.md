@@ -87,8 +87,10 @@ anyway):
   `nameProblem` refuses it for `[package] name`, `mopm new` and `mopm init` with `package name 'collections' is a
   module of the Mojo standard library (std.collections); choose another name`.
 - Where the list lives: one checked-in file per Mojo version, `toolchain/mojo-<version>.std-modules.txt`, one module per
-  line, written by the job that adds the version's lock (it already downloads `mojo-compiler`), from the paths above.
-  The client and the registry refuse the union over every version in `toolchain/versions.txt`; a unit test on each
+  line, read from the paths above. The `toolchain` job of `.github/workflows/kpin-update.yml`, which solves each
+  version's lock today and downloads no package, gains a step that downloads the pinned `mojo-compiler`, checks its
+  sha256 against the lock, and writes the file (a Zig tool with Zig tests, task ns-C1), so the file is never written
+  by hand. The client and the registry refuse the union over every version in `toolchain/versions.txt`; a unit test on each
   side checks that its list equals that union, so the two cannot drift. Tests never download the toolchain.
 - A later Mojo version that adds a module: the module joins the union when that version joins `versions.txt`. The
   registry then refuses new packages with that name; a package published earlier under it keeps resolving and
@@ -746,8 +748,9 @@ Each new name was checked against everything below; the checks are reproducible 
   `service/api/src/publish/claim.ts` `RESERVED_NAMES`), and the name grammar `^[a-z][a-z0-9_]{1,63}$`.
 - The other 259 new names (no duplicate), and komira's top-level `src/` directory not in the mapping (`tests`).
 - Every bare top-level import in komira's `.mojo` files that is not `std` or `komira_*`
-  (`git grep -h -oE '^\s*(from|import)\s+[a-z_][a-z0-9_]*' main -- '*.mojo'`): the one match, `chunk`, is a line of a
-  docstring in `komira_json_index`, not an import.
+  (`git grep -h -oE '^\s*(from|import)\s+[a-z_][a-z0-9_]*' main -- '*.mojo'`, 190 distinct names, many of them words
+  of docstrings): the only one equal to a new name is `chunk`, a docstring line in `komira_json_index`, not an
+  import.
 
 Dropping the prefix fails these checks for five directories; a sixth is renamed by decision:
 
@@ -758,10 +761,10 @@ Dropping the prefix fails these checks for five directories; a sixth is renamed 
 | `komira_hash` | `hash` | a Mojo builtin, and `std.hashlib.hash` | `hashing` |
 | `komira_host` | `host` | `std.gpu.host` | `host_probe` |
 | `komira_simd` | `simd` | `std.builtin.simd` | `simd_ops` |
-| `komira_buffer` | `buffer` | nothing in Mojo 1.0.0's standard library; older Mojo had a `buffer` module | `byte_buffer` |
+| `komira_buffer` | `buffer` | nothing in Mojo 1.0.0's standard library; the standard library had `buffer` until at least modular/modular `modular/v25.6.0` (`mojo/stdlib/stdlib/buffer`) | `byte_buffer` |
 
-`komira_buffer` is renamed because the CEO's amendment names it, and keeping `buffer` would read as the standard
-library's former module. The new names describe the packages: `containers` (a slab, an inline value, a variadic pack,
+`komira_buffer` is renamed because the CEO's amendment names it; `buffer` was a standard module in earlier Mojo
+releases (row above). The new names describe the packages: `containers` (a slab, an inline value, a variadic pack,
 a HyperLogLog sketch), `hashing` (FNV-1a), `host_probe` (CPU, memory and hugepage probes), `simd_ops` (SIMD byte and
 bit primitives), `async_rt` (the async runtime), `byte_buffer` (aligned, shared and mapped byte buffers).
 
@@ -863,6 +866,9 @@ Client:
   as a dependency key) and `toolchain/mojo-1.0.0.std-modules.txt`, with a test that each version in
   `toolchain/versions.txt` has its file and that the client's list is their union. Manifest goldens in
   `tests/manifest/`: `collections` refused, `containers` accepted, a dependency named `os` warned; no registry needed.
+  The writer of the std-modules files (the Zig tool and its step in the `toolchain` job of 1.1), whose Zig tests read
+  a small `std.mojoc`-shaped fixture (header, zstd frame, paths) and refuse an archive whose sha256 differs from the
+  lock's.
 - ns-C2 (M) The import-name rule at lock, lock read and unit graph, with dependency paths. Tests: two registry
   packages; a path package against a registry package; the root against a dependency; a dev-dependency path; three
   packages; two clashing import names at once.
@@ -930,7 +936,7 @@ Choices this design makes that the settled points leave open, one line of reason
     amendment; one rename leaves no package half under the old scheme, and a directory published later already has its
     final name.
 20. The `kci_*` packages are kept: not deleted, not renamed, skipped by the deletion tool by their `kci_` prefix, on the
-    CEO's amendment (their ideas may come back in ucdk). They stay flat names on `/api/v1`, the version 1 index and the
+    CEO's amendment. They stay flat names on `/api/v1`, the version 1 index and the
     root channel, and the 139 names of 12.1 are listed in full because they are public on the registry today.
 21. The standard-library list is read from the pinned `mojo-compiler` package, checked in per Mojo version, and the
     rule refuses the union over `toolchain/versions.txt`: what mopm installs is what the rule protects, and tests stay
@@ -941,7 +947,7 @@ Choices this design makes that the settled points leave open, one line of reason
 23. A module added by a later Mojo version is refused for new packages and only warned about in dependency keys: a
     package published before that version keeps building for its users.
 24. `komira_buffer` is renamed to `byte_buffer` although Mojo 1.0.0's standard library has no `buffer`: the amendment
-    names it, and the name read as the former standard module.
+    names it, and `buffer` was a standard module in earlier Mojo releases (12.2).
 25. The mapping file holds import names, not full names, and no header: the rename tool rewrites directory names and
     imports, which are import names; the namespace is `komira-ai` for every line.
 
