@@ -10,12 +10,13 @@ contract. Nothing here describes the registry's internals.
 | `mopm-toml.md` | the `mopm.toml` manifest authors write (draft) |
 | `package-metadata.schema.json` | `<name>.mopm.json`, embedded in every package |
 | `api/openapi.yaml` | the HTTP API under `/api/v1`: login, tokens, publish, yank, owners, packages, search, health; the error catalogue; auth schemes; the additive-only versioning rule |
+| `api/openapi-v2.yaml` | the HTTP API under `/api/v2`, served beside v1: package names in owner namespaces (`komira-ai/json`), namespaces, no owners or claims; its own error catalogue |
 | `channel.md` | the conda channel at `conda.<site>`: layout, naming, immutability and yank as clients see them |
 | `index.md`, `index-record.schema.json`, `index-config.schema.json`, `takedowns.schema.json` | the static sparse index the CLI reads |
 | `lock.md`, `lock.schema.json` | `mopm.lock`, the resolved closure (version 2: one build per Mojo version) |
 | `unit-graph.md` | `mopm plan --unit-graph`, the unit ids with their Mojo version, and `mopm unit build` and `mopm unit test` |
 | `staged-set.md` | the staged set `mopm publish --staged` publishes through one group, its `plan.json`, `state.json` and `report.json`, and `mopm yank --group` |
-| `proposed/namespaces.md` | proposed, not implemented: owner namespaces (`komira-ai/json`) and what they change in each file above (`docs/design/namespaces.md`) |
+| `proposed/namespaces.md` | proposed, not implemented (but for the API, now live in `api/openapi-v2.yaml`): owner namespaces (`komira-ai/json`) and what they change in each file above (`docs/design/namespaces.md`) |
 
 ## How the pieces fit
 

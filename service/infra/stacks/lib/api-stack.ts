@@ -70,6 +70,38 @@ export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> =
 /** The claim operation of spec/api/openapi.yaml: reserve a free package name for the caller. The literal `claim` wins over `{version}`. */
 export const CLAIM_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> = [{ method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/claim' }];
 /**
+ * The operations of spec/api/openapi-v2.yaml (`/api/v2`), one gateway route each. They are explicit, not a greedy `/api/v2/{proxy+}`:
+ * a request the contract does not list never reaches the handler, and the route inventory (spec-gateway.test.ts) reads this list.
+ * The handler is the same function as `/api/v1`'s. `/packages/{namespace}/{name}/versions` and `/packages/{namespace}/{name}/{version}`
+ * are two routes: the literal segment wins over the parameter.
+ */
+export const V2_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> = [
+  { method: apigw.HttpMethod.GET, path: '/api/v2/health' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/auth/device' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/auth/device/poll' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/auth/oidc/exchange' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/me' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/me/tokens' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/me/tokens' },
+  { method: apigw.HttpMethod.DELETE, path: '/api/v2/me/tokens/{token_id}' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/namespaces' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/namespaces/{namespace}' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/packages' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/packages/{namespace}/{name}' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v2/packages/{namespace}/{name}' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/packages/{namespace}/{name}/versions' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/packages/{namespace}/{name}/{version}' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/packages/{namespace}/{name}/{version}/files' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/packages/{namespace}/{name}/{version}/publish' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v2/packages/{namespace}/{name}/{version}/yank' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/publishes/{publish_id}' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/groups' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/groups/{group_id}' },
+  { method: apigw.HttpMethod.DELETE, path: '/api/v2/groups/{group_id}' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/groups/{group_id}/commit' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v2/groups/{group_id}/yank' },
+];
+/**
  * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no
  * UpdateItem. (The tokens table, including the last-used mark, is granted by AUTH_GRANTS.) A new version is a transaction of two PutItems (version + audit).
  * A claim is a transaction of three PutItems (package + owner + audit), each created only if its key is absent: hence PutItem on packages and
@@ -392,6 +424,8 @@ export class ApiStack extends Stack {
     for (const r of AUTH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     for (const r of PUBLISH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     for (const r of CLAIM_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
+    // /api/v2: explicit per-operation routes to the same handler (V2_ROUTES).
+    for (const r of V2_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     // The CLI sends no token: neither index route has an authorizer. The literal route wins over the greedy one.
     const configRoutes = this.api.addRoutes({ path: '/index/config.json', methods: [apigw.HttpMethod.GET], integration });
     const readerRoutes = this.api.addRoutes({
