@@ -179,7 +179,10 @@ pub const Project = struct {
     dev_deps: []const []const u8,
 };
 
-fn readManifest(arena: Allocator, cmd: Command, path: []const u8) !?manifest.Manifest {
+/// The registry a manifest refusal may ask which namespace the user logged in with (`--registry` and the version of mopm).
+pub const Lookup = struct { registry: []const u8, cli_version: []const u8 };
+
+fn readManifest(arena: Allocator, cmd: Command, path: []const u8, lookup: ?Lookup) !?manifest.Manifest {
     const src = std.fs.cwd().readFileAlloc(arena, path, 1 << 20) catch |e| {
         if (e == error.FileNotFound) {
             err(cmd, "no {s}\n", .{path});
@@ -188,16 +191,65 @@ fn readManifest(arena: Allocator, cmd: Command, path: []const u8) !?manifest.Man
         }
         return null;
     };
-    return parseManifest(arena, cmd, path, src);
+    return parseManifestFor(arena, cmd, path, src, lookup);
 }
 
 /// `src`, the text of `path`, checked as a manifest; null when it is not
 /// one (reported).
 pub fn parseManifest(arena: Allocator, cmd: Command, path: []const u8, src: []const u8) !?manifest.Manifest {
+    return parseManifestFor(arena, cmd, path, src, null);
+}
+
+const bare_package_prefix = "package name '";
+const bare_package_middle = "' has no namespace: write name = \"<namespace>/";
+
+/// The name `message` refuses when it is the manifest's refusal of a [package] name with no namespace
+/// (`package name 'json' has no namespace: write name = "<namespace>/json"`), else null.
+fn barePackageName(message: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, message, bare_package_prefix)) return null;
+    const rest = message[bare_package_prefix.len..];
+    const at = std.mem.indexOf(u8, rest, bare_package_middle) orelse return null;
+    const name = rest[0..at];
+    const tail = rest[at + bare_package_middle.len ..];
+    if (tail.len != name.len + 1 or !std.mem.startsWith(u8, tail, name) or tail[name.len] != '"') return null;
+    return name;
+}
+
+/// `message`, worded with the namespace `mopm login` stored when it refuses a bare [package] name and there is one;
+/// every other message, and any message with no stored namespace, as it is.
+fn rewordBarePackage(arena: Allocator, message: []const u8, stored: ?[]const u8) Allocator.Error![]const u8 {
+    const name = barePackageName(message) orelse return message;
+    const ns = stored orelse return message;
+    return std.fmt.allocPrint(arena, "package name '{s}' has no namespace: write name = \"{s}/{s}\" ({s} is your namespace), or another namespace you publish in", .{ name, ns, name, ns });
+}
+
+/// The namespace stored by `mopm login` for the registry `l` names, or null when there is none or anything on the way
+/// to it fails (the one request a manifest error makes of the registry: config.json).
+fn storedNamespace(arena: Allocator, l: Lookup) ?[]const u8 {
+    const base = switch (registry.resolve(l.registry)) {
+        .ok => |b| b,
+        .bad => return null,
+    };
+    const loaded = registry.load(arena, base, l.cli_version) catch return null;
+    const config = switch (loaded) {
+        .ok => |c| c,
+        .bad => return null,
+    };
+    const dir = core.credentials.defaultDir(arena) catch return null;
+    const entry = (core.credentials.load(arena, dir, config.api_url) catch return null) orelse return null;
+    return entry.namespace;
+}
+
+/// `parseManifest`; when it refuses a bare [package] name and `lookup` is set, the message names the stored namespace.
+pub fn parseManifestFor(arena: Allocator, cmd: Command, path: []const u8, src: []const u8, lookup: ?Lookup) !?manifest.Manifest {
     var diag: manifest.Diagnostic = .{};
     const m = manifest.parse(arena, src, &diag) catch |e| {
         if (e == error.Invalid) {
-            err(cmd, "{s}:{d}:{d}: {s}\n", .{ path, diag.pos.line, diag.pos.col, diag.message });
+            var message = diag.message;
+            if (lookup) |l| {
+                if (barePackageName(message) != null) message = try rewordBarePackage(arena, message, storedNamespace(arena, l));
+            }
+            err(cmd, "{s}:{d}:{d}: {s}\n", .{ path, diag.pos.line, diag.pos.col, message });
         } else {
             err(cmd, "{s}: {s}\n", .{ path, @errorName(e) });
         }
@@ -228,7 +280,7 @@ fn addPathDep(arena: Allocator, cmd: Command, full: []const u8, name: []const u8
         return false;
     }
     const file = try std.fmt.allocPrint(arena, "{s}/{s}", .{ path, manifest_path });
-    const m = (try readManifest(arena, cmd, file)) orelse return false;
+    const m = (try readManifest(arena, cmd, file, null)) orelse return false;
     if (!std.mem.eql(u8, m.package.full_name, full)) {
         err(cmd, "{s} names the package {s}, but {s} calls it {s}\n", .{ file, m.package.full_name, needed_by, full });
         return false;
@@ -254,13 +306,18 @@ fn addPathDep(arena: Allocator, cmd: Command, full: []const u8, name: []const u8
 }
 
 pub fn readProject(arena: Allocator, cmd: Command) !?Project {
+    return readProjectFor(arena, cmd, null);
+}
+
+/// `readProject`; with `lookup`, a refused bare [package] name is worded with the namespace stored for that registry.
+pub fn readProjectFor(arena: Allocator, cmd: Command, lookup: ?Lookup) !?Project {
     std.fs.cwd().access(manifest_path, .{}) catch |e| {
         if (e == error.FileNotFound) {
             err(cmd, "no {s} in this directory\n", .{manifest_path});
             return null;
         }
     };
-    const m = (try readManifest(arena, cmd, manifest_path)) orelse return null;
+    const m = (try readManifest(arena, cmd, manifest_path, lookup)) orelse return null;
     return projectOf(arena, cmd, m);
 }
 
@@ -491,7 +548,7 @@ pub fn loadOverlay(arena: Allocator, cmd: Command, dir: []const u8) !?overlay.Ov
 
 fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
     if (cmd == .add or cmd == .remove) return edit_cmd.edit(arena, cmd, args, cli_version);
-    const project = (try readProject(arena, cmd)) orelse return 1;
+    const project = (try readProjectFor(arena, cmd, .{ .registry = args.registry, .cli_version = cli_version })) orelse return 1;
     // `lock`, `update` and a `sync` that may lock treat a lock that predates namespaces as no lock; every other
     // command refuses it.
     var stale: ?[]const u8 = null;
@@ -977,4 +1034,34 @@ test "a lock that predates namespaces is no lock to a command that rewrites it, 
     stale = null;
     try std.testing.expectError(error.Invalid, parseLock(a, .lock, "{\"lock_version\": 3}", &stale));
     try std.testing.expect(stale == null);
+}
+
+test "a refused bare [package] name is worded with the stored namespace, and every other message is kept" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const bare = "package name 'json' has no namespace: write name = \"<namespace>/json\"";
+    try std.testing.expectEqualStrings(
+        "package name 'json' has no namespace: write name = \"alice/json\" (alice is your namespace), or another namespace you publish in",
+        try rewordBarePackage(a, bare, "alice"),
+    );
+    // No stored namespace: the manifest's message as it is.
+    try std.testing.expectEqualStrings(bare, try rewordBarePackage(a, bare, null));
+    // Messages that are not that refusal are never reworded, stored namespace or not.
+    const others = [_][]const u8{
+        "dependency 'json' has no namespace: write it \"<namespace>/json\" = \"1\"",
+        "package name 'Json' is not in lower case; write 'json'",
+        "package name 'json' has no namespace: write name = \"<namespace>/other\"",
+        "package name 'json' has no namespace: write name = \"<namespace>/json\" and more",
+        "package name 'json' has no namespace",
+        "",
+    };
+    for (others) |m| try std.testing.expectEqualStrings(m, try rewordBarePackage(a, m, "alice"));
+}
+
+test "the bare [package] name is read out of the manifest's refusal and out of nothing else" {
+    try std.testing.expectEqualStrings("json", barePackageName("package name 'json' has no namespace: write name = \"<namespace>/json\"").?);
+    try std.testing.expectEqualStrings("a-b_c", barePackageName("package name 'a-b_c' has no namespace: write name = \"<namespace>/a-b_c\"").?);
+    try std.testing.expect(barePackageName("package name 'json' has no namespace: write name = \"<namespace>/jso\"") == null);
+    try std.testing.expect(barePackageName("package name 'json' has no namespace: write name = \"<namespace>/json") == null);
 }

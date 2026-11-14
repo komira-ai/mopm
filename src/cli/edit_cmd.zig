@@ -9,12 +9,14 @@ const semver = core.semver;
 const resolve = core.resolve;
 const toml_edit = core.toml_edit;
 const ic = @import("install_cmd.zig");
+const Net = @import("group_io.zig").Net;
 
 const Args = ic.Args;
 const Command = ic.Command;
 const err = ic.err;
 const manifest_path = ic.manifest_path;
 const parseManifest = ic.parseManifest;
+const parseManifestFor = ic.parseManifestFor;
 const readLockStale = ic.readLockStale;
 const projectOf = ic.projectOf;
 const resolveProject = ic.resolveProject;
@@ -34,6 +36,80 @@ fn specProblem(arena: Allocator, full: []const u8) Allocator.Error!?[]const u8 {
         return try std.fmt.allocPrint(arena, "dependency '{s}' has no namespace: write it as <namespace>/<name>, as in 'mopm add <namespace>/<name>'", .{full});
     }
     return core.names.fullNameProblem(arena, "dependency", full, .allow);
+}
+
+/// Packages a refusal of a bare name lists, at most.
+const max_suggested = 5;
+/// The page size asked of the search (the registry's largest).
+const search_limit = 100;
+
+/// `dependency '<bare>' has no namespace` as `specProblem` words it, with nothing about the registry.
+fn bareProblem(arena: Allocator, bare: []const u8) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "dependency '{s}' has no namespace: write it as <namespace>/<name>, as in 'mopm add <namespace>/<name>'", .{bare});
+}
+
+/// The refusal of the bare dependency name `bare`. `found` is the full names a search of the registry's `stage` for
+/// `bare` returned, or null when the registry or the search could not be read (then the refusal says nothing of the
+/// registry). Only the packages whose name part is `bare` are listed, at most `max_suggested`, in the registry's order.
+fn bareMessage(arena: Allocator, bare: []const u8, stage: []const u8, found: ?[]const []const u8) Allocator.Error![]const u8 {
+    const all = found orelse return bareProblem(arena, bare);
+    var kept = std.ArrayList([]const u8).init(arena);
+    for (all) |full| {
+        if (kept.items.len == max_suggested) break;
+        const parts = core.names.split(full) orelse continue;
+        if (std.mem.eql(u8, parts.name, bare)) try kept.append(full);
+    }
+    if (kept.items.len == 0) {
+        return std.fmt.allocPrint(arena, "dependency '{s}' has no namespace: write it as <namespace>/{s}; no package on {s} is named {s}", .{ bare, bare, stage, bare });
+    }
+    const list = try std.mem.join(arena, ", ", kept.items);
+    return std.fmt.allocPrint(arena, "dependency '{s}' has no namespace: write it as <namespace>/{s}; packages named {s} on {s}: {s} (as in 'mopm add {s}')", .{ bare, bare, bare, stage, list, kept.items[0] });
+}
+
+/// `s` percent-encoded for a URL query.
+fn queryEscape(arena: Allocator, s: []const u8) Allocator.Error![]const u8 {
+    var out = std.ArrayList(u8).init(arena);
+    for (s) |c| switch (c) {
+        'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~' => try out.append(c),
+        else => try out.writer().print("%{X:0>2}", .{c}),
+    };
+    return out.toOwnedSlice();
+}
+
+const Hit = struct { name: []const u8 };
+const Hits = struct { packages: []const Hit = &.{} };
+
+/// The full names of the first page of `GET <api_v2_url>/packages?q=<bare>` (no token), in the registry's order; null
+/// when the request fails, is not answered 2xx or is not a package list.
+fn searchNames(arena: Allocator, net: Net, api_v2_url: []const u8, bare: []const u8) Allocator.Error!?[]const []const u8 {
+    if (api_v2_url.len == 0) return null;
+    const url = try std.fmt.allocPrint(arena, "{s}/packages?q={s}&limit={d}", .{ api_v2_url, try queryEscape(arena, bare), search_limit });
+    const answer = net.once(arena, .GET, url, .{}) catch return null;
+    if (!answer.ok()) return null;
+    const hits = std.json.parseFromSliceLeaky(Hits, arena, answer.body, .{ .ignore_unknown_fields = true }) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+    var out = std.ArrayList([]const u8).init(arena);
+    for (hits.packages) |h| try out.append(h.name);
+    return out.items;
+}
+
+/// The refusal of the bare dependency name `bare` for the registry `registry_spec` (`--registry`): asks it which
+/// packages are named `bare`. Reading the registry never fails the refusal; it only leaves the suggestion out.
+fn bareRefusal(arena: Allocator, net: Net, registry_spec: []const u8, cli_version: []const u8, bare: []const u8) Allocator.Error![]const u8 {
+    const plain = try bareProblem(arena, bare);
+    if (bare.len == 0) return plain;
+    const base = switch (core.registry.resolve(registry_spec)) {
+        .ok => |b| b,
+        .bad => return plain,
+    };
+    const loaded = core.registry.load(arena, base, cli_version) catch return plain;
+    const config = switch (loaded) {
+        .ok => |c| c,
+        .bad => return plain,
+    };
+    return bareMessage(arena, bare, config.stage, try searchNames(arena, net, config.api_v2_url, bare));
 }
 
 /// `s` as a TOML basic string.
@@ -88,6 +164,11 @@ fn editText(arena: Allocator, cmd: Command, src: []const u8, dev: bool, name: []
 /// edited manifest, and only then write mopm.toml and mopm.lock.
 pub fn edit(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
     const spec = splitSpec(args.spec);
+    // A bare name is refused; the registry is asked only for the names to suggest, and nothing is written.
+    if (core.names.split(spec.name) == null) {
+        err(cmd, "{s}\n", .{try bareRefusal(arena, @import("group_io.zig").realNet(), args.registry, cli_version, spec.name)});
+        return 1;
+    }
     if (try specProblem(arena, spec.name)) |why| {
         err(cmd, "{s}\n", .{why});
         return 1;
@@ -109,7 +190,7 @@ pub fn edit(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8)
         }
         return e;
     };
-    _ = (try parseManifest(arena, cmd, manifest_path, src)) orelse return 1;
+    _ = (try parseManifestFor(arena, cmd, manifest_path, src, .{ .registry = args.registry, .cli_version = cli_version })) orelse return 1;
     // A lock that predates namespaces is no lock: `add` and `remove` write a new one.
     var stale: ?[]const u8 = null;
     const old = readLockStale(arena, cmd, &stale) catch |e| {
@@ -342,4 +423,157 @@ test "remove of an absent dependency is an error, and so is the other table's" {
     try std.testing.expect((try editText(a, .remove, "[package]\nname = \"a\"\n", true, "example/tls", "")) == .bad);
     // A table written as dotted keys is not edited.
     try std.testing.expect((try editText(a, .add, "dependencies.tls = \"1\"\n\n[package]\nname = \"a\"\n", false, "x", "\"1\"")) == .bad);
+}
+
+/// A registry that answers each request with one canned answer, and keeps what it was asked.
+const FakeNet = struct {
+    status: u16 = 200,
+    body: []const u8 = "",
+    /// The request fails as a refused connection does.
+    refuse: bool = false,
+    method: ?std.http.Method = null,
+    url: []const u8 = "",
+    token: ?[]const u8 = null,
+    asked: usize = 0,
+
+    fn net(f: *FakeNet) Net {
+        return .{ .ptr = f, .vtable = &.{ .request = request, .sleep = sleep, .now = now } };
+    }
+
+    fn request(ptr: *anyopaque, _: Allocator, method: std.http.Method, url: []const u8, options: core.http.Options) anyerror!core.http.Answer {
+        const f: *FakeNet = @ptrCast(@alignCast(ptr));
+        f.asked += 1;
+        f.method = method;
+        f.url = url;
+        f.token = options.token;
+        if (f.refuse) return error.ConnectionRefused;
+        return .{ .status = f.status, .body = f.body };
+    }
+
+    fn sleep(_: *anyopaque, _: u64) void {}
+
+    fn now(_: *anyopaque) i64 {
+        return 0;
+    }
+};
+
+fn searchOf(comptime l: []const []const u8) ?[]const []const u8 {
+    return l;
+}
+
+test "a bare name with matching packages is refused with the full names to write, in the registry's order" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; packages named json on prod: komira-ai/json (as in 'mopm add komira-ai/json')",
+        try bareMessage(a, "json", "prod", searchOf(&.{"komira-ai/json"})),
+    );
+    // The same name in another namespace is a match too; the first is the example.
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; packages named json on beta: komira-ai/json, alice/json (as in 'mopm add komira-ai/json')",
+        try bareMessage(a, "json", "beta", searchOf(&.{ "komira-ai/json", "alice/json" })),
+    );
+}
+
+test "a bare name keeps only the packages whose name is exactly it, and at most five" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // json5 and jsonx start with json but are other names; an entry with no namespace is not a full name.
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; packages named json on prod: bob/json (as in 'mopm add bob/json')",
+        try bareMessage(a, "json", "prod", searchOf(&.{ "alice/json5", "alice/jsonx", "json", "bob/json", "carol/xjson" })),
+    );
+    // Prefix matches only: nothing is named json.
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; no package on prod is named json",
+        try bareMessage(a, "json", "prod", searchOf(&.{ "alice/json5", "alice/jsonx" })),
+    );
+    // Exactly five are listed, and a sixth is left out.
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; packages named json on prod: a/json, b/json, c/json, d/json, e/json (as in 'mopm add a/json')",
+        try bareMessage(a, "json", "prod", searchOf(&.{ "a/json", "b/json", "c/json", "d/json", "e/json" })),
+    );
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; packages named json on prod: a/json, b/json, c/json, d/json, e/json (as in 'mopm add a/json')",
+        try bareMessage(a, "json", "prod", searchOf(&.{ "a/json", "b/json", "c/json", "d/json", "e/json", "f/json", "g/json" })),
+    );
+    // Non-matching results do not use up the five.
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; packages named json on prod: a/json, b/json, c/json, d/json, e/json (as in 'mopm add a/json')",
+        try bareMessage(a, "json", "prod", searchOf(&.{ "a/json5", "a/json", "b/json", "c/json", "x/jsonx", "d/json", "e/json", "f/json" })),
+    );
+}
+
+test "a bare name with no package of that name is refused saying so, and an unreadable registry leaves today's message" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; no package on gamma is named json",
+        try bareMessage(a, "json", "gamma", searchOf(&.{})),
+    );
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/<name>, as in 'mopm add <namespace>/<name>'",
+        try bareMessage(a, "json", "prod", null),
+    );
+    try std.testing.expectEqualStrings(try bareProblem(a, "json"), (try specProblem(a, "json")).?);
+}
+
+test "the search asks the v2 registry for the bare name with no token, and reads the full names in its order" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var fake = FakeNet{ .body = "{\"packages\":[{\"name\":\"alice/json\",\"latest\":\"0.1.0\",\"description\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"name\":\"bob/json_x\"}],\"next_cursor\":null}" };
+    const got = (try searchNames(a, fake.net(), "http://127.0.0.1:1/api/v2", "json")).?;
+    try std.testing.expectEqual(@as(usize, 2), got.len);
+    try std.testing.expectEqualStrings("alice/json", got[0]);
+    try std.testing.expectEqualStrings("bob/json_x", got[1]);
+    try std.testing.expectEqual(@as(usize, 1), fake.asked);
+    try std.testing.expectEqual(std.http.Method.GET, fake.method.?);
+    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/packages?q=json&limit=100", fake.url);
+    try std.testing.expect(fake.token == null);
+    // The end to end of a search and a refusal.
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; packages named json on prod: alice/json (as in 'mopm add alice/json')",
+        try bareMessage(a, "json", "prod", got),
+    );
+}
+
+test "a search that cannot be read finds nothing and never fails the refusal" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var refused = FakeNet{ .refuse = true };
+    try std.testing.expect((try searchNames(a, refused.net(), "http://127.0.0.1:1/api/v2", "json")) == null);
+    var down = FakeNet{ .status = 503, .body = "{\"packages\":[{\"name\":\"alice/json\"}]}" };
+    try std.testing.expect((try searchNames(a, down.net(), "http://127.0.0.1:1/api/v2", "json")) == null);
+    var garbled = FakeNet{ .body = "not json" };
+    try std.testing.expect((try searchNames(a, garbled.net(), "http://127.0.0.1:1/api/v2", "json")) == null);
+    var wrong_shape = FakeNet{ .body = "{\"packages\":3}" };
+    try std.testing.expect((try searchNames(a, wrong_shape.net(), "http://127.0.0.1:1/api/v2", "json")) == null);
+    // A registry with no v2 API is not asked at all.
+    var unasked = FakeNet{};
+    try std.testing.expect((try searchNames(a, unasked.net(), "", "json")) == null);
+    try std.testing.expectEqual(@as(usize, 0), unasked.asked);
+    // An empty list is an answer: no package is named so.
+    var empty = FakeNet{ .body = "{\"packages\":[],\"next_cursor\":null}" };
+    try std.testing.expectEqual(@as(usize, 0), (try searchNames(a, empty.net(), "http://127.0.0.1:1/api/v2", "json")).?.len);
+}
+
+test "the bare name is percent-encoded in the search, and an unresolvable registry or an empty name is refused as before" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try std.testing.expectEqualStrings("json-x_1.2~", try queryEscape(a, "json-x_1.2~"));
+    try std.testing.expectEqualStrings("a%26b%3Dc%20d%2F", try queryEscape(a, "a&b=c d/"));
+    var fake = FakeNet{};
+    _ = (try searchNames(a, fake.net(), "http://127.0.0.1:1/api/v2", "a&b")).?;
+    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/packages?q=a%26b&limit=100", fake.url);
+    // Neither case reaches the network: the registry is not a registry, and there is no name to search for.
+    var never = FakeNet{};
+    try std.testing.expectEqualStrings(try bareProblem(a, "json"), try bareRefusal(a, never.net(), "nonsense", "0.0.1", "json"));
+    try std.testing.expectEqualStrings(try bareProblem(a, ""), try bareRefusal(a, never.net(), "prod", "0.0.1", ""));
+    try std.testing.expectEqual(@as(usize, 0), never.asked);
 }

@@ -158,7 +158,7 @@ test "mopm login, whoami and logout against the fake registry" {
         }
         const rest = try finishLogin(a, &login.child);
         const out = try std.mem.concat(a, u8, &.{ login.first, "\n", rest.stdout });
-        rep.check("an approved login succeeds", rest.code == 0 and h.contains(out, "Logged in to beta as e2e-user."), rest.stderr);
+        rep.check("an approved login succeeds", rest.code == 0 and h.contains(out, "Logged in to beta as e2e-user"), rest.stderr);
         path = try h.join(a, &.{ conf, "credentials.json" });
         const exists = if (std.fs.cwd().access(path, .{})) true else |_| false;
         rep.check("the token file exists", exists, path);

@@ -8,7 +8,7 @@
 //!
 //!   1  the C sources are compiled with the zig the walk's job installed (`zig cc -c`) and archived (`zig ar`) into
 //!      libshim.a for this platform, and the member is precompiled with the Mojo environment of the walk;
-//!   2  `mopm stage` packs the member from those artifacts (the archive is read from `shimlib.native/libshim.a`), and
+//!   2  `mopm stage` packs the member from those artifacts (the archive is read from `<namespace>/shimlib.native/libshim.a`), and
 //!      `mopm publish --staged` publishes the set through one group into the fake registry, which then serves the version;
 //!   3  as a user: `mopm new --bin`, `mopm add shimlib` from that registry, `mopm sync` (the installed environment
 //!      holds lib/libshim.a, byte for byte the archive that was built), `mopm build` with no file (the manifest's
@@ -228,8 +228,8 @@ fn walk(w: *Walk) !void {
         try objs.append(obj);
     }
     const art = try h.join(a, &.{ root, "artifacts" });
-    const archive = try h.join(a, &.{ art, subdir, "shimlib.native", "libshim.a" });
-    try cwd.makePath(try h.join(a, &.{ art, subdir, "shimlib.native" }));
+    const archive = try h.join(a, &.{ art, subdir, o.namespace, "shimlib.native", "libshim.a" });
+    try cwd.makePath(try h.join(a, &.{ art, subdir, o.namespace, "shimlib.native" }));
     var ar = std.ArrayList([]const u8).init(a);
     try ar.appendSlice(&.{ o.zig, "ar", "rcs", archive });
     try ar.appendSlice(objs.items);
@@ -239,7 +239,7 @@ fn walk(w: *Walk) !void {
 
     var mojo_env = try h.cloneEnv(a, o.env);
     try mojo_env.put("MODULAR_HOME", try h.fmt(a, "{s}/share/max", .{o.mojo_env}));
-    const mojoc = try h.join(a, &.{ art, subdir, "shimlib.mojoc" });
+    const mojoc = try h.join(a, &.{ art, subdir, o.namespace, "shimlib.mojoc" });
     _ = try w.must("native: mojo precompile of the member", &.{ try h.join(a, &.{ o.mojo_env, "bin", "mojo" }), "precompile", "src/shimlib", "-o", mojoc }, member, &mojo_env);
 
     // 2. Staged, then published through one group.
