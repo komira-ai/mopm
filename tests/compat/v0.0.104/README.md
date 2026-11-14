@@ -7,11 +7,11 @@ tests/drivers/compat_v0_0_104_test.zig). Nothing here is edited: do not change a
 A file of the release that the live tree still holds byte for byte is not copied: the build reads it from the live tree. Only a
 file that differs from the live tree is vendored here.
 
-- Vendored `fake/`: the files of `registry/fake` at the tag that differ today: `auth`, `control`, `files`, `groups`, `main`,
+- Vendored `fake/`: the files of `registry/fake` at the tag that differ today: `api`, `auth`, `control`, `files`, `groups`, `main`,
   `packages`, `publish`, `state`.
 - Vendored `cli/`: `group_plan`, `group_publish` (the release's `Publisher`) and `group_publish_test` (imported by the others from
   inside `test` blocks, which are not analysed, but Zig reads every file an `@import` names, so the file must exist).
-- Read from the live tree: `registry/fake/{api,errors,resp,source_commit,token_scopes,util,versions}.zig` and
+- Read from the live tree: `registry/fake/{errors,resp,source_commit,token_scopes,util,versions}.zig` and
   `src/cli/{group_stage_token,publish_cmd,registry_cmd}.zig`.
 - BUCK lays both out in one directory, as the release had them (`:prev_fake_tree`, `:prev_cli_tree`, tests/compat/tree.bzl), because
   Zig resolves a relative `@import` from the directory of the importing file. `prev_cli` and `prev_fake` are built from that.

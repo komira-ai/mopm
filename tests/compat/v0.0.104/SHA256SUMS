@@ -1,4 +1,3 @@
-b855ce51ec422b7baab19a8ec7f10065da60477ae11e9245a9e22868757de7eb  registry/fake/api.zig
 49bd05757356f3ba4ab05e6fc3205ad777d9cebdeda1d02863fc5e5e2b725d17  registry/fake/errors.zig
 adbe0ca3869cee2e6e6dbdc44d8f3f5ebd648288cdd0b1772db62dfd7cf107c2  registry/fake/resp.zig
 e2392115bbecbed19800ae752b2ad98ea15f5184d5258339545eeffd6ba2e3de  registry/fake/source_commit.zig
@@ -11,6 +10,7 @@ f870cf88bd982e7313c640e081e8cf1b3ff529ec180ed33be0d272862d6899c5  src/cli/regist
 4f371eb48a7e3ccc0c8ec053d2f8b63f61bea9502ddd186390f97f5e9c5f8ee1  tests/compat/v0.0.104/cli/group_plan.zig
 f1fca05767d5173919f26a6c01cf17588c8b5a8f18738be99c6cf173ff3690cd  tests/compat/v0.0.104/cli/group_publish.zig
 a191c1a7da589dedd3876c0f72cfd2837015be789132dfa77ad780244d5c1e6d  tests/compat/v0.0.104/cli/group_publish_test.zig
+b855ce51ec422b7baab19a8ec7f10065da60477ae11e9245a9e22868757de7eb  tests/compat/v0.0.104/fake/api.zig
 44c93d8f41f8f8ee0454670a936fb82548afcf91bf97a5fd3e845236ccef34ec  tests/compat/v0.0.104/fake/auth.zig
 a6caede4f6c8cdb4f87b19f9835b995dbd3ed9717cb9628a1db33dd7d5b87443  tests/compat/v0.0.104/fake/control.zig
 271eea3b580a0e8828987c2267b0c9a98948bf89f8445ef7923f5bcaf983cb60  tests/compat/v0.0.104/fake/files.zig

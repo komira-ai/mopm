@@ -13,6 +13,9 @@ const auth = @import("auth.zig");
 const publish = @import("publish.zig");
 const token_scopes = @import("token_scopes.zig");
 const gr = @import("group_readmes.zig");
+const keys = @import("keys.zig");
+const names = @import("names.zig");
+const ns_errors = @import("ns_errors.zig");
 
 /// Names nobody may claim.
 const reserved = [_][]const u8{ "mopm", "mojo", "max", "modular", "std", "stdlib" };
@@ -25,14 +28,9 @@ fn owners(arena: Allocator, p: *const st.Package) Allocator.Error![]const Owner 
     return try out.toOwnedSlice();
 }
 
-/// The package named by a path segment, or the error to answer: a name that
-/// is not normalised is `invalid_name`, an unknown one `package_not_found`.
-const Found = union(enum) { ok: *st.Package, fail: Response };
-
-fn findPackage(ctx: *Ctx, name: []const u8) Allocator.Error!Found {
-    if (!util.isName(name)) return .{ .fail = try resp.fail(ctx.arena, .invalid_name, &.{.{ "name", name }}) };
-    const p = ctx.state.packageByName(name) orelse return .{ .fail = try resp.fail(ctx.arena, .package_not_found, &.{.{ "name", name }}) };
-    return .{ .ok = p };
+/// The package named by a path segment, or the error to answer (keys.zig: a v1 name, or a full name under v2).
+pub fn findPackage(ctx: *Ctx, name: []const u8) Allocator.Error!keys.Found {
+    return keys.find(ctx, name);
 }
 
 // ---------------------------------------------------------------------------
@@ -80,17 +78,35 @@ fn byUpdated(_: void, a: *st.Package, b: *st.Package) bool {
     return std.mem.order(u8, a.name, b.name) == .lt;
 }
 
+/// `searchPackages` under either prefix. v1 lists v1 packages whose name starts with `q`. v2 lists packages in
+/// namespaces: `q` is a name prefix (matched against the part after `/`, in every namespace), or `<namespace>/` with an
+/// optional name prefix (that namespace only); results are full names.
 pub fn searchPackages(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     const pg = switch (try page(ctx)) {
         .ok => |p| p,
         .fail => |r| return r,
     };
-    const q = try util.normalise(ctx.arena, api.queryParam(ctx, "q") orelse "");
+    var raw = api.queryParam(ctx, "q") orelse "";
+    var in_namespace: ?[]const u8 = null;
+    if (ctx.v2) {
+        raw = try keys.decodeSlash(ctx.arena, raw);
+        if (std.mem.indexOfScalar(u8, raw, '/')) |slash| {
+            const n = raw[0..slash];
+            if (!names.isNamespace(n)) return ns_errors.fail(ctx.arena, .invalid_namespace, &.{.{ "namespace", n }});
+            in_namespace = n;
+            raw = raw[slash + 1 ..];
+        }
+    }
+    const q = try util.normalise(ctx.arena, raw);
     if (q.len > 64) return resp.invalid(ctx.arena, "'q' is at most 64 characters");
     const sort = api.queryParam(ctx, "sort") orelse "name";
     var hits = std.ArrayList(*st.Package).init(ctx.arena);
     for (ctx.state.packages.items) |p| {
-        if (std.mem.startsWith(u8, p.name, q)) try hits.append(p);
+        if ((p.namespace != null) != ctx.v2) continue;
+        if (in_namespace) |n| {
+            if (!std.mem.eql(u8, p.namespace.?.name, n)) continue;
+        }
+        if (std.mem.startsWith(u8, names.importName(p.name), q)) try hits.append(p);
     }
     if (std.mem.eql(u8, sort, "name")) {
         std.mem.sort(*st.Package, hits.items, {}, byName);
@@ -198,6 +214,8 @@ pub fn claimPackage(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         if (std.mem.eql(u8, r, name)) return resp.fail(ctx.arena, .name_reserved, &.{.{ "name", name }});
     }
     if (ctx.state.packageByName(name) != null) return resp.fail(ctx.arena, .name_taken, &.{.{ "name", name }});
+    // Once names are in namespaces, v1 creates no package (an existing name is still `name_taken`).
+    if (!ctx.state.v1_creation) return ns_errors.flatCreationRefused(ctx.arena, name);
     if (!confirm) {
         if (try similar(ctx, name)) |other| {
             return resp.fail(ctx.arena, .name_too_similar, &.{ .{ "name", name }, .{ "other", other.name } });

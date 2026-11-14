@@ -2,6 +2,12 @@
 //! (spec/channel.md) and the sparse index (spec/index.md), written under the
 //! data directory and served at `/channel/...` and `/index/...`.
 //!
+//! Packages in namespaces (spec/proposed/namespaces.md) are written beside the
+//! v1 ones: index version 2 under `index/v2/`, and one channel per namespace,
+//! `channel/<namespace>/<subdir>/`, whose conda names are
+//! `mojo-<namespace>.<name>`. The flat root `channel/<subdir>/` holds only v1
+//! packages, and an empty valid repodata when there are none.
+//!
 //! `rewrite` regenerates every file from the state after each change (a
 //! publish, a yank, a takedown, read-only mode). Writes are deterministic:
 //! keys sorted, no timestamps but `published_at` and a takedown's date, so the
@@ -17,18 +23,16 @@ const versions = @import("versions.zig");
 const publish = @import("publish.zig");
 const api = @import("api.zig");
 const resp = @import("resp.zig");
+const names = @import("names.zig");
 
 pub const subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64", "noarch" };
 
 /// The oldest CLI the fake says it supports (index config).
 const min_cli_version = "0.0.1";
 
-/// `ht/tp/http_client`: the index path of a package (spec/index.md).
-pub fn indexPath(arena: Allocator, name: []const u8) Allocator.Error![]const u8 {
-    var pad: [4]u8 = .{ '_', '_', '_', '_' };
-    @memcpy(pad[0..@min(name.len, 4)], name[0..@min(name.len, 4)]);
-    return std.fmt.allocPrint(arena, "index/{s}/{s}/{s}", .{ pad[0..2], pad[2..4], name });
-}
+/// `index/ht/tp/http_client`: the index path of a package (spec/index.md), or of a package in a namespace,
+/// `index/v2/ko/mi/komira-ai/json`.
+pub const indexPath = names.indexPath;
 
 fn writeAll(dir: std.fs.Dir, path: []const u8, data: []const u8) !void {
     if (std.fs.path.dirname(path)) |parent| try dir.makePath(parent);
@@ -40,24 +44,39 @@ pub fn rewrite(arena: Allocator, s: *st.State) !void {
     var dir = try std.fs.cwd().openDir(s.dir, .{});
     defer dir.close();
     try writeAll(dir, "index/config.json", try config(arena, s));
-    try writeAll(dir, "index/takedowns.json", try takedowns(arena, s));
+    try writeAll(dir, "index/takedowns.json", try takedowns(arena, s, 1));
+    try writeAll(dir, "index/v2/takedowns.json", try takedowns(arena, s, 2));
     for (s.packages.items) |p| {
         if (p.versions.items.len == 0) continue;
         try writeAll(dir, try indexPath(arena, p.name), try indexRecords(arena, s, p));
     }
+    try writeChannel(arena, dir, s, null);
+    for (s.namespaces.items) |n| try writeChannel(arena, dir, s, n);
+}
+
+/// The repodata of one channel: the flat root (`ns` null, v1 packages) or the channel of namespace `ns`.
+fn writeChannel(arena: Allocator, dir: std.fs.Dir, s: *const st.State, ns: ?*const st.Namespace) !void {
+    const root = if (ns) |n| try std.fmt.allocPrint(arena, "channel/{s}", .{n.name}) else "channel";
     for (subdirs) |subdir| {
-        try writeAll(dir, try std.fmt.allocPrint(arena, "channel/{s}/repodata.json", .{subdir}), try repodata(arena, s, subdir, false));
-        try writeAll(dir, try std.fmt.allocPrint(arena, "channel/{s}/current_repodata.json", .{subdir}), try repodata(arena, s, subdir, true));
+        try writeAll(dir, try std.fmt.allocPrint(arena, "{s}/{s}/repodata.json", .{ root, subdir }), try repodata(arena, s, ns, subdir, false));
+        try writeAll(dir, try std.fmt.allocPrint(arena, "{s}/{s}/current_repodata.json", .{ root, subdir }), try repodata(arena, s, ns, subdir, true));
     }
+}
+
+/// `channel/<subdir>/<file>` of a v1 package, `channel/<namespace>/<subdir>/<file>` of a package in a namespace.
+fn channelPath(arena: Allocator, key: []const u8, f: st.File) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ try names.channelDir(arena, key), f.subdir, f.filename });
 }
 
 /// Copies a newly published version's bytes into the channel.
 pub fn addFiles(s: *st.State, v: *const st.Version) !void {
     var dir = try std.fs.cwd().openDir(s.dir, .{});
     defer dir.close();
-    var buf: [512]u8 = undefined;
+    var buf: [1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
     for (v.files) |f| {
-        const to = try std.fmt.bufPrint(&buf, "channel/{s}/{s}", .{ f.subdir, f.filename });
+        fba.reset();
+        const to = try channelPath(fba.allocator(), v.package.name, f);
         if (std.fs.path.dirname(to)) |parent| try dir.makePath(parent);
         try dir.copyFile(f.path, dir, to, .{});
     }
@@ -67,9 +86,11 @@ pub fn addFiles(s: *st.State, v: *const st.Version) !void {
 pub fn removeFiles(s: *st.State, v: *const st.Version) !void {
     var dir = try std.fs.cwd().openDir(s.dir, .{});
     defer dir.close();
-    var buf: [512]u8 = undefined;
+    var buf: [1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
     for (v.files) |f| {
-        const path = try std.fmt.bufPrint(&buf, "channel/{s}/{s}", .{ f.subdir, f.filename });
+        fba.reset();
+        const path = try channelPath(fba.allocator(), v.package.name, f);
         dir.deleteFile(path) catch |e| if (e != error.FileNotFound) return e;
     }
 }
@@ -78,8 +99,10 @@ fn config(arena: Allocator, s: *const st.State) ![]const u8 {
     var out = std.ArrayList(u8).init(arena);
     try std.json.stringify(.{
         .api_url = try std.fmt.allocPrint(arena, "{s}/api/v1", .{s.base_url}),
+        .api_v2_url = try std.fmt.allocPrint(arena, "{s}/api/v2", .{s.base_url}),
         .channel_url = try std.fmt.allocPrint(arena, "{s}/channel/", .{s.base_url}),
         .index_version = 1,
+        .index_versions = [_]u32{ 1, 2 },
         .min_cli_version = min_cli_version,
         .read_only = s.read_only,
         .stage = s.stage,
@@ -109,7 +132,8 @@ pub fn build(filename: []const u8) []const u8 {
     return stem[dash + 1 ..];
 }
 
-/// One NDJSON line per shown version, keys sorted (spec/index.md).
+/// One NDJSON line per shown version, keys sorted (spec/index.md): record `v` 1 for a v1 package, `v` 2 (its `name` the
+/// full name, its URLs in the namespace's channel) for a package in a namespace.
 fn indexRecords(arena: Allocator, s: *const st.State, p: *const st.Package) ![]const u8 {
     const Dep = struct { name: []const u8, range: []const u8 };
     const Native = struct { id: []const u8, soname: []const u8 };
@@ -141,7 +165,7 @@ fn indexRecords(arena: Allocator, s: *const st.State, p: *const st.Package) ![]c
                 .sha256 = f.sha256,
                 .size = f.size,
                 .subdir = f.subdir,
-                .url = if (v.state == .tombstoned) null else try std.fmt.allocPrint(arena, "{s}/channel/{s}/{s}", .{ s.base_url, f.subdir, f.filename }),
+                .url = if (v.state == .tombstoned) null else try publish.fileUrl(arena, s, p.name, f),
             });
         }
         try std.json.stringify(Record{
@@ -156,7 +180,7 @@ fn indexRecords(arena: Allocator, s: *const st.State, p: *const st.Package) ![]c
             .requires_mojo = try publish.requiresMojo(arena, v.files[0].filename),
             .state = @tagName(v.state),
             .tombstone = if (v.state == .tombstoned) .{ .date = try util.date(arena, v.tombstone_at), .reason_code = v.tombstone_reason.? } else null,
-            .v = 1,
+            .v = if (p.namespace == null) @as(u32, 1) else 2,
             .version = v.version,
             .yank_reason = if (v.state == .yanked) v.yank_reason else null,
         }, .{ .emit_null_optional_fields = false }, out.writer());
@@ -165,10 +189,12 @@ fn indexRecords(arena: Allocator, s: *const st.State, p: *const st.Package) ![]c
     return out.items;
 }
 
-fn takedowns(arena: Allocator, s: *const st.State) ![]const u8 {
+/// The takedown log of index version `index_version`: v1 packages for 1, packages in namespaces (full names) for 2.
+fn takedowns(arena: Allocator, s: *const st.State, index_version: u32) ![]const u8 {
     const Takedown = struct { date: []const u8, name: []const u8, reason_code: []const u8, sha256: []const []const u8, version: []const u8 };
     var list = std.ArrayList(Takedown).init(arena);
     for (s.packages.items) |p| {
+        if ((p.namespace != null) != (index_version == 2)) continue;
         for (p.versions.items) |v| {
             if (v.state != .tombstoned) continue;
             var shas = std.ArrayList([]const u8).init(arena);
@@ -192,7 +218,7 @@ fn takedowns(arena: Allocator, s: *const st.State) ![]const u8 {
         }
     }.less);
     var out = std.ArrayList(u8).init(arena);
-    try std.json.stringify(.{ .index_version = 1, .takedowns = list.items }, .{}, out.writer());
+    try std.json.stringify(.{ .index_version = index_version, .takedowns = list.items }, .{}, out.writer());
     try out.append('\n');
     return out.items;
 }
@@ -203,12 +229,19 @@ fn byFilename(_: void, a: Entry, b: Entry) bool {
     return std.mem.order(u8, a.filename, b.filename) == .lt;
 }
 
-/// `repodata.json` of `subdir` (or, when `current`, `current_repodata.json`:
-/// only each name's newest published version).
-fn repodata(arena: Allocator, s: *const st.State, subdir: []const u8, current: bool) ![]const u8 {
+fn sameNamespace(a: ?*const st.Namespace, b: ?*const st.Namespace) bool {
+    const x = a orelse return b == null;
+    const y = b orelse return false;
+    return x == y;
+}
+
+/// `repodata.json` of `subdir` of one channel (or, when `current`, `current_repodata.json`:
+/// only each name's newest published version): the flat root's (`ns` null) or namespace `ns`'s.
+fn repodata(arena: Allocator, s: *const st.State, ns: ?*const st.Namespace, subdir: []const u8, current: bool) ![]const u8 {
     var live = std.ArrayList(Entry).init(arena);
     var removed = std.ArrayList([]const u8).init(arena);
     for (s.packages.items) |p| {
+        if (!sameNamespace(p.namespace, ns)) continue;
         const newest = publish.latest(p);
         for (p.versions.items) |v| {
             for (v.files) |f| {
@@ -245,7 +278,7 @@ fn repodata(arena: Allocator, s: *const st.State, subdir: []const u8, current: b
             .build = build(e.filename),
             .build_number = 0,
             .depends = depends[0..],
-            .name = try std.fmt.allocPrint(arena, "mojo-{s}", .{e.version.package.name}),
+            .name = try names.condaName(arena, e.version.package.name),
             .sha256 = e.file.sha256,
             .size = e.file.size,
             .subdir = subdir,
@@ -271,8 +304,7 @@ pub fn serve(ctx: *api.Ctx) anyerror!resp.Response {
         for (p.versions.items) |v| {
             if (v.state != .tombstoned) continue;
             for (v.files) |f| {
-                const gone = try std.fmt.allocPrint(ctx.arena, "channel/{s}/{s}", .{ f.subdir, f.filename });
-                if (std.mem.eql(u8, gone, rel)) return resp.empty(.gone);
+                if (std.mem.eql(u8, try channelPath(ctx.arena, p.name, f), rel)) return resp.empty(.gone);
             }
         }
     }
