@@ -1,12 +1,16 @@
 import { createHash, createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto';
 import { RegistryError } from '../errors';
+import { flatCreationRefused } from '../publish/catalogue';
 import type { Store } from '../store';
 import { canonicalVersion } from '../version';
 import { ciOwnerOf, type CiPublisher } from './ci-publishers';
 import { EXCHANGE_CONCURRENCY, mapBounded } from './bounded';
 import { AuthError, oidcInvalid } from './errors';
-import { mintToken, newId, NAME_PATTERN, OIDC_TOKEN_TTL_MS, type Clock } from './tokens';
+import { mintToken, NAME_PATTERN, OIDC_TOKEN_TTL_MS, type Clock } from './tokens';
+import { namespaceNotFound } from './namespace-access';
+import type { NamespaceRecord, NamespaceStore } from './namespaces';
 import type { AuthStore, TrustedPublisher } from './types';
+import { splitFullName } from '../names';
 
 export const GITHUB_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
 export const GITHUB_JWKS_URL = `${GITHUB_OIDC_ISSUER}/.well-known/jwks`;
@@ -221,6 +225,8 @@ export interface OidcExchangeOptions {
    */
   ciPublishers?: readonly CiPublisher[];
   registry?: Store;
+  /** The namespaces `exchangeV2` resolves. Absent: `/api/v2`'s exchange is `unavailable`. */
+  namespaces?: NamespaceStore;
 }
 
 export interface PackageVersion {
@@ -250,7 +256,8 @@ export class OidcExchange {
    * Two forms. `{jwt, name, version}`: verify the CI token, match a trusted publisher registered for the package, mint a
    * 10 minute token for that package and version. `{jwt, packages}`: for a CI publisher the deployment trusts by
    * configuration; every package must be unclaimed (it is created, owned by the publisher) or already the publisher's;
-   * the 10 minute token is good for exactly those packages and versions and acts as the publisher.
+   * the 10 minute token is good for exactly those packages and versions and acts as the publisher. A name nobody has is refused
+   * (`name_reserved`, the flat-creation hint): `/api/v1` no longer creates packages.
    * Either form takes an optional `purpose`: `publish` (the default) or `stage`, which mints the same token with the one scope
    * `stage` (it creates, reads and aborts a group but cannot commit or yank). Any other value is `invalid_request`.
    */
@@ -266,10 +273,85 @@ export class OidcExchange {
 
   /**
    * `POST /api/v2/auth/oidc/exchange` (ns-R3): the two forms of `exchange`, with full names, matched to the publishers of
-   * the namespace; it mints a token and creates nothing.
+   * the namespace; it mints a token and creates nothing. `{jwt, name, version}` needs a publisher registered for the
+   * namespace (a trusted-publisher row keyed `<namespace>/`); `{jwt, packages}` needs a configured CI publisher whose
+   * `namespace` is the one namespace of every name. Either way the publisher's repository owner must be the namespace's
+   * GitHub id. The token carries `ci_namespace` and the CI identity as `ci_owner`.
    */
-  async exchangeV2(_input: unknown): Promise<unknown> {
-    throw new Error('exchangeV2: not implemented');
+  async exchangeV2(input: unknown): Promise<unknown> {
+    const purpose = purposeOf(input);
+    const o = input !== null && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+    const bad = (detail: string) => new AuthError('invalid_request', `The request is not valid: ${detail}.`, { detail });
+    const single = !('packages' in o);
+    let wanted: PackageVersion[];
+    if (single) {
+      wanted = [this.wantedV2(o.name, o.version)];
+    } else {
+      if ('name' in o || 'version' in o) throw bad("send 'packages' or 'name' and 'version', not both");
+      const list = o.packages;
+      if (!Array.isArray(list) || list.length < 1 || list.length > MAX_CI_PACKAGES) throw bad(`'packages' holds 1 to ${MAX_CI_PACKAGES} entries`);
+      wanted = list.map((e) => this.wantedV2((e as { name?: unknown } | null)?.name, (e as { version?: unknown } | null)?.version));
+      if (new Set(wanted.map((w) => w.name)).size !== wanted.length) throw bad("'packages' names a package twice");
+    }
+    const namespace = splitFullName(wanted[0]!.name)!.namespace;
+    if (wanted.some((w) => splitFullName(w.name)!.namespace !== namespace)) throw bad("'packages' names more than one namespace");
+    if (!this.o.namespaces) throw new AuthError('unavailable', 'The registry is temporarily unavailable.');
+
+    const claims = await this.o.verifier.verify(typeof o.jwt === 'string' ? o.jwt : '');
+    const ns = await this.o.namespaces.getNamespace(namespace);
+    if (!ns) throw namespaceNotFound(namespace);
+    const first = wanted[0]!.name;
+    const untrusted = () => new AuthError('oidc_not_trusted', `No trusted publisher of '${first}' matches this CI identity.`, { name: first });
+    // Both matchers compare the row with the claim, so the claim equal to the namespace's id makes the row equal to it too.
+    const ownedByNamespace = claims.repository_owner_id === String(ns.github_id);
+
+    let owner: string | undefined;
+    if (single) {
+      const trusted = await this.o.store.listTrustedPublishers(`${namespace}/`);
+      const hit = ownedByNamespace && trusted.some((tp) => matchesTrustedPublisher(tp, claims));
+      if (hit) owner = ciOwnerOf(claims.repository_id);
+    } else {
+      const publisher = this.o.ciPublishers?.find((p) => p.namespace === namespace && matchesCiPublisher(p, claims));
+      if (publisher && ownedByNamespace) owner = ciOwnerOf(publisher.repository_id);
+    }
+    if (owner === undefined) throw untrusted();
+    return this.mintV2(claims, ns, owner, wanted, purpose, single);
+  }
+
+  /** One `{name, version}` of a v2 request: a full name and a valid version. */
+  private wantedV2(name: unknown, version: unknown): PackageVersion {
+    if (typeof name !== 'string' || splitFullName(name) === undefined) {
+      throw new AuthError('invalid_name', `'${String(name)}' is not a valid package name.`, { name: String(name) });
+    }
+    try {
+      canonicalVersion(version as string);
+    } catch {
+      throw new AuthError('invalid_version', `'${String(version)}' is not a valid version.`, { version: String(version) });
+    }
+    return { name, version: version as string };
+  }
+
+  private async mintV2(claims: GithubActionsClaims, ns: NamespaceRecord, owner: string, wanted: PackageVersion[], purpose: OidcPurpose, single: boolean) {
+    const now = this.now();
+    // Spent only after the identity matched, as in v1.
+    const keepUntil = Math.max(claims.exp * 1000 + 60_000, now.getTime() + JTI_MIN_TTL_MS);
+    if (!(await this.o.store.claimOnce(jtiKey(claims.jti), new Date(keepUntil).toISOString()))) throw oidcInvalid('token already used');
+    const m = await mintToken(this.o.store, {
+      kind: 'oidc',
+      name: `ci ${claims.repository}`,
+      scopes: [purpose],
+      packages: wanted.map((w) => w.name),
+      all_current: false,
+      ...(single ? { version: wanted[0]!.version } : { versions: Object.fromEntries(wanted.map((w) => [w.name, w.version])) }),
+      ci_owner: owner,
+      ci_namespace: ns.namespace,
+      issued_to: claims.repository,
+      created_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + OIDC_TOKEN_TTL_MS).toISOString(),
+    });
+    return single
+      ? { token: m.secret, token_kind: purpose, expires_at: m.record.expires_at, name: wanted[0]!.name, version: wanted[0]!.version }
+      : { token: m.secret, token_kind: purpose, expires_at: m.record.expires_at, packages: wanted };
   }
 
   private async exchangeConfigured(input: { jwt: string; packages: unknown }, purpose: OidcPurpose) {
@@ -301,33 +383,17 @@ export class OidcExchange {
     const refuse = (name: string) => new AuthError('not_owner', `You are not an owner of '${name}'.`, { name });
     if (publisher.acts_for !== undefined) return this.exchangeActsFor(claims, publisher.acts_for, owner, wanted, registry, purpose);
 
-    // Read first, so a name that belongs to someone else spends nothing and creates nothing.
+    // Read first, so a name that belongs to someone else, or that nobody has, spends nothing. Flat names are no longer created
+    // (docs/design/namespaces.md section 8): only a package this publisher already owns is published.
     const existing = await mapBounded(wanted, EXCHANGE_CONCURRENCY, (w) => registry.getPackage(w.name));
     existing.forEach((p, i) => {
       if (p && p.ci_owner !== owner) throw refuse(wanted[i]!.name);
     });
+    const missing = wanted.findIndex((_, i) => !existing[i]);
+    if (missing >= 0) throw flatCreationRefused(wanted[missing]!.name);
     const now = this.now();
     const keepUntil = Math.max(claims.exp * 1000 + 60_000, now.getTime() + JTI_MIN_TTL_MS);
     if (!(await this.o.store.claimOnce(jtiKey(claims.jti), new Date(keepUntil).toISOString()))) throw oidcInvalid('token already used');
-
-    // Sixteen names at a time. A name that is already this publisher's (made by an earlier attempt, or by another request between
-    // the read and the write) is not an error and is not written twice; one that is anyone else's is refused, the first in the
-    // order of the request, as it was when the names were taken one by one.
-    await mapBounded(
-      wanted.filter((_, i) => !existing[i]),
-      EXCHANGE_CONCURRENCY,
-      async (w) => {
-        try {
-          await registry.createPackage({ name: w.name, state: 'claimed', created_at: now.toISOString(), ci_owner: owner });
-        } catch (err) {
-          if (!(err instanceof RegistryError) || err.code !== 'name_taken') throw err;
-          // Someone created it between the read and the write: it is ours only if we are its owner.
-          if ((await registry.getPackage(w.name))?.ci_owner !== owner) throw refuse(w.name);
-          return;
-        }
-        await registry.appendAudit({ name: w.name, ts: now.toISOString(), id: newId('a'), actor: owner, action: 'ci_claim', detail: { repository: claims.repository } });
-      },
-    );
 
     const m = await mintToken(this.o.store, {
       kind: 'oidc',

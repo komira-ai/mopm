@@ -71,6 +71,7 @@ export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessE
     oidc: new OidcExchange({
       store,
       verifier: new GithubJwtVerifier({ audiences: oidcAudiences(stage) }),
+      namespaces,
       ...(ciPublishers.length > 0 ? { ciPublishers, registry: new DynamoStore(doc, tablesFor(stage)) } : {}),
     }),
     async devices() {

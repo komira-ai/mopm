@@ -49,6 +49,11 @@ type Setup = ReturnType<typeof setup>;
 
 const widgets = [{ name: 'widgets', version: '1.0.0' }];
 
+/** Packages this identity already owns: /api/v1 no longer creates them, so a test that exchanges for a name makes it first. */
+const own = async (s: Setup, ...names: string[]) => {
+  for (const name of names) await s.h.registry.createPackage({ name, state: 'claimed', created_at: s.h.clock.now().toISOString(), ci_owner: OWNER });
+};
+
 async function refused(p: Promise<unknown>, code: string, status: number) {
   try {
     await p;
@@ -62,9 +67,10 @@ async function refused(p: Promise<unknown>, code: string, status: number) {
 const errCode = (r: { body: string }) => JSON.parse(r.body).error.code as string;
 const ciTokens = (s: Setup) => s.h.authStore.dumpTokens().filter((t) => t.kind === 'oidc');
 
-describe('the trusted repository publishes a new package on beta and owns it', () => {
-  test('the exchange creates the package claimed, owned by the repository identity (no account owner), and the token publishes it end to end', async () => {
+describe('the trusted repository publishes a package it owns on beta', () => {
+  test('the exchange for a package the repository identity owns writes nothing, and the token publishes it end to end', async () => {
     const s = setup();
+    await own(s, 'widgets');
     const r = await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
     expect(r.packages).toEqual(widgets);
     expect(r.token_kind).toBe('publish');
@@ -73,7 +79,7 @@ describe('the trusted repository publishes a new package on beta and owns it', (
     const rec = await s.h.registry.getPackage('widgets');
     expect(rec).toMatchObject({ name: 'widgets', state: 'claimed', ci_owner: OWNER });
     expect(await s.h.registry.listOwners('widgets')).toEqual([]);
-    expect((await s.h.registry.listAudit('widgets')).map((a) => [a.actor, a.action])).toEqual([[OWNER, 'ci_claim']]);
+    expect(await s.h.registry.listAudit('widgets')).toEqual([]);
 
     const p = pkg({ name: 'widgets', version: '1.0.0' });
     const id = await s.h.publish(r.token, p);
@@ -85,6 +91,7 @@ describe('the trusted repository publishes a new package on beta and owns it', (
 
   test('the package is active after its first published version, and the read API names no owner and leaks no ci_owner', async () => {
     const s = setup();
+    await own(s, 'widgets');
     const r = await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
     const p = pkg({ name: 'widgets', version: '1.0.0' });
     await s.h.publish(r.token, p);
@@ -97,17 +104,18 @@ describe('the trusted repository publishes a new package on beta and owns it', (
     expect(JSON.stringify(info)).not.toContain(OWNER);
   });
 
-  test('a later run of the same repository publishes the next version to the package it owns; the package is not created twice', async () => {
+  test('a later run of the same repository publishes the next version to the package it owns', async () => {
     const s = setup();
+    await own(s, 'widgets');
     await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
     const again = await s.oidc.exchange({ jwt: s.jwt(), packages: [{ name: 'widgets', version: '1.0.1' }] });
-    expect((await s.h.registry.listAudit('widgets')).filter((a) => a.action === 'ci_claim')).toHaveLength(1);
     const u = await s.h.upload(again.token, pkg({ name: 'widgets', version: '1.0.1' }));
     expect(u.res.statusCode).toBe(200);
   });
 
   test('one exchange covers several packages, each at its own version, and nothing else', async () => {
     const s = setup();
+    await own(s, 'widgets', 'gadgets');
     const r = await s.oidc.exchange({ jwt: s.jwt(), packages: [...widgets, { name: 'gadgets', version: '2.0.0' }] });
     const principal = await s.auth.authenticate(`Bearer ${r.token}`);
     expect(principal).toMatchObject({ kind: 'oidc', ci_owner: OWNER, packages: ['widgets', 'gadgets'], versions: { widgets: '1.0.0', gadgets: '2.0.0' } });
@@ -122,6 +130,7 @@ describe('the trusted repository publishes a new package on beta and owns it', (
 
   test('the token lives ten minutes: valid at 9:59, expired at 10:00', async () => {
     const s = setup();
+    await own(s, 'widgets');
     const r = await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
     s.h.clock.advance(10 * 60_000 - 1000);
     await s.auth.authenticate(`Bearer ${r.token}`);
@@ -129,16 +138,18 @@ describe('the trusted repository publishes a new package on beta and owns it', (
     await expect(s.auth.authenticate(`Bearer ${r.token}`)).rejects.toMatchObject({ code: 'token_expired' });
   });
 
-  test('a token is exchanged once: the second exchange of the same CI token is oidc_token_invalid and creates nothing more', async () => {
+  test('a token is exchanged once: the second exchange of the same CI token is oidc_token_invalid and mints nothing more', async () => {
     const s = setup();
+    await own(s, 'widgets', 'gadgets');
     const jwt = s.jwt();
     await s.oidc.exchange({ jwt, packages: widgets });
     await refused(s.oidc.exchange({ jwt, packages: [{ name: 'gadgets', version: '1.0.0' }] }), 'oidc_token_invalid', 401);
-    expect(await s.h.registry.getPackage('gadgets')).toBeUndefined();
+    expect(ciTokens(s)).toHaveLength(1);
   });
 
   test('through the router: POST /auth/oidc/exchange with packages answers 200 with the packages and a publish token', async () => {
     const s = setup();
+    await own(s, 'widgets');
     const auth = { authn: s.auth, oidc: s.oidc } as unknown as AuthServices;
     const res = await route(
       { method: 'POST', path: '/api/v1/auth/oidc/exchange', query: {}, headers: {}, body: JSON.stringify({ jwt: s.jwt(), packages: widgets }) },
@@ -160,12 +171,13 @@ describe('names that belong to someone else are refused', () => {
   test('a user-owned name: not_owner (403); nothing is created, no token is minted, and the CI token is not spent', async () => {
     const s = setup();
     await s.h.account(1, 'someone', ['demo']);
+    await own(s, 'widgets');
     const jwt = s.jwt();
     await refused(s.oidc.exchange({ jwt, packages: [{ name: 'demo', version: '1.0.0' }, ...widgets] }), 'not_owner', 403);
-    expect(await s.h.registry.getPackage('widgets')).toBeUndefined(); // the free name in the same request is not created either
+    expect(await s.h.registry.listAudit('widgets')).toEqual([]);
     expect((await s.h.registry.getPackage('demo'))?.ci_owner).toBeUndefined();
     expect(ciTokens(s)).toEqual([]);
-    await expect(s.oidc.exchange({ jwt, packages: widgets })).resolves.toBeDefined(); // the same CI token still works for a name that is free
+    await expect(s.oidc.exchange({ jwt, packages: widgets })).resolves.toBeDefined(); // the same CI token still works for a name it owns
   });
 
   test('a name owned by another CI identity: not_owner', async () => {
@@ -176,22 +188,48 @@ describe('names that belong to someone else are refused', () => {
     expect(ciTokens(s)).toEqual([]);
   });
 
-  test('a name created by someone between the read and the write is theirs: refused; created by this identity meanwhile: carried on', async () => {
-    for (const [existingOwner, outcome] of [['gh-repo:999', 'refused'], [OWNER, 'ok']] as const) {
-      const s = setup();
-      await s.h.registry.createPackage({ name: 'widgets', state: 'claimed', created_at: '2026-10-01T00:00:00Z', ci_owner: existingOwner });
-      // the first read does not see the package (it is created "meanwhile"); createPackage then loses with name_taken
-      jest.spyOn(s.h.registry, 'getPackage').mockImplementationOnce(async () => undefined);
-      const run = s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
-      if (outcome === 'refused') await refused(run, 'not_owner', 403);
-      else await expect(run).resolves.toBeDefined();
-    }
+  test('a registry error while reading the names is not swallowed', async () => {
+    const s = setup();
+    jest.spyOn(s.h.registry, 'getPackage').mockRejectedValueOnce(new RegistryError('unavailable', 'down'));
+    await expect(s.oidc.exchange({ jwt: s.jwt(), packages: widgets })).rejects.toMatchObject({ code: 'unavailable' });
+  });
+});
+
+describe('/api/v1 no longer creates a package: a name nobody has is refused', () => {
+  const exchangeRoute = (s: Setup, jwt: string, packages: unknown) =>
+    route(
+      { method: 'POST', path: '/api/v1/auth/oidc/exchange', query: {}, headers: {}, body: JSON.stringify({ jwt, packages }) },
+      { store: s.h.registry, stage: 'beta', version: 't', commit: 't', readOnly: false, auth: { authn: s.auth, oidc: s.oidc } as unknown as AuthServices },
+      'req-flat',
+    );
+
+  test('through the router the refusal is name_reserved (403) with the update-mopm hint, and nothing is written or minted', async () => {
+    const s = setup();
+    const res = await exchangeRoute(s, s.jwt(), widgets);
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body).error).toEqual({ code: 'name_reserved', message: "'widgets' is reserved.", hint: 'package names are in namespaces now; update mopm' });
+    expect(await s.h.registry.getPackage('widgets')).toBeUndefined();
+    expect(await s.h.registry.listAudit('widgets')).toEqual([]);
+    expect(ciTokens(s)).toEqual([]);
   });
 
-  test('another error from the registry while creating is not swallowed', async () => {
+  test('the first name nobody has is the one named, though an owned name comes before it; the CI token is not spent', async () => {
     const s = setup();
-    jest.spyOn(s.h.registry, 'createPackage').mockRejectedValueOnce(new RegistryError('unavailable', 'down'));
-    await expect(s.oidc.exchange({ jwt: s.jwt(), packages: widgets })).rejects.toMatchObject({ code: 'unavailable' });
+    await own(s, 'widgets');
+    const jwt = s.jwt();
+    const set = [...widgets, { name: 'gadgets', version: '1.0.0' }, { name: 'sprockets', version: '1.0.0' }];
+    const e = await s.oidc.exchange({ jwt, packages: set }).catch((x) => x);
+    expect(e).toBeInstanceOf(RegistryError);
+    expect({ code: e.code, detail: e.detail }).toEqual({ code: 'name_reserved', detail: { name: 'gadgets', flat_creation: 'refused' } });
+    expect(await s.h.registry.getPackage('gadgets')).toBeUndefined();
+    expect(ciTokens(s)).toEqual([]);
+    await expect(s.oidc.exchange({ jwt, packages: widgets })).resolves.toBeDefined();
+  });
+
+  test('a name another identity owns is still not_owner, ahead of the refusal for a missing name', async () => {
+    const s = setup();
+    await s.h.registry.createPackage({ name: 'widgets', state: 'claimed', created_at: 't', ci_owner: 'gh-repo:999' });
+    await refused(s.oidc.exchange({ jwt: s.jwt(), packages: [{ name: 'gadgets', version: '1.0.0' }, ...widgets] }), 'not_owner', 403);
   });
 });
 
@@ -227,11 +265,13 @@ describe('only the configured identity is trusted, field by field', () => {
 
   test('the good push identity passes', async () => {
     const s = setup();
+    await own(s, 'widgets');
     await expect(s.oidc.exchange({ jwt: s.jwt(), packages: widgets })).resolves.toBeDefined();
   });
 
   test('a publisher that names one event refuses the other (the rule is per row, not hard-wired to push)', async () => {
     const s = setup([{ ...PUBLISHER, events: ['workflow_dispatch'] }]);
+    await own(s, 'widgets');
     await refused(s.oidc.exchange({ jwt: s.jwt({ event_name: 'push' }), packages: widgets }), 'oidc_not_trusted', 403);
     await expect(s.oidc.exchange({ jwt: s.jwt({ event_name: 'workflow_dispatch' }), packages: widgets })).resolves.toBeDefined();
   });
@@ -252,6 +292,7 @@ describe('only the configured identity is trusted, field by field', () => {
 
   test('the form of the request is checked: nothing, too many, duplicates, bad names and versions, both forms at once', async () => {
     const s = setup();
+    await own(s, 'widgets');
     const many = Array.from({ length: 501 }, (_x, i) => ({ name: `pkg_${i}`, version: '1.0.0' }));
     const jwt = s.jwt();
     await refused(s.oidc.exchange({ jwt, packages: [] }), 'invalid_request', 400);
@@ -262,7 +303,6 @@ describe('only the configured identity is trusted, field by field', () => {
     await refused(s.oidc.exchange({ jwt, packages: [null as never] }), 'invalid_name', 400);
     await refused(s.oidc.exchange({ jwt, packages: [{ name: 'widgets', version: 'one' }] }), 'invalid_version', 400);
     await refused(s.oidc.exchange({ jwt, packages: widgets, name: 'widgets', version: '1.0.0' } as never), 'invalid_request', 400);
-    expect(await s.h.registry.getPackage('widgets')).toBeUndefined();
     // none of these spent the token
     await expect(s.oidc.exchange({ jwt, packages: widgets })).resolves.toBeDefined();
   });
@@ -271,7 +311,7 @@ describe('only the configured identity is trusted, field by field', () => {
 describe('the token cannot touch what is outside its scope', () => {
   test('another package, or another version of its own, is scope_missing on begin-upload', async () => {
     const s = setup();
-    await s.h.registry.createPackage({ name: 'gadgets', state: 'claimed', created_at: 't', ci_owner: OWNER }); // also this identity's, but not in this token
+    await own(s, 'gadgets', 'widgets'); // gadgets is also this identity's, but not in this token
     const r = await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
     const other = pkg({ name: 'gadgets', version: '1.0.0' });
     expect(errCode((await s.h.upload(r.token, other)).res)).toBe('scope_missing');
@@ -282,6 +322,7 @@ describe('the token cannot touch what is outside its scope', () => {
 
   test('its publish is read by its own identity\'s tokens and by no other identity, and it yanks only the exact package and version it was minted for', async () => {
     const s = setup();
+    await own(s, 'widgets', 'gadgets');
     const r = await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
     const sameIdentity = await s.oidc.exchange({ jwt: s.jwt(), packages: [{ name: 'gadgets', version: '1.0.0' }] });
     const t = s.h.clock.now();
@@ -387,18 +428,18 @@ describe('the ownership check for a CI token cannot be bypassed', () => {
   });
 });
 
-// The CI exchange and the claim route both create packages, in the registry, by the same conditional write. What these prove: a
-// name goes to whoever gets there first, in either order, and the loser changes nothing; both leave the package `claimed`;
-// the per-actor claim limit counts user claims only. What they do not: the two racing at once (the conditional write is
-// what decides, and claim.test.ts races two claims).
-describe('the CI exchange and the claim route share one namespace', () => {
+// A package owned by a CI identity (made before /api/v1 stopped creating) and the claim route share the registry's names. What
+// these prove: a name belongs to whoever has it, and the loser changes nothing; both leave the package `claimed`; the per-actor
+// claim limit counts user claims only. What they do not: the two racing at once (claim.test.ts races two claims).
+describe('a CI-owned package and the claim route share one namespace', () => {
   const userClaim = async (s: Setup, name: string, id = 7) => {
     await s.h.authStore.upsertUser(id, `user${id}`, s.h.clock.now().toISOString());
     return s.h.call('POST', `/api/v1/packages/${name}/claim`, await s.h.token(id, [], ['publish']), undefined);
   };
 
-  test('both write state claimed: a CI-created and a user-claimed package look alike except for who owns them', async () => {
+  test('both are state claimed: a CI-owned and a user-claimed package look alike except for who owns them', async () => {
     const s = setup();
+    await own(s, 'widgets');
     await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
     expect((await userClaim(s, 'gadgets')).statusCode).toBe(201);
     const ci = await s.h.registry.getPackage('widgets');
@@ -418,17 +459,19 @@ describe('the CI exchange and the claim route share one namespace', () => {
     expect((await s.h.registry.listOwners('widgets')).map((o) => o.github_id)).toEqual([7]);
     expect((await s.h.registry.listAudit('widgets')).map((a) => a.action)).toEqual(['claim']);
     expect(ciTokens(s)).toEqual([]);
+    await own(s, 'free_name');
     await expect(s.oidc.exchange({ jwt, packages: [{ name: 'free_name', version: '1.0.0' }] })).resolves.toBeDefined(); // not spent
   });
 
-  test('a name CI created is refused for a user claim (409 name_taken): the CI identity still owns it and no owner row appears', async () => {
+  test('a name a CI identity owns is refused for a user claim (409 name_taken): the CI identity still owns it and no owner row appears', async () => {
     const s = setup();
+    await own(s, 'widgets');
     await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
     const res = await userClaim(s, 'widgets');
     expect([res.statusCode, errCode(res)]).toEqual([409, 'name_taken']);
     expect((await s.h.registry.getPackage('widgets'))?.ci_owner).toBe(OWNER);
     expect(await s.h.registry.listOwners('widgets')).toEqual([]);
-    expect((await s.h.registry.listAudit('widgets')).map((a) => a.action)).toEqual(['ci_claim']);
+    expect(await s.h.registry.listAudit('widgets')).toEqual([]);
   });
 
   test('the claim limit counts user claims only: CI exchanges neither spend it nor are refused by it', async () => {
@@ -436,8 +479,9 @@ describe('the CI exchange and the claim route share one namespace', () => {
     s.h.config.claimRatePerAccountPerDay = 1;
     s.h.config.claimRatePerTokenPerDay = 1;
     s.h.build();
+    await own(s, 'alpha', 'bravo', 'charlie');
     for (const name of ['alpha', 'bravo', 'charlie']) {
-      await s.oidc.exchange({ jwt: s.jwt(), packages: [{ name, version: '1.0.0' }] }); // three creations against a limit of one
+      await s.oidc.exchange({ jwt: s.jwt(), packages: [{ name, version: '1.0.0' }] }); // three exchanges against a limit of one
     }
     expect(s.h.publishes.counters.size).toBe(0);
     expect((await userClaim(s, 'delta')).statusCode).toBe(201); // the whole quota is still there
