@@ -164,8 +164,9 @@ fn editText(arena: Allocator, cmd: Command, src: []const u8, dev: bool, name: []
 /// edited manifest, and only then write mopm.toml and mopm.lock.
 pub fn edit(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
     const spec = splitSpec(args.spec);
-    // A bare name is refused; the registry is asked only for the names to suggest, and nothing is written.
-    if (core.names.split(spec.name) == null) {
+    // A bare name is refused; `add` asks the registry only for the names to suggest, and nothing is written. `remove`
+    // asks nothing: the refusal below says how to name the entry to remove.
+    if (cmd == .add and core.names.split(spec.name) == null) {
         err(cmd, "{s}\n", .{try bareRefusal(arena, @import("group_io.zig").realNet(), args.registry, cli_version, spec.name)});
         return 1;
     }
@@ -525,7 +526,7 @@ test "the search asks the v2 registry for the bare name with no token, and reads
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    var fake = FakeNet{ .body = "{\"packages\":[{\"name\":\"alice/json\",\"latest\":\"0.1.0\",\"description\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"name\":\"bob/json_x\"}],\"next_cursor\":null}" };
+    var fake = FakeNet{ .body = "{\"packages\":[{\"name\":\"alice/json\",\"latest\":\"0.1.0\",\"description\":null,\"updated_at\":\"2026-10-01T00:00:00Z\"},{\"name\":\"bob/json_x\"}],\"next_cursor\":null}" };
     const got = (try searchNames(a, fake.net(), "http://127.0.0.1:1/api/v2", "json")).?;
     try std.testing.expectEqual(@as(usize, 2), got.len);
     try std.testing.expectEqualStrings("alice/json", got[0]);

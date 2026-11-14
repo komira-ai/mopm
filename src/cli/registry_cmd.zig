@@ -425,7 +425,7 @@ test "login stores the user namespace equal to the handle in lower case when the
     defer tmp.cleanup();
     const dir = try tmp.dir.realpathAlloc(a, ".");
     const r = try approvedLogin(a, dir, me_step(
-        \{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"old-ada","kind":"user","role":"owner","packages":[]},{"namespace":"acme","kind":"org","role":"admin","packages":["acme/tool"]},{"namespace":"ada","kind":"user","role":"owner","packages":[]}]}
+        \\{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"old-ada","kind":"user","role":"owner","packages":[]},{"namespace":"acme","kind":"org","role":"admin","packages":["acme/tool"]},{"namespace":"ada","kind":"user","role":"owner","packages":[]}]}
     ));
     try std.testing.expectEqual(@as(u8, 0), r.code);
     try std.testing.expectEqualStrings("ada", r.entry.namespace.?);
@@ -442,7 +442,7 @@ test "login stores the first user namespace when none equals the handle, and nev
     defer tmp.cleanup();
     const dir = try tmp.dir.realpathAlloc(a, ".");
     const r = try approvedLogin(a, dir, me_step(
-        \{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"acme","kind":"org","role":"admin","packages":[]},{"namespace":"old-ada","kind":"user","role":"owner","packages":[]}]}
+        \\{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"acme","kind":"org","role":"admin","packages":[]},{"namespace":"old-ada","kind":"user","role":"owner","packages":[]}]}
     ));
     try std.testing.expectEqualStrings("old-ada", r.entry.namespace.?);
     try std.testing.expect(std.mem.endsWith(u8, r.con.out.items, "Logged in to beta as Ada; your namespace is old-ada.\n"));
@@ -456,7 +456,7 @@ test "login stores no namespace and says so when the account has only organizati
     defer tmp.cleanup();
     const dir = try tmp.dir.realpathAlloc(a, ".");
     const r = try approvedLogin(a, dir, me_step(
-        \{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"acme","kind":"org","role":"member","packages":[]}]}
+        \\{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"acme","kind":"org","role":"member","packages":[]}]}
     ));
     try std.testing.expectEqual(@as(u8, 0), r.code);
     try std.testing.expect(r.entry.namespace == null);
@@ -471,7 +471,7 @@ test "login with an unavailable_namespace stores none and says why on standard o
     defer tmp.cleanup();
     const dir = try tmp.dir.realpathAlloc(a, ".");
     const r = try approvedLogin(a, dir, me_step(
-        \{"github_id":7,"handle":"Ada","namespaces":[],"unavailable_namespace":"Ada"}
+        \\{"github_id":7,"handle":"Ada","namespaces":[],"unavailable_namespace":"Ada"}
     ));
     try std.testing.expectEqual(@as(u8, 0), r.code);
     try std.testing.expect(r.entry.namespace == null);
@@ -537,7 +537,7 @@ test "whoami lists each namespace with its kind, role and packages in the order 
     const dir = try tmp.dir.realpathAlloc(a, ".");
     try loggedIn(a, dir);
     var script = gt.Script{ .steps = &.{me_step(
-        \{"github_id":7,"handle":"ada","namespaces":[{"namespace":"ada","kind":"user","role":"owner","packages":["ada/one","ada/two"]},{"namespace":"acme","kind":"org","role":"admin","packages":[]},{"namespace":"zeta","kind":"org","role":"member","packages":["zeta/z"]}]}
+        \\{"github_id":7,"handle":"ada","namespaces":[{"namespace":"ada","kind":"user","role":"owner","packages":["ada/one","ada/two"]},{"namespace":"acme","kind":"org","role":"admin","packages":[]},{"namespace":"zeta","kind":"org","role":"member","packages":["zeta/z"]}]}
     )}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
     try std.testing.expectEqual(@as(u8, 0), try whoami(loginSession(a, dir), script.net(), &con));
     try std.testing.expect(script.mismatch == null);
@@ -558,7 +558,7 @@ test "whoami prints no namespaces section for an account with none, and says its
     const dir = try tmp.dir.realpathAlloc(a, ".");
     try loggedIn(a, dir);
     var script = gt.Script{ .steps = &.{me_step(
-        \{"github_id":9,"handle":"ada","namespaces":[],"unavailable_namespace":"Ada"}
+        \\{"github_id":9,"handle":"ada","namespaces":[],"unavailable_namespace":"Ada"}
     )}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
     try std.testing.expectEqual(@as(u8, 0), try whoami(loginSession(a, dir), script.net(), &con));
     try std.testing.expectEqualStrings("ada (GitHub id 9) on beta\nyour GitHub login 'Ada' is not a namespace on beta (another account holds it, it is reserved, or it is not a valid namespace)\n", con.out.items);

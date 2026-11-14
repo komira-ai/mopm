@@ -609,7 +609,7 @@ would send a readme of 38 bytes
 dry run: nothing was sent
 ```
 
-Without `--dry-run`, `mopm publish` logs in with `$MOPM_TOKEN` or the login that `mopm login` stored, uploads each file, commits, and waits for the registry to say `published` or `rejected`. A published version is immutable and its number can never be reused. `pack` and `publish` refuse, before any request, a package that cannot be published as it is, each with exit status 1:
+Without `--dry-run`, `mopm publish` logs in with `$MOPM_TOKEN` or the login that `mopm login` stored, creates the package (`PUT /packages/<namespace>/<name>`, which prints `created <full name> on <registry>` when it is new), uploads each file, commits, and waits for the registry to say `published` or `rejected`. A published version is immutable and its number can never be reused. `pack` and `publish` refuse, before any request, a package that cannot be published as it is, each with exit status 1:
 
 | change | message |
 |---|---|

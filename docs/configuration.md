@@ -241,17 +241,19 @@ mopm keeps one file for the user, the login, and takes the rest from flags and f
 
 ### credentials.json
 
-`credentials.json` is in the config directory: the one `--config-dir <dir>` names (on `login`, `logout`, `whoami` and `publish`), else `$XDG_CONFIG_HOME/mopm` when `XDG_CONFIG_HOME` is set and not empty, else `$HOME/.config/mopm`. It is written by `mopm login`, to a temporary name with mode 0600 and then renamed, so it is never readable by others; `mopm logout` removes the entry. mopm never prints the token. The file is a JSON object from a registry's API URL (the `api_url` of the registry's index configuration, which is how `--registry` is told apart) to its entry:
+`credentials.json` is in the config directory: the one `--config-dir <dir>` names (on `login`, `logout`, `whoami`, `publish`, `new` and `init`), else `$XDG_CONFIG_HOME/mopm` when `XDG_CONFIG_HOME` is set and not empty, else `$HOME/.config/mopm`. It is written by `mopm login`, to a temporary name with mode 0600 and then renamed, so it is never readable by others; `mopm logout` removes the entry. mopm never prints the token. The file is a JSON object from a registry's API URL (the `api_url` of the registry's index configuration, which is how `--registry` is told apart) to its entry:
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
 | `token` | string | none, required | the session token of `mopm login` | `"token": "<token>"` |
 | `handle` | string | empty | the account name | `"handle": "octocat"` |
+| `namespace` | string | left out | the user namespace the registry gave this login, which `mopm login` reads from `GET <api_v2_url>/me` (the namespace of kind `user` equal to the handle in lower case, else the first of kind `user`); `mopm new` and `mopm init` default to it, and a refusal of a name without a namespace names it. Left out when the registry has none for the account or could not be asked; `mopm whoami` shows it | `"namespace": "octocat"` |
 
 ```json
 {
   "http://127.0.0.1:8080/api/v1": {
     "handle": "octocat",
+    "namespace": "octocat",
     "token": "<token>"
   }
 }
@@ -259,7 +261,7 @@ mopm keeps one file for the user, the login, and takes the rest from flags and f
 
 ### Registries
 
-`--registry` takes `prod` (the default, `https://api.mopm.dev`), `gamma` (`https://api.gamma.mopm.dev`), `beta` (`https://api.beta.mopm.dev`) or a URL. A URL is `https://`, or `http://` only to `127.0.0.1`, `[::1]` or `localhost` with a port, for a local registry. It is accepted by `login`, `logout`, `whoami`, `publish`, `lock`, `update`, `sync`, `add` and `remove`. A project with no registry dependency is locked without contacting the registry at all, and the channel its lock lists is `https://conda.mopm.dev/`.
+`--registry` takes `prod` (the default, `https://api.mopm.dev`), `gamma` (`https://api.gamma.mopm.dev`), `beta` (`https://api.beta.mopm.dev`) or a URL. A URL is `https://`, or `http://` only to `127.0.0.1`, `[::1]` or `localhost` with a port, for a local registry. It is accepted by `login`, `logout`, `whoami`, `publish`, `new`, `init`, `lock`, `update`, `sync`, `add` and `remove`. A project with no registry dependency is locked without contacting the registry at all, and the channel its lock lists is `https://conda.mopm.dev/`.
 
 The registry's `config.json` must list index version 2 in `index_versions` and give an `api_v2_url`; otherwise mopm stops with `the registry at <url> serves no namespaced packages (index version 2); it is older than this mopm`. mopm reads the index at `/index/v2/<aa>/<bb>/<namespace>/<name>` and sends every request that names a package (publish, groups, yank, the CI identity exchange) to `api_v2_url`, with `/packages/<namespace>/<name>/...`. `login`, `logout`, `whoami` and tokens use the registry's `api_url`.
 

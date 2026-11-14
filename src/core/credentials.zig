@@ -86,6 +86,24 @@ pub fn load(arena: Allocator, dir_path: []const u8, api_url: []const u8) !?Entry
     return .{ .token = token, .handle = handle, .namespace = namespace };
 }
 
+/// Whether any entry holds a namespace; false when there is no file or it cannot be read. A command that needs the
+/// stored namespace asks this first, so it reads no registry configuration when no login has stored one.
+pub fn anyNamespace(arena: Allocator, dir_path: []const u8) bool {
+    const all = readAll(arena, dir_path) catch return false;
+    var it = all.iterator();
+    while (it.next()) |kv| {
+        const e = switch (kv.value_ptr.*) {
+            .object => |o| o,
+            else => continue,
+        };
+        switch (e.get("namespace") orelse continue) {
+            .string => |n| if (n.len > 0) return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
 pub fn store(arena: Allocator, dir_path: []const u8, api_url: []const u8, entry: Entry) !void {
     var all = try readAll(arena, dir_path);
     var e = std.json.ObjectMap.init(arena);
@@ -157,4 +175,23 @@ test "an entry from before namespaces, or with a namespace that is not text or i
         try std.testing.expect(got.namespace == null);
     }
     try std.testing.expectEqualStrings("t2", (try load(a, dir, "https://b.test/api/v1")).?.token);
+}
+
+test "anyNamespace: no file, entries without one, and an empty one are none; one stored namespace is enough" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    try std.testing.expect(!anyNamespace(a, dir));
+    try std.testing.expect(!anyNamespace(a, try std.fs.path.join(a, &.{ dir, "missing" })));
+    try store(a, dir, "https://a.test/api/v1", .{ .token = "t1", .handle = "h1" });
+    try std.testing.expect(!anyNamespace(a, dir));
+    try store(a, dir, "https://b.test/api/v1", .{ .token = "t2", .handle = "h2", .namespace = "" });
+    try std.testing.expect(!anyNamespace(a, dir));
+    try store(a, dir, "https://c.test/api/v1", .{ .token = "t3", .handle = "h3", .namespace = "h3" });
+    try std.testing.expect(anyNamespace(a, dir));
+    try tmp.dir.writeFile(file_name, "not json");
+    try std.testing.expect(!anyNamespace(a, dir));
 }

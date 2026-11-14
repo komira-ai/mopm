@@ -1,10 +1,10 @@
 # Owner namespaces (proposed)
 
-**Proposed, not implemented.** No released mopm or registry reads or serves anything on this page, and no test reads
+**Proposed, not implemented.** No released mopm or registry reads or serves anything left on this page, and no test reads
 it (`//:contract` checks only `spec/*.schema.json` and `spec/api/openapi.yaml`). It is the spec text that
-`docs/design/namespaces.md` implies, one section per live spec it changes. Each section moves into its live file (and
-the schema fragments into the `.schema.json` files) in the task that implements it; until then the live files describe
-what the code does.
+`docs/design/namespaces.md` implies. What the command line does is live in the specs and documents named under "Live
+already"; only the names the registry also takes ("Names (all specs)", which the live specs repeat for the client) and the registry's API remain here, and they move into `spec/api/openapi.yaml` in the registry's task
+that serves it.
 
 ## Names (all specs)
 
@@ -36,22 +36,17 @@ what the code does.
 - Reserved namespaces, never created: those matching `^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$`
   (the shape of a conda subdir), and `index`, `quarantine`, `native-mirror`.
 
-## mopm-toml.md
-
-The names of `[package]`, `[dependencies]` and `[dev-dependencies]`, the refusal of a name without a namespace, the
-import-name rules and the library directory rule are live in `spec/mopm-toml.md` ("Names", "`[targets]`"). What is left:
-
-- In the refusal of a name without a namespace, mopm puts the user namespace stored by `mopm login` in place of
-  `<namespace>` when it has one.
-
-The rule of one package per import name in a closure is live in `spec/mopm-toml.md` ("Rules").
-
 ## Live already
 
-The index (version 2, `config.json`'s `index_versions` and `api_v2_url`), the channel (one per namespace, conda name
+The names of `[package]`, `[dependencies]` and `[dev-dependencies]`, the refusal of a name without a namespace (worded with
+the stored namespace for `[package] name`), the import-name rules, the library directory rule and the rule of one package
+per import name in a closure are live in `spec/mopm-toml.md` ("Names", "`[targets]`", "Rules"). The index (version 2,
+`config.json`'s `index_versions` and `api_v2_url`), the channel (one per namespace, conda name
 `mojo-<namespace>.<name>`), package metadata schema 2, the lock (`lock_version` 3), the unit graph (format 6) and the
-staged set's `plan.json` version 2 are live in `spec/index.md`, `spec/channel.md`, `spec/package-metadata.schema.json`,
-`spec/lock.md`, `spec/unit-graph.md` and `spec/staged-set.md`, with their schemas.
+staged set's `plan.json` version 2, its `--artifacts` layout and the creation of each package before a new group are live in
+`spec/index.md`, `spec/channel.md`, `spec/package-metadata.schema.json`, `spec/lock.md`, `spec/unit-graph.md` and
+`spec/staged-set.md`, with their schemas. The optional `namespace` of a registry's entry in `credentials.json` is described in
+`docs/configuration.md`.
 
 ## api/openapi.yaml
 
@@ -138,18 +133,6 @@ the message `'{name}' is a module of the Mojo standard library (std.{name}).` an
 `name_reserved` with the hint "package names are in namespaces now; update mopm". Every other v1 operation is
 unchanged. Flat names that remain after the deletion (on mopm.dev, the `kci_*` packages) are served by v1 and the
 version 1 index as before.
-
-## staged-set.md
-
-The staged set's `plan.json` version 2 is live in `spec/staged-set.md`. What is left:
-
-- `mopm stage --artifacts <dir>`: `<dir>/<subdir>/<namespace>/<name>.mojoc`, natives at
-  `<dir>/<subdir>/<namespace>/<name>.native/lib<id>.a`.
-
-## Credentials
-
-`<config dir>/credentials.json` gains one optional key per registry, `namespace`: the user namespace `mopm login`
-received. `mopm new` and `mopm init` default to it.
 
 ## Unchanged
 
