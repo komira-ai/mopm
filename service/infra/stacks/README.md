@@ -42,6 +42,7 @@ Account ids come from the CDK environment at deploy time and are never committed
   A login also makes the account's user namespace in the `namespaces` table (keyed by the namespace, with a
   `by_github_id` index; created together with its index, so it is one deploy): a PutItem conditional on the key being
   absent, so the role can create a namespace and never remove one or change its GitHub id (docs/design/namespaces.md).
-  Binding a new GitHub App installation to an organization namespace is a PutItem conditional on the GitHub id and kind
-  it read. A passed organization membership check is kept in `membership_passes` (keyed by organization and account
-  id, TTL `expires_at`) for 5 minutes; the code decides expiry, TTL removes the rows later.
+  Registering an organization namespace and every member change are TransactWriteItems of PutItems: the namespace row
+  (conditional on its member revision) and the member row in `namespace_members` (keyed by namespace and member id, with
+  a `by_member` index). A removed member is a row written back as removed, since the tables deny DeleteItem. Nothing asks
+  GitHub about an organization after the registration, so the role reads no GitHub App secret.

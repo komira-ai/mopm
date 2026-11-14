@@ -71,6 +71,42 @@ pub const Nx = struct {
         }
     }
 
+    /// A GitHub organization `login` with `members` (JSON, as `/_fake/org` takes them).
+    pub fn org(nx: *Nx, login: []const u8, members: []const u8) !void {
+        try nx.control("/_fake/org", try nx.fmt("{{\"login\":\"{s}\",\"members\":{s}}}", .{ login, members }));
+    }
+
+    /// Starts the registration of `namespace` as `token`, answers the device flow as `approver` (the account that started
+    /// it when null) and polls once; the poll's answer.
+    pub fn register(nx: *Nx, token: []const u8, namespace: []const u8, approver: ?[]const u8) !Reply {
+        const started = try nx.call(.POST, "/api/v2/namespaces", try nx.fmt("{{\"namespace\":\"{s}\"}}", .{namespace}), token);
+        try expectStatus(started, 202);
+        const code = str(started.value, "user_code");
+        const answer = if (approver) |h|
+            try nx.fmt("{{\"user_code\":\"{s}\",\"decision\":\"approve\",\"handle\":\"{s}\"}}", .{ code, h })
+        else
+            try nx.fmt("{{\"user_code\":\"{s}\",\"decision\":\"approve\"}}", .{code});
+        try nx.control("/_fake/device", answer);
+        return nx.call(.POST, "/api/v2/namespaces/poll", try nx.fmt("{{\"device_code\":\"{s}\"}}", .{str(started.value, "device_code")}), token);
+    }
+
+    /// `register` by the account of `token`, which must end in `created`.
+    pub fn registered(nx: *Nx, token: []const u8, namespace: []const u8) !void {
+        const r = try nx.register(token, namespace, null);
+        try expectStatus(r, 200);
+        try std.testing.expectEqualStrings("created", str(r.value, "status"));
+    }
+
+    /// `PUT /namespaces/{namespace}/members/{user}` with `role`.
+    pub fn setMember(nx: *Nx, token: []const u8, namespace: []const u8, user: []const u8, role: []const u8) !Reply {
+        return nx.call(.PUT, try nx.fmt("/api/v2/namespaces/{s}/members/{s}", .{ namespace, user }), try nx.fmt("{{\"role\":\"{s}\"}}", .{role}), token);
+    }
+
+    /// `DELETE /namespaces/{namespace}/members/{user}`.
+    pub fn removeMember(nx: *Nx, token: []const u8, namespace: []const u8, user: []const u8) !Reply {
+        return nx.call(.DELETE, try nx.fmt("/api/v2/namespaces/{s}/members/{s}", .{ namespace, user }), "", token);
+    }
+
     /// An API token of the account `session` belongs to, with `scopes` (JSON) for `packages` (JSON), made under v2.
     pub fn apiToken(nx: *Nx, session_token: []const u8, scopes: []const u8, packages: []const u8) ![]const u8 {
         const body = try nx.fmt("{{\"name\":\"t\",\"scopes\":{s},\"packages\":{s},\"expires_in_days\":7}}", .{ scopes, packages });
@@ -151,7 +187,7 @@ test "a login makes the user namespace of the lower-cased login; /api/v2/me list
     try expectStatus(ns, 200);
     try std.testing.expectEqualStrings("user", str(ns.value, "kind"));
     try std.testing.expectEqualStrings("Alice-X", str(ns.value, "login"));
-    try std.testing.expect(!ns.value.object.get("frozen").?.bool);
+    try std.testing.expect(ns.value.object.get("frozen") == null);
 }
 
 test "a login outside the grammar, reserved, or held by another account gets no namespace, and /me says which login" {
@@ -222,7 +258,23 @@ test "PUT creates a package in a namespace the caller can write: 201, then 200; 
     try expectCode(try nx.call(.GET, "/api/v2/namespaces/No-Body", "", null), 400, "invalid_namespace");
 }
 
-test "an organization namespace: created by an active admin with the App installed, written by active members only" {
+fn messageOf(r: Reply) []const u8 {
+    return str(r.value.object.get("error").?, "message");
+}
+
+/// The members of `namespace` as `<user>:<handle>:<role>` lines, as `token` reads them.
+fn membersOf(nx: *Nx, token: []const u8, namespace: []const u8) ![]const u8 {
+    const r = try nx.call(.GET, try nx.fmt("/api/v2/namespaces/{s}/members", .{namespace}), "", token);
+    try expectStatus(r, 200);
+    try std.testing.expectEqualStrings(namespace, str(r.value, "namespace"));
+    var out = std.ArrayList(u8).init(nx.life.allocator());
+    for (r.value.object.get("members").?.array.items) |m| {
+        try out.writer().print("{s}:{s}:{s}\n", .{ str(m, "user"), str(m, "handle"), str(m, "role") });
+    }
+    return out.items;
+}
+
+test "registering an organization namespace: only an active admin whose own account approves creates it, and becomes its owner" {
     var nx: Nx = undefined;
     try nx.setup();
     defer nx.deinit();
@@ -230,81 +282,245 @@ test "an organization namespace: created by an active admin with the App install
     const bob = try nx.session("bob");
     const carol = try nx.session("carol");
     const dave = try nx.session("dave");
-    const body = "{\"namespace\":\"komira-ai\"}";
-    // No such organization, then one without the App.
-    try expectCode(try nx.call(.POST, "/api/v2/namespaces", body, alice), 403, "namespace_unverified");
-    try nx.control("/_fake/org", "{\"login\":\"komira-ai\",\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"},{\"handle\":\"bob\",\"role\":\"member\"},{\"handle\":\"carol\",\"role\":\"member\",\"state\":\"pending\"},{\"handle\":\"dave\",\"role\":\"billing_manager\"}]}");
-    const no_app = try nx.call(.POST, "/api/v2/namespaces", body, alice);
-    try expectCode(no_app, 403, "namespace_unverified");
-    try std.testing.expectEqualStrings("'komira-ai' cannot be verified on GitHub: the mopm registry GitHub App is not installed on the organization.", str(no_app.value.object.get("error").?, "message"));
-    try nx.control("/_fake/org", "{\"login\":\"komira-ai\",\"installed\":true}");
-    // A pending admin and a non-member may not create it either.
-    _ = try nx.session("erin");
-    try nx.control("/_fake/org", "{\"login\":\"komira-ai\",\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"},{\"handle\":\"bob\",\"role\":\"member\"},{\"handle\":\"carol\",\"role\":\"admin\",\"state\":\"pending\"},{\"handle\":\"dave\",\"role\":\"billing_manager\"}]}");
-    try expectCode(try nx.call(.POST, "/api/v2/namespaces", body, carol), 403, "not_namespace_member");
-    try expectCode(try nx.call(.POST, "/api/v2/namespaces", body, try nx.session("erin")), 403, "not_namespace_member");
-    // A member who is not an admin may not create it; a stale session may not either; reserved and bad names are refused.
-    try expectCode(try nx.call(.POST, "/api/v2/namespaces", body, bob), 403, "not_namespace_member");
+    const erin = try nx.session("erin");
+    try nx.org("komira-ai", "[{\"handle\":\"alice\",\"role\":\"admin\"},{\"handle\":\"bob\",\"role\":\"member\"},{\"handle\":\"carol\",\"role\":\"admin\",\"state\":\"pending\"},{\"handle\":\"dave\",\"role\":\"billing_manager\"}]");
+
+    // Refused before GitHub is asked: a stale session, a reserved or malformed string, a string some account holds.
     const stale = try nx.call(.POST, "/_fake/session", "{\"handle\":\"alice\",\"fresh\":false}", null);
-    try expectCode(try nx.call(.POST, "/api/v2/namespaces", body, str(stale.value, "token")), 401, "stale_session");
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"komira-ai\"}", str(stale.value, "token")), 401, "stale_session");
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"komira-ai\"}", null), 401, "token_missing");
     try expectCode(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"linux-64\"}", alice), 403, "namespace_reserved");
     try expectCode(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"Komira-AI\"}", alice), 400, "invalid_namespace");
     try expectCode(try nx.call(.POST, "/api/v2/namespaces", "{}", alice), 400, "invalid_request");
+    const taken = try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"bob\"}", alice);
+    try expectCode(taken, 409, "namespace_taken");
+    try std.testing.expectEqualStrings("'bob' is taken.", messageOf(taken));
 
-    const made = try nx.call(.POST, "/api/v2/namespaces", body, alice);
-    try expectStatus(made, 201);
-    try std.testing.expectEqualStrings("org", str(made.value, "kind"));
-    try std.testing.expectEqualStrings("komira-ai", str(made.value, "login"));
-    try std.testing.expectEqualStrings("alice:user:owner:\nkomira-ai:org:admin:\n", try namespacesOf(&nx, alice));
+    // Each refusal of GitHub's answer is not_org_admin, with the same message, and creates nothing.
+    const not_admin = "You are not an active admin of the GitHub organization 'komira-ai'.";
+    for ([_][]const u8{ bob, carol, dave, erin }) |who| {
+        const r = try nx.register(who, "komira-ai", null);
+        try expectCode(r, 403, "not_org_admin");
+        try std.testing.expectEqualStrings(not_admin, messageOf(r));
+    }
+    try expectCode(try nx.register(alice, "ghost-org", null), 403, "not_org_admin");
+    try std.testing.expect(nx.state.namespaceByName("komira-ai") == null);
 
-    // Active admins and members write; pending and billing managers do not, and are not listed by /me.
-    try expectStatus(try nx.call(.PUT, "/api/v2/packages/komira-ai/json", "", bob), 201);
-    try expectCode(try nx.call(.PUT, "/api/v2/packages/komira-ai/yaml", "", carol), 403, "not_namespace_member");
-    try expectCode(try nx.call(.PUT, "/api/v2/packages/komira-ai/yaml", "", dave), 403, "not_namespace_member");
-    try std.testing.expectEqualStrings("bob:user:owner:\nkomira-ai:org:member:komira-ai/json\n", try namespacesOf(&nx, bob));
-    try std.testing.expectEqualStrings("carol:user:owner:\n", try namespacesOf(&nx, carol));
+    // An admin approving with another GitHub account is refused, whatever that account is in the organization.
+    const mismatch = try nx.register(alice, "komira-ai", "bob");
+    try expectCode(mismatch, 403, "github_account_mismatch");
+    try std.testing.expectEqualStrings("The GitHub account that approved is not the one logged in to mopm.", messageOf(mismatch));
+    try std.testing.expect(nx.state.namespaceByName("komira-ai") == null);
 
-    // A token is checked when it is used: removed from the organization, bob's token stops working.
-    const bob_token = try nx.apiToken(bob, "[\"publish\"]", "[\"komira-ai/json\"]");
-    try nx.control("/_fake/org", "{\"login\":\"komira-ai\",\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"}]}");
-    try expectCode(try nx.call(.PUT, "/api/v2/packages/komira-ai/json", "", bob_token), 403, "not_namespace_member");
+    // An organization renamed away from the string: the old string is refused, the new login registers.
+    try nx.org("old-name", "[{\"handle\":\"alice\",\"role\":\"admin\"}]");
+    try nx.control("/_fake/rename", "{\"login\":\"old-name\",\"to\":\"new-name\"}");
+    try expectCode(try nx.register(alice, "old-name", null), 403, "not_org_admin");
+    try nx.registered(alice, "new-name");
+    try std.testing.expectEqualStrings("org", @tagName(nx.state.namespaceByName("new-name").?.kind));
 
-    // The organization renamed keeps writing; its namespace keeps its name and shows the new login.
-    try nx.control("/_fake/rename", "{\"login\":\"komira-ai\",\"to\":\"komira\"}");
-    try expectStatus(try nx.call(.PUT, "/api/v2/packages/komira-ai/yaml", "", alice), 201);
-    try std.testing.expectEqualStrings("komira", str((try nx.call(.GET, "/api/v2/namespaces/komira-ai", "", null)).value, "login"));
-    try nx.control("/_fake/rename", "{\"login\":\"komira\",\"to\":\"komira-ai\"}");
+    const made = try nx.register(alice, "komira-ai", null);
+    try expectStatus(made, 200);
+    try std.testing.expectEqualStrings("created", str(made.value, "status"));
+    const info = made.value.object.get("namespace").?;
+    try std.testing.expectEqualStrings("komira-ai", str(info, "namespace"));
+    try std.testing.expectEqualStrings("org", str(info, "kind"));
+    try std.testing.expectEqualStrings("komira-ai", str(info, "login"));
+    try std.testing.expectEqual(nx.state.orgByLogin("komira-ai").?.github_id, @as(u64, @intCast(info.object.get("github_id").?.integer)));
+    try std.testing.expect(info.object.get("frozen") == null);
+    try std.testing.expectEqualStrings("alice:user:owner:\nkomira-ai:org:owner:\nnew-name:org:owner:\n", try namespacesOf(&nx, alice));
+    try std.testing.expectEqualStrings("alice:alice:owner\n", try membersOf(&nx, alice, "komira-ai"));
+    const got = try nx.call(.GET, "/api/v2/namespaces/komira-ai", "", null);
+    try std.testing.expectEqualStrings("org", str(got.value, "kind"));
 
-    // The App uninstalled: the namespace is frozen, reads work, writes are refused; installing it again is not enough until
-    // an admin binds the new installation.
-    try nx.control("/_fake/org", "{\"login\":\"komira-ai\",\"installed\":false}");
-    const frozen = try nx.call(.GET, "/api/v2/namespaces/komira-ai", "", null);
-    try std.testing.expect(frozen.value.object.get("frozen").?.bool);
-    try expectStatus(try nx.call(.GET, "/api/v2/packages/komira-ai/json", "", null), 200);
-    const refused = try nx.call(.PUT, "/api/v2/packages/komira-ai/toml", "", alice);
-    try expectCode(refused, 403, "namespace_unverified");
-    try std.testing.expectEqualStrings("'komira-ai' cannot be verified on GitHub: no installation of the mopm registry GitHub App is bound to it.", str(refused.value.object.get("error").?, "message"));
-    try std.testing.expect(std.mem.indexOf(u8, try namespacesOf(&nx, alice), "komira-ai") == null);
-    try nx.control("/_fake/org", "{\"login\":\"komira-ai\",\"installed\":true}");
-    try expectCode(try nx.call(.PUT, "/api/v2/packages/komira-ai/toml", "", alice), 403, "namespace_unverified");
-    const again = try nx.call(.POST, "/api/v2/namespaces", body, alice);
-    try expectStatus(again, 200);
-    try std.testing.expect(!again.value.object.get("frozen").?.bool);
-    try expectStatus(try nx.call(.PUT, "/api/v2/packages/komira-ai/toml", "", alice), 201);
+    // Once registered the string is taken, and GitHub is not asked again: with the organization emptied of members,
+    // the owner still writes.
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"komira-ai\"}", alice), 409, "namespace_taken");
+    try nx.org("komira-ai", "[]");
+    try expectStatus(try nx.call(.PUT, "/api/v2/packages/komira-ai/json", "", alice), 201);
 }
 
-test "an organization that takes a login another account's namespace holds is refused that namespace" {
+test "an account with no user namespace cannot start registering an organization namespace: user_not_found, GitHub not asked" {
+    var nx: Nx = undefined;
+    try nx.setup();
+    defer nx.deinit();
+    const alice = try nx.session("alice");
+    const odd = try nx.session("Enterprise_Login");
+    try nx.org("komira-ai", "[{\"handle\":\"Enterprise_Login\",\"role\":\"admin\"}]");
+    const refused = try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"komira-ai\"}", odd);
+    try expectCode(refused, 404, "user_not_found");
+    try std.testing.expectEqualStrings("There is no mopm user 'enterprise_login'.", messageOf(refused));
+    try std.testing.expectEqual(@as(usize, 0), nx.state.logins.items.len);
+    // The string checks come first, and an account with a user namespace is not refused.
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"linux-64\"}", odd), 403, "namespace_reserved");
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"alice\"}", odd), 409, "namespace_taken");
+    try expectStatus(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"komira-ai\"}", alice), 202);
+}
+
+test "the registration's device flow: pending, denied, expired, and a code only its own account polls" {
+    var nx: Nx = undefined;
+    try nx.setup();
+    defer nx.deinit();
+    const alice = try nx.session("alice");
+    const bob = try nx.session("bob");
+    try nx.org("acme", "[{\"handle\":\"alice\",\"role\":\"admin\"}]");
+    const start = "{\"namespace\":\"acme\"}";
+
+    const started = try nx.call(.POST, "/api/v2/namespaces", start, alice);
+    try expectStatus(started, 202);
+    const code = try nx.fmt("{{\"device_code\":\"{s}\"}}", .{str(started.value, "device_code")});
+    try std.testing.expectEqual(@as(i64, 600), started.value.object.get("expires_in").?.integer);
+    try std.testing.expect(started.value.object.get("interval").?.integer > 0);
+    const pending = try nx.call(.POST, "/api/v2/namespaces/poll", code, alice);
+    try expectStatus(pending, 200);
+    try std.testing.expectEqualStrings("pending", str(pending.value, "status"));
+    try std.testing.expectEqual(started.value.object.get("interval").?.integer, pending.value.object.get("interval").?.integer);
+    // Another account's token, no token, and a code of the login flow are not this registration.
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces/poll", code, bob), 404, "device_code_unknown");
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces/poll", code, null), 401, "token_missing");
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces/poll", "{}", alice), 400, "invalid_request");
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces/poll", "{\"device_code\":\"short\"}", alice), 400, "invalid_request");
+    const login = try nx.call(.POST, "/api/v2/auth/device", "{\"client\":\"test\"}", null);
+    const login_code = try nx.fmt("{{\"device_code\":\"{s}\"}}", .{str(login.value, "device_code")});
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces/poll", login_code, alice), 404, "device_code_unknown");
+    try expectCode(try nx.call(.POST, "/api/v2/auth/device/poll", code, null), 404, "device_code_unknown");
+    // The code stays good for its own account after those.
+    try std.testing.expectEqualStrings("pending", str((try nx.call(.POST, "/api/v2/namespaces/poll", code, alice)).value, "status"));
+
+    // Denied on GitHub: `denied` once, then the row is gone.
+    try nx.control("/_fake/device", try nx.fmt("{{\"user_code\":\"{s}\",\"decision\":\"deny\"}}", .{str(started.value, "user_code")}));
+    try std.testing.expectEqualStrings("denied", str((try nx.call(.POST, "/api/v2/namespaces/poll", code, alice)).value, "status"));
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces/poll", code, alice), 404, "device_code_unknown");
+
+    // Not decided in ten minutes: `expired` once, then the row is gone.
+    const slow = try nx.call(.POST, "/api/v2/namespaces", start, alice);
+    const slow_code = try nx.fmt("{{\"device_code\":\"{s}\"}}", .{str(slow.value, "device_code")});
+    try nx.control("/_fake/clock", "{\"advance_seconds\":601}");
+    try std.testing.expectEqualStrings("expired", str((try nx.call(.POST, "/api/v2/namespaces/poll", slow_code, alice)).value, "status"));
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces/poll", slow_code, alice), 404, "device_code_unknown");
+    try std.testing.expect(nx.state.namespaceByName("acme") == null);
+}
+
+test "a string taken between the start and the approval is namespace_taken, and the approved code answers once" {
+    var nx: Nx = undefined;
+    try nx.setup();
+    defer nx.deinit();
+    const alice = try nx.session("alice");
+    try nx.org("acme", "[{\"handle\":\"alice\",\"role\":\"admin\"}]");
+    const first = try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"acme\"}", alice);
+    const second = try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"acme\"}", alice);
+    for ([_]Reply{ first, second }) |r| {
+        try nx.control("/_fake/device", try nx.fmt("{{\"user_code\":\"{s}\",\"decision\":\"approve\"}}", .{str(r.value, "user_code")}));
+    }
+    const won = try nx.call(.POST, "/api/v2/namespaces/poll", try nx.fmt("{{\"device_code\":\"{s}\"}}", .{str(first.value, "device_code")}), alice);
+    try std.testing.expectEqualStrings("created", str(won.value, "status"));
+    const lost = try nx.call(.POST, "/api/v2/namespaces/poll", try nx.fmt("{{\"device_code\":\"{s}\"}}", .{str(second.value, "device_code")}), alice);
+    try expectCode(lost, 409, "namespace_taken");
+    try std.testing.expectEqualStrings("'acme' is taken.", messageOf(lost));
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces/poll", try nx.fmt("{{\"device_code\":\"{s}\"}}", .{str(first.value, "device_code")}), alice), 404, "device_code_unknown");
+    try std.testing.expectEqual(@as(usize, 2), nx.state.namespaces.items.len);
+}
+
+test "an organization whose login another account's namespace holds cannot register that string" {
     var nx: Nx = undefined;
     try nx.setup();
     defer nx.deinit();
     const alice = try nx.session("alice");
     _ = try nx.session("zed");
     try nx.control("/_fake/rename", "{\"login\":\"zed\",\"to\":\"zed2\"}");
-    try nx.control("/_fake/org", "{\"login\":\"zed\",\"installed\":true,\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"}]}");
-    const r = try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"zed\"}", alice);
-    try expectCode(r, 403, "namespace_unverified");
-    try std.testing.expectEqualStrings("'zed' cannot be verified on GitHub: it belongs to another GitHub account.", str(r.value.object.get("error").?, "message"));
+    try nx.org("zed", "[{\"handle\":\"alice\",\"role\":\"admin\"}]");
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"zed\"}", alice), 409, "namespace_taken");
     try std.testing.expectEqualStrings("user", str((try nx.call(.GET, "/api/v2/namespaces/zed", "", null)).value, "kind"));
+}
+
+test "owners add, change and remove members by mopm username; a removed member is refused at once; the last owner stays" {
+    var nx: Nx = undefined;
+    try nx.setup();
+    defer nx.deinit();
+    const alice = try nx.session("alice");
+    const bob = try nx.session("bob");
+    const carol = try nx.session("carol");
+    _ = try nx.session("Erin-B");
+    _ = try nx.session("zoe");
+    try nx.org("acme", "[{\"handle\":\"alice\",\"role\":\"admin\"}]");
+    try nx.registered(alice, "acme");
+    try std.testing.expectEqualStrings("alice:alice:owner\n", try membersOf(&nx, alice, "acme"));
+
+    // Adding: 201, then 200 for the same role; the answer names the member by username, handle and GitHub id.
+    const added = try nx.setMember(alice, "acme", "bob", "member");
+    try expectStatus(added, 201);
+    try std.testing.expectEqualStrings("bob", str(added.value, "user"));
+    try std.testing.expectEqualStrings("bob", str(added.value, "handle"));
+    try std.testing.expectEqualStrings("member", str(added.value, "role"));
+    try std.testing.expectEqual(nx.state.userByHandle("bob").?.github_id, @as(u64, @intCast(added.value.object.get("github_id").?.integer)));
+    try expectStatus(try nx.setMember(alice, "acme", "bob", "member"), 200);
+    const erin_b = try nx.setMember(alice, "acme", "erin-b", "member");
+    try expectStatus(erin_b, 201);
+    try std.testing.expectEqualStrings("erin-b", str(erin_b.value, "user"));
+    try std.testing.expectEqualStrings("Erin-B", str(erin_b.value, "handle"));
+    try std.testing.expectEqualStrings("alice:alice:owner\nbob:bob:member\nerin-b:Erin-B:member\n", try membersOf(&nx, bob, "acme"));
+
+    // Only an owner manages members; a member is not an owner, a stranger is not a member; bad requests are refused.
+    const by_member = try nx.setMember(bob, "acme", "carol", "member");
+    try expectCode(by_member, 403, "not_namespace_owner");
+    try std.testing.expectEqualStrings("You are not an owner of 'acme'.", messageOf(by_member));
+    try expectCode(try nx.removeMember(bob, "acme", "erin-b"), 403, "not_namespace_owner");
+    try expectCode(try nx.setMember(carol, "acme", "carol", "owner"), 403, "not_namespace_member");
+    try expectCode(try nx.removeMember(carol, "acme", "bob"), 403, "not_namespace_member");
+    try expectCode(try nx.call(.GET, "/api/v2/namespaces/acme/members", "", carol), 403, "not_namespace_member");
+    try expectCode(try nx.call(.GET, "/api/v2/namespaces/acme/members", "", null), 401, "token_missing");
+    const stale = try nx.call(.POST, "/_fake/session", "{\"handle\":\"alice\",\"fresh\":false}", null);
+    try expectCode(try nx.setMember(str(stale.value, "token"), "acme", "carol", "member"), 401, "stale_session");
+    try expectCode(try nx.setMember(alice, "acme", "carol", "admin"), 400, "invalid_request");
+    try expectCode(try nx.call(.PUT, "/api/v2/namespaces/acme/members/carol", "{}", alice), 400, "invalid_request");
+    const nobody = try nx.setMember(alice, "acme", "nobody", "member");
+    try expectCode(nobody, 404, "user_not_found");
+    try std.testing.expectEqualStrings("There is no mopm user 'nobody'.", messageOf(nobody));
+    // An organization's namespace is not a username; a user namespace has no members; a missing namespace is not found.
+    try expectCode(try nx.setMember(alice, "acme", "acme", "member"), 404, "user_not_found");
+    const user_ns = try nx.call(.GET, "/api/v2/namespaces/alice/members", "", alice);
+    try expectCode(user_ns, 400, "invalid_request");
+    try std.testing.expectEqualStrings("The request is not valid: 'alice' is a user namespace; it has no members.", messageOf(user_ns));
+    try expectCode(try nx.setMember(alice, "alice", "bob", "member"), 400, "invalid_request");
+    try expectCode(try nx.setMember(alice, "nope", "bob", "member"), 404, "namespace_not_found");
+    try expectCode(try nx.setMember(alice, "Acme", "bob", "member"), 400, "invalid_namespace");
+
+    // A member writes, and /me lists the namespace with the role `member`.
+    try expectStatus(try nx.call(.PUT, "/api/v2/packages/acme/json", "", bob), 201);
+    try std.testing.expectEqualStrings("bob:user:owner:\nacme:org:member:acme/json\n", try namespacesOf(&nx, bob));
+    const bob_token = try nx.apiToken(bob, "[\"publish\"]", "[\"acme/json\"]");
+    try expectStatus(try nx.call(.PUT, "/api/v2/packages/acme/json", "", bob_token), 200);
+
+    // Removed, bob's session and token are refused at the next request; removing again is member_not_found.
+    try expectStatus(try nx.removeMember(alice, "acme", "bob"), 204);
+    try expectCode(try nx.call(.PUT, "/api/v2/packages/acme/json", "", bob_token), 403, "not_namespace_member");
+    try expectCode(try nx.call(.PUT, "/api/v2/packages/acme/yaml", "", bob), 403, "not_namespace_member");
+    try expectCode(try nx.call(.GET, "/api/v2/namespaces/acme/members", "", bob), 403, "not_namespace_member");
+    try std.testing.expect(std.mem.indexOf(u8, try namespacesOf(&nx, bob), "acme") == null);
+    const again = try nx.removeMember(alice, "acme", "bob");
+    try expectCode(again, 404, "member_not_found");
+    try std.testing.expectEqualStrings("'bob' is not a member of 'acme'.", messageOf(again));
+    try expectCode(try nx.removeMember(alice, "acme", "zoe"), 404, "member_not_found");
+    try expectCode(try nx.removeMember(alice, "acme", "nobody"), 404, "user_not_found");
+    // Added again, bob writes again.
+    try expectStatus(try nx.setMember(alice, "acme", "bob", "member"), 201);
+    try expectStatus(try nx.call(.PUT, "/api/v2/packages/acme/json", "", bob_token), 200);
+
+    // The last owner cannot be demoted or removed; with a second owner either may go, the owner removing themselves too.
+    const demote = try nx.setMember(alice, "acme", "alice", "member");
+    try expectCode(demote, 409, "last_owner");
+    try std.testing.expectEqualStrings("'alice' is the last owner of 'acme'.", messageOf(demote));
+    try expectCode(try nx.removeMember(alice, "acme", "alice"), 409, "last_owner");
+    try std.testing.expectEqualStrings("alice:alice:owner\nbob:bob:member\nerin-b:Erin-B:member\n", try membersOf(&nx, alice, "acme"));
+    try expectStatus(try nx.setMember(alice, "acme", "bob", "owner"), 200);
+    try expectStatus(try nx.setMember(alice, "acme", "alice", "member"), 200);
+    try expectCode(try nx.setMember(alice, "acme", "carol", "member"), 403, "not_namespace_owner");
+    try expectCode(try nx.setMember(bob, "acme", "bob", "member"), 409, "last_owner");
+    try expectStatus(try nx.setMember(bob, "acme", "alice", "owner"), 200);
+    try expectStatus(try nx.removeMember(alice, "acme", "alice"), 204);
+    try std.testing.expectEqualStrings("bob:bob:owner\nerin-b:Erin-B:member\n", try membersOf(&nx, bob, "acme"));
+    try expectCode(try nx.call(.PUT, "/api/v2/packages/acme/other", "", alice), 403, "not_namespace_member");
+    try expectCode(try nx.call(.GET, "/api/v2/namespaces/acme/members", "", alice), 403, "not_namespace_member");
 }
 
 test "v2 API tokens name full names in namespaces the caller can write, created or not" {

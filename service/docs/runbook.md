@@ -267,12 +267,19 @@ addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-
   `/api/v2` exchange then mints a token for full names in that namespace, when the job's `repository_owner_id` is the namespace's GitHub
   id. It creates nothing; `mopm publish` creates a package with `PUT /api/v2/packages/{namespace}/{name}` using that token.
 
+## Organization namespaces
+
+An admin of a GitHub organization registers it with `mopm org create <org>`: a device flow that asks GitHub for `read:org` once, reads
+the caller's membership, and discards the token. It needs no secret and no stage setup. The registrant becomes the namespace's first
+owner; owners manage members with `mopm org add|remove|list`, and a removed member is refused on their next write. Members live in the
+`namespace_members` table (a removal is a row written back as removed, and the table denies DeleteItem); to fix a namespace by hand,
+write that row, never the namespace row's `members_rev`.
+
 ## Creating a package
 
 `PUT /api/v2/packages/{namespace}/{name}` is the only way a package comes to exist (docs/design/namespaces.md section 8). It needs the
-right to write the namespace: the account a user namespace is bound to, an active member or admin of an organization (the live GitHub
-membership check; no stage has the registry's GitHub App configured yet, so organization writes answer `unavailable`), or a CI token
-minted for that namespace's publisher. It writes the package row (`state: claimed`, no expiry, no owner row: the namespace is the
+right to write the namespace: the account a user namespace is bound to, an owner or member of an organization namespace (a row in
+the `namespace_members` table; no GitHub call), or a CI token minted for that namespace's publisher. It writes the package row (`state: claimed`, no expiry, no owner row: the namespace is the
 owner) and an audit entry `create`, answers 201, or 200 when the package exists. An import name that is a keyword, a builtin, a
 reserved name or a top-level module of the Mojo standard library is `name_reserved`. The daily limit below applies to it, counted per
 account (or per namespace for a CI token).

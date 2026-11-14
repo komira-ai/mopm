@@ -10,7 +10,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
-import { StageConfig, appSecretName, channelBucketName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
+import { StageConfig, channelBucketName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 
 export interface ApiStackProps extends StackProps {
@@ -85,7 +85,11 @@ export const V2_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> = [
   { method: apigw.HttpMethod.GET, path: '/api/v2/me/tokens' },
   { method: apigw.HttpMethod.DELETE, path: '/api/v2/me/tokens/{token_id}' },
   { method: apigw.HttpMethod.POST, path: '/api/v2/namespaces' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/namespaces/poll' },
   { method: apigw.HttpMethod.GET, path: '/api/v2/namespaces/{namespace}' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/namespaces/{namespace}/members' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v2/namespaces/{namespace}/members/{user}' },
+  { method: apigw.HttpMethod.DELETE, path: '/api/v2/namespaces/{namespace}/members/{user}' },
   { method: apigw.HttpMethod.GET, path: '/api/v2/packages' },
   { method: apigw.HttpMethod.GET, path: '/api/v2/packages/{namespace}/{name}' },
   { method: apigw.HttpMethod.PUT, path: '/api/v2/packages/{namespace}/{name}' },
@@ -186,10 +190,12 @@ export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
  * - users: read and upsert a row at login.
  * - device_logins: start (PutItem), poll (GetItem), record the poll and consume (UpdateItem).
  * - trusted_publishers: read only; nothing in the Lambda registers publishers yet.
- * - namespaces: read one (GetItem), create one at login (PutItem, conditional on the key being absent), list an account's
- *   (Query on its by_github_id index), and bind a new GitHub App installation to an organization namespace (PutItem,
- *   conditional on the GitHub id and kind it read: the id is never changed, and no UpdateItem is granted).
- * - membership_passes: read and keep a passed organization membership check (GetItem, PutItem); expiry is TTL.
+ * - namespaces: read one (GetItem), create one at login or at the registration of an organization (PutItem, conditional on
+ *   the key being absent; a member change rewrites an organization's row with its member revision raised, conditional on the
+ *   revision it read), and list an account's (Query on its by_github_id index). No UpdateItem is granted.
+ * - namespace_members: read one (GetItem), add or change one (PutItem; a removal is a row written back as removed), list a
+ *   namespace's members (Query) and an account's memberships (Query on its by_member index). A member change is a
+ *   TransactWriteItems of PutItems, which IAM authorizes as PutItem on each table.
  * - owners: read, and Query on its by_github_id index (POST /me/tokens lists the packages the account owns). The table is
  *   also in READ_TABLES; an index is a separate resource, so the index ARN is granted here.
  */
@@ -200,7 +206,7 @@ export const AUTH_GRANTS: Record<string, { actions: string[]; indexes?: string[]
   trusted_publishers: { actions: ['dynamodb:GetItem', 'dynamodb:Query'] },
   owners: { actions: ['dynamodb:GetItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
   namespaces: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
-  membership_passes: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
+  namespace_members: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_member'] },
 };
 
 /** `GET /index/config.json` is built from code by the API Lambda; every other file under /index/ is read from the bucket by the reader. */
@@ -330,22 +336,6 @@ export class ApiStack extends Stack {
             service: 'secretsmanager',
             resource: 'secret',
             resourceName: `${oauthSecretName(c.stage)}-??????`,
-            arnFormat: ArnFormat.COLON_RESOURCE_NAME,
-          }),
-        ],
-      }),
-    );
-
-    // The registry's GitHub App of this stage, same shape: one secret, read only, ARN suffix of six `?`.
-    this.handler.addToRolePolicy(
-      new iam.PolicyStatement({
-        sid: 'ReadGitHubAppSecret',
-        actions: ['secretsmanager:GetSecretValue'],
-        resources: [
-          this.formatArn({
-            service: 'secretsmanager',
-            resource: 'secret',
-            resourceName: `${appSecretName(c.stage)}-??????`,
             arnFormat: ArnFormat.COLON_RESOURCE_NAME,
           }),
         ],

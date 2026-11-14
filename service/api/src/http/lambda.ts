@@ -5,12 +5,12 @@ import {
   parseCiPublishers,
   DeviceLogin,
   DynamoAuthStore,
-  DynamoMembershipPassStore,
   DynamoNamespaceStore,
   GithubJwtVerifier,
   HttpGitHubApi,
   type NamespaceAccess,
-  OrgMembership,
+  OrgMembers,
+  OrgRegistration,
   OidcExchange,
   ownedPackagesFrom,
   TokenService,
@@ -22,7 +22,6 @@ import type { Store } from '../store';
 import type { V2Deps } from './v2-routes';
 import type { Flags } from '../publish/ports';
 import type { AuthServices } from './auth-routes';
-import { appSecretName, SecretGitHubAppApi } from './app-secret';
 import { OAuthSecretSource, readSecretFromAws, type SecretReader } from './oauth-secret';
 import { route, type RouterDeps, type Stage } from './router';
 
@@ -68,10 +67,18 @@ export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessE
   if (!secretId) return undefined;
   const tables = authTablesFor(stage);
   const store = new DynamoAuthStore(doc, tables);
-  const namespaces = new DynamoNamespaceStore(doc, tables.namespaces);
+  const namespaces = new DynamoNamespaceStore(doc, tables.namespaces, tables.namespace_members);
   const secret = new OAuthSecretSource({ secretId, read });
   const require2fa = env.MOPM_REQUIRE_2FA !== 'false';
-  let device: { clientId: string; svc: DeviceLogin } | undefined;
+  let device: { clientId: string; svc: DeviceLogin; registration: OrgRegistration } | undefined;
+  const services = async () => {
+    const clientId = await secret.clientId();
+    if (device?.clientId !== clientId) {
+      const github = new HttpGitHubApi(clientId);
+      device = { clientId, svc: new DeviceLogin({ store, namespaces, github, require2fa }), registration: new OrgRegistration({ store, namespaces, github }) };
+    }
+    return device;
+  };
   return {
     authn: new Authenticator({ store }),
     tokens: new TokenService({ store, ownedPackages: ownedPackagesFrom(doc, tablesFor(stage).owners) }),
@@ -82,9 +89,10 @@ export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessE
       ...(ciPublishers.length > 0 ? { ciPublishers, registry: new DynamoStore(doc, tablesFor(stage)) } : {}),
     }),
     async devices() {
-      const clientId = await secret.clientId();
-      if (device?.clientId !== clientId) device = { clientId, svc: new DeviceLogin({ store, namespaces, github: new HttpGitHubApi(clientId), require2fa }) };
-      return device.svc;
+      return (await services()).svc;
+    },
+    async registration() {
+      return (await services()).registration;
     },
   };
 }
@@ -104,41 +112,20 @@ export function packagesInFrom(registry: Pick<Store, 'searchPackages'>): (namesp
 
 /**
  * What `/api/v2` needs (src/http/v2-routes.ts). `getMe` and `createToken` need the auth tables, so they are wired with login
- * (MOPM_OAUTH_SECRET_NAME); `createPackage` with the publish side; `createNamespace` with the organization check
- * (`membership`, built by `membershipFor`; while the stage's GitHub App secret is absent `createNamespace` answers `unavailable`).
+ * (MOPM_OAUTH_SECRET_NAME); `createPackage` with the publish side; the members of an organization namespace with the stage's
+ * namespace and member tables alone.
  */
-export function configureV2(
-  stage: Stage,
-  doc: DocClient,
-  env: NodeJS.ProcessEnv,
-  registry: Store,
-  access: NamespaceAccess,
-  creates: V2Deps['creates'],
-  membership?: OrgMembership,
-): V2Deps {
-  const namespaces = new DynamoNamespaceStore(doc, authTablesFor(stage).namespaces);
+export function configureV2(stage: Stage, doc: DocClient, env: NodeJS.ProcessEnv, registry: Store, access: NamespaceAccess, creates: V2Deps['creates']): V2Deps {
+  const tables = authTablesFor(stage);
+  const namespaces = new DynamoNamespaceStore(doc, tables.namespaces, tables.namespace_members);
+  const users = new DynamoAuthStore(doc, tables);
   return {
     access,
     namespaces,
+    members: new OrgMembers({ namespaces, access, users }),
     ...(creates ? { creates } : {}),
-    ...(membership ? { membership } : {}),
-    ...(env.MOPM_OAUTH_SECRET_NAME
-      ? { tokens: new TokenServiceV2({ store: new DynamoAuthStore(doc, authTablesFor(stage)), access, packagesIn: packagesInFrom(registry) }) }
-      : {}),
+    ...(env.MOPM_OAUTH_SECRET_NAME ? { tokens: new TokenServiceV2({ store: users, access, packagesIn: packagesInFrom(registry) }) } : {}),
   };
-}
-
-/**
- * The organization membership check. Its GitHub App credentials are the stage's secret `appSecretName(stage)`, a name derived
- * from the stage, not configured. The secret is read on the first organization question, not here; while it is absent or
- * malformed that question answers `unavailable`, and everything else is served.
- */
-export function membershipFor(stage: Stage, doc: DocClient, read: SecretReader = readSecretFromAws): OrgMembership {
-  return new OrgMembership({
-    app: new SecretGitHubAppApi({ secretId: appSecretName(stage), read }),
-    passes: new DynamoMembershipPassStore(doc, authTablesFor(stage).membership_passes),
-    now: () => new Date(),
-  });
 }
 
 function configure(): Configured {
@@ -147,8 +134,7 @@ function configure(): Configured {
   const flags = flagsFor(process.env, doc, stage);
   const envReadOnly = process.env.MOPM_READ_ONLY === 'true';
   const store = new DynamoStore(doc, tablesFor(stage));
-  const membership = membershipFor(stage, doc);
-  const access = namespaceAccessFor(doc, stage, membership);
+  const access = namespaceAccessFor(doc, stage);
   const publish = publishApiFor(process.env, doc, stage, flags, access);
   return {
     deps: {
@@ -159,7 +145,7 @@ function configure(): Configured {
       readOnly: envReadOnly,
       publish,
       auth: configureAuth(stage, doc, process.env),
-      v2: configureV2(stage, doc, process.env, store, access, publish?.creates, membership),
+      v2: configureV2(stage, doc, process.env, store, access, publish?.creates),
       ...(process.env.MOPM_API_DOMAIN && process.env.MOPM_CHANNEL_DOMAIN
         ? { indexConfig: { apiDomain: process.env.MOPM_API_DOMAIN, channelDomain: process.env.MOPM_CHANNEL_DOMAIN } }
         : {}),

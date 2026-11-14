@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { AuthError } from '../../src/auth/errors';
-import { NamespaceError } from '../../src/auth/org-membership';
+import { AuthError, NamespaceError } from '../../src/auth/errors';
 import { RegistryError } from '../../src/errors';
 import { errorViewV2, V2_CATALOGUE } from '../../src/http/v2-catalogue';
 import { PublishError } from '../../src/publish/errors';
@@ -60,17 +59,31 @@ describe('the /api/v2 error catalogue is the contract\'s', () => {
     expect(new Set(enumCodes).size).toBe(enumCodes.length);
   });
 
-  test('name_reserved says what the name is, the five namespace codes carry the proposed text', () => {
+  test('name_reserved says what the name is, the codes of the namespaces carry their statuses', () => {
     expect(spec.name_reserved).toEqual({ status: 403, message: "'{name}' is {what}.", hint: 'Choose another name.' });
-    expect(spec.invalid_namespace!.status).toBe(400);
-    expect(spec.not_namespace_member!.status).toBe(403);
-    expect(spec.namespace_unverified!.status).toBe(403);
-    expect(spec.namespace_reserved!.status).toBe(403);
-    expect(spec.namespace_not_found!.status).toBe(404);
+    const statuses: Record<string, number> = {
+      invalid_namespace: 400,
+      namespace_reserved: 403,
+      namespace_not_found: 404,
+      namespace_taken: 409,
+      not_namespace_member: 403,
+      not_namespace_owner: 403,
+      not_org_admin: 403,
+      github_account_mismatch: 403,
+      last_owner: 409,
+      member_not_found: 404,
+      user_not_found: 404,
+    };
+    for (const [code, status] of Object.entries(statuses)) expect(spec[code]!.status).toBe(status);
+  });
+
+  test('the App-based namespace code is gone from the contract and from the service', () => {
+    expect(spec.namespace_unverified).toBeUndefined();
+    expect(V2_CATALOGUE.namespace_unverified).toBeUndefined();
   });
 
   test('codes of the retired owner model are not in the contract', () => {
-    for (const code of ['owner_not_found', 'already_owner', 'last_owner', 'invitation_not_found', 'invitation_expired', 'user_not_found']) {
+    for (const code of ['owner_not_found', 'already_owner', 'invitation_not_found', 'invitation_expired']) {
       expect(spec[code]).toBeUndefined();
     }
   });
@@ -92,6 +105,15 @@ describe('errorViewV2', () => {
     });
     expect(errorViewV2(new AuthError('unavailable', 'x')).status).toBe(503);
     expect(errorViewV2(new PublishError('rate_limited', 'x', { retry_after: '60' }, 60)).retryAfter).toBe(60);
+  });
+
+  test('renders the member codes with the user and the namespace of their detail', () => {
+    expect(errorViewV2(new NamespaceError('last_owner', 'x', { user: 'alice', namespace: 'komira-ai' }))).toMatchObject({
+      status: 409,
+      body: { error: { code: 'last_owner', message: "'alice' is the last owner of 'komira-ai'.", hint: 'Make another member an owner first.' } },
+    });
+    expect(errorViewV2(new NamespaceError('member_not_found', 'x', { user: 'bob', namespace: 'komira-ai' })).body.error.message).toBe("'bob' is not a member of 'komira-ai'.");
+    expect(errorViewV2(new NamespaceError('user_not_found', 'x', { user: 'ghost' })).body.error.message).toBe("There is no mopm user 'ghost'.");
   });
 
   test('an error of no known class, or of a code the catalogue lacks, is internal_error', () => {

@@ -25,8 +25,8 @@ async function world() {
   await users.upsertUser(300, 'octo-new', NOW);
   await namespaces.createNamespace(ns('alice', 400));
   await namespaces.createNamespace(ns('octo', 300));
-  await namespaces.createNamespace(ns('komira-ai', 100, { kind: 'org', installation_id: 7 }));
-  await namespaces.createNamespace(ns('acme', 200, { kind: 'org' })); // no installation: frozen
+  await namespaces.createNamespace(ns('komira-ai', 100, { kind: 'org' }));
+  await namespaces.createNamespace(ns('acme', 200, { kind: 'org' }));
   const access = new NamespaceAccess({ namespaces, users });
   const deps: RouterDeps = { store, stage: 'beta', version: 'v', commit: 'c', readOnly: false, v2: { access, namespaces } };
   return { store, namespaces, users, deps };
@@ -47,25 +47,19 @@ describe('getNamespace', () => {
     const { deps } = await world();
     const { res, body } = await call(deps, '/api/v2/namespaces/alice');
     expect(res.statusCode).toBe(200);
-    expect(body).toEqual({ namespace: 'alice', kind: 'user', github_id: 400, login: 'Alice', frozen: false });
+    expect(body).toEqual({ namespace: 'alice', kind: 'user', github_id: 400, login: 'Alice' });
   });
 
   test('a renamed user: the namespace keeps its name while the login is the new one', async () => {
     const { deps } = await world();
     const { body } = await call(deps, '/api/v2/namespaces/octo');
-    expect(body).toEqual({ namespace: 'octo', kind: 'user', github_id: 300, login: 'octo-new', frozen: false });
+    expect(body).toEqual({ namespace: 'octo', kind: 'user', github_id: 300, login: 'octo-new' });
   });
 
-  test('an organization with its installation bound is not frozen and its login is the namespace', async () => {
+  test('an organization: its login is the namespace, and nothing else is said about who may publish', async () => {
     const { deps } = await world();
     const { body } = await call(deps, '/api/v2/namespaces/komira-ai');
-    expect(body).toEqual({ namespace: 'komira-ai', kind: 'org', github_id: 100, login: 'komira-ai', frozen: false });
-  });
-
-  test('an organization without a bound installation is frozen', async () => {
-    const { deps } = await world();
-    const { body } = await call(deps, '/api/v2/namespaces/acme');
-    expect(body).toEqual({ namespace: 'acme', kind: 'org', github_id: 200, login: 'acme', frozen: true });
+    expect(body).toEqual({ namespace: 'komira-ai', kind: 'org', github_id: 100, login: 'komira-ai' });
   });
 
   test.each([
@@ -98,7 +92,7 @@ describe('getPackage', () => {
     expect(body).toEqual({
       name: 'komira-ai/json',
       state: 'active',
-      namespace: { namespace: 'komira-ai', kind: 'org', github_id: 100, login: 'komira-ai', frozen: false },
+      namespace: { namespace: 'komira-ai', kind: 'org', github_id: 100, login: 'komira-ai' },
       latest: '1.0.0',
       repository: null,
       license: 'MIT',
@@ -115,12 +109,12 @@ describe('getPackage', () => {
     expect(Object.keys(body).slice(0, 3)).toEqual(['name', 'state', 'namespace']);
   });
 
-  test('a package of a frozen organization is readable and says so', async () => {
+  test('a package with no version yet is readable and has no latest', async () => {
     const { store, deps } = await world();
     await newPackage(store, 'acme/http');
     const { res, body } = await call(deps, '/api/v2/packages/acme/http');
     expect(res.statusCode).toBe(200);
-    expect(body.namespace.frozen).toBe(true);
+    expect(body.namespace).toEqual({ namespace: 'acme', kind: 'org', github_id: 200, login: 'acme' });
     expect(body.latest).toBeNull();
   });
 

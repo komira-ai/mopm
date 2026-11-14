@@ -50,7 +50,15 @@ describe('segmentsV2', () => {
 describe('services that are not wired answer unavailable', () => {
   test.each([
     ['createNamespace', 'POST', '/api/v2/namespaces', 'no auth', () => withV2()],
-    ['createNamespace', 'POST', '/api/v2/namespaces', 'no v2 deps', () => base({ auth: auth() })],
+    ['createNamespace', 'POST', '/api/v2/namespaces', 'the client id secret absent', () => base({ auth: auth({ registration: async () => { throw new AuthError('unavailable', 'x'); } }) })], // prettier-ignore
+    ['pollNamespace', 'POST', '/api/v2/namespaces/poll', 'no auth', () => withV2()],
+    ['pollNamespace', 'POST', '/api/v2/namespaces/poll', 'no v2 deps', () => base({ auth: auth() })],
+    ['listMembers', 'GET', '/api/v2/namespaces/komira-ai/members', 'no auth', () => withV2()],
+    ['listMembers', 'GET', '/api/v2/namespaces/komira-ai/members', 'no members service', () => withV2({}, { auth: auth() })],
+    ['setMember', 'PUT', '/api/v2/namespaces/komira-ai/members/bob', 'no auth', () => withV2()],
+    ['setMember', 'PUT', '/api/v2/namespaces/komira-ai/members/bob', 'no members service', () => withV2({}, { auth: auth() })],
+    ['removeMember', 'DELETE', '/api/v2/namespaces/komira-ai/members/bob', 'no auth', () => withV2()],
+    ['removeMember', 'DELETE', '/api/v2/namespaces/komira-ai/members/bob', 'no members service', () => withV2({}, { auth: auth() })],
     ['getNamespace', 'GET', '/api/v2/namespaces/alice', 'no v2 deps', () => base()],
     ['getPackage', 'GET', '/api/v2/packages/alice/pkg', 'no v2 deps', () => base()],
     ['createPackage', 'PUT', '/api/v2/packages/alice/pkg', 'no v2 deps', () => base()],

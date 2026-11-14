@@ -427,7 +427,7 @@ test "login stores the user namespace equal to the handle in lower case when the
     defer tmp.cleanup();
     const dir = try tmp.dir.realpathAlloc(a, ".");
     const r = try approvedLogin(a, dir, me_step(
-        \\{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"old-ada","kind":"user","role":"owner","packages":[]},{"namespace":"acme","kind":"org","role":"admin","packages":["acme/tool"]},{"namespace":"ada","kind":"user","role":"owner","packages":[]}]}
+        \\{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"old-ada","kind":"user","role":"owner","packages":[]},{"namespace":"acme","kind":"org","role":"owner","packages":["acme/tool"]},{"namespace":"ada","kind":"user","role":"owner","packages":[]}]}
     ));
     try std.testing.expectEqual(@as(u8, 0), r.code);
     try std.testing.expectEqualStrings("ada", r.entry.namespace.?);
@@ -444,7 +444,7 @@ test "login stores the first user namespace when none equals the handle, and nev
     defer tmp.cleanup();
     const dir = try tmp.dir.realpathAlloc(a, ".");
     const r = try approvedLogin(a, dir, me_step(
-        \\{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"acme","kind":"org","role":"admin","packages":[]},{"namespace":"old-ada","kind":"user","role":"owner","packages":[]}]}
+        \\{"github_id":7,"handle":"Ada","namespaces":[{"namespace":"acme","kind":"org","role":"owner","packages":[]},{"namespace":"old-ada","kind":"user","role":"owner","packages":[]}]}
     ));
     try std.testing.expectEqualStrings("old-ada", r.entry.namespace.?);
     try std.testing.expect(std.mem.endsWith(u8, r.con.out.items, "Logged in to beta as Ada; your namespace is old-ada.\n"));
@@ -539,14 +539,14 @@ test "whoami lists each namespace with its kind, role and packages in the order 
     const dir = try tmp.dir.realpathAlloc(a, ".");
     try loggedIn(a, dir);
     var script = gt.Script{ .steps = &.{me_step(
-        \\{"github_id":7,"handle":"ada","namespaces":[{"namespace":"ada","kind":"user","role":"owner","packages":["ada/one","ada/two"]},{"namespace":"acme","kind":"org","role":"admin","packages":[]},{"namespace":"zeta","kind":"org","role":"member","packages":["zeta/z"]}]}
+        \\{"github_id":7,"handle":"ada","namespaces":[{"namespace":"ada","kind":"user","role":"owner","packages":["ada/one","ada/two"]},{"namespace":"acme","kind":"org","role":"owner","packages":[]},{"namespace":"zeta","kind":"org","role":"member","packages":["zeta/z"]}]}
     )}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
     try std.testing.expectEqual(@as(u8, 0), try whoami(loginSession(a, dir), script.net(), &con));
     try std.testing.expect(script.mismatch == null);
     try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
     try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/me", script.seen.items[0].url);
     try std.testing.expectEqualStrings("mopm_tok", script.seen.items[0].token.?);
-    try std.testing.expectEqualStrings("ada (GitHub id 7) on beta\nnamespaces:\n  ada (user, owner): ada/one ada/two\n  acme (org, admin)\n  zeta (org, member): zeta/z\n", con.out.items);
+    try std.testing.expectEqualStrings("ada (GitHub id 7) on beta\nnamespaces:\n  ada (user, owner): ada/one ada/two\n  acme (org, owner)\n  zeta (org, member): zeta/z\n", con.out.items);
     try std.testing.expectEqualStrings("", con.err.items);
 }
 

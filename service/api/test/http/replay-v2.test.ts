@@ -31,8 +31,8 @@ const valid = cases.filter((c) => (c.expect ?? 'valid') === 'valid');
 
 describe('the v2 contract cases are the spec\'s', () => {
   test('the spec was read: its operations, its error table and its rejection codes', () => {
-    expect(ops.size).toBe(24);
-    expect(Object.keys(catalogue).length).toBe(39);
+    expect(ops.size).toBe(28);
+    expect(Object.keys(catalogue).length).toBe(45);
     expect(specRejectionCodes()).toHaveLength(7);
     expect(cases.length).toBeGreaterThan(100);
   });

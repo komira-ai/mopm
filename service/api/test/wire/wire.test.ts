@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
-import { DynamoAuthStore, DynamoMembershipPassStore, DynamoNamespaceStore, authTablesFor, ownedPackagesFrom } from '../../src/auth';
+import { DynamoAuthStore, DynamoNamespaceStore, authTablesFor, ownedPackagesFrom } from '../../src/auth';
 import { DynamoStore, tablesFor } from '../../src/dynamo-store';
 import { DynamoPublishStore, publishTablesFor } from '../../src/publish/dynamo-publish-store';
 import { DynamoFlags } from '../../src/publish/flags';
@@ -43,7 +43,7 @@ interface Reply {
   reasons?: string[];
 }
 interface Step {
-  adapter: 'store' | 'auth' | 'publish' | 'flags' | 'owned' | 'namespaces' | 'passes';
+  adapter: 'store' | 'auth' | 'publish' | 'flags' | 'owned' | 'namespaces';
   method: string;
   args: Json[];
   replies?: Reply[];
@@ -114,8 +114,7 @@ function adapters(recorder: Recorder) {
     publish: new DynamoPublishStore(doc, publishTablesFor('beta')),
     flags: new DynamoFlags(doc, publishTablesFor('beta').config),
     owned: { call: ownedPackagesFrom(doc, 'mopm-beta-owners') },
-    namespaces: new DynamoNamespaceStore(doc, authTablesFor('beta').namespaces),
-    passes: new DynamoMembershipPassStore(doc, authTablesFor('beta').membership_passes),
+    namespaces: new DynamoNamespaceStore(doc, authTablesFor('beta').namespaces, authTablesFor('beta').namespace_members),
   };
 }
 

@@ -255,7 +255,7 @@ zig_test(  # buck-only: readmes as uploaded objects, and the fall back to inline
 # that differ are vendored under tests/compat/v0.0.104 (README.md there; SHA256SUMS pins every file, and the test checks it).
 # The `tree` targets (tests/compat/tree.bzl) lay both out in one directory, where the release's files find each other by their relative imports.
 _PREV_FAKE_LIVE = ["errors", "resp", "source_commit", "token_scopes", "util", "versions"]
-_PREV_CLI_LIVE = ["registry_cmd"]
+_PREV_CLI_LIVE = []
 
 tree(  # buck-only: the fake registry of v0.0.104 as its files lay out at the tag, and the fixture that calls it
     name = "prev_fake_tree",
@@ -279,7 +279,7 @@ tree(  # buck-only: the files of src/cli of v0.0.104 that its group publisher re
 zig_module(  # buck-only: the v0.0.104 client's group publisher and the files it needs, for :compat_v0_0_104
     name = "prev_cli",
     src = ":prev_cli_tree[group_publish.zig]",
-    imports = [":prev_cli_tree[{}.zig]".format(n) for n in _PREV_CLI_LIVE + ["group_plan", "group_publish_test"]],
+    imports = [":prev_cli_tree[{}.zig]".format(n) for n in _PREV_CLI_LIVE + ["registry_cmd", "group_plan", "group_publish_test"]],
     deps = [":mopm_core"],
 )
 

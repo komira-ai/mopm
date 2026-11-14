@@ -1,6 +1,5 @@
-import { AuthError } from './errors';
-import { namespaceProblem, type NamespaceKind, type NamespaceRecord, type NamespaceStore } from './namespaces';
-import { NamespaceError, UNVERIFIED, type OrgMembership, type OrgRole } from './org-membership';
+import { NamespaceError } from './errors';
+import { namespaceProblem, type MemberRole, type NamespaceKind, type NamespaceRecord, type NamespaceStore } from './namespaces';
 import type { AuthStore, UserRecord } from './types';
 
 /**
@@ -8,16 +7,15 @@ import type { AuthStore, UserRecord } from './types';
  * package, publishing, yanking, the packages of an API token, and the namespaces `GET /api/v2/me` lists.
  *
  * - A user namespace: the account bound to it (role `owner`).
- * - An organization namespace: an active admin or member of the organization, by the live membership check of 2.2
- *   (OrgMembership: a pass is reused for 5 minutes, a refusal never). A deployment without the registry's GitHub App
- *   wired cannot check, so every organization write there is `unavailable`, naming GitHub.
+ * - An organization namespace: an account with a row in the namespace's member table, as `owner` or `member`. The table is
+ *   the only thing asked: no GitHub call and no cache, so a removed member is refused on the next request.
  *
  * A CI identity's token is not an account: its right comes from the namespace publisher it was minted for
  * (src/auth/oidc.ts), and src/publish/service.ts `requireOwner` accepts it by the names it was minted for.
  */
 
-/** `role` of `MeV2.namespaces[]`: `owner` of a user namespace, GitHub's `admin` or `member` of an organization's. */
-export type NamespaceRole = 'owner' | OrgRole;
+/** `role` of `MeV2.namespaces[]`: `owner` of a user namespace or an organization's, `member` of an organization's. */
+export type NamespaceRole = MemberRole;
 
 export interface WriteRight {
   record: NamespaceRecord;
@@ -31,23 +29,18 @@ export interface NamespaceInfo {
   github_id: number;
   /** The GitHub login the registry knows for the account: a user's handle from its last login; an organization's namespace string. */
   login: string;
-  /** An organization namespace with no bound installation of the App: reads work, writes are refused. */
-  frozen: boolean;
 }
 
 export interface NamespaceAccessDeps {
   namespaces: NamespaceStore;
   users: Pick<AuthStore, 'getUser'>;
-  /** The membership check. Absent: the deployment has no GitHub App, and organization writes are `unavailable`. */
-  membership?: OrgMembership;
 }
 
 export const invalidNamespace = (namespace: string) => new NamespaceError('invalid_namespace', `'${namespace}' is not a valid namespace.`, { namespace });
 export const namespaceReserved = (namespace: string) => new NamespaceError('namespace_reserved', `'${namespace}' is reserved.`, { namespace });
 export const namespaceNotFound = (namespace: string) => new NamespaceError('namespace_not_found', `There is no namespace '${namespace}'.`, { namespace });
 export const notNamespaceMember = (namespace: string) => new NamespaceError('not_namespace_member', `You cannot write in '${namespace}'.`, { namespace });
-const noApp = (namespace: string) =>
-  new AuthError('unavailable', `GitHub could not be asked about '${namespace}': the registry has no GitHub App configured.`, { namespace, service: 'GitHub' });
+export const notNamespaceOwner = (namespace: string) => new NamespaceError('not_namespace_owner', `You are not an owner of '${namespace}'.`, { namespace });
 
 export class NamespaceAccess {
   constructor(private readonly d: NamespaceAccessDeps) {}
@@ -64,24 +57,16 @@ export class NamespaceAccess {
 
   /**
    * May the account write in `namespace` now? Answers the row and the account's role; throws NamespaceError
-   * (`invalid_namespace`, `namespace_reserved`, `namespace_not_found`, `not_namespace_member`, `namespace_unverified`) or
-   * AuthError `unavailable` (GitHub unreachable, or no App configured).
+   * (`invalid_namespace`, `namespace_reserved`, `namespace_not_found`, `not_namespace_member`).
    */
   async require(namespace: string, account_id: number): Promise<WriteRight> {
     const record = await this.find(namespace);
     return { record, role: await this.roleIn(record, account_id) };
   }
 
-  /**
-   * May a CI identity's token (minted for a publisher of `namespace`) write there now? The namespace must exist and, for an
-   * organization, still have its App installation bound (a frozen one refuses every write). Answers the row.
-   */
+  /** May a CI identity's token (minted for a publisher of `namespace`) write there now? The namespace must exist. Answers the row. */
   async requireCi(namespace: string): Promise<NamespaceRecord> {
-    const record = await this.find(namespace);
-    if (record.kind === 'org' && record.installation_id === undefined) {
-      throw new NamespaceError('namespace_unverified', `'${namespace}' cannot be verified on GitHub: ${UNVERIFIED.noInstallation}.`, { namespace, detail: UNVERIFIED.noInstallation });
-    }
-    return record;
+    return this.find(namespace);
   }
 
   /** The handle the registry knows for an account (its last login), or `u:<id>` for one it has no row for. Recorded as `published_by`. */
@@ -95,34 +80,24 @@ export class NamespaceAccess {
       if (record.github_id !== account_id) throw notNamespaceMember(record.namespace);
       return 'owner';
     }
-    if (!this.d.membership) throw noApp(record.namespace);
-    return this.d.membership.check(record, account_id);
+    const member = await this.d.namespaces.getMember(record.namespace, account_id);
+    if (!member) throw notNamespaceMember(record.namespace);
+    return member.role;
   }
 
   /**
-   * Every namespace the account can write now: its user namespaces (bound to its id), then the organization namespaces of
-   * the organizations its last login recorded (`UserRecord.orgs`), each checked live. An organization the check refuses
-   * is left out; GitHub unreachable is `unavailable`. Without an App, no organization namespace is listed. Sorted: user
-   * namespaces first, each kind by namespace.
+   * Every namespace the account can write now: its user namespaces (bound to its id, role `owner`), then the organization
+   * namespaces of its rows in the member table (role `owner` or `member`). The member list is read from an index and may lag
+   * a change briefly. Sorted: user namespaces first, each kind by namespace.
    */
   async writable(user: UserRecord): Promise<WriteRight[]> {
     const own = (await this.d.namespaces.listNamespaces(user.github_id))
       .filter((r) => r.kind === 'user')
       .map((record): WriteRight => ({ record, role: 'owner' }));
     const orgs: WriteRight[] = [];
-    if (this.d.membership) {
-      const ids = [...new Set((user.orgs ?? []).map((o) => o.github_id))].sort((a, b) => a - b);
-      for (const id of ids) {
-        for (const record of await this.d.namespaces.listNamespaces(id)) {
-          if (record.kind !== 'org') continue;
-          try {
-            orgs.push({ record, role: await this.d.membership.check(record, user.github_id) });
-          } catch (e) {
-            if (e instanceof NamespaceError) continue; // not a member, or the namespace is frozen: not writable now
-            throw e;
-          }
-        }
-      }
+    for (const m of await this.d.namespaces.listMemberships(user.github_id)) {
+      const record = await this.d.namespaces.getNamespace(m.namespace);
+      if (record?.kind === 'org') orgs.push({ record, role: m.role });
     }
     // Namespaces are unique keys of the store, so no two rows compare equal.
     const byName = (a: WriteRight, b: WriteRight) => (a.record.namespace < b.record.namespace ? -1 : 1);
@@ -141,7 +116,7 @@ export class NamespaceAccess {
     return held && held.github_id !== user.github_id ? ns : undefined;
   }
 
-  /** `NamespaceInfo`. Reads never call GitHub: a user's login is its handle from its last login. */
+  /** `NamespaceInfo`: a user's login is its handle from its last login. */
   async info(record: NamespaceRecord): Promise<NamespaceInfo> {
     const login = record.kind === 'user' ? ((await this.d.users.getUser(record.github_id))?.handle ?? record.namespace) : record.namespace;
     return {
@@ -149,7 +124,6 @@ export class NamespaceAccess {
       kind: record.kind,
       github_id: record.github_id,
       login,
-      frozen: record.kind === 'org' && record.installation_id === undefined,
     };
   }
 }

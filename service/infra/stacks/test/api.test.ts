@@ -3,7 +3,7 @@ import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, V2_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
-import { STAGES, appSecretName, stageConfig, tableName } from '../lib/config';
+import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
 const acts = (s: any): string[] => ([] as string[]).concat(s.Action);
@@ -11,11 +11,11 @@ const flat = (v: any): string => (typeof v === 'string' ? v : JSON.stringify(v))
 
 /**
  * Everything the handler's role may do, checked as rules. Allowed: GetItem/Query on the four read tables; per WRITE_GRANTS on the publish tables; per AUTH_GRANTS
- * on the four auth tables (indexes by name only); GetSecretValue on the OAuth secret and the GitHub App secret. Returns what breaks them.
+ * on the four auth tables (indexes by name only); GetSecretValue on the OAuth secret. Returns what breaks them.
  */
 function policyViolations(stage: string, statements: any[]): string[] {
   const out: string[] = [];
-  const secrets = [`secret:mopm/${stage}/github-oauth-??????`, `secret:mopm/${stage}/github-app-??????`];
+  const secrets = [`secret:mopm/${stage}/github-oauth-??????`];
   for (const s of statements) {
     if (s.Effect !== 'Allow') continue;
     const res = ([] as any[]).concat(s.Resource).map(flat);
@@ -279,8 +279,8 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(AUTH_GRANTS.tokens!.indexes).toEqual(['by_github_id']);
   });
 
-  // A login creates the user namespace with a PutItem conditional on the key being absent; binding a new App installation
-  // is a PutItem conditional on the GitHub id it read. Nothing in the handler updates or deletes a namespace.
+  // A login creates the user namespace with a PutItem conditional on the key being absent; a member change rewrites an
+  // organization's row with a PutItem conditional on its revision. Nothing in the handler updates or deletes a namespace.
   test('namespaces: read, create and list by account only; never update or delete', () => {
     expect(AUTH_GRANTS.namespaces).toEqual({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_github_id'] });
     const st = statements().filter((s) => s.Sid === 'AuthNamespaces');
@@ -288,12 +288,19 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(acts(st[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']);
   });
 
-  // The membership check keeps a pass (PutItem) and reads it back (GetItem); nothing deletes one (TTL does).
-  test('membership_passes: read and put only', () => {
-    expect(AUTH_GRANTS.membership_passes).toEqual({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] });
-    const st = statements().filter((s) => s.Sid === 'AuthMembershipPasses');
+  // A member is added or changed with a PutItem, read with GetItem and Query, and an account's memberships come from the
+  // by_member index; a removal is a row written back, so nothing deletes one.
+  test('namespace_members: get, put and query with its one index; never update or delete', () => {
+    expect(AUTH_GRANTS.namespace_members).toEqual({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_member'] });
+    const st = statements().filter((s) => s.Sid === 'AuthNamespaceMembers');
     expect(st).toHaveLength(1);
-    expect(acts(st[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem']);
+    expect(acts(st[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']);
+    expect(flatten(st[0].Resource)).toContain(`table/${tableName(stage, 'namespace_members')}/index/by_member`);
+  });
+
+  test('the membership_passes table is no longer granted', () => {
+    expect(AUTH_GRANTS.membership_passes).toBeUndefined();
+    expect(JSON.stringify(statements())).not.toContain('membership_passes');
   });
 
   // POST /api/v1/me/tokens asks which packages the account owns (ownedPackagesFrom: a Query on the owners table's
@@ -309,22 +316,17 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(flatten(allowing[0].Resource)).not.toContain('index/*');
   });
 
-  test('the role may read exactly two secrets, the stage OAuth app and the registry GitHub App, one statement each, and nothing else in Secrets Manager', () => {
+  test('the role may read exactly one secret, the stage OAuth app, and nothing else in Secrets Manager', () => {
     const st = statements().filter((s) => acts(s).some((a) => a.startsWith('secretsmanager:')));
-    expect(st).toHaveLength(2);
-    const bySid = (sid: string) => st.find((s) => s.Sid === sid);
-    for (const [sid, name] of [['ReadGitHubOAuthSecret', 'github-oauth'], ['ReadGitHubAppSecret', 'github-app']] as const) {
-      const one = bySid(sid);
-      expect(one).toBeDefined();
-      expect(acts(one)).toEqual(['secretsmanager:GetSecretValue']);
-      expect(([] as any[]).concat(one.Resource)).toHaveLength(1);
-      expect(flatten(one.Resource)).toContain(`secret:mopm/${stage}/${name}-??????`);
-      expect(flatten(one.Resource)).not.toContain('"*"');
-    }
-    // The App secret's name is derived from the stage by the function (service/api/src/http/app-secret.ts): no environment
-    // variable configures it, and nothing carries its value.
+    expect(st).toHaveLength(1);
+    expect(st[0].Sid).toBe('ReadGitHubOAuthSecret');
+    expect(acts(st[0])).toEqual(['secretsmanager:GetSecretValue']);
+    expect(([] as any[]).concat(st[0].Resource)).toHaveLength(1);
+    expect(flatten(st[0].Resource)).toContain(`secret:mopm/${stage}/github-oauth-??????`);
+    expect(flatten(st[0].Resource)).not.toContain('"*"');
+    expect(JSON.stringify(statements())).not.toContain('github-app');
     for (const fn of Object.values(t.findResources('AWS::Lambda::Function'))) {
-      expect(Object.keys((fn as any).Properties?.Environment?.Variables ?? {})).not.toContain('MOPM_APP_SECRET_NAME');
+      expect(Object.keys((fn as any).Properties?.Environment?.Variables ?? {}).filter((k) => /APP_SECRET/.test(k))).toEqual([]);
     }
     t.hasResourceProperties('AWS::Lambda::Function', {
       Environment: { Variables: Match.objectLike({ MOPM_OAUTH_SECRET_NAME: `mopm/${stage}/github-oauth`, MOPM_REQUIRE_2FA: 'true' }) },
@@ -604,15 +606,4 @@ test('no stage allows another stage\'s origin (the three origin lists are pairwi
   const all = origins.flat();
   expect(new Set(all).size).toBe(all.length);
   expect(all.sort()).toEqual(['https://beta.mopm.dev', 'https://gamma.mopm.dev', 'https://mopm.dev']);
-});
-
-// The API derives the App secret's name from its stage (no setting names it); the IAM grant above uses config.ts's rule. The
-// two definitions must be the same rule, or the function would be denied its own secret.
-test('the GitHub App secret the API reads is the one its role may read, on every stage', () => {
-  const src = fs.readFileSync(path.resolve(__dirname, '../../../api/src/http/app-secret.ts'), 'utf8');
-  const m = /export const appSecretName = \(stage: string\): string => `([^`]*)`;/.exec(src);
-  expect(m).not.toBeNull();
-  for (const stage of STAGES) expect(m![1]!.replace('${stage}', stage)).toBe(appSecretName(stage));
-  // A different rule in the API is caught: the same check on a changed copy fails.
-  expect(m![1]!.replace('github-app', 'github-app2').replace('${stage}', 'beta')).not.toBe(appSecretName('beta'));
 });

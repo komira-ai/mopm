@@ -1,5 +1,4 @@
-import { AuthError } from '../auth/errors';
-import { NamespaceError } from '../auth/org-membership';
+import { AuthError, NamespaceError } from '../auth/errors';
 import { RegistryError } from '../errors';
 import { PUBLISH_CATALOGUE, PUBLISH_REASONS, type ErrorView } from '../publish/catalogue';
 import { PublishError } from '../publish/errors';
@@ -16,7 +15,7 @@ const V1_ONLY: ReadonlySet<string> = new Set(['name_taken', 'name_too_similar'])
 
 /**
  * The error catalogue of `/api/v2` (`x-mopm-errors` of spec/api/openapi-v2.yaml): v1's, with `name_reserved` saying why
- * (`'{name}' is {what}.`: `reserved`, or a module of the Mojo standard library) and the five codes of the namespaces.
+ * (`'{name}' is {what}.`: `reserved`, or a module of the Mojo standard library) and the codes of the namespaces.
  * test/http/v2-catalogue.test.ts compares every entry with the spec file, so a drift fails there.
  */
 export const V2_CATALOGUE: Record<string, Entry> = {
@@ -35,12 +34,22 @@ export const V2_CATALOGUE: Record<string, Entry> = {
     message: "'{namespace}' is not a valid namespace.",
     hint: 'A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters.',
   },
-  not_namespace_member: { status: 403, message: "You cannot write in '{namespace}'.", hint: 'Ask an owner of the GitHub organization for membership.' },
-  namespace_unverified: {
+  not_namespace_member: { status: 403, message: "You cannot write in '{namespace}'.", hint: "Ask an owner of '{namespace}' to run 'mopm org add {namespace} <your mopm username>'." },
+  not_namespace_owner: { status: 403, message: "You are not an owner of '{namespace}'.", hint: "Ask an owner of '{namespace}'; 'mopm org list {namespace}' shows them." },
+  not_org_admin: {
     status: 403,
-    message: "'{namespace}' cannot be verified on GitHub: {detail}.",
-    hint: 'An owner of the organization installs the mopm registry GitHub App, then an admin runs the namespace creation again.',
+    message: "You are not an active admin of the GitHub organization '{namespace}'.",
+    hint: "An admin of the GitHub organization runs 'mopm org create {namespace}'; an organization that restricts OAuth apps approves the mopm registry first.",
   },
+  github_account_mismatch: {
+    status: 403,
+    message: 'The GitHub account that approved is not the one logged in to mopm.',
+    hint: "Approve with the GitHub account you logged in with, or run 'mopm login' with the other one.",
+  },
+  namespace_taken: { status: 409, message: "'{namespace}' is taken.", hint: 'Choose the namespace of another GitHub organization.' },
+  last_owner: { status: 409, message: "'{user}' is the last owner of '{namespace}'.", hint: 'Make another member an owner first.' },
+  member_not_found: { status: 404, message: "'{user}' is not a member of '{namespace}'.", hint: "List the members with 'mopm org list {namespace}'." },
+  user_not_found: { status: 404, message: "There is no mopm user '{user}'.", hint: "A user gets their name at their first 'mopm login'." },
   namespace_reserved: { status: 403, message: "'{namespace}' is reserved.", hint: "Publish in an organization's namespace." },
   namespace_not_found: {
     status: 404,

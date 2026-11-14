@@ -78,7 +78,7 @@ A package's name is a full name, `<namespace>/<name>`, such as `komira-ai/json`.
   its name joined the list keeps building.
 - Reserved namespaces, which no package has: the shape of a conda subdir,
   `^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$`, and
-  `index`, `quarantine` and `native-mirror`.
+  `index`, `quarantine`, `native-mirror` and `poll`.
 - A path dependency's key must equal the `[package] name` of the `mopm.toml` at
   the path; a path package in another namespace is fine.
 

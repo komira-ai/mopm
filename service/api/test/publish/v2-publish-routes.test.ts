@@ -1,17 +1,8 @@
-import {
-  HttpGitHubAppApi,
-  MemoryMembershipPassStore,
-  MemoryNamespaceStore,
-  NamespaceAccess,
-  OrgMembership,
-  mintToken,
-  type NamespaceRecord,
-} from '../../src/auth';
+import { MemoryNamespaceStore, NamespaceAccess, mintToken, type NamespaceRecord } from '../../src/auth';
 import { routePublish } from '../../src/http/publish-routes';
 import { condaNameOf } from '../../src/names';
 import { GroupService, groupIdFor } from '../../src/publish/group-service';
 import { MemoryPresigner, MemoryQueue } from '../../src/publish/memory';
-import { APP_ID, APP_PRIVATE_KEY, fakeGitHubApp } from '../github-app-fake';
 import { Harness, sha256 } from './harness';
 
 // The publish and group operations under /api/v2 (docs/design/namespaces.md section 8): a package is
@@ -19,10 +10,9 @@ import { Harness, sha256 } from './harness';
 
 const ALICE = 1; // owns the user namespace alice
 const BOB = 2; // owns the user namespace bob
-const CAROL = 3; // an active member of the organization komira-ai
+const CAROL = 3; // a member of the organization komira-ai
+const DAVE = 4; // an owner of komira-ai
 const ORG_ID = 77;
-const INST = 5555;
-const FROZEN_ID = 78;
 const BUILD = 'mojo1.0.0_0';
 const SHA = 'a'.repeat(64);
 
@@ -34,26 +24,26 @@ const member = (full: string, version = '1.0.0') => ({ name: full, version, file
 
 async function rig() {
   const h = new Harness();
-  const gh = fakeGitHubApp(h.clock.now);
-  gh.install(INST, { id: ORG_ID, login: 'komira-ai' }).user(CAROL, 'carol').member('komira-ai', 'carol', CAROL);
   const store = new MemoryNamespaceStore();
   const at = h.clock.now().toISOString();
   const rows: NamespaceRecord[] = [
     { namespace: 'alice', kind: 'user', github_id: ALICE, created_at: at },
     { namespace: 'bob', kind: 'user', github_id: BOB, created_at: at },
-    { namespace: 'komira-ai', kind: 'org', github_id: ORG_ID, created_at: at, installation_id: INST },
-    { namespace: 'frozen-org', kind: 'org', github_id: FROZEN_ID, created_at: at },
   ];
   for (const r of rows) await store.createNamespace(r);
-  const app = new HttpGitHubAppApi({ appId: APP_ID, privateKey: APP_PRIVATE_KEY }, h.clock.now, gh.fetchFn);
-  const membership = new OrgMembership({ app, passes: new MemoryMembershipPassStore(), now: h.clock.now });
-  const access = new NamespaceAccess({ namespaces: store, users: h.authStore, membership });
+  // komira-ai: BOB's user account is not in it; ALICE is not either until a test adds her. DAVE owns it, CAROL is a member.
+  await store.createOrgNamespace(
+    { namespace: 'komira-ai', kind: 'org', github_id: ORG_ID, created_at: at, created_by: DAVE },
+    { namespace: 'komira-ai', github_id: DAVE, role: 'owner', added_by: DAVE, added_at: at },
+  );
+  await store.setMember({ namespace: 'komira-ai', github_id: CAROL, role: 'member', added_by: DAVE, added_at: at });
+  const access = new NamespaceAccess({ namespaces: store, users: h.authStore });
   h.namespaces = access;
   h.v2 = { access, namespaces: store };
   h.build();
   for (const [id, handle] of [[ALICE, 'alice'], [BOB, 'bob'], [CAROL, 'carol']] as const) await h.authStore.upsertUser(id, handle, at);
   const make = (full: string) => h.registry.createPackage({ name: full, state: 'active', created_at: at });
-  return { h, gh, store, access, make };
+  return { h, store, access, make };
 }
 type Rig = Awaited<ReturnType<typeof rig>>;
 
@@ -145,14 +135,13 @@ describe('begin, commit and yank under /api/v2 by the namespace owner', () => {
 });
 
 describe('who may write in the namespace', () => {
-  test('an active member of the organization begins and commits; the handle recorded is the member\'s, not the organization\'s', async () => {
+  test('a member of the organization begins and commits; the handle recorded is the member\'s, not the organization\'s', async () => {
     const r = await rig();
     await r.make('komira-ai/json');
     const token = await r.h.token(CAROL, ['komira-ai/json'], ['publish']);
     const started = await begin(r, token, 'komira-ai/json');
     expect(started.statusCode).toBe(200);
     expect((await r.h.registry.getVersion('komira-ai/json', '1.0.0'))?.published_by).toBe('carol');
-    expect(r.gh.reads()).toContain('GET /orgs/komira-ai/memberships/carol');
   });
 
   test('an account that is neither the owner nor a member is not_namespace_member (403) for begin, commit and yank', async () => {
@@ -169,25 +158,19 @@ describe('who may write in the namespace', () => {
     expect((await r.h.registry.getVersion('alice/json', '1.0.0'))?.state).toBe('published');
   });
 
-  test('a member removed from the organization after the token was made is refused at once (the check is live)', async () => {
+  test('a member removed from the organization after the token was made is refused on the very next request, and GitHub is not asked', async () => {
     const r = await rig();
     await r.make('komira-ai/json');
-    const token = await r.h.token(CAROL, ['komira-ai/json'], ['publish']);
-    expect((await begin(r, token, 'komira-ai/json')).statusCode).toBe(200);
-    r.h.clock.advance(10 * 60_000); // past the kept pass
-    r.gh.removeMember('komira-ai', 'carol');
-    expect(err(await begin(r, token, 'komira-ai/json', '1.0.1')).code).toBe('not_namespace_member');
-  });
-
-  test('an organization namespace whose App installation is gone is namespace_unverified (403), with the message of the catalogue', async () => {
-    const r = await rig();
-    await r.make('frozen-org/json');
-    const res = await begin(r, await r.h.token(CAROL, ['frozen-org/json'], ['publish']), 'frozen-org/json');
-    expect([res.statusCode, err(res).code, err(res).message]).toEqual([
-      403,
-      'namespace_unverified',
-      "'frozen-org' cannot be verified on GitHub: the mopm registry GitHub App is not installed on the organization.",
-    ]);
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    try {
+      const token = await r.h.token(CAROL, ['komira-ai/json'], ['publish']);
+      expect((await begin(r, token, 'komira-ai/json')).statusCode).toBe(200);
+      expect(await r.store.removeMember('komira-ai', CAROL, DAVE, r.h.clock.now().toISOString())).toBe('removed');
+      expect(err(await begin(r, token, 'komira-ai/json', '1.0.1')).code).toBe('not_namespace_member');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   test('a namespace nobody made is namespace_not_found (404)', async () => {
@@ -222,17 +205,6 @@ describe('who may write in the namespace', () => {
     r.h.build();
     const res = await begin(r, await r.h.token(ALICE, ['alice/json'], ['publish']), 'alice/json');
     expect([res.statusCode, err(res).code]).toEqual([503, 'unavailable']);
-  });
-
-  test('a deployment with no GitHub App cannot check an organization: unavailable, while a user namespace still works', async () => {
-    const r = await rig();
-    await r.make('komira-ai/json');
-    await r.make('alice/json');
-    r.h.namespaces = new NamespaceAccess({ namespaces: r.store, users: r.h.authStore });
-    r.h.build();
-    const org = await begin(r, await r.h.token(CAROL, ['komira-ai/json'], ['publish']), 'komira-ai/json');
-    expect([org.statusCode, err(org).code, err(org).message]).toEqual([503, 'unavailable', 'The registry is temporarily unavailable.']);
-    expect((await begin(r, await r.h.token(ALICE, ['alice/json'], ['publish']), 'alice/json')).statusCode).toBe(200);
   });
 
   test('without the v2 deps every publish path of /api/v2 is unavailable, and /api/v1 is not affected', async () => {
@@ -301,10 +273,8 @@ describe('a CI token of a namespace\'s publisher', () => {
     expect(err(await begin(r, token, 'komira-ai/json', '2.0.0')).code).toBe('scope_missing');
   });
 
-  test('is refused on a frozen organization namespace (namespace_unverified), and for a package that does not exist', async () => {
+  test('is refused for a package that does not exist', async () => {
     const r = await rig();
-    await r.make('frozen-org/json');
-    expect(err(await begin(r, await ciToken(r, 'frozen-org', ['frozen-org/json']), 'frozen-org/json')).code).toBe('namespace_unverified');
     expect(err(await begin(r, await ciToken(r, 'komira-ai', ['komira-ai/new']), 'komira-ai/new')).code).toBe('package_not_found');
   });
 
@@ -437,8 +407,8 @@ describe('groups under /api/v2', () => {
     const refused = await create(r, await r.h.token(CAROL, ['alice/json', 'komira-ai/yaml'], ['publish']), [member('alice/json'), member('komira-ai/yaml')]);
     expect([refused.statusCode, err(refused).code, err(refused).message]).toEqual([403, 'not_namespace_member', "You cannot write in 'alice'."]);
 
-    // Alice is also an admin of the organization, so she may write both.
-    r.gh.user(ALICE, 'alice').member('komira-ai', 'alice', ALICE, 'admin');
+    // Alice is also an owner of the organization, so she may write both.
+    await r.store.setMember({ namespace: 'komira-ai', github_id: ALICE, role: 'owner', added_by: DAVE, added_at: r.h.clock.now().toISOString() });
     const ok = await create(r, await r.h.token(ALICE, ['alice/json', 'komira-ai/yaml'], ['publish']), [member('komira-ai/yaml'), member('alice/json')]);
     expect(ok.statusCode).toBe(201);
     expect(body(ok).members.map((m: { name: string }) => m.name)).toEqual(['alice/json', 'komira-ai/yaml']);
@@ -526,8 +496,7 @@ describe('groups under /api/v2', () => {
     const header = (await r.h.registry.getGroup(gid))!;
     expect(await r.h.registry.commitGroup(gid, { rev: header.rev, writeOrder: [0], now: at, audit: audit('a_commit') })).toMatchObject({ outcome: 'committed' });
     await r.h.registry.updateGroup(gid, (cur) => ({ ...cur, status: 'visible' }), audit('a_visible'));
-    r.h.clock.advance(10 * 60_000); // past the kept pass
-    r.gh.removeMember('komira-ai', 'carol');
+    await r.store.removeMember('komira-ai', CAROL, DAVE, at);
     const res = await r.h.call('PUT', `/api/v2/groups/${gid}/yank`, token, { yanked: true, reason: 'x' });
     expect([res.statusCode, err(res).code, err(res).message]).toEqual([403, 'not_namespace_member', "You cannot write in 'komira-ai'."]);
   });

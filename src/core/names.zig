@@ -87,8 +87,8 @@ const builtins = [_][]const u8{
 const reserved_names = [_][]const u8{ "mopm", "mojo", "max", "modular", "std", "stdlib" };
 
 /// Namespaces never created, so that a channel URL is never ambiguous: the channel bucket's other top-level
-/// prefixes. The conda subdir shapes are in `isSubdirShape`.
-const reserved_namespaces = [_][]const u8{ "index", "quarantine", "native-mirror" };
+/// prefixes, and `poll`, the path of the registration poll. The conda subdir shapes are in `isSubdirShape`.
+const reserved_namespaces = [_][]const u8{ "index", "quarantine", "native-mirror", "poll" };
 
 /// The platforms of a conda subdir, `<platform>-<arch>`; `noarch` is the one subdir without an arch.
 const subdir_platforms = [_][]const u8{ "linux", "osx", "win", "freebsd", "zos", "wasi", "emscripten" };
@@ -276,6 +276,7 @@ test "a full name is a lower-case namespace, one '/', and an importable name" {
         .{ "emscripten-wasm32/json", "package name 'emscripten-wasm32/json': the namespace 'emscripten-wasm32' is reserved; publish in your own or an organization's namespace" },
         .{ "index/json", "package name 'index/json': the namespace 'index' is reserved; publish in your own or an organization's namespace" },
         .{ "native-mirror/json", "package name 'native-mirror/json': the namespace 'native-mirror' is reserved; publish in your own or an organization's namespace" },
+        .{ "poll/json", "package name 'poll/json': the namespace 'poll' is reserved; publish in your own or an organization's namespace" },
         .{ "komira-ai/", "package name 'komira-ai/': the import name is empty" },
         .{ "komira-ai/1json", "package name 'komira-ai/1json': the import name '1json' must start with a lowercase letter" },
         .{ "komira-ai/js-on", "package name 'komira-ai/js-on': the import name 'js-on' may contain only lowercase letters, digits and '_'" },

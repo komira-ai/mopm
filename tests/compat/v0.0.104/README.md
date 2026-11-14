@@ -9,10 +9,9 @@ file that differs from the live tree is vendored here.
 
 - Vendored `fake/`: the files of `registry/fake` at the tag that differ today: `api`, `auth`, `control`, `files`, `groups`, `main`,
   `packages`, `publish`, `state`.
-- Vendored `cli/`: `group_plan`, `group_publish` (the release's `Publisher`), `group_stage_token`, `publish_cmd` and `group_publish_test` (imported by the others from
+- Vendored `cli/`: `registry_cmd`, `group_plan`, `group_publish` (the release's `Publisher`), `group_stage_token`, `publish_cmd` and `group_publish_test` (imported by the others from
   inside `test` blocks, which are not analysed, but Zig reads every file an `@import` names, so the file must exist).
-- Read from the live tree: `registry/fake/{errors,resp,source_commit,token_scopes,util,versions}.zig` and
-  `src/cli/registry_cmd.zig`.
+- Read from the live tree: `registry/fake/{errors,resp,source_commit,token_scopes,util,versions}.zig`.
 - BUCK lays both out in one directory, as the release had them (`:prev_fake_tree`, `:prev_cli_tree`, tests/compat/tree.bzl), because
   Zig resolves a relative `@import` from the directory of the importing file. `prev_cli` and `prev_fake` are built from that.
 - `SHA256SUMS`: lines `<sha256>  <repo-relative path>`, one for every file of the two modules, the sha256 being that of

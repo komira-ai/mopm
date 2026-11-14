@@ -53,17 +53,9 @@ const CHECKS: Record<string, Check> = {
     eq(await s.getUser(7), again);
     eq(await s.getUser(8), undefined);
   },
-  'the organization list of a login is stored as given, kept by a login that read none, and replaced (even by an empty one)': async (s) => {
-    const orgs = [{ github_id: 77, login: 'komira-ai', role: 'admin' as const }, { github_id: 78, login: 'acme', role: 'member' as const }];
-    eq((await s.upsertUser(7, 'octo', '2026-10-01T00:00:00.000Z', true, orgs)).orgs, orgs);
-    eq((await s.getUser(7))?.orgs, orgs);
-    const kept = await s.upsertUser(7, 'octo', '2026-10-02T00:00:00.000Z', true);
-    eq(kept.orgs, orgs);
-    eq(await s.getUser(7), kept);
-    eq((await s.upsertUser(7, 'octo', '2026-10-03T00:00:00.000Z', true, [])).orgs, []);
-    eq((await s.getUser(7))?.orgs, []);
-    // A user who never had a list read has none.
+  'a user row holds no organization list: a login records only the account': async (s) => {
     expect(await s.upsertUser(8, 'other', '2026-10-01T00:00:00.000Z')).not.toHaveProperty('orgs');
+    expect(await s.getUser(8)).not.toHaveProperty('orgs');
   },
   'a token round-trips exactly, millisecond expiry included, by hash': async (s) => {
     const t = tok({ id: 'tok_a', hash: h(1), last_used_at: '2026-10-14T12:30:00.000Z' });
@@ -181,6 +173,27 @@ describe('the DynamoDB adapter under the Lambda grants', () => {
 
   test.each(lambdaChecks)('%s', async (_n, check) => {
     await check(lambdaStore().store);
+  });
+
+  test('a user row written when logins still recorded organizations reads without them', async () => {
+    const doc = new FakeAuthDoc({ pageSize: 2, grants: LAMBDA_GRANTS });
+    doc.seed('users', {
+      github_id: '9',
+      github_id_num: 9,
+      handle: 'octo',
+      created_at: '2026-10-01T00:00:00.000Z',
+      last_login_at: '2026-10-01T00:00:00.000Z',
+      orgs: [{ github_id: 77, login: 'komira-ai', role: 'admin' }],
+    });
+    const store = new DynamoAuthStore(doc, authTablesFor('t'));
+    expect(await store.getUser(9)).toEqual({ github_id: 9, handle: 'octo', created_at: '2026-10-01T00:00:00.000Z', last_login_at: '2026-10-01T00:00:00.000Z' });
+  });
+
+  test('a device login poll or consume that fails for a reason other than the row being gone is an error, not a silent skip', async () => {
+    const doc = new FakeAuthDoc({ pageSize: 2, grants: { ...LAMBDA_GRANTS, device_logins: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] } } });
+    const store = new DynamoAuthStore(doc, authTablesFor('t'));
+    await expect(store.setDevicePolled('d1', '2026-10-14T12:00:00.000Z', 5)).rejects.toMatchObject({ name: 'AccessDeniedException' });
+    await expect(store.deleteDeviceLogin('d1')).rejects.toMatchObject({ name: 'AccessDeniedException' });
   });
 
   test('trusted publishers can be read (and not written) with the Lambda grants', async () => {

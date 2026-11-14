@@ -71,7 +71,7 @@ function deps(withV2 = false): RouterDeps {
     version: 'v',
     commit: 'c',
     readOnly: false,
-    auth: { authn, tokens: new TokenService({ store, ownedPackages: async () => [] }), oidc: { exchange: unavailable } as unknown as OidcExchange, devices: unavailable },
+    auth: { authn, tokens: new TokenService({ store, ownedPackages: async () => [] }), oidc: { exchange: unavailable } as unknown as OidcExchange, devices: unavailable, registration: unavailable },
     publish,
     ...(withV2 ? { v2: v2Stubs() } : {}),
   };

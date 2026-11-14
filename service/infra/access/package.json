@@ -8,8 +8,7 @@
     "typecheck": "tsc --noEmit",
     "synth": "cdk synth",
     "bootstrap": "ts-node --prefer-ts-exts bin/bootstrap.ts",
-    "oauth-secret": "ts-node --prefer-ts-exts bin/oauth-secret.ts",
-    "app-secret": "ts-node --prefer-ts-exts bin/app-secret.ts"
+    "oauth-secret": "ts-node --prefer-ts-exts bin/oauth-secret.ts"
   },
   "devDependencies": {
     "@types/jest": "29.5.14",

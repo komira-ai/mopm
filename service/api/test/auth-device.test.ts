@@ -41,7 +41,7 @@ describe('start', () => {
     const call = fake.state.calls[0]!;
     expect(call.url).toBe('https://github.com/login/device/code');
     expect(new URLSearchParams(call.body).get('client_id')).toBe('Iv1.testclientid');
-    expect(new URLSearchParams(call.body).get('scope')).toBe('read:user read:org');
+    expect(new URLSearchParams(call.body).get('scope')).toBe('read:user');
     expect(new URLSearchParams(call.body).has('client_secret')).toBe(false);
   });
 

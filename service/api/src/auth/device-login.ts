@@ -1,15 +1,100 @@
 import { AuthError } from './errors';
-import { GitHubUnavailable, type GitHubApi } from './github';
+import { GitHubUnavailable, type GitHubApi, type GitHubDeviceStart } from './github';
 import { ensureUserNamespace, type NamespaceStore } from './namespaces';
 import { hashToken, mintToken, newId, SESSION_FRESH_MS, type Clock } from './tokens';
-import type { AuthStore, UserOrg } from './types';
+import type { AuthStore, DeviceLoginRecord } from './types';
 
 /** The approval page expires in ten minutes (spec), whatever GitHub allows. */
 export const DEVICE_LOGIN_TTL_S = 600;
 export const MIN_POLL_INTERVAL_S = 5;
-/** The OAuth scopes a login asks for: `read:user` for the account and its two-factor flag, `read:org` for its memberships. */
-export const DEFAULT_GITHUB_SCOPE = 'read:user read:org';
+/** The OAuth scope a login asks for: `read:user`, for the account and its two-factor flag. */
+export const DEFAULT_GITHUB_SCOPE = 'read:user';
 const SLOW_DOWN_STEP_S = 5;
+
+/** What a device flow answers its client while GitHub has no token to give: the login poll and the organization registration poll both. */
+export type DeviceWait = { status: 'pending'; interval: number } | { status: 'expired' } | { status: 'denied' };
+
+/** The 503 of GitHub failing: `unavailable`. Any other error passes. */
+export async function callGitHub<T>(f: () => Promise<T>): Promise<T> {
+  try {
+    return await f();
+  } catch (e) {
+    if (e instanceof GitHubUnavailable) throw new AuthError('unavailable', 'The registry is temporarily unavailable.', { service: 'GitHub' });
+    throw e;
+  }
+}
+
+export interface DeviceStore {
+  store: AuthStore;
+  now: Clock;
+}
+
+/**
+ * Store a device row for the GitHub flow `gh` just started and hand back our own device code: the row keeps GitHub's code and the
+ * hash of ours, so a leaked client log cannot be polled at GitHub. The row lives `DEVICE_LOGIN_TTL_S` at most, whatever GitHub allows.
+ */
+export async function storeDeviceFlow(d: DeviceStore, gh: GitHubDeviceStart, row: { client: string } & Partial<Pick<DeviceLoginRecord, 'org_namespace' | 'account_id'>>): Promise<DeviceStart> {
+  const now = d.now();
+  const expires_in = Math.min(gh.expires_in, DEVICE_LOGIN_TTL_S);
+  const interval = Math.max(gh.interval, MIN_POLL_INTERVAL_S);
+  const device_code = newId('dev') + newId('x').slice(2);
+  await d.store.putDeviceLogin({
+    ...row,
+    id: hashToken(device_code),
+    github_device_code: gh.device_code,
+    created_at: now.toISOString(),
+    expires_at: new Date(now.getTime() + expires_in * 1000).toISOString(),
+    interval,
+  });
+  return { device_code, user_code: gh.user_code, verification_uri: gh.verification_uri, expires_in, interval };
+}
+
+/** The row of a device code the client sent, or `device_code_unknown`. */
+export async function findDeviceRow(store: AuthStore, code: unknown): Promise<DeviceLoginRecord> {
+  if (typeof code !== 'string' || code.length < 16 || code.length > 200) throw new AuthError('device_code_unknown', 'The device code is not recognised.');
+  const row = await store.getDeviceLogin(hashToken(code));
+  if (!row) throw new AuthError('device_code_unknown', 'The device code is not recognised.');
+  return row;
+}
+
+/**
+ * One poll of a device row: expiry, the interval the client must keep (polling faster is answered without asking GitHub and
+ * slows the client down), then GitHub's answer. A finished flow (denied, expired) deletes the row. `{access_token}` is
+ * GitHub's token for an approved flow; the row is left for the caller to delete once it has used the token.
+ */
+export async function advanceDeviceFlow(d: DeviceStore & { github: GitHubApi }, row: DeviceLoginRecord): Promise<DeviceWait | { access_token: string }> {
+  const { id } = row;
+  const now = d.now();
+  if (Date.parse(row.expires_at) <= now.getTime()) {
+    await d.store.deleteDeviceLogin(id);
+    return { status: 'expired' };
+  }
+  if (row.last_polled_at && now.getTime() - Date.parse(row.last_polled_at) < row.interval * 1000) {
+    const interval = row.interval + SLOW_DOWN_STEP_S;
+    await d.store.setDevicePolled(id, now.toISOString(), interval);
+    return { status: 'pending', interval };
+  }
+  await d.store.setDevicePolled(id, now.toISOString(), row.interval);
+
+  const r = await callGitHub(() => d.github.pollDeviceFlow(row.github_device_code));
+  switch (r.kind) {
+    case 'pending':
+      return { status: 'pending', interval: row.interval };
+    case 'slow_down': {
+      const interval = Math.max(r.interval ?? 0, row.interval + SLOW_DOWN_STEP_S);
+      await d.store.setDevicePolled(id, now.toISOString(), interval);
+      return { status: 'pending', interval };
+    }
+    case 'denied':
+      await d.store.deleteDeviceLogin(id);
+      return { status: 'denied' };
+    case 'expired':
+      await d.store.deleteDeviceLogin(id);
+      return { status: 'expired' };
+    case 'ok':
+      return { access_token: r.access_token };
+  }
+}
 
 export interface DeviceLoginConfig {
   store: AuthStore;
@@ -22,8 +107,7 @@ export interface DeviceLoginConfig {
    */
   require2fa?: boolean;
   /**
-   * OAuth scope to request. Default `read:user read:org`: the user, and the organizations the user is an active member of,
-   * read once at login and recorded on the user row for a later `whoami` (nothing reads them yet); see github.ts.
+   * OAuth scope to request. Default `read:user`; see github.ts.
    */
   githubScope?: string;
   sessionTtlDays?: number;
@@ -77,72 +161,27 @@ export class DeviceLogin {
     if (typeof client !== 'string' || client.length < 1 || client.length > 80) {
       throw new AuthError('invalid_request', 'The request is not valid: client must be 1 to 80 characters.', { detail: 'client must be 1 to 80 characters' });
     }
-    const gh = await this.callGitHub(() => this.github.startDeviceFlow(this.scope));
-    const now = this.now();
-    const expires_in = Math.min(gh.expires_in, DEVICE_LOGIN_TTL_S);
-    const interval = Math.max(gh.interval, MIN_POLL_INTERVAL_S);
-    // Our own code goes to the CLI; GitHub's stays here, so a leaked CLI log cannot be polled at GitHub.
-    const device_code = newId('dev') + newId('x').slice(2);
-    await this.store.putDeviceLogin({
-      id: hashToken(device_code),
-      github_device_code: gh.device_code,
-      client,
-      created_at: now.toISOString(),
-      expires_at: new Date(now.getTime() + expires_in * 1000).toISOString(),
-      interval,
-    });
-    return { device_code, user_code: gh.user_code, verification_uri: gh.verification_uri, expires_in, interval };
+    const gh = await callGitHub(() => this.github.startDeviceFlow(this.scope));
+    return storeDeviceFlow({ store: this.store, now: this.now }, gh, { client });
   }
 
   async poll(input: { device_code: string }): Promise<DevicePoll> {
-    const code = input?.device_code;
-    if (typeof code !== 'string' || code.length < 16 || code.length > 200) {
-      throw new AuthError('device_code_unknown', 'The device code is not recognised.');
-    }
-    const id = hashToken(code);
-    const login = await this.store.getDeviceLogin(id);
-    if (!login) throw new AuthError('device_code_unknown', 'The device code is not recognised.');
+    const login = await findDeviceRow(this.store, input?.device_code);
+    // A code of an organization registration is not a login: it never makes a session.
+    if (login.org_namespace !== undefined) throw new AuthError('device_code_unknown', 'The device code is not recognised.');
+    const id = login.id;
     const now = this.now();
-    if (Date.parse(login.expires_at) <= now.getTime()) {
-      await this.store.deleteDeviceLogin(id);
-      return { status: 'expired' };
-    }
-    // Polling faster than the interval is answered without bothering GitHub, and slows the client down.
-    if (login.last_polled_at && now.getTime() - Date.parse(login.last_polled_at) < login.interval * 1000) {
-      const interval = login.interval + SLOW_DOWN_STEP_S;
-      await this.store.setDevicePolled(id, now.toISOString(), interval);
-      return { status: 'pending', interval };
-    }
-    await this.store.setDevicePolled(id, now.toISOString(), login.interval);
+    const r = await advanceDeviceFlow({ store: this.store, github: this.github, now: this.now }, login);
+    if (!('access_token' in r)) return r.status === 'denied' ? { status: 'denied', reason: 'github_denied' } : r;
 
-    const r = await this.callGitHub(() => this.github.pollDeviceFlow(login.github_device_code));
-    switch (r.kind) {
-      case 'pending':
-        return { status: 'pending', interval: login.interval };
-      case 'slow_down': {
-        const interval = Math.max(r.interval ?? 0, login.interval + SLOW_DOWN_STEP_S);
-        await this.store.setDevicePolled(id, now.toISOString(), interval);
-        return { status: 'pending', interval };
-      }
-      case 'denied':
-        await this.store.deleteDeviceLogin(id);
-        return { status: 'denied', reason: 'github_denied' };
-      case 'expired':
-        await this.store.deleteDeviceLogin(id);
-        return { status: 'expired' };
-      case 'ok':
-        break;
-    }
-
-    const gh = await this.callGitHub(() => this.github.getUser(r.access_token));
+    const gh = await callGitHub(() => this.github.getUser(r.access_token));
     // The login is over at GitHub: the row goes, and GitHub's token, never stored, is used once more below and dropped.
     await this.store.deleteDeviceLogin(id);
     if (this.require2fa && gh.two_factor !== true) {
       return { status: 'denied', reason: 'two_factor_required' };
     }
-    const orgs = await this.readOrgs(r.access_token);
     const iso = now.toISOString();
-    const user = await this.store.upsertUser(gh.id, gh.login, iso, gh.two_factor, orgs);
+    const user = await this.store.upsertUser(gh.id, gh.login, iso, gh.two_factor);
     // The user namespace: made, already held, or none (taken by another id, reserved, outside the grammar). None never
     // stops the login: the account can still publish in organization namespaces. A store failure fails the login, as a
     // failing user upsert does: the person logs in again, and the next login makes the namespace.
@@ -167,28 +206,5 @@ export class DeviceLogin {
       handle: user.handle,
       ...(ns.status === 'created' || ns.status === 'held' ? { namespace: ns.namespace } : {}),
     };
-  }
-
-  /**
-   * The account's active organization memberships, recorded for whoami. GitHub failing here does not fail the login, which
-   * has what it needs: the account keeps the list of its last successful read (undefined leaves it unchanged).
-   */
-  private async readOrgs(accessToken: string): Promise<UserOrg[] | undefined> {
-    try {
-      const list = await this.github.listOrgMemberships(accessToken);
-      return list.map((m) => ({ github_id: m.id, login: m.login, role: m.role }));
-    } catch (e) {
-      if (e instanceof GitHubUnavailable) return undefined;
-      throw e;
-    }
-  }
-
-  private async callGitHub<T>(f: () => Promise<T>): Promise<T> {
-    try {
-      return await f();
-    } catch (e) {
-      if (e instanceof GitHubUnavailable) throw new AuthError('unavailable', 'The registry is temporarily unavailable.');
-      throw e;
-    }
   }
 }

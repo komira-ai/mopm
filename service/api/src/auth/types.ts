@@ -10,21 +10,6 @@ export interface UserRecord {
   last_login_at: string;
   /** What GitHub said at the last login: undefined when GitHub did not show it for the granted scope. */
   two_factor?: boolean;
-  /**
-   * The organizations GitHub listed as the account's active memberships at the last login that could read them (scope
-   * `read:org`). For `whoami` only: it never grants a write, which always runs the live membership check. Absent until
-   * a login has read it; a login whose lookup failed keeps the previous list.
-   */
-  orgs?: UserOrg[];
-}
-
-/** One active organization membership, as GitHub showed it at login. */
-export interface UserOrg {
-  /** The organization's numeric GitHub id. */
-  github_id: number;
-  /** Its login at that time; it may have changed since. */
-  login: string;
-  role: 'admin' | 'member';
 }
 
 /**
@@ -85,6 +70,10 @@ export interface DeviceLoginRecord {
   expires_at: string;
   interval: number;
   last_polled_at?: string;
+  /** A device flow that registers an organization namespace (not a login): the namespace string it was started for. */
+  org_namespace?: string;
+  /** With `org_namespace`: the GitHub id of the account that started it, the only one that may poll it. */
+  account_id?: number;
 }
 
 /**
@@ -111,8 +100,8 @@ export interface TrustedPublisher {
 
 /** Persistence for the auth layer. The memory adapter defines the rules; the DynamoDB adapter keeps them (test/auth-store.test.ts runs one suite over both). */
 export interface AuthStore {
-  /** Insert or update by github_id, keeping created_at, and `orgs` when none is given; returns the stored row. */
-  upsertUser(github_id: number, handle: string, now: string, two_factor?: boolean, orgs?: UserOrg[]): Promise<UserRecord>;
+  /** Insert or update by github_id, keeping created_at; returns the stored row. */
+  upsertUser(github_id: number, handle: string, now: string, two_factor?: boolean): Promise<UserRecord>;
   getUser(github_id: number): Promise<UserRecord | undefined>;
 
   putToken(rec: TokenRecord): Promise<void>;

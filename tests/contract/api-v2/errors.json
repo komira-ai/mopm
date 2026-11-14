@@ -209,29 +209,6 @@
       }
     },
     {
-      "name": "error namespace_unverified",
-      "operationId": "createNamespace",
-      "request": {
-        "body": {
-          "namespace": "acme-labs"
-        },
-        "auth": "freshSession"
-      },
-      "response": {
-        "status": 403,
-        "headers": {
-          "x-mopm-request-id": "req-7f3a2c19d0e4"
-        },
-        "body": {
-          "error": {
-            "code": "namespace_unverified",
-            "message": "'acme-labs' cannot be verified on GitHub: the mopm registry GitHub App is not installed on the organization.",
-            "hint": "An owner of the organization installs the mopm registry GitHub App, then an admin runs the namespace creation again."
-          }
-        }
-      }
-    },
-    {
       "name": "error not_namespace_member",
       "operationId": "createPackage",
       "request": {
@@ -250,19 +227,190 @@
           "error": {
             "code": "not_namespace_member",
             "message": "You cannot write in 'alice'.",
-            "hint": "Ask an owner of the GitHub organization for membership."
+            "hint": "Ask an owner of 'alice' to run 'mopm org add alice <your mopm username>'."
           }
         }
       }
     },
     {
-      "name": "error unavailable",
+      "name": "error namespace_taken",
       "operationId": "createNamespace",
       "request": {
         "body": {
           "namespace": "komira-ai"
         },
         "auth": "freshSession"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "namespace_taken",
+            "message": "'komira-ai' is taken.",
+            "hint": "Choose the namespace of another GitHub organization."
+          }
+        }
+      }
+    },
+    {
+      "name": "error not_org_admin",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_org_admin",
+            "message": "You are not an active admin of the GitHub organization 'acme-labs'.",
+            "hint": "An admin of the GitHub organization runs 'mopm org create acme-labs'; an organization that restricts OAuth apps approves the mopm registry first."
+          }
+        }
+      }
+    },
+    {
+      "name": "error github_account_mismatch",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "github_account_mismatch",
+            "message": "The GitHub account that approved is not the one logged in to mopm.",
+            "hint": "Approve with the GitHub account you logged in with, or run 'mopm login' with the other one."
+          }
+        }
+      }
+    },
+    {
+      "name": "error not_namespace_owner",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "alice"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_namespace_owner",
+            "message": "You are not an owner of 'komira-ai'.",
+            "hint": "Ask an owner of 'komira-ai'; 'mopm org list komira-ai' shows them."
+          }
+        }
+      }
+    },
+    {
+      "name": "error last_owner",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "alice"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "last_owner",
+            "message": "'alice' is the last owner of 'komira-ai'.",
+            "hint": "Make another member an owner first."
+          }
+        }
+      }
+    },
+    {
+      "name": "error member_not_found",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "dave"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "member_not_found",
+            "message": "'dave' is not a member of 'komira-ai'.",
+            "hint": "List the members with 'mopm org list komira-ai'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error user_not_found",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "ghost"
+        },
+        "body": {
+          "role": "owner"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "user_not_found",
+            "message": "There is no mopm user 'ghost'.",
+            "hint": "A user gets their name at their first 'mopm login'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error unavailable",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
       },
       "response": {
         "status": 503,
@@ -1162,29 +1310,6 @@
       "malformed_request": true
     },
     {
-      "name": "namespace_reserved with the message of namespace_unverified",
-      "operationId": "getNamespace",
-      "request": {
-        "path": {
-          "namespace": "index"
-        }
-      },
-      "response": {
-        "status": 403,
-        "headers": {
-          "x-mopm-request-id": "req-7f3a2c19d0e4"
-        },
-        "body": {
-          "error": {
-            "code": "namespace_reserved",
-            "message": "'index' cannot be verified on GitHub: no App.",
-            "hint": "Publish in an organization's namespace."
-          }
-        }
-      },
-      "expect": "invalid"
-    },
-    {
       "name": "rate_limited without Retry-After",
       "operationId": "createPackage",
       "request": {
@@ -1345,6 +1470,79 @@
             "code": "route_not_found",
             "message": "There is no such operation.",
             "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "namespace_reserved with the message of namespace_taken",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "index"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "namespace_reserved",
+            "message": "'index' is taken.",
+            "hint": "Publish in an organization's namespace."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "not_namespace_member with the hint of the retired GitHub membership",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_namespace_member",
+            "message": "You cannot write in 'alice'.",
+            "hint": "Ask an owner of the GitHub organization for membership."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "last_owner with the status of member_not_found",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "alice"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "last_owner",
+            "message": "'alice' is the last owner of 'komira-ai'.",
+            "hint": "Make another member an owner first."
           }
         }
       },

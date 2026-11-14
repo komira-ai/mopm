@@ -40,13 +40,12 @@ pub const User = struct {
 pub const OrgRole = enum { admin, member, billing_manager };
 pub const Membership = struct { user: *User, role: OrgRole, active: bool = true };
 
-/// A GitHub organization, as the fake's stand-in for GitHub knows it (`/_fake/org`).
+/// A GitHub organization, as the fake's stand-in for GitHub knows it (`/_fake/org`): it answers the one question the
+/// registry asks of GitHub, who is an active admin of it, when an organization namespace is registered.
 pub const Org = struct {
     /// The organization's login now.
     login: []const u8,
     github_id: u64,
-    /// The installation of the mopm registry App on it, 0 when it is not installed; each install gets a new id.
-    installation_id: u64 = 0,
     members: std.ArrayListUnmanaged(Membership) = .{},
 
     pub fn membership(o: *const Org, u: *const User) ?Membership {
@@ -60,7 +59,13 @@ pub const Org = struct {
 pub const NamespaceKind = enum { user, org };
 
 /// Whether an account may write in a namespace, and if not, why.
-pub const Right = enum { write, not_member, frozen };
+pub const Right = enum { write, not_member };
+
+/// The role of a member of an organization namespace in the registry's own member table.
+pub const MemberRole = enum { owner, member };
+
+/// A row of the member table of an organization namespace.
+pub const Member = struct { user: *User, role: MemberRole, added_by: u64, added_at: i64 };
 
 /// An owner namespace (docs/design/namespaces.md section 2): keyed by the GitHub id of its user or organization; its
 /// name never changes, whatever the account is called on GitHub now.
@@ -69,24 +74,33 @@ pub const Namespace = struct {
     kind: NamespaceKind,
     github_id: u64,
     created_at: i64,
-    /// Organization namespaces: the organization, and the App installation an admin bound when creating it.
-    org: ?*Org = null,
-    installation_id: u64 = 0,
+    /// Organization namespaces: the GitHub id of the account that registered it.
+    created_by: u64 = 0,
+    /// Organization namespaces: who may write in it, kept in the registry and never asked of GitHub again.
+    members: std.ArrayListUnmanaged(Member) = .{},
     /// Repositories (`owner/repo`) whose CI identity may write in it: its trusted publishers (`/_fake/trusted`).
     publishers: std.ArrayListUnmanaged([]const u8) = .{},
 
-    /// An organization namespace whose bound installation is gone (the App uninstalled, or installed again and not yet
-    /// bound): reads work, every write is refused.
-    pub fn frozen(ns: *const Namespace) bool {
-        if (ns.kind == .user) return false;
-        const o = ns.org orelse return true;
-        return o.installation_id == 0 or o.installation_id != ns.installation_id;
+    /// The member row of `u` in an organization namespace.
+    pub fn member(ns: *const Namespace, u: *const User) ?*Member {
+        for (ns.members.items) |*m| {
+            if (m.user == u) return m;
+        }
+        return null;
+    }
+
+    /// How many owners an organization namespace has.
+    pub fn ownerCount(ns: *const Namespace) usize {
+        var n: usize = 0;
+        for (ns.members.items) |m| {
+            if (m.role == .owner) n += 1;
+        }
+        return n;
     }
 
     /// The right of `u` in it, checked live: a CI identity by the publishers; a person by being the user of a user
-    /// namespace, or an active admin or member of the organization.
+    /// namespace, or by a row in the member table of an organization namespace.
     pub fn right(ns: *const Namespace, u: *const User) Right {
-        if (ns.frozen()) return .frozen;
         if (u.ci_repository) |repo| {
             for (ns.publishers.items) |r| {
                 if (std.mem.eql(u8, r, repo)) return .write;
@@ -95,17 +109,15 @@ pub const Namespace = struct {
         }
         return switch (ns.kind) {
             .user => if (u.github_id == ns.github_id) .write else .not_member,
-            .org => {
-                const m = ns.org.?.membership(u) orelse return .not_member;
-                return if (m.active and m.role != .billing_manager) .write else .not_member;
-            },
+            .org => if (ns.member(u) != null) .write else .not_member,
         };
     }
 
-    /// The role `GET /api/v2/me` gives `u` in it: `owner` of their user namespace, GitHub's role in an organization's.
+    /// The role `GET /api/v2/me` gives `u` in it: `owner` of their user namespace, the member table's role in an
+    /// organization's.
     pub fn role(ns: *const Namespace, u: *const User) []const u8 {
         if (ns.kind == .user) return "owner";
-        return @tagName(ns.org.?.membership(u).?.role);
+        return @tagName(ns.member(u).?.role);
     }
 };
 
@@ -326,6 +338,10 @@ pub const DeviceLogin = struct {
     decision: Decision = .pending,
     /// Who approved it.
     user: ?*User = null,
+    /// The device flow of an organization namespace's registration (`POST /namespaces`) and not of a login: the
+    /// namespace it asks for, and the account that started it.
+    org_namespace: ?[]const u8 = null,
+    account: ?*User = null,
     /// The session token handed out on the first approved poll.
     token: ?*Token = null,
 };
@@ -351,8 +367,6 @@ pub const State = struct {
     /// Requests answered that were not a `/_fake/` control (uploads to `/_fake/upload/` count): `/_fake/requests` reads it.
     api_requests: u64 = 0,
     next_github_id: u64 = 1000,
-    /// The id the next App installation (`/_fake/org`) gets.
-    next_installation_id: u64 = 1,
     users: std.ArrayListUnmanaged(*User) = .{},
     tokens: std.ArrayListUnmanaged(*Token) = .{},
     logins: std.ArrayListUnmanaged(*DeviceLogin) = .{},
@@ -561,6 +575,16 @@ pub const State = struct {
             if (std.mem.eql(u8, l.user_code, code)) return l;
         }
         return null;
+    }
+
+    /// Forgets `l`: a device row is deleted once GitHub has answered.
+    pub fn removeLogin(s: *State, l: *const DeviceLogin) void {
+        for (s.logins.items, 0..) |x, i| {
+            if (x == l) {
+                _ = s.logins.orderedRemove(i);
+                return;
+            }
+        }
     }
 
     pub fn addLogin(s: *State, l: DeviceLogin) Allocator.Error!*DeviceLogin {

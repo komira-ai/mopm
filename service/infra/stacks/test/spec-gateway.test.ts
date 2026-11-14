@@ -66,6 +66,10 @@ describe('the gateway routes every operation of the /api/v2 spec', () => {
     expect(ops.length).toBeGreaterThanOrEqual(20);
     expect(ops).toContain('PUT /api/v2/packages/{namespace}/{name}');
     expect(ops).toContain('POST /api/v2/namespaces');
+    expect(ops).toContain('POST /api/v2/namespaces/poll');
+    expect(ops).toContain('GET /api/v2/namespaces/{namespace}/members');
+    expect(ops).toContain('PUT /api/v2/namespaces/{namespace}/members/{user}');
+    expect(ops).toContain('DELETE /api/v2/namespaces/{namespace}/members/{user}');
   });
 
   test.each(ops)('%s is a gateway route', (op) => {

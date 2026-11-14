@@ -259,13 +259,9 @@ describe('the namespace section of the side panel', () => {
     expect(sec).not.toContain('github.com/new');
   });
 
-  test('a frozen namespace says publishing is refused and installing works', () => {
+  test('a namespace row says nothing about publishing rights', () => {
     const sec = section((ns) => Object.assign(ns, { frozen: true }));
-    expect(text(sec)).toContain('Frozen: the registry’s GitHub App is not installed for this account, so nothing new can be published here. Installing works as before.');
-  });
-
-  test('a namespace that is not frozen has no frozen line', () => {
-    expect(text(section())).not.toContain('Frozen');
+    expect(text(sec)).not.toMatch(/Frozen|GitHub App|publish/i);
   });
 
   test('the old owners list is gone', () => {

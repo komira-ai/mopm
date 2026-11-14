@@ -41,7 +41,7 @@ describe('createPackage: who may create', () => {
     expect(await r.registry.listAudit('alice/json')).toHaveLength(1);
   });
 
-  test('an organization member and an organization admin create in the organization namespace', async () => {
+  test('an organization member and an organization owner create in the organization namespace', async () => {
     const r = await rig();
     expect(await r.creates.create(await r.session(CAROL), 'komira-ai', 'json')).toEqual({ created: true });
     expect(await r.creates.create(await r.session(DAVE), 'komira-ai', 'toml')).toEqual({ created: true });
@@ -59,8 +59,6 @@ describe('createPackage: who may create', () => {
     expect((await r.registry.listAudit('komira-ai/json'))[0]!.actor).toBe('ci:ns:komira-ai');
     expect(await r.creates.create(await r.ci('komira-ai', ['komira-ai/toml'], { ci_owner: 'gh-repo:99' }), 'komira-ai', 'toml')).toEqual({ created: true });
     expect((await r.registry.listAudit('komira-ai/toml'))[0]!.actor).toBe('ci:gh-repo:99');
-    // A CI token needs no GitHub call: its right is the namespace publisher it was minted for.
-    expect(r.gh.state.calls).toEqual([]);
   });
 });
 
@@ -134,34 +132,9 @@ describe('createPackage: refusals, in order', () => {
     await nothingWritten(r, 'komira-ai/json');
   });
 
-  test('a frozen organization is namespace_unverified', async () => {
+  test('an organization namespace the registry holds needs no installation: a CI token for it passes', async () => {
     const r = await rig();
-    const e = await refused(r.creates.create(await r.session(CAROL), 'frozen-org', 'json'));
-    expect([e.status, e.code]).toEqual([403, 'namespace_unverified']);
-    expect(e.message).toMatch(/^'frozen-org' cannot be verified on GitHub: /);
-  });
-
-  test('a CI token of a frozen organization is namespace_unverified, and nothing is written', async () => {
-    const r = await rig();
-    const e = await refused(r.creates.create(await r.ci('frozen-org', ['frozen-org/json']), 'frozen-org', 'json'));
-    expect([e.status, e.code]).toEqual([403, 'namespace_unverified']);
-    expect(e.message).toBe("'frozen-org' cannot be verified on GitHub: the mopm registry GitHub App is not installed on the organization.");
-    await nothingWritten(r, 'frozen-org/json');
-  });
-
-  test('GitHub being down is unavailable, and nothing is written', async () => {
-    const r = await rig();
-    r.gh.state.faults.push({ path: /memberships/, reject: true });
-    const e = await refused(r.creates.create(await r.session(CAROL), 'komira-ai', 'json'));
-    expect([e.status, e.code]).toEqual([503, 'unavailable']);
-    await nothingWritten(r, 'komira-ai/json');
-  });
-
-  test('a deployment with no GitHub App answers unavailable for an organization, and still serves a user namespace', async () => {
-    const r = await rig({ app: false });
-    const e = await refused(r.creates.create(await r.session(CAROL), 'komira-ai', 'json'));
-    expect([e.status, e.code]).toEqual([503, 'unavailable']);
-    expect(await r.creates.create(await r.session(ALICE), 'alice', 'json')).toEqual({ created: true });
+    expect(await r.creates.create(await r.ci('komira-ai', ['komira-ai/json']), 'komira-ai', 'json')).toEqual({ created: true });
   });
 
   test.each([
@@ -194,11 +167,20 @@ describe('createPackage: refusals, in order', () => {
     expect((await refused(r.creates.create(await r.api(ALICE, []), 'bob', 'json'))).code).toBe('scope_missing');
   });
 
-  test('the account that left an organization after its token was minted is refused by the live check', async () => {
+  test('an account removed from an organization after its token was minted is refused on the very next request, with no network call', async () => {
     const r = await rig();
-    const t = await r.api(CAROL, ['komira-ai/json']);
-    r.gh.state.memberships.delete('komira-ai/carol');
-    expect((await refused(r.creates.create(t, 'komira-ai', 'json'))).code).toBe('not_namespace_member');
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    try {
+      const t = await r.api(CAROL, ['komira-ai/json', 'komira-ai/toml']);
+      expect(await r.creates.create(t, 'komira-ai', 'json')).toEqual({ created: true });
+      expect(await r.namespaces.removeMember('komira-ai', CAROL, DAVE, r.clock.now().toISOString())).toBe('removed');
+      const e = await refused(r.creates.create(t, 'komira-ai', 'toml'));
+      expect([e.status, e.code, e.message]).toEqual([403, 'not_namespace_member', "You cannot write in 'komira-ai'."]);
+      await nothingWritten(r, 'komira-ai/toml');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 
