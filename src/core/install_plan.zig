@@ -316,6 +316,9 @@ fn sameNatives(a: []const lock.Native, b: []const lock.Native) bool {
 /// A path dependency of the project, read from its own mopm.toml.
 pub const PathDep = struct {
     name: []const u8,
+    /// `[package] name` of its mopm.toml, `<namespace>/<name>`; `name` is the part after the `/`. Empty when the
+    /// caller knows only `name` (import_names.zig then uses `name`).
+    full_name: []const u8 = "",
     /// `[package] version` of its mopm.toml.
     version: []const u8,
     /// Its directory, relative to the project, `/`-separated.
@@ -324,6 +327,8 @@ pub const PathDep = struct {
     deps: []const []const u8 = &.{},
     /// Its `[native-dependencies]`: `mopm lock` pins the ones to load (system_libs.zig).
     native_deps: []const manifest.NativeDep = &.{},
+    /// Its `[dependencies]` as its mopm.toml writes them, with their full names (import_names.zig reads them).
+    manifest_deps: []const manifest.Dep = &.{},
 };
 
 /// `l` with one `source = path` entry per path dependency (lock.zig): no

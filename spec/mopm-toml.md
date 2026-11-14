@@ -228,5 +228,31 @@ untrusted; `description` and `license` are plain text to escape, never markup.
 
 - A native library has one owner: two packages in one dependency closure may
   not ship the same soname.
+- An import name has one package: two packages in one dependency closure (the
+  root with its `[dependencies]` and `[dev-dependencies]`, and every path and
+  registry package with its `[dependencies]`, at any depth) may not have the same import
+  name. There is no rename. `mopm lock` refuses such a closure before it writes
+  anything (exit 1), and so does every command that reads `mopm.toml` or
+  `mopm.lock` (`tree`, `sync`, `plan`) and `mopm plan` when it makes the unit
+  graph. The error lists every clashing import name, sorted, and under each
+  the packages that have it, sorted by full name, each with the shortest
+  dependency path from the root (ties broken by comparing the full names
+  along the path as bytes; the root's own path is the root alone; a path that
+  starts in `[dev-dependencies]` ends in `(dev)` and loses a tie to one that
+  does not):
+
+  ```text
+  2 packages in the dependency closure have the import name 'json'; Mojo imports a package by the part after '/', so a closure holds one package per import name:
+    alice/json 1.4.2         alice/app -> alice/http 0.3.0 -> alice/json 1.4.2
+    komira-ai/json 0.1.0     alice/app -> komira-ai/parquet 0.2.0 -> komira-ai/json 0.1.0
+  There is no rename: drop one of the dependencies that brings them in.
+  ```
+
+  Until the lock and the index name packages by full name, a registry package
+  is known by the full name a manifest of the closure gives it (one that no
+  manifest names is shown by its bare name; a lock dependency that the
+  manifests name in several namespaces gives no path through it), and a clash found before
+  resolution shows a registry package's requirement in quotes in place of its
+  version.
 - A package that links natives lists, in its generated metadata, every native
   library it needs from other packages.
