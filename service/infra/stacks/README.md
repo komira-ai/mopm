@@ -39,3 +39,6 @@ Account ids come from the CDK environment at deploy time and are never committed
   index on `tokens` (CloudFormation allows one index change per table per update, so a second index goes in a later
   deploy). Nothing in the Lambda deletes rows: the tables deny DeleteItem to its role, a finished device login is marked
   consumed, and DynamoDB TTL removes expired rows later (typically within two days), so expiry is decided in code.
+  A login also makes the account's user namespace in the `namespaces` table (keyed by the namespace, with a
+  `by_github_id` index; created together with its index, so it is one deploy): a PutItem conditional on the key being
+  absent, so the role can create a namespace and never rebind or remove one (docs/design/namespaces.md).

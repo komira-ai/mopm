@@ -158,7 +158,9 @@ everything else (the read API, token management, CI exchange) is unaffected, so 
    | Enable Device Flow | checked | checked | checked |
 
    The callback URL is required by GitHub's form but the device flow never uses it (the API has no callback route).
-   The API asks for the `read:user` scope only. Do not tick anything else.
+   The API asks for the scopes `read:user` (the account and its two-factor flag) and `read:org` (the organizations the
+   account is an active member of, recorded at login for `whoami`; it never grants a write). Scopes are asked for
+   at login, not set on the app: there is nothing to tick.
 2. On the app's page, "Generate a new client secret". GitHub shows it once.
 3. Store both with the held script, run with that stage's admin credentials. Preview first; nothing is read or called
    without `--apply`. The client secret is read from standard input (hidden prompt on a terminal), never from a flag:
@@ -172,7 +174,7 @@ everything else (the read API, token management, CI exchange) is unaffected, so 
 4. Check on beta first: `curl -sS -X POST https://api.beta.mopm.dev/api/v1/auth/device -H 'content-type: application/json'
    -d '{"client":"check"}'` must answer with a `user_code` and a GitHub `verification_uri` (a `503` means the secret is
    missing or unreadable; the API logs only the reason). The API requires the account to have two-factor authentication on (`MOPM_REQUIRE_2FA`, default on, set by `require2fa` on the
-   API stack) and fails closed if GitHub does not show that field for a `read:user` token: confirm on beta with a real
+   API stack) and fails closed if GitHub does not show that field for a token of the scopes the login asks for (`read:user read:org`): confirm on beta with a real
    account before relying on it in prod (`service/api/src/auth/github.ts` says why).
 
 The Lambda role may read exactly this one secret (`secretsmanager:GetSecretValue` on `mopm/<stage>/github-oauth-??????`,

@@ -1,6 +1,6 @@
 import { GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import type { DocClient } from '../dynamo-store';
-import type { AuthStore, DeviceLoginRecord, TokenRecord, TrustedPublisher, UserRecord } from './types';
+import type { AuthStore, DeviceLoginRecord, TokenRecord, TrustedPublisher, UserOrg, UserRecord } from './types';
 
 /** Table names (service/infra/stacks/lib/config.ts: `mopm-<stage>-<table>`). */
 export interface AuthTables {
@@ -8,6 +8,7 @@ export interface AuthTables {
   tokens: string;
   device_logins: string;
   trusted_publishers: string;
+  namespaces: string;
 }
 
 export const authTablesFor = (stage: string): AuthTables => ({
@@ -15,6 +16,7 @@ export const authTablesFor = (stage: string): AuthTables => ({
   tokens: `mopm-${stage}-tokens`,
   device_logins: `mopm-${stage}-device_logins`,
   trusted_publishers: `mopm-${stage}-trusted_publishers`,
+  namespaces: `mopm-${stage}-namespaces`,
 });
 
 /** The tokens table's index by account (service/infra/stacks/lib/data-stack.ts): partition github_id, sort id. */
@@ -67,10 +69,12 @@ export class DynamoAuthStore implements AuthStore {
     private readonly tables: AuthTables,
   ) {}
 
-  async upsertUser(github_id: number, handle: string, now: string, two_factor?: boolean): Promise<UserRecord> {
+  async upsertUser(github_id: number, handle: string, now: string, two_factor?: boolean, orgs?: UserOrg[]): Promise<UserRecord> {
     const old = await this.getUser(github_id);
     const rec: UserRecord = { github_id, handle, created_at: old?.created_at ?? now, last_login_at: now };
     if (two_factor !== undefined) rec.two_factor = two_factor;
+    const keep = orgs ?? old?.orgs;
+    if (keep !== undefined) rec.orgs = keep;
     await this.doc.send(
       new PutCommand({ TableName: this.tables.users, Item: { ...rec, github_id: String(github_id), github_id_num: github_id } }),
     );

@@ -18,15 +18,20 @@ export interface FakeGitHubState {
   pollScript: Array<Record<string, unknown>>;
   user: Record<string, unknown>;
   userStatus: number;
+  /** `GET /user/memberships/orgs`: the pages it answers in order (page n is entry n - 1; past the end, an empty list). */
+  orgPages: unknown[];
+  orgStatus: number;
   calls: Array<{ url: string; method: string; headers: Record<string, string>; body?: string }>;
 }
 
-/** A fake of the three GitHub endpoints login uses. No network. */
+/** A fake of the four GitHub endpoints login uses. No network. */
 export function fakeGitHub(over: Partial<FakeGitHubState> = {}) {
   const state: FakeGitHubState = {
     pollScript: [{ access_token: 'gho_faketoken', token_type: 'bearer', scope: 'read:user' }],
     user: { id: 4242, login: 'octo', two_factor_authentication: true },
     userStatus: 200,
+    orgPages: [[]],
+    orgStatus: 200,
     calls: [],
     ...over,
   };
@@ -47,6 +52,8 @@ export function fakeGitHub(over: Partial<FakeGitHubState> = {}) {
       return reply(200, next);
     }
     if (url === 'https://api.github.com/user') return reply(state.userStatus, state.user);
+    const orgs = /^https:\/\/api\.github\.com\/user\/memberships\/orgs\?state=active&per_page=100&page=([0-9]+)$/.exec(url);
+    if (orgs) return reply(state.orgStatus, state.orgPages[Number(orgs[1]) - 1] ?? []);
     return reply(404, {});
   };
   return { state, fetchFn };
