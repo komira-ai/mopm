@@ -328,9 +328,11 @@ test "login pauses the interval the registry named before the first poll and the
     }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
     try std.testing.expectEqual(@as(u8, 0), try login(loginSession(a, dir), script.net(), &con, "1.2.3"));
     try std.testing.expect(script.mismatch == null);
-    // The device request carries the client; every poll carries the device code.
+    // The device request carries the client; each of the three polls carries the device code; /me is a GET, last.
+    try std.testing.expectEqual(@as(usize, 5), script.seen.items.len);
     try std.testing.expectEqualStrings("{\"client\":\"mopm 1.2.3\"}", script.seen.items[0].body.?);
-    for (script.seen.items[1..]) |x| try std.testing.expectEqualStrings("{\"device_code\":\"dc\"}", x.body.?);
+    for (script.seen.items[1..4]) |x| try std.testing.expectEqualStrings("{\"device_code\":\"dc\"}", x.body.?);
+    try std.testing.expect(script.seen.items[4].body == null);
     // 5 before the first poll, 2 after the interval it was told, 2 again when the next pending names none: 9, not 15.
     try std.testing.expectEqual(@as(u64, 9), script.slept);
     const entry = (try credentials.load(a, dir, "http://127.0.0.1:1/api/v1")).?;

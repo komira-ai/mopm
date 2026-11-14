@@ -2402,6 +2402,22 @@ const golden_member_natives =
     \\      "key": "90c4698f09339ab439ab77271072f2a0acb930dccedecb678d0d3988c3be6759"
     \\    },
     \\    {
+    \\      "id": "example/util@0.3.0#mojo1.0.0/lib",
+    \\      "package": "example/util",
+    \\      "import": "util",
+    \\      "version": "0.3.0",
+    \\      "kind": "lib",
+    \\      "root": "util/src/util",
+    \\      "srcs": [
+    \\        {"path": "util/src/util/__init__.mojo", "sha256": "e3163528c26697e825dd5eec25279a8679ef2c05095c92a8a952de7fe7514ea5"}
+    \\      ],
+    \\      "deps": [],
+    \\      "natives": [],
+    \\      "profile": {"opt": 1, "assert": "all", "debug": false},
+    \\      "outputs": ["util.mojoc"],
+    \\      "key": "540005bc3fbe5c24fd26c2f24c1963c74fa2a26369c446d935731dc1bf28ef61"
+    \\    },
+    \\    {
     \\      "id": "native:example/app/app_shim",
     \\      "package": "example/app",
     \\      "import": "app",
@@ -2421,22 +2437,6 @@ const golden_member_natives =
     \\      "natives": [],
     \\      "outputs": ["libapp_shim.a"],
     \\      "key": "951c44211d3a8c5b081558b5e4183101513ad9d0ee31ce7e941899d847dfffa5"
-    \\    },
-    \\    {
-    \\      "id": "example/util@0.3.0#mojo1.0.0/lib",
-    \\      "package": "example/util",
-    \\      "import": "util",
-    \\      "version": "0.3.0",
-    \\      "kind": "lib",
-    \\      "root": "util/src/util",
-    \\      "srcs": [
-    \\        {"path": "util/src/util/__init__.mojo", "sha256": "e3163528c26697e825dd5eec25279a8679ef2c05095c92a8a952de7fe7514ea5"}
-    \\      ],
-    \\      "deps": [],
-    \\      "natives": [],
-    \\      "profile": {"opt": 1, "assert": "all", "debug": false},
-    \\      "outputs": ["util.mojoc"],
-    \\      "key": "540005bc3fbe5c24fd26c2f24c1963c74fa2a26369c446d935731dc1bf28ef61"
     \\    }
     \\  ]
     \\}

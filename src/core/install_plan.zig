@@ -655,7 +655,12 @@ test "the lock is written for a loopback http channel with a path, and refused f
     };
     try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/acme/linux-64/mojo-acme.crypto-2.0.1-mojo1.0.0_0.conda", l.packages[0].url);
     try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/acme/", l.packages[0].channel);
-    try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/komira-ai/", l.packages[1].channel);
+    // crypto is locked for both of its subdirs, so the second package is crypto again and the third a komira-ai one.
+    try std.testing.expectEqualStrings("acme/crypto", l.packages[1].name);
+    try std.testing.expectEqualStrings("osx-arm64", l.packages[1].subdir);
+    try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/acme/", l.packages[1].channel);
+    try std.testing.expectEqualStrings("komira-ai/http_client", l.packages[2].name);
+    try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/komira-ai/", l.packages[2].channel);
     const text = try lock.render(a, l);
     var why: []const u8 = "";
     _ = lock.parse(a, text, &why) catch |e| {

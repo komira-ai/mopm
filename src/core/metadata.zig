@@ -160,9 +160,9 @@ test "name and dependency names must be full names" {
     const a = arenaFor(&t);
     try std.testing.expectError(error.BadName, parse(a, "{\"schema\": 2, \"name\": \"json\"}"));
     try std.testing.expectError(error.BadName, parse(a, "{\"schema\": 2, \"name\": \"Komira/json\"}"));
-    try std.testing.expectError(error.BadName, parse(a, "{\"schema\": 2, \"name\": \"komira-ai/json\", \"deps\": [{\"name\": \"b\"}]}"));
-    const m = try parse(a, "{\"schema\": 2, \"name\": \"komira-ai/json\", \"deps\": [{\"name\": \"other/b\"}]}");
-    try std.testing.expectEqualStrings("other/b", m.deps[0].name);
+    try std.testing.expectError(error.BadName, parse(a, "{\"schema\": 2, \"name\": \"komira-ai/json\", \"deps\": [{\"name\": \"bb\"}]}"));
+    const m = try parse(a, "{\"schema\": 2, \"name\": \"komira-ai/json\", \"deps\": [{\"name\": \"other/bb\"}]}");
+    try std.testing.expectEqualStrings("other/bb", m.deps[0].name);
 }
 
 test "invalid documents are refused" {
