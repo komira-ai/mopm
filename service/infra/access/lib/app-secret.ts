@@ -73,7 +73,7 @@ export function appSecret(argv: string[], host: Host, opts: Options): number {
     } catch {
       throw new UsageError(`cannot read --key-file ${keyFile}`);
     }
-    if (!PEM_RE.test(key)) throw new UsageError('--key-file is not a PEM private key (-----BEGIN RSA PRIVATE KEY----- or -----BEGIN PRIVATE KEY-----)');
+    if (!PEM_RE.test(key)) throw new UsageError('--key-file is not a PEM private key (a PKCS#1 RSA or a PKCS#8 private key block)');
 
     // The key goes to the CLI in a file only the admin can read, in the workspace scratch directory, never in an argument,
     // and the file is removed at the end.

@@ -128,7 +128,8 @@ fn stageWith(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8, readme: 
     var members = std.ArrayList(u8).init(a);
     for (names, 0..) |n, i| {
         if (i != 0) try members.append(',');
-        const bytes = try std.fmt.allocPrint(a, "{s}-bytes", .{n});
+        // The bytes name the member by its last letter (`a-bytes` for pa): 7 bytes each, as the plans of these tests say.
+        const bytes = try std.fmt.allocPrint(a, "{s}-bytes", .{n[1..]});
         const filename = try std.fmt.allocPrint(a, "mojo-acme.{s}-1.0.0-x.conda", .{n});
         try tmp.dir.makePath("noarch");
         try tmp.dir.writeFile(try std.fmt.allocPrint(a, "noarch/{s}", .{filename}), bytes);
@@ -803,7 +804,7 @@ test "a rejected member ends the group: it is named, and none is published" {
         .{ .method = .POST, .suffix = "/groups", .status = 201, .body = createAnswer("open", .{ true, true, true }) },
         .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
         .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("validating") },
-        .{ .method = .GET, .suffix = gid, .status = 200, .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"rejected\",\"failure\":{\"code\":\"path_not_allowed\",\"message\":\"bin/tool is not an allowed path\",\"member\":\"b\"}}" },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"rejected\",\"failure\":{\"code\":\"path_not_allowed\",\"message\":\"bin/tool is not an allowed path\",\"member\":\"acme/pb\"}}" },
     });
     var console = Console.init(a, null);
     var p = publisher(a, &tmp, plan, &script, &console);

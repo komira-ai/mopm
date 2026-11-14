@@ -1,14 +1,16 @@
 // Tests the app-secret command (lib/app-secret.ts) against a fake Host standing in for `aws`. No AWS access.
 // Proves: a dry run touches nothing and reads no key; --apply creates or updates mopm/<stage>/github-app with the right
 // JSON; the private key is never in any argument, any output, or any file left behind; bad input and failures change nothing.
+import { generateKeyPairSync } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { appSecret } from '../lib/app-secret';
 import { FakeHost, Reply, acct } from './fake-host';
 
-const BODY = 'MIIEowIBAAKCAQEAs3ntinelPrivateKeyBody0123456789abcdef+/=';
-const PEM = `-----BEGIN RSA PRIVATE KEY-----\n${BODY}\n-----END RSA PRIVATE KEY-----\n`;
+// A PKCS#1 RSA key made for this run, so no key text is committed; BODY, its first line of base64, is what must never leak.
+const PEM = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs1' }).toString();
+const BODY = PEM.split('\n')[1]!;
 const NAME = 'mopm/gamma/github-app';
 
 type Mode = 'exists' | 'missing' | 'denied';
