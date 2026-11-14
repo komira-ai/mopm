@@ -1,6 +1,7 @@
 import type { Principal } from '../auth';
 import type { GroupMembers } from '../group';
 import type { GroupRecord, GroupStore } from '../group-store';
+import type { NamespaceAccess } from '../auth';
 import type { Store } from '../store';
 import { groupNotSettled, invalidRequest, PublishError } from './errors';
 import type { GroupAccess } from './group-commit';
@@ -26,6 +27,8 @@ const BATCH = 16;
 
 export interface GroupYankDeps {
   registry: Store & GroupStore;
+  /** Who may write in a namespace: the owner check of a full name (`/api/v2`). Absent, a yank of a full name's member answers `unavailable`. */
+  namespaces?: NamespaceAccess;
   /** The group queue: the request queues the rows on it. Absent, a request answers `unavailable`. */
   groupQueue?: Queue;
   now?: () => Date;
@@ -75,7 +78,7 @@ export class GroupYanker {
     // A configured CI publisher's token reaches here only for a group its identity created (`load` refuses any other actor, and a
     // CI identity owns no package by account), and must still own every member (`ci_owner`).
     for (let i = 0; i < members.members.length; i += BATCH) {
-      const results = await Promise.allSettled(members.members.slice(i, i + BATCH).map((m) => requireOwner(this.d.registry, p, m.name)));
+      const results = await Promise.allSettled(members.members.slice(i, i + BATCH).map((m) => requireOwner(this.d.registry, p, m.name, this.d.namespaces)));
       for (const r of results) if (r.status === 'rejected') throw r.reason;
     }
   }

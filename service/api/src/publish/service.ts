@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Principal } from '../auth';
-import { NAME_PATTERN } from '../auth';
+import { NAME_PATTERN, NamespaceError, type NamespaceAccess } from '../auth';
+import { AuthError } from '../auth/errors';
+import { condaNameOf, splitFullName } from '../names';
 import { ciActorOf } from '../auth/ci-publishers';
 import { RegistryError, versionExists } from '../errors';
 import type { GroupStore } from '../group-store';
@@ -21,6 +23,8 @@ import type { Actor, IndexMessage, PublishRecord, UploadRecord, ValidateMessage 
 
 export interface PublishServiceDeps {
   registry: Store;
+  /** Who may write in a namespace: the owner check of a full name (`/api/v2`). Absent, a write to a full name answers `unavailable`. */
+  namespaces?: NamespaceAccess;
   /** The registry's group side (the same adapter object). With it, a single publish can take over the number of a dead group; without it, it never does. */
   groups?: GroupStore;
   publishes: PublishStore;
@@ -153,7 +157,7 @@ export class PublishService {
   }
 
   private checkTarget(name: string, version: string): string {
-    if (!NAME_PATTERN.test(name)) throw new RegistryError('invalid_name', `'${name}' is not a valid package name.`, { name });
+    if (!NAME_PATTERN.test(name) && splitFullName(name) === undefined) throw new RegistryError('invalid_name', `'${name}' is not a valid package name.`, { name });
     return canonicalVersion(version); // throws invalid_version
   }
 
@@ -162,7 +166,7 @@ export class PublishService {
   }
 
   private requireOwner(p: Principal, name: string): Promise<string> {
-    return requireOwner(this.d.registry, p, name);
+    return requireOwner(this.d.registry, p, name, this.d.namespaces);
   }
 
   private async rateLimit(p: Principal): Promise<void> {
@@ -269,7 +273,7 @@ export class PublishService {
     const handle = await this.requireOwner(p, name);
     const actor = actorOf(p);
     const publishId = publishIdFor(name, canonical, req.upload_ids);
-    const accepted = { publish_id: publishId, status_url: `/api/v1/publishes/${publishId}` };
+    const accepted = { publish_id: publishId, status_url: `/api/${splitFullName(name) ? 'v2' : 'v1'}/publishes/${publishId}` };
 
     // The same upload ids again resume the publish already made (and send the message again if it never left).
     const existing = await this.d.publishes.getPublish(publishId);
@@ -431,7 +435,7 @@ export function parseFileFacts(config: PublishConfig, name: string, version: str
   if (size > config.maxArchiveBytes) {
     throw new PublishError('payload_too_large', 'The file is larger than the limit.', { limit: String(config.maxArchiveBytes) });
   }
-  const prefix = `mojo-${name}-${version}-`;
+  const prefix = `${condaNameOf(name)}-${version}-`;
   const build = filename.startsWith(prefix) && filename.endsWith('.conda') ? filename.slice(prefix.length, -'.conda'.length) : undefined;
   if (build === undefined || !BUILD.test(build)) {
     throw uploadInvalid(`the file name must be ${prefix}<build>.conda`);
@@ -442,8 +446,15 @@ export function parseFileFacts(config: PublishConfig, name: string, version: str
 /**
  * The package must exist (claimed). An account token must belong to a current owner (a token outlives an ownership change).
  * A CI token must name the package's `ci_owner` (a CI-owned package has no account owners).
+ *
+ * A full name (`<namespace>/<name>`, `/api/v2`) has no owners: its namespace is the owner. An account's token (a session, an
+ * API token, or a CI token that acts for an account) must be allowed to write there now (`access.require`, a live check every
+ * time); a CI token minted for a namespace's publisher (`ci_namespace`) must name this namespace. The package must exist.
+ * Answers the handle recorded as `published_by`: the account's handle, or `ci`.
  */
-export async function requireOwner(registry: Store, p: Principal, name: string): Promise<string> {
+export async function requireOwner(registry: Store, p: Principal, name: string, access?: NamespaceAccess): Promise<string> {
+  const full = splitFullName(name);
+  if (full) return requireWriter(registry, p, name, full.namespace, access);
   const pkg = await registry.getPackage(name);
   if (!pkg) throw new PublishError('package_not_found', `There is no package '${name}'.`, { name });
   if (p.github_id !== undefined) {
@@ -452,7 +463,7 @@ export async function requireOwner(registry: Store, p: Principal, name: string):
     return owner.handle;
   }
   const notOwner = () => new PublishError('not_owner', `You are not an owner of '${name}'.`, { name });
-  if (p.kind !== 'oidc') throw notOwner();
+  if (p.kind !== 'oidc' || p.ci_namespace !== undefined) throw notOwner();
   if (p.ci_owner !== undefined) {
     // A configured CI publisher's token acts as one identity and owns only the packages that name it.
     if (pkg.ci_owner !== p.ci_owner) throw notOwner();
@@ -461,6 +472,24 @@ export async function requireOwner(registry: Store, p: Principal, name: string):
   // A token minted for a package's registered trusted publisher: it belongs to accounts, never to a CI identity's package.
   if (pkg.ci_owner !== undefined) throw notOwner();
   return 'ci';
+}
+
+async function requireWriter(registry: Store, p: Principal, name: string, namespace: string, access: NamespaceAccess | undefined): Promise<string> {
+  const unavailable = () => new AuthError('unavailable', 'The registry is temporarily unavailable.');
+  let handle = 'ci';
+  if (p.github_id !== undefined) {
+    if (!access) throw unavailable();
+    await access.require(namespace, p.github_id);
+    handle = await access.handleOf(p.github_id);
+  } else if (p.kind === 'oidc' && p.ci_namespace !== undefined) {
+    if (p.ci_namespace !== namespace) throw new NamespaceError('not_namespace_member', `You cannot write in '${namespace}'.`, { namespace });
+    if (!access) throw unavailable();
+    await access.requireCi(namespace);
+  } else {
+    throw new PublishError('not_owner', `You are not an owner of '${name}'.`, { name });
+  }
+  if (!(await registry.getPackage(name))) throw new PublishError('package_not_found', `There is no package '${name}'.`, { name });
+  return handle;
 }
 
 /** Bytes of the files that are still on the channel: published and yanked versions (a tombstone's bytes are gone). */

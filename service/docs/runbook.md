@@ -205,7 +205,7 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
 - **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
   trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
   config-table item for it), so the fastest stop is the deploy.
-- **Gamma gets none of it, and prod only the acting-for row below.** Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the claim route's, on every stage, and there is no CI-only grant), and answers the `packages`
+- **Gamma gets none of it, and prod only the acting-for row below.** Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the create route's, `PUT /api/v2/packages/{namespace}/{name}`, on every stage, and there is no CI-only grant), and answers the `packages`
   form of the exchange with `oidc_not_trusted`. The handler also refuses to start on gamma if the variable is present, and on prod if a
   row does not carry `acts_for`, so a function that fails to start with "may be set on the beta stage only" or "trusts only rows that
   carry 'acts_for'" means the variable reached the wrong stage or has the wrong shape: fix it in the stack and redeploy. Trusting a CI
@@ -235,21 +235,33 @@ addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-
   stay valid until their 10 minutes end, and a deploy without the row refuses every later exchange with `oidc_not_trusted`. The
   account's own tokens, groups and `groups_enabled` item are untouched. To stop CI groups without a deploy, remove `u:<id>` from
   `groups_enabled` (that also stops the human account).
-- **Reading a refusal.** As for beta, plus: `package_not_found` at the exchange means the account has not claimed the name (claim it
-  with the account's own login first); an `oidc_token_invalid` "wrong audience" means the job asked for an audience other than `mopm.dev`.
+- **Reading a refusal.** As for beta, plus: `package_not_found` at the exchange means the account owns no flat package of that name.
+  `/api/v1` creates no new flat names any more (claims are refused `name_reserved`), so a new package is published in a namespace
+  through `/api/v2` instead; an `oidc_token_invalid` "wrong audience" means the job asked for an audience other than `mopm.dev`.
 - **What a CI-created package looks like.** `claimed`, `ci_owner` = `gh-repo:<repository_id>`, no owner rows (so `owners` is empty in
   the read API), and an audit entry `ci_claim`. Only a token minted for that identity may publish to it. Fixing a wrong name means a
-  takedown by an operator; the service has no route that renames or transfers it.
+  takedown by an operator; the service has no route that renames or transfers it. Since `/api/v2` is served the exchange creates no
+  flat package any more: a name nobody has is refused `name_reserved` with the hint "package names are in namespaces now; update
+  mopm". CI-created packages made before keep publishing.
 - **Reading a refusal.** `oidc_not_trusted`: the job's repository id, owner id, workflow file, ref, environment or event is not the
   configured one (`pull_request` never is). `not_owner` at the exchange: a name in the request belongs to an account or to another
   identity. `oidc_token_invalid` "token already used": a CI token is exchanged once.
-- **One namespace with claims.** A CI exchange and `POST /packages/{name}/claim` create packages by the same conditional write, so a name
-  goes to whoever creates it first: a user claim of a CI-created name is `name_taken`, and the exchange for a user-claimed name is
-  `not_owner`. The claim rate limit counts user claims only; the exchange is not charged to it.
+- **Namespace publishers.** A `CI_PUBLISHERS` row may name a `namespace` instead of `acts_for` (prod accepts either, never both): the
+  `/api/v2` exchange then mints a token for full names in that namespace, when the job's `repository_owner_id` is the namespace's GitHub
+  id. It creates nothing; `mopm publish` creates a package with `PUT /api/v2/packages/{namespace}/{name}` using that token.
 
-## Claiming a package name
+## Creating a package
 
-`POST /packages/{name}/claim` (a user token: a login or an API token; a CI identity token is refused) is the only way a package comes to exist. It writes the package
+`PUT /api/v2/packages/{namespace}/{name}` is the only way a package comes to exist (docs/design/namespaces.md section 8). It needs the
+right to write the namespace: the account a user namespace is bound to, an active member or admin of an organization (the live GitHub
+membership check; no stage has the registry's GitHub App configured yet, so organization writes answer `unavailable`), or a CI token
+minted for that namespace's publisher. It writes the package row (`state: claimed`, no expiry, no owner row: the namespace is the
+owner) and an audit entry `create`, answers 201, or 200 when the package exists. An import name that is a keyword, a builtin, a
+reserved name or a top-level module of the Mojo standard library is `name_reserved`. The daily limit below applies to it, counted per
+account (or per namespace for a CI token).
+
+`POST /api/v1/packages/{name}/claim` no longer creates anything: it answers `name_reserved` with the hint "package names are in
+namespaces now; update mopm", whatever the token. What follows described it, and still describes the rows claims made: it wrote the package
 (`state: claimed`, with `claim_expires_at` 30 days out), its first owner (the account) and an `audit` entry in one DynamoDB transaction, each
 row created only if its key is absent, so of two claims of one name exactly one wins and the loser leaves nothing behind. The API role has
 `PutItem` on `packages` and `owners` for this and nothing more there: it cannot change or delete an owner or a package.

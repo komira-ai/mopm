@@ -1,0 +1,16 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /index/config.json",
+  "rawPath": "/index/config.json",
+  "rawQueryString": "",
+  "requestContext": {
+    "requestId": "req-index-config",
+    "stage": "$default",
+    "http": {
+      "method": "GET",
+      "path": "/index/config.json",
+      "protocol": "HTTP/1.1"
+    }
+  },
+  "isBase64Encoded": false
+}

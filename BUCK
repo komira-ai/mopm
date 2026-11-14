@@ -503,6 +503,7 @@ zig_test(  # buck-only: tests/contract/validate.py: the spec, the API cases and 
     ] + glob([
         "spec/**",
         "tests/contract/api/**",
+        "tests/contract/api-v2/**",
         "tests/contract/examples/**",
         "tests/fixtures/**",
     ]),
@@ -811,6 +812,7 @@ filegroup(
     name = "spec",
     srcs = {
         "api/openapi.yaml": "spec/api/openapi.yaml",
+        "api/openapi-v2.yaml": "spec/api/openapi-v2.yaml",
         "package-metadata.schema.json": "spec/package-metadata.schema.json",
         "index-record.schema.json": "spec/index-record.schema.json",
         "index-config.schema.json": "spec/index-config.schema.json",
@@ -819,10 +821,30 @@ filegroup(
     visibility = ["//service/api:", "//service/infra/stacks:"],
 )
 
+# What service/api's test/names.test.ts holds the registry's name lists to: the Mojo versions and their standard library modules,
+# and the command line's keyword, builtin and reserved-name lists.
+filegroup(
+    name = "names_toolchain",
+    srcs = {f[len("toolchain/"):]: f for f in glob(["toolchain/versions.txt", "toolchain/mojo-*.std-modules.txt"])},
+    visibility = ["//service/api:"],
+)
+
+filegroup(
+    name = "names_core",
+    srcs = {"names.zig": "src/core/names.zig"},
+    visibility = ["//service/api:"],
+)
+
 filegroup(
     name = "contract_api",
     srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},
     visibility = ["//service/api:", "//site:"],
+)
+
+filegroup(
+    name = "contract_api_v2",
+    srcs = {f[len("tests/contract/api-v2/"):]: f for f in glob(["tests/contract/api-v2/*.json"])},
+    visibility = ["//service/api:"],
 )
 
 # ---- What the Rust crates (service/lambda/*) read -----------------------------------

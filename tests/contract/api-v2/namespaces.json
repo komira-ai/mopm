@@ -1,0 +1,231 @@
+{
+  "cases": [
+    {
+      "name": "create an organization namespace",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "acme-labs"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "acme-labs",
+          "kind": "org",
+          "github_id": 99,
+          "login": "acme-labs",
+          "frozen": false
+        }
+      }
+    },
+    {
+      "name": "create a namespace that exists",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "komira-ai"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "komira-ai",
+          "kind": "org",
+          "github_id": 77,
+          "login": "komira-ai",
+          "frozen": false
+        }
+      }
+    },
+    {
+      "name": "create a namespace that is frozen, binding the new installation",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "frozen-org"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "frozen-org",
+          "kind": "org",
+          "github_id": 88,
+          "login": "frozen-org",
+          "frozen": false
+        }
+      }
+    },
+    {
+      "name": "get a user namespace",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "alice"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "alice",
+          "kind": "user",
+          "github_id": 1001,
+          "login": "Alice",
+          "frozen": false
+        }
+      }
+    },
+    {
+      "name": "get an organization namespace",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "komira-ai"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "komira-ai",
+          "kind": "org",
+          "github_id": 77,
+          "login": "komira-ai",
+          "frozen": false
+        }
+      }
+    },
+    {
+      "name": "get a frozen namespace",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "frozen-org"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "frozen-org",
+          "kind": "org",
+          "github_id": 88,
+          "login": "frozen-org",
+          "frozen": true
+        }
+      }
+    },
+    {
+      "name": "NamespaceInfo missing frozen",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "alice"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "alice",
+          "kind": "user",
+          "github_id": 1001,
+          "login": "Alice"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "NamespaceInfo with a kind that is not one",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "alice"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "alice",
+          "kind": "team",
+          "github_id": 1001,
+          "login": "Alice",
+          "frozen": false
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a namespace created answered 202, which the operation does not declare",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "acme-labs"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "acme-labs",
+          "kind": "org",
+          "github_id": 99,
+          "login": "acme-labs",
+          "frozen": false
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a namespace in upper case",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "Alice"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "alice",
+          "kind": "user",
+          "github_id": 1001,
+          "login": "Alice",
+          "frozen": false
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

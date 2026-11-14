@@ -1,6 +1,7 @@
-//! The error codes `/api/v2` adds (spec/proposed/namespaces.md, "api/openapi.yaml"), with the status, message and hint
-//! written there. They are not in the catalogue of spec/api/openapi.yaml yet, so errors.zig (generated from it) does not
-//! hold them; when the spec moves into the catalogue, these move into errors.zig and this file goes.
+//! The error codes `/api/v2` adds (`x-mopm-errors` of spec/api/openapi-v2.yaml, the live spec of `/api/v2`), with the status,
+//! message and hint written there. They are not in the catalogue of spec/api/openapi.yaml (`/api/v1`), so errors.zig (generated
+//! from it) does not hold them; when the catalogue they are in is what errors.zig is generated from, these move into
+//! errors.zig and this file goes.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

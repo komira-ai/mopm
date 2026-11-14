@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import type { Principal } from '../auth';
-import { NAME_PATTERN } from '../auth';
+import { NAME_PATTERN, type NamespaceAccess } from '../auth';
 import { AuthError } from '../auth/errors';
 import { RegistryError, versionExists } from '../errors';
 import { API_VIEW, type GroupMembers } from '../group';
@@ -9,6 +9,7 @@ import { bitmapHas, bitmapIndexes, bitmapSet, memberAuditId, type GroupFailure, 
 import { Metrics } from '../metrics';
 import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
+import { splitFullName } from '../names';
 import { canonicalVersion } from '../version';
 import type { PublishConfig } from './config';
 import { groupConflict, groupNotFound, groupNotOpen, invalidRequest, PublishError } from './errors';
@@ -46,6 +47,8 @@ type GroupRegistry = Store & GroupStore;
 
 export interface GroupServiceDeps {
   registry: GroupRegistry;
+  /** Who may write in a namespace: the owner check of a full name (`/api/v2`). Absent, a write to a full name answers `unavailable`. */
+  namespaces?: NamespaceAccess;
   publishes: PublishStore;
   /** Only `head` is used: a file already in quarantine needs no upload URL. */
   objects: Pick<ObjectStore, 'head' | 'get'>;
@@ -89,8 +92,14 @@ const MAX_FILES_PER_MEMBER = 20;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const fileKey = (f: Pick<GroupFileRequest, 'subdir' | 'filename'>) => `${f.subdir}/${f.filename}`;
 
-/** The request body as a GroupRequest, or invalid_request (and the errors a single begin raises for a file). */
-export function parseGroupRequest(config: PublishConfig, body: unknown): GroupRequest {
+/** The API a request came in by: `/api/v1` names its members with flat names, `/api/v2` with full names. */
+export type ApiVersion = 'v1' | 'v2';
+
+/**
+ * The request body as a GroupRequest, or invalid_request (and the errors a single begin raises for a file). Every member's
+ * name is of the grammar of `api`; a name of the other one is `invalid_name`. The members may be in different namespaces.
+ */
+export function parseGroupRequest(config: PublishConfig, body: unknown, api: ApiVersion = 'v1'): GroupRequest {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
   const { members, on_overlap: onOverlap } = body;
   if (onOverlap !== undefined && onOverlap !== 'supersede' && onOverlap !== 'refuse') throw invalidRequest("'on_overlap' is 'supersede' or 'refuse'");
@@ -103,7 +112,7 @@ export function parseGroupRequest(config: PublishConfig, body: unknown): GroupRe
     if (!isObject(m)) throw invalidRequest('a member is not a JSON object');
     const { name, version, files } = m;
     if (typeof name !== 'string' || typeof version !== 'string') throw invalidRequest("a member needs a 'name' and a 'version', both strings");
-    if (!NAME_PATTERN.test(name)) throw new RegistryError('invalid_name', `'${name}' is not a valid package name.`, { name });
+    if (api === 'v1' ? !NAME_PATTERN.test(name) : splitFullName(name) === undefined) throw new RegistryError('invalid_name', `'${name}' is not a valid package name.`, { name });
     const canonical = canonicalVersion(version); // throws invalid_version
     if (names.has(name)) throw invalidRequest(`'${name}' appears twice: a group has one version of each package`);
     names.add(name);
@@ -244,7 +253,7 @@ export class GroupService {
     this.metrics = d.metrics ?? new Metrics();
     const scoped = { load: (p: Principal, id: string) => this.loadCovered(p, id) };
     this.committer = new GroupCommitter({ registry: d.registry, objects: d.objects, config: d.config, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, scoped);
-    this.yanker = new GroupYanker({ registry: d.registry, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, scoped);
+    this.yanker = new GroupYanker({ registry: d.registry, ...(d.namespaces ? { namespaces: d.namespaces } : {}), ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, scoped);
   }
 
   /** POST /groups/{id}/commit: see src/publish/group-commit.ts. */
@@ -261,8 +270,8 @@ export class GroupService {
     return { started: done.started, body: statusBody(done.header, done.members) };
   }
 
-  parse(body: unknown): GroupRequest {
-    return parseGroupRequest(this.d.config, body);
+  parse(body: unknown, api: ApiVersion = 'v1'): GroupRequest {
+    return parseGroupRequest(this.d.config, body, api);
   }
 
   // --- create ---------------------------------------------------------------------------------------------
@@ -394,14 +403,15 @@ export class GroupService {
     // A group is created by an account's token or by a configured CI publisher's (it owns packages through `ci_owner`). Any other
     // CI token is valid for one version of one package and creates no group.
     // A token that acts for an account has the account's `github_id`, so it passes by the first test.
-    if (p.github_id === undefined && !(p.kind === 'oidc' && p.ci_owner !== undefined)) {
+    // A token minted for a namespace's publisher (`ci_namespace`) does the same for the full names of that namespace.
+    if (p.github_id === undefined && !(p.kind === 'oidc' && (p.ci_owner !== undefined || p.ci_namespace !== undefined))) {
       const name = req.members[0]!.name;
       throw new AuthError('scope_missing', `The token does not have the 'publish' scope for '${name}'.`, { scope: 'publish', name });
     }
     let handle = '';
     for (let i = 0; i < req.members.length; i += BATCH) {
       const batch = req.members.slice(i, i + BATCH);
-      const results = await Promise.allSettled(batch.map((m) => requireOwner(this.d.registry, p, m.name)));
+      const results = await Promise.allSettled(batch.map((m) => requireOwner(this.d.registry, p, m.name, this.d.namespaces)));
       for (const r of results) {
         if (r.status === 'rejected') throw r.reason;
         handle = r.value;

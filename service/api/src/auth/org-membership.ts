@@ -22,14 +22,15 @@ export const MEMBERSHIP_PASS_MS = 5 * 60 * 1000;
 
 export type OrgRole = 'admin' | 'member';
 
-/** The codes of section 8 this module raises besides `unavailable` (spec/proposed/namespaces.md, "New error codes"). */
-export type NamespaceErrorCode = 'invalid_namespace' | 'namespace_reserved' | 'not_namespace_member' | 'namespace_unverified';
+/** The codes of section 8 (this module raises all but `namespace_not_found`, which src/auth/namespace-access.ts does) besides `unavailable` (spec/proposed/namespaces.md, "New error codes"). */
+export type NamespaceErrorCode = 'invalid_namespace' | 'namespace_reserved' | 'not_namespace_member' | 'namespace_unverified' | 'namespace_not_found';
 
 export const NAMESPACE_HTTP_STATUS: Record<NamespaceErrorCode, number> = {
   invalid_namespace: 400,
   namespace_reserved: 403,
   not_namespace_member: 403,
   namespace_unverified: 403,
+  namespace_not_found: 404,
 };
 
 /** A refused write or creation in a namespace. Same shape as AuthError (code, status, detail), so a router answers both alike. */

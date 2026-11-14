@@ -175,6 +175,9 @@ paths:
         but it can only prepare a group (`createGroup`, `getGroup`, `abortGroup`); `commitGroup`, `commitPublish`, `setYanked`
         and `yankGroup` refuse it as `scope_missing`. Who may be minted either token is unchanged. Any other `purpose` is
         `invalid_request`, before the CI identity token is spent.
+
+        Once `/api/v2` is served (`spec/api/openapi-v2.yaml`), the `packages` form answers `name_reserved` for a name nobody has,
+        with the hint "package names are in namespaces now; update mopm". It still mints a token for the names that exist.
       security: []
       requestBody:
         required: true
@@ -358,6 +361,9 @@ paths:
         registry has set a higher daily limit for the account; over it the claim is `rate_limited` and `Retry-After` says when the day ends.
         An API token that has only the `stage` scope is refused (`scope_missing`): a claim makes the caller the owner, and `stage`
         reaches nothing that changes ownership.
+
+        Once `/api/v2` is served (`spec/api/openapi-v2.yaml`), this operation answers `name_reserved` for every name, with the
+        hint "package names are in namespaces now; update mopm": a package is created with `createPackage` of `/api/v2`.
       security:
         - userToken: []
       parameters:
@@ -1232,7 +1238,8 @@ components:
       description: |
         Two forms. `name` and `version`: a token for that one package version, for a package with a trusted
         publisher. `packages`: one token for every listed package version, for a CI publisher the deployment
-        trusts by configuration (a package nobody has claimed is created, owned by the publisher). Send one form,
+        trusts by configuration (a package nobody has claimed is created, owned by the publisher; once `/api/v2` is served
+        that is refused with `name_reserved`, hint "package names are in namespaces now; update mopm"). Send one form,
         not both; a name is listed once. Either form takes the optional `purpose`.
       required: [jwt]
       oneOf:

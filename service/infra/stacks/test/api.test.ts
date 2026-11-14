@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, V2_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
@@ -102,6 +102,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       [
         ...READ_ROUTES.map((r) => `GET ${r}`),
         ...PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`),
+        ...V2_ROUTES.map((r) => `${r.method} ${r.path}`),
         'POST /api/v1/packages/{name}/claim',
         'POST /api/v1/auth/device',
         'POST /api/v1/auth/device/poll',
@@ -116,7 +117,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     );
     expect(AUTH_ROUTES).toHaveLength(7);
     expect(CLAIM_ROUTES.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /api/v1/packages/{name}/claim']);
-    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + CLAIM_ROUTES.length + 2);
+    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + CLAIM_ROUTES.length + V2_ROUTES.length + 2);
     // Claim is POST only (a GET of `.../claim` is the version route's, which the handler refuses); yank (PUT) is routed too.
     expect(keys.filter((k) => /\/claim/.test(k))).toEqual(['POST /api/v1/packages/{name}/claim']);
     expect(keys).toContain('PUT /api/v1/packages/{name}/{version}/yank');

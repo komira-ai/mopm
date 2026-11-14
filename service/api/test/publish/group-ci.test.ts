@@ -66,8 +66,14 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
     gadgets = pkg({ name: 'gadgets', subdir: 'noarch' });
   });
 
-  /** A token of the configured identity from a real exchange: it creates the packages it names and is good for exactly them at those versions. */
+  /**
+   * A token of the configured identity from a real exchange: good for exactly the packages it names at those versions. /api/v1
+   * creates no package, so the ones that do not exist yet are made first, owned by the identity.
+   */
   async function exchange(pkgs: Pkg[]): Promise<string> {
+    for (const p of pkgs) {
+      if (!(await rig.store.getPackage(p.name))) await rig.store.createPackage({ name: p.name, state: 'claimed', created_at: env.clock.now().toISOString(), ci_owner: OWNER });
+    }
     const jwt = signJwt(
       key,
       goodClaims(env.clock, {
@@ -143,7 +149,7 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
         expect(await rig.store.listOwners(p.name)).toEqual([]);
         expect(await rig.store.getVersion(p.name, p.version)).toMatchObject({ state: 'published', published_by: OWNER });
         const trail = (await rig.store.listAudit(p.name)).map((a) => [a.action, a.actor]);
-        expect(trail).toContainEqual(['ci_claim', OWNER]);
+        expect(trail).not.toContainEqual(['ci_claim', OWNER]);
         expect(trail).toContainEqual(['group_reserve', ACTOR]);
         expect(trail).toContainEqual(['group_flip', 'system']);
       }
@@ -204,7 +210,7 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
         const m = created.members.find((x: { name: string }) => x.name === p.name);
         await env.objects.put(quarantineKeyFor(m.files[0].upload_id, m.files[0].filename), p.bytes, { contentType: 'application/octet-stream' });
       }
-      // the packages exist (claimed by the first exchange) and the group is open and unread: the second exchange still passes
+      // the packages exist (claimed, owned by the identity) and the group is open and unread: the second exchange still passes
       const later = await exchange([widgets, gadgets]);
       expect(later).not.toBe(first);
       const again = await env.create(later, [widgets, gadgets].map(memberOf));

@@ -42,7 +42,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_EXCHANGE_BODY_BYTES = 128 * 1024;
 const unavailable = () => new AuthError('unavailable', 'The registry is temporarily unavailable.');
 
-function jsonBody(raw: string | undefined, maxBytes = MAX_BODY_BYTES): Record<string, unknown> {
+export function jsonBody(raw: string | undefined, maxBytes = MAX_BODY_BYTES): Record<string, unknown> {
   const bad = (detail: string) => new RegistryError('invalid_request', `The request is not valid: ${detail}.`, { detail });
   if (raw === undefined || raw === '') throw bad('a JSON body is required');
   if (raw.length > maxBytes) throw bad('the body is too large');
@@ -57,7 +57,7 @@ function jsonBody(raw: string | undefined, maxBytes = MAX_BODY_BYTES): Record<st
 }
 
 /** Errors that mean the tables are not there (yet) or not reachable by this role: the auth routes are unavailable, the read API is not. */
-const STORE_NOT_READY = new Set(['ResourceNotFoundException', 'AccessDeniedException', 'UnrecognizedClientException']);
+export const STORE_NOT_READY = new Set(['ResourceNotFoundException', 'AccessDeniedException', 'UnrecognizedClientException']);
 
 /**
  * The operations of spec/api/openapi.yaml for login, tokens and CI exchange. Returns undefined for a request that is

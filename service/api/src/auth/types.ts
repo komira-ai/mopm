@@ -59,6 +59,11 @@ export interface TokenRecord {
    * (`gh-repo:<repository_id>`). The token's `github_id` is then the account, and `ci_owner` is absent.
    */
   acts_via?: string;
+  /**
+   * An `oidc` token minted by `/api/v2`'s exchange for a publisher of a namespace (a registered one, or a configured CI
+   * publisher with `namespace`): that namespace. Its `packages` are full names in it, and it writes those only.
+   */
+  ci_namespace?: string;
   /** Session tokens only: full-strength actions need a login newer than this. */
   fresh_until?: string;
   created_at: string;
