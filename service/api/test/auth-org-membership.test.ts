@@ -218,6 +218,18 @@ describe('the membership check: a namespace that cannot be verified is frozen', 
     expect(await refusal(om.check(NS, ALICE))).toEqual(unverified('the GitHub App installation belongs to another GitHub account'));
   });
 
+  test('suspended and restored by an owner: GitHub revoked the token meanwhile, and the next check passes', async () => {
+    const { gh, om, clock } = rig();
+    gh.member('komira-ai', 'alice', ALICE);
+    await om.check(NS, ALICE);
+    gh.state.installations.get(INST)!.suspended = true;
+    gh.revokeTokens();
+    clock.advance(MEMBERSHIP_PASS_MS);
+    expect(await refusal(om.check(NS, ALICE))).toEqual(unverified('the mopm registry GitHub App is suspended on the organization'));
+    gh.state.installations.get(INST)!.suspended = false;
+    expect(await om.check(NS, ALICE)).toBe('member');
+  });
+
   test('the installation is suspended by an owner', async () => {
     const { gh, om } = rig();
     gh.member('komira-ai', 'alice', ALICE);
@@ -371,6 +383,32 @@ describe('bindOrgNamespace: the creation of an organization namespace by an admi
     const { gh, om, store } = setup();
     gh.state.installations.delete(INST);
     expect(await refusal(om.bindOrgNamespace(store, 'komira-ai', ALICE))).toEqual(unverified('the mopm registry GitHub App is not installed on the organization'));
+  });
+
+  test('a login GitHub resolves to an organization now called something else (a redirect) creates nothing', async () => {
+    const { gh, om, store } = setup();
+    gh.install(INST, { id: ORG_ID, login: 'komira-labs' }).member('komira-labs', 'alice', ALICE, 'admin');
+    gh.state.faults.push({ path: /^\/orgs\/komira-ai\/installation$/, body: { id: INST, account: { id: ORG_ID, login: 'komira-labs' }, suspended_at: null } });
+    expect(await refusal(om.bindOrgNamespace(store, 'komira-ai', ALICE))).toEqual(
+      unverified('the organization found under that login is now called something else on GitHub'),
+    );
+    expect(await store.getNamespace('komira-ai')).toBeUndefined();
+    expect(gh.reads()).toEqual(['GET /orgs/komira-ai/installation']);
+  });
+
+  test('a login that differs only in case from the installation\'s is the same organization', async () => {
+    const { gh, om, store } = setup();
+    gh.install(INST, { id: ORG_ID, login: 'Komira-AI' }).member('Komira-AI', 'alice', ALICE, 'admin');
+    expect((await om.bindOrgNamespace(store, 'komira-ai', ALICE)).status).toBe('created');
+  });
+
+  test('a namespace whose organization was renamed is rebound by id: the old string resolves to the same organization', async () => {
+    const { gh, om, store } = setup();
+    await store.createNamespace(NS);
+    gh.state.installations.delete(INST);
+    gh.install(6666, { id: ORG_ID, login: 'komira-labs' }).member('komira-labs', 'alice', ALICE, 'admin');
+    gh.state.faults.push({ path: /^\/orgs\/komira-ai\/installation$/, body: { id: 6666, account: { id: ORG_ID, login: 'komira-labs' }, suspended_at: null } });
+    expect(await om.bindOrgNamespace(store, 'komira-ai', ALICE)).toEqual({ status: 'rebound', record: { ...NS, installation_id: 6666 } });
   });
 
   test('a suspended installation: unverified, and nothing is created', async () => {

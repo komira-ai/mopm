@@ -172,6 +172,11 @@ export function fakeGitHubApp(now: () => Date) {
       state.memberships.delete(`${org.toLowerCase()}/${login.toLowerCase()}`);
       return gh;
     },
+    /** GitHub revokes every installation token it handed out (as when an owner suspends the App): they answer 401. */
+    revokeTokens() {
+      state.tokens.clear();
+      return gh;
+    },
     /** Calls other than token minting, as `<METHOD> <path>`. */
     reads() {
       return state.calls.filter((c) => !c.path.endsWith('/access_tokens')).map((c) => `${c.method} ${c.path}`);

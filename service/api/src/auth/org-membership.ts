@@ -60,6 +60,8 @@ export const UNVERIFIED = {
   otherAccount: 'the GitHub App installation belongs to another GitHub account',
   notOrg: 'it is not an organization namespace',
   boundElsewhere: 'it is bound to another GitHub account',
+  /** The installation GitHub found for the string is on an organization whose current login is another (a redirect). */
+  otherLogin: 'the organization found under that login is now called something else on GitHub',
 } as const;
 
 /** A kept pass. `expires_at` is decided in code: a row past it is never used, whether or not the store has removed it. */
@@ -186,6 +188,9 @@ export class OrgMembership {
     if (held && held.kind !== 'org') throw unverified(namespace, UNVERIFIED.notOrg);
     const inst = await asking(namespace, () => this.d.app.getOrgInstallation(namespace));
     if (!inst) throw unverified(namespace, UNVERIFIED.noInstallation);
+    // A namespace is made only for the organization that holds that login now: an old login GitHub still resolves to a
+    // renamed organization must not become its namespace while someone else may hold the login.
+    if (!held && inst.account.login.toLowerCase() !== namespace) throw unverified(namespace, UNVERIFIED.otherLogin);
     if (held && held.github_id !== inst.account.id) throw unverified(namespace, UNVERIFIED.boundElsewhere);
     if (inst.suspended) throw unverified(namespace, UNVERIFIED.suspended);
     const role = await this.role(namespace, inst, account_id, 'admin');

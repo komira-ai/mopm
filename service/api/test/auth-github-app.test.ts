@@ -1,5 +1,5 @@
 import { generateKeyPairSync, verify } from 'node:crypto';
-import { APP_JWT_LIFETIME_SECONDS, GitHubUnavailable, HttpGitHubAppApi, INSTALLATION_TOKEN_MARGIN_MS, type FetchLike } from '../src/auth';
+import { APP_JWT_LIFETIME_SECONDS, GITHUB_CALL_TIMEOUT_MS, GitHubUnavailable, HttpGitHubAppApi, INSTALLATION_TOKEN_MARGIN_MS, type FetchLike } from '../src/auth';
 import { TestClock } from './auth-helpers';
 import { APP_ID, APP_PRIVATE_KEY, APP_PUBLIC_KEY, fakeGitHubApp } from './github-app-fake';
 
@@ -157,6 +157,36 @@ describe('the installation token', () => {
     ]);
   });
 
+  test('a token GitHub revoked early (401) is dropped and minted again, and the call made once more', async () => {
+    const { app, gh } = rig();
+    await app.getUserById(5555, 4242);
+    gh.revokeTokens();
+    expect(await app.getOrgMembership(5555, 'komira-ai', 'alice')).toEqual({ user_id: 4242, state: 'active', role: 'admin' });
+    expect(gh.state.calls.map((c) => `${c.method} ${c.path} ${c.auth.startsWith('Bearer ghs_') ? c.auth.slice(7) : 'jwt'}`)).toEqual([
+      'POST /app/installations/5555/access_tokens jwt',
+      'GET /user/4242 ghs_fake1',
+      'GET /orgs/komira-ai/memberships/alice ghs_fake1',
+      'POST /app/installations/5555/access_tokens jwt',
+      'GET /orgs/komira-ai/memberships/alice ghs_fake2',
+    ]);
+    await app.getUserById(5555, 4242);
+    expect(gh.state.calls[gh.state.calls.length - 1]!.auth).toBe('Bearer ghs_fake2');
+  });
+
+  test('a 401 that persists with a new token is unavailable after one more try, not a loop', async () => {
+    const { app, gh } = rig();
+    gh.state.faults.push({ path: /^\/user\//, status: 401 });
+    await expect(app.getUserById(5555, 4242)).rejects.toEqual(unavailable('GitHub answered 401 for the user lookup'));
+    expect(gh.state.calls.map((c) => c.path)).toEqual(['/app/installations/5555/access_tokens', '/user/4242', '/app/installations/5555/access_tokens', '/user/4242']);
+  });
+
+  test.each([403, 500])('a %s with the token keeps it: only a 401 says the token is bad', async (status) => {
+    const { app, gh } = rig();
+    gh.state.faults.push({ path: /^\/user\//, status });
+    await expect(app.getUserById(5555, 4242)).rejects.toEqual(unavailable(`GitHub answered ${status} for the user lookup`));
+    expect(gh.state.calls.filter((c) => c.path.endsWith('/access_tokens'))).toHaveLength(1);
+  });
+
   test('an installation gone when its token is asked for is GitHub unavailable (there is nothing to ask with)', async () => {
     const { app } = rig();
     await expect(app.getUserById(1, 4242)).rejects.toEqual(unavailable('GitHub answered 404 for the installation token'));
@@ -215,6 +245,19 @@ describe('unusable answers are GitHub unavailable, never a guess', () => {
     const { app, gh } = rig();
     gh.state.faults.push({ path: /^\/orgs\/[^/]+\/memberships\//, body });
     await expect(app.getOrgMembership(5555, 'komira-ai', 'alice')).rejects.toEqual(unavailable('GitHub answered an unusable membership'));
+  });
+
+  test('every call carries a time limit; a call abandoned at it is unavailable', async () => {
+    const signals: unknown[] = [];
+    const app = new HttpGitHubAppApi({ appId: APP_ID, privateKey: APP_PRIVATE_KEY }, () => new Date(), async (_url, init) => {
+      signals.push(init.signal);
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    await expect(app.getInstallation(5555)).rejects.toEqual(unavailable('GitHub could not be read for the installation: TimeoutError'));
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect((signals[0] as AbortSignal).aborted).toBe(false);
+    expect(GITHUB_CALL_TIMEOUT_MS).toBe(5000);
   });
 
   test('a rejected fetch with no error name still says unreachable', async () => {
