@@ -314,7 +314,7 @@ fn account(c: *Ctx) ![]const u8 {
         c.rep.check("login: a device login approved on the registry stores the account", ok, try h.fmt(a, "first line: {s}\n{s}\n{s}", .{ first, out, err }));
     }
     r = try c.mopm(c.ws, &.{ "whoami", "--registry", c.fake.base, "--config-dir", c.conf });
-    c.check("whoami names the account", r.code == 0 and h.contains(r.stdout, "beta-user (GitHub id ") and h.contains(r.stdout, ") on beta"), r);
+    c.check("whoami names the account", r.code == 0 and h.hasLine(r.stdout, "handle: beta-user") and h.hasLinePrefix(r.stdout, "github_id: "), r);
 
     // What the person does next, on the registry's API: claim the name and make a token that may publish it.
     const creds = h.parseJson(a, c.read(c.path(&.{ c.conf, "credentials.json" }))) catch std.json.Value{ .null = {} };

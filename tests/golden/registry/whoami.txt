@@ -1,0 +1,13 @@
+usage: mopm whoami [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Show the account the token belongs to and its namespaces.
+
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends GET /api/v2/me (getMe) with the token 'mopm login' stored, or $MOPM_TOKEN.

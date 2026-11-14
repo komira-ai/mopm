@@ -2017,7 +2017,7 @@ test "--abort of a group that already ended is not an error, and one that was co
     try std.testing.expectEqual(Result.failed, r2);
     try std.testing.expectEqual(@as(u8, 1), q.finish(r2));
     try expectContains(c2.err.items, "is validating: it was committed, so it cannot be aborted");
-    try expectContains(c2.err.items, "mopm yank --group " ++ gid);
+    try expectContains(c2.err.items, "mopm group yank " ++ gid);
     // And it did not forget the group.
     try std.testing.expectEqualStrings(gid, (try plan_mod.loadState(a, tmp.dir)).ok.group_id);
 }

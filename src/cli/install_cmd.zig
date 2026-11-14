@@ -363,6 +363,7 @@ const IndexSource = struct {
 
     pub fn fetch(self: IndexSource, arena: Allocator, name: []const u8, diag: *resolve.Diagnostic) resolve.Error!?[]const u8 {
         const url = try registry.indexUrl(arena, self.config, name);
+        // not the registry API: the static sparse index, a file under the registry's index URL
         const answer = http.request(arena, .GET, url, .{}) catch |e| {
             return resolve.fail(arena, diag, .unreachable_index, "cannot read {s}: {s}", .{ url, @errorName(e) });
         };
@@ -383,6 +384,7 @@ const ChannelSource = struct {
 
     pub fn fetch(self: ChannelSource, arena: Allocator, namespace: []const u8, subdir: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
         const url = try std.fmt.allocPrint(arena, "{s}{s}/{s}/repodata.json", .{ self.channel_url, namespace, subdir });
+        // not the registry API: a namespace channel's repodata.json, a static file
         const answer = http.request(arena, .GET, url, .{}) catch |e| {
             return resolve.fail(arena, diag, .bad_channel, "cannot read {s}: {s}", .{ url, @errorName(e) });
         };
@@ -394,6 +396,7 @@ const ChannelSource = struct {
     /// in memory, up to `max_conda` bytes; a longer one is refused as too large.
     pub fn fetchConda(self: ChannelSource, arena: Allocator, namespace: []const u8, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
         const url = try std.fmt.allocPrint(arena, "{s}{s}/{s}/{s}", .{ self.channel_url, namespace, subdir, filename });
+        // not the registry API: a package file of a namespace channel, a static file
         const answer = http.request(arena, .GET, url, .{ .max_body = self.max_conda }) catch |e| {
             if (e == error.StreamTooLong) return resolve.fail(arena, diag, .bad_channel, "{s} is larger than {d} bytes, the most a package file may be", .{ url, self.max_conda });
             return resolve.fail(arena, diag, .bad_channel, "cannot read {s}: {s}", .{ url, @errorName(e) });

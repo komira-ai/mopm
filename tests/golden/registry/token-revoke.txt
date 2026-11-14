@@ -1,0 +1,15 @@
+usage: mopm token revoke <token_id> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Revoke an API token.
+
+arguments:
+  <token_id>
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends DELETE /api/v2/me/tokens/{token_id} (revokeToken) with the token 'mopm login' stored, or $MOPM_TOKEN.

@@ -1,0 +1,65 @@
+usage: mopm api create-group --body <file> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Create or continue a publish group (one step of 'mopm publish --staged').
+
+A group is a set of versions, at most one per package, that are meant to be published together. This call
+declares the whole set up front (each member's name, version and files with their sha256 and size) and
+reserves the version numbers; the caller then PUTs each file to the URL it is given. Creating a group
+publishes nothing and makes nothing visible.
+
+The token must be an API token with the `publish` or `stage` scope for every member's package, and the caller must be
+able to write the namespace of each package; or a CI identity token minted by `exchangeOidcToken` for a publisher of the
+namespace, which must name every member's package and version. The first member
+that fails any of these refuses the whole group and is named in the error. A number that a published version
+already holds is `version_exists`; one that another group is still using is `group_conflict`. A
+`group_conflict` carries a `reason` (see `Error`) that tells the causes apart without reading the message.
+
+The id of a group is a function of the caller and the declared set: the same request again is the same group. The
+derivation is a stable interface, so a client can compute the id itself and read the group with `getGroup` (a 404
+`group_not_found` means there is no such group of the caller's). The id is `grp_` followed by the first 32 lowercase hex
+digits of the SHA-256 of the UTF-8 bytes of the compact JSON text (no white space) of the array
+`[actor, set]`. `actor` is `u:<GitHub account id>` for an account's token, including a CI token that acts for an
+account, and `ci:gh-repo:<repository id>` for a configured CI publisher's own token. `set` is the array of members
+sorted by full name, each member `[name, version, files]`, with `files` the array of the member's files sorted by
+the text `<subdir>/<filename>`, each file `[subdir, filename, sha256, size]` (`size` a JSON integer). The order of
+members and files in the request, `on_overlap`, a member's `readme` and every other option are not part of it. For the actor `u:1234` and
+the one file `linux-64/mojo-komira-ai.alpha-1.0.0-mojo1.0.0_0.conda` (sha256 `a` repeated 64 times, size 1000) of
+`komira-ai/alpha` 1.0.0, the text hashed is
+`["u:1234",[["komira-ai/alpha","1.0.0",[["linux-64","mojo-komira-ai.alpha-1.0.0-mojo1.0.0_0.conda","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",1000]]]]]`
+and the id is `grp_598a7e4a7e56109c58051a434f3be338`. More vectors are in the registry's test fixtures. A change to the
+derivation would be a new id prefix, never a different hash under `grp_`. The hosted registry derives ids this way; the
+fake registry's ids are opaque and a client must not compute them.
+
+Repeating the request while the group is `open` returns `200` and continues it (a reply with `reserving` has not
+reached every member yet; send the same request again), with fresh upload URLs for the files not yet in
+storage. Repeating it for a group that ended without committing (`expired`, `aborted`, `rejected`,
+`superseded`) opens it again with the next `attempt` (`201`). A group that is `validating`, `committed` or
+`visible` is returned as it is. A `failed` group has burned its numbers: `group_conflict`.
+
+A caller has a limited number of open groups. A different set that shares a version with one of the caller's
+own open groups supersedes it; a group that is validating is never superseded. With `on_overlap: refuse` it is
+refused instead (`group_conflict`, reason `overlap_refused`) and nothing is ended. The groups a create ended are
+listed in `superseded` of its answer. A group that is past its
+`deadline_at` is expired by the next request that meets it. A group costs its number of files from a daily
+allowance of its own, once per attempt, which is not the allowance of single publishes.
+
+A registry that lists `group_readme_objects` in the `features` of `getHealth` also takes a `readme` on a member: the
+SHA-256 and size of the member's readme. It answers, for such a member, where to PUT the readme (`readme` of the
+member's answer, see `GroupUploadReadme`), and `commitGroup` then names the readme by that digest and size instead of
+carrying its text. A `readme` that is not `{sha256, size}` of a readme of 1 to 65536 bytes is `invalid_request`, and
+the message names the member. A registry that does not list the feature ignores the field and answers none.
+
+Group publishing is off unless the registry has enabled it for the caller. Until then this call is answered
+`route_not_found`; reading and aborting a group that exists keep working.
+
+options:
+  --body <file>
+      the request body, JSON (`-`: standard input), as `CreateGroupRequest` of spec/api/openapi-v2.yaml
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends POST /api/v2/groups (createGroup) with the token 'mopm login' stored, or $MOPM_TOKEN.

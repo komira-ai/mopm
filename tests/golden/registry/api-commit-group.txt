@@ -1,0 +1,46 @@
+usage: mopm api commit-group <group_id> --body <file> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Commit a publish group (one step of 'mopm publish --staged').
+
+Asynchronous. The caller has created the group and PUT every file to the URL it was given; this call hands over what
+the archives cannot say for themselves, one entry per member: the optional `manifest_sha256` of its embedded manifest (checked when given, as in
+`commitPublish`), the optional display fields (the same rules as `commitPublish`) and the optional `source_commit` (the
+same rules, informational and unverified; it lands on that member's version only). Every member of the group is listed exactly once.
+
+The registry checks that the group is `open`, not past its `deadline_at`, that every member is reserved and that every
+file is in storage at its declared size, stores the request, moves the group to `validating` and answers 202. It then
+validates every member's archives; if every one is valid it copies the files into the channel and commits the group:
+the members become visible together to the read API, as `published` at the commit time. A member whose archive is not
+valid, a deadline that passes, or an upload more than 18 hours old ends the group `rejected` before anything is copied
+(its version numbers are free again); a failure after the copies began ends it `failed`, and its version numbers are
+burned. Read `getGroup` for where it is: `status` and, for a group that ended, `failure`.
+
+The same request again resumes: while the group is `validating` it queues the validation again (one job), and for a
+group that has committed it answers `200` as it is. A different request for a group that already has one is refused.
+A group that is not open (`aborted`, `expired`, `rejected`, ...) is refused with `group_commit_refused`; create it
+again with the same request to open it again. A commit is a write: read-only mode refuses it. It is not gated by the
+switch that enables group creation, since a group that exists is finished whatever the switch says.
+
+The token must have the `publish` scope (or, for a CI identity token, be the `publish` token of the exchange). A token with
+only `stage` is refused as `scope_missing`, and the group stays as it was.
+
+A member's `readme` is either the text (a string) or, at a registry that lists `group_readme_objects` in the
+`features` of `getHealth`, the `{sha256, size}` of a readme the caller has PUT to the URL `createGroup` gave. With
+text, the request is one body that holds the display fields of every member (a readme is up to 64 KiB), so a group
+of many members with readmes can exceed what the gateway accepts. With the object form the body holds a digest and a
+size for each readme (under 100 bytes), so its size does not depend on the readmes and a group of up to 500
+members stays far below any limit of the gateway.
+
+arguments:
+  <group_id>
+options:
+  --body <file>
+      the request body, JSON (`-`: standard input), as `CommitGroupRequest` of spec/api/openapi-v2.yaml
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends POST /api/v2/groups/{group_id}/commit (commitGroup) with the token 'mopm login' stored, or $MOPM_TOKEN.

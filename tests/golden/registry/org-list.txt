@@ -1,0 +1,19 @@
+usage: mopm org list <namespace> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+List the members of a namespace and their roles.
+
+Readable by an owner or a member of the namespace; any other account is `not_namespace_member`. A user
+namespace has no members (`invalid_request`). Sorted by `user`.
+
+arguments:
+  <namespace>
+      The namespace of the package, a GitHub login in lower case.
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends GET /api/v2/namespaces/{namespace}/members (listMembers) with the token 'mopm login' stored, or $MOPM_TOKEN.

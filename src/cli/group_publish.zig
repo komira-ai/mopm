@@ -175,10 +175,11 @@ pub const Publisher = struct {
     /// Where the bytes of one file are held while it is uploaded; freed after each file.
     scratch: Allocator = std.heap.page_allocator,
 
-    fn call(p: *Publisher, method: std.http.Method, path: []const u8, body: ?[]const u8) Stop!http.Answer {
-        const url = try std.fmt.allocPrint(p.arena, "{s}{s}", .{ p.api_url, path });
-        return p.net.request(p.arena, method, url, .{ .token = p.token, .body = body }) catch |e| {
-            p.console.fail("{s} {s}: {s}\n", .{ @tagName(method), path, @errorName(e) });
+    /// Sends the registry operation `Op` with `params` through the generated client, repeating it as `net.policy` allows.
+    fn sendOp(p: *Publisher, comptime Op: type, params: Op.Params) Stop!http.Answer {
+        return v2.send(Op, p.arena, p.net, p.net.policy, p.api_url, p.token, params) catch |e| {
+            const path = Op.target(p.arena, params) catch Op.path_template;
+            p.console.fail("{s} {s}: {s}\n", .{ @tagName(Op.method), path, @errorName(e) });
             return error.Failed;
         };
     }
@@ -208,7 +209,7 @@ pub const Publisher = struct {
         };
     }
 
-    fn createBody(p: *Publisher) Stop![]const u8 {
+    fn createRequest(p: *Publisher) Stop!v2.CreateGroupRequest {
         const uploads = try p.plan.uploads(p.arena);
         const members = try p.arena.alloc(v2.GroupMemberRequest, uploads.len);
         for (uploads, members) |m, *out| {
@@ -220,15 +221,15 @@ pub const Publisher = struct {
                 if (readmes.entryWithReadme(p.entries, m.name)) |e| out.readme = .{ .sha256 = e.readme_sha256, .size = @intCast(e.readme.?.len) };
             }
         }
-        return (try v2.CreateGroup.body(p.arena, .{ .body = .{ .members = members } })).?;
+        return .{ .members = members };
     }
 
     /// Asks for the group, repeating the request while the registry has reserved only some of the members.
     fn create(p: *Publisher) Stop!CreateAnswer {
-        const body = try p.createBody();
+        const request = try p.createRequest();
         var round: usize = 0;
         while (round < max_reserving_rounds) : (round += 1) {
-            const a = try p.call(.POST, try v2.CreateGroup.target(p.arena, .{ .body = .{ .members = &.{} } }), body);
+            const a = try p.sendOp(v2.CreateGroup, .{ .body = request });
             if (a.status == 404) {
                 const e = try http.apiError(p.arena, a);
                 if (e.code.len == 0 or std.mem.eql(u8, e.code, "route_not_found")) {
@@ -452,6 +453,7 @@ pub const Publisher = struct {
             },
         };
         // No bearer token: the URL is presigned.
+        // not the registry API: the file is PUT to the storage URL the registry signed
         const r = p.net.request(scratch, .PUT, url, .{ .body = bytes, .content_type = null, .extra_headers = headers }) catch |e| {
             p.console.fail("uploading {s} failed: {s}; run the same command again to resume group {s}\n", .{ what.name, @errorName(e), p.state.group_id });
             return error.Failed;
@@ -467,9 +469,14 @@ pub const Publisher = struct {
     }
 
     fn commit(p: *Publisher) Stop!void {
-        const path = try v2.CommitGroup.target(p.arena, .{ .group_id = p.state.group_id, .body = .{ .members = &.{} } });
-        const body = if (p.objects) try plan_mod.objectsBody(p.arena, p.entries) else p.commit_body;
-        const a = try p.call(.POST, path, body);
+        const text = if (p.objects) try plan_mod.objectsBody(p.arena, p.entries) else p.commit_body;
+        // The body text is written by plan_mod (`commitBody`, `objectsBody`) in the field order of the contract, so the
+        // request read back from it is written again with the same bytes.
+        const request = std.json.parseFromSliceLeaky(v2.CommitGroupRequest, p.arena, text, .{}) catch |e| {
+            p.console.fail("the commit request of group {s} is not one the contract has: {s}\n", .{ p.state.group_id, @errorName(e) });
+            return error.Failed;
+        };
+        const a = try p.sendOp(v2.CommitGroup, .{ .group_id = p.state.group_id, .body = request });
         if (!a.ok()) {
             const stop = p.refuse(a);
             // A registry from before readme objects refuses a `readme` that is not a string; other refusals get no note.
@@ -491,7 +498,7 @@ pub const Publisher = struct {
     /// run then waits for, or refuses under `--no-commit`) goes on.
     fn checkStaged(p: *Publisher) Stop!void {
         const path = try v2.GetGroup.target(p.arena, .{ .group_id = p.state.group_id });
-        const a = try p.call(.GET, path, null);
+        const a = try p.sendOp(v2.GetGroup, .{ .group_id = p.state.group_id });
         if (a.status == 404) {
             p.console.fail("group {s}, staged by an earlier run (see {s}), is not known to the registry; nothing was sent\n", .{ p.state.group_id, plan_mod.state_name });
             p.console.note("remove {s} and stage the set again\n", .{plan_mod.state_name});
@@ -517,14 +524,14 @@ pub const Publisher = struct {
             p.console.say("{s} names no group: nothing to abort\n", .{plan_mod.state_name});
             return .nothing_to_abort;
         }
-        const path = try v2.AbortGroup.target(p.arena, .{ .group_id = p.state.group_id });
-        const a = try p.call(.DELETE, path, null);
+        const path = try v2.GetGroup.target(p.arena, .{ .group_id = p.state.group_id });
+        const a = try p.sendOp(v2.AbortGroup, .{ .group_id = p.state.group_id });
         var gone = false;
         if (a.ok()) {
             p.group_status = "aborted";
         } else if (a.status == 409) {
             // Not open: read what it is. An ended group holds nothing; a committed one is not this command's to stop.
-            const g = try p.call(.GET, path, null);
+            const g = try p.sendOp(v2.GetGroup, .{ .group_id = p.state.group_id });
             if (!g.ok()) return p.refuse(g);
             const now = v2.decode(v2.GetGroup, p.arena, g.body) catch {
                 p.console.fail("the registry's answer to GET {s} is not one this mopm reads\n", .{path});
@@ -532,7 +539,7 @@ pub const Publisher = struct {
             };
             p.group_status = @tagName(now.status);
             if (!ended(now.status)) {
-                p.console.fail("group {s} is {s}: it was committed, so it cannot be aborted; if it becomes visible, 'mopm yank --group {s}' takes it back\n", .{ p.state.group_id, @tagName(now.status), p.state.group_id });
+                p.console.fail("group {s} is {s}: it was committed, so it cannot be aborted; if it becomes visible, 'mopm group yank {s} --reason <text>' takes it back\n", .{ p.state.group_id, @tagName(now.status), p.state.group_id });
                 return error.Failed;
             }
             p.console.say("group {s} is already {s}: nothing is held\n", .{ p.state.group_id, @tagName(now.status) });
@@ -559,7 +566,7 @@ pub const Publisher = struct {
         const path = try v2.GetGroup.target(p.arena, .{ .group_id = p.state.group_id });
         const deadline = p.net.now() + p.wait_secs;
         while (true) {
-            const a = try p.call(.GET, path, null);
+            const a = try p.sendOp(v2.GetGroup, .{ .group_id = p.state.group_id });
             if (!a.ok()) return p.refuse(a);
             const g = v2.decode(v2.GetGroup, p.arena, a.body) catch {
                 p.console.fail("the registry's answer to GET {s} is not one this mopm reads\n", .{path});

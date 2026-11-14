@@ -177,7 +177,7 @@ test "mopm login, whoami and logout against the fake registry" {
 
     r = try m.run(&whoami_args);
     rep.check("whoami names the account", r.code == 0 and hasWhoami(r.stdout), r.stdout);
-    rep.check("whoami lists the user namespace with its kind and role", r.code == 0 and h.contains(r.stdout, "namespaces:\n  e2e-user (user, owner)\n"), r.stdout);
+    rep.check("whoami lists the user namespace with its kind and role", r.code == 0 and h.contains(r.stdout, "namespaces:\n  - namespace: e2e-user\n    kind: user\n    role: owner\n"), r.stdout);
 
     // A session lives 30 days: past that the registry refuses it, and mopm
     // prints the contract's message, hint and request id.
@@ -208,14 +208,14 @@ test "mopm login, whoami and logout against the fake registry" {
     try rep.finish();
 }
 
-/// A line `e2e-user (GitHub id <digits>) on beta`.
+/// The generic rendering of GET /me names the account: a line `handle: e2e-user` and a line `github_id: <digits>`.
 fn hasWhoami(text: []const u8) bool {
+    if (!h.hasLine(text, "handle: e2e-user")) return false;
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |line| {
-        const pre = "e2e-user (GitHub id ";
-        const post = ") on beta";
-        if (!std.mem.startsWith(u8, line, pre) or !std.mem.endsWith(u8, line, post)) continue;
-        const digits = line[pre.len .. line.len - post.len];
+        const pre = "github_id: ";
+        if (!std.mem.startsWith(u8, line, pre)) continue;
+        const digits = line[pre.len..];
         if (digits.len == 0) continue;
         var all_digits = true;
         for (digits) |ch| {

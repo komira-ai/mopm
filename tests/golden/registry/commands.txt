@@ -1,0 +1,31 @@
+registry commands (one call of the registry API each; mopm <command> --help):
+  health                   Show whether the registry is up and in which mode.
+  api start-device-login   Start a device login and print its codes (one step of 'mopm login').
+  api poll-device-login    Ask once whether a device login was approved (one step of 'mopm login').
+  api exchange-oidc-token  Exchange a CI identity token for a registry token (one step of 'mopm publish --oidc').
+  whoami                   Show the account the token belongs to and its namespaces.
+  token create             Create an API token; its secret is printed once.
+  token list               List the API tokens of the account.
+  token revoke             Revoke an API token.
+  api create-namespace     Start registering an organization's namespace (one step of 'mopm org create').
+  api poll-namespace       Ask once whether a namespace registration was approved (one step of 'mopm org create').
+  namespace info           Show a namespace: its kind and its GitHub account.
+  org list                 List the members of a namespace and their roles.
+  org add                  Add a member to a namespace, or change a member's role.
+  org remove               Remove a member from a namespace.
+  search                   Search the packages by name.
+  package info             Show a package and its versions.
+  package create           Create a package in a namespace you can write in.
+  package versions         List the versions of a package.
+  package version          Show one version of a package: its state, files and dependencies.
+  api begin-upload         Begin the upload of one file of a version (one step of 'mopm publish').
+  api commit-publish       Commit the uploads of a version (one step of 'mopm publish').
+  publish status           Show how a publish is going.
+  api create-group         Create or continue a publish group (one step of 'mopm publish --staged').
+  group status             Show a publish group: its state, its members and its yank.
+  group abort              End an open publish group without publishing it.
+  api commit-group         Commit a publish group (one step of 'mopm publish --staged').
+  group yank               Yank every version a publish group published.
+  group unyank             Restore the versions a group's yank changed.
+  yank                     Yank a version: new resolutions no longer pick it.
+  unyank                   Restore a yanked version.

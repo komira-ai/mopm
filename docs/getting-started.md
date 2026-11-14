@@ -288,9 +288,10 @@ mopm publish ... --registry beta                                       # prod (d
 `Logged in to prod as alice; your namespace is alice.` When your GitHub login cannot be a namespace (another account
 holds it, it is reserved, or it is not a valid namespace) it says so and stores none. If the registry cannot be asked,
 the token is stored all the same and mopm warns `mopm: could not read your namespace from prod; 'mopm whoami' shows it`.
-`mopm whoami` prints `<handle> (GitHub id <id>) on <registry>`, then `namespaces:` with one line for each, `  <namespace>
-(<kind>, <role>): <packages>` (kind `user` or `org`; role `owner` or `member`), and the line about an
-unavailable login when there is one.
+`mopm whoami` is a generated command (one call of `GET /me`; `mopm whoami --help` lists its flags). It prints the
+registry's answer as `key: value` lines: the handle, the GitHub id, then `namespaces:` with an entry for each (its
+namespace, kind `user` or `org`, role `owner` or `member`, and its packages), and `unavailable_namespace` when your
+GitHub login cannot be a namespace. `--json` prints the answer as JSON.
 
 An organization's namespace is shared by its members. An admin of the GitHub organization registers it once, and
 the registry then manages its members itself:
@@ -298,9 +299,9 @@ the registry then manages its members itself:
 ```sh
 mopm org create komira-ai                    # an active GitHub admin of komira-ai; you become its first owner
 mopm org add komira-ai alice                 # alice (her mopm username) may publish in komira-ai
-mopm org add komira-ai bob --owner           # bob may also manage the members
+mopm org add komira-ai bob --role owner      # bob may also manage the members
 mopm org remove komira-ai alice              # alice is refused from the next request on
-mopm org list komira-ai                      # one line per member: `  alice (member)`
+mopm org list komira-ai                      # the members and their roles
 ```
 
 `mopm org create` needs a stored login. It prints `To register the GitHub organization komira-ai on prod, open
@@ -310,9 +311,10 @@ the one you are logged in as, and an active admin of the organization whose curr
 the registry answers `not_org_admin` or `github_account_mismatch`. An organization that restricts OAuth apps must
 approve the mopm registry first. GitHub is asked only then: afterwards members are the registry's own list, a person
 leaving the GitHub organization is not removed from it, and an owner runs `mopm org remove`. A member is named by their
-mopm username, which is their lower-case GitHub login and exists after their first `mopm login`. `add` sets the role,
-so `mopm org add <org> <user>` makes an owner a member. The last owner cannot be removed or demoted. Every verb takes
-`--registry` and `--config-dir`.
+mopm username, which is their lower-case GitHub login and exists after their first `mopm login`. `add` sets the role
+(`--role owner|member`, `member` when not given), so `mopm org add <org> <user>` makes an owner a member. The last owner
+cannot be removed or demoted. `add`, `remove` and `list` are generated commands, one call of the registry's API each
+(`mopm org add --help`); every verb takes `--registry`, `--config-dir` and `--json`.
 
 `mopm publish` first makes the package: it sends `PUT /packages/<namespace>/<name>` with no body, after reading the
 token and before any upload. A 201 prints `created <full name> on <registry>`; a 200 (the package exists) prints nothing;

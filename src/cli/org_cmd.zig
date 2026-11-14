@@ -1,20 +1,15 @@
-//! `mopm org create|add|remove|list`: an organization's namespace on a registry and its members.
+//! `mopm org create`: an organization's namespace on a registry. The members of a namespace are generated commands
+//! (`mopm org add|remove|list`, see `mopm org add --help`); only `create` is not one call.
 //!
-//!   mopm org create <org>            [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-//!   mopm org add <org> <user> [--owner] [--registry ...] [--config-dir <dir>]
-//!   mopm org remove <org> <user>     [--registry ...] [--config-dir <dir>]
-//!   mopm org list <org>              [--registry ...] [--config-dir <dir>]
+//!   mopm org create <org> [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
 //!
 //! `create` is a GitHub device flow through the registry, as `mopm login` is: mopm prints a code and a page to enter it on,
 //! and polls until the person decides. The registry asks GitHub once, with the one-time token of that flow, whether the
 //! account that approved is the logged-in account and an active admin of the GitHub organization `<org>`; it then
-//! registers the namespace and makes the account its first owner. Nothing about the organization is asked of GitHub
-//! afterwards: `add`, `remove` and `list` work on the member table the registry keeps. `<user>` is a mopm username, the
-//! user namespace of an account, which it gets at its first `mopm login`. `add` sets the role: without `--owner` the
-//! account becomes a member, also when it was an owner.
+//! registers the namespace and makes the account its first owner.
 //!
-//! Every verb needs the session `mopm login` stored for the registry and refuses without a request when there is none.
-//! `<org>` and `<user>` are checked against the namespace grammar before anything is sent.
+//! It needs the session `mopm login` stored for the registry and refuses without a request when there is none.
+//! `<org>` is checked against the namespace grammar before anything is sent.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -26,34 +21,23 @@ const gp = @import("group_publish.zig");
 const rc = @import("registry_cmd.zig");
 
 const usage =
-    \\usage: mopm org create <org>            [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-    \\       mopm org add <org> <user> [--owner] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-    \\       mopm org remove <org> <user>     [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-    \\       mopm org list <org>              [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\usage: mopm org create <org> [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\       'mopm org add|remove|list' are generated commands: mopm org add --help
     \\
 ;
 
-pub const Verb = enum { create, add, remove, list };
-
 pub const Parsed = struct {
-    verb: Verb,
     org: []const u8,
-    /// `add` and `remove`: the mopm username; empty for the other verbs.
-    user: []const u8 = "",
-    /// `add`: the account becomes an owner, not a member.
-    owner: bool = false,
     flags: rc.Flags = .{},
 };
 
-/// The arguments after `org`; null on a usage error (an unknown verb or flag, a flag without its value, a missing or extra
-/// name, `--owner` on a verb but `add`).
+/// The arguments after `org`; null on a usage error (a verb but `create`, an unknown flag, a flag without its value, a
+/// missing or extra name).
 pub fn parse(args: []const []const u8) ?Parsed {
     if (args.len == 0) return null;
-    const verb = std.meta.stringToEnum(Verb, args[0]) orelse return null;
+    if (!std.mem.eql(u8, args[0], "create")) return null;
     var flags = rc.Flags{};
-    var owner = false;
-    var positional: [2][]const u8 = undefined;
-    var n: usize = 0;
+    var org: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -65,29 +49,14 @@ pub fn parse(args: []const []const u8) ?Parsed {
             if (i + 1 >= args.len) return null;
             flags.config_dir = args[i + 1];
             i += 1;
-        } else if (std.mem.eql(u8, a, "--owner")) {
-            if (verb != .add) return null;
-            owner = true;
         } else if (std.mem.startsWith(u8, a, "--")) {
             return null;
         } else {
-            if (n == positional.len) return null;
-            positional[n] = a;
-            n += 1;
+            if (org != null) return null;
+            org = a;
         }
     }
-    const wanted: usize = switch (verb) {
-        .create, .list => 1,
-        .add, .remove => 2,
-    };
-    if (n != wanted) return null;
-    return .{
-        .verb = verb,
-        .org = positional[0],
-        .user = if (wanted == 2) positional[1] else "",
-        .owner = owner,
-        .flags = flags,
-    };
+    return .{ .org = org orelse return null, .flags = flags };
 }
 
 /// `^[a-z0-9]+(-[a-z0-9]+)*$`, at most 39 characters: a GitHub login in lower case.
@@ -103,14 +72,10 @@ pub fn isNamespace(s: []const u8) bool {
     return true;
 }
 
-/// Whether the names of `p` are namespaces; if not, says which is not, on standard error.
+/// Whether the name of `p` is a namespace; if not, says so on standard error.
 fn namesValid(con: *gp.Console, p: Parsed) bool {
     if (!isNamespace(p.org)) {
         con.fail("'{s}' is not a valid namespace\n", .{p.org});
-        return false;
-    }
-    if (p.user.len > 0 and !isNamespace(p.user)) {
-        con.fail("'{s}' is not a valid namespace\n", .{p.user});
         return false;
     }
     return true;
@@ -130,8 +95,8 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
     };
 }
 
-/// One verb. The clock, the pauses between polls and the requests are `net`'s, and everything it says goes through `con`, so
-/// a test drives it without waiting and without touching the real standard streams.
+/// The registration. The clock, the pauses between polls and the requests are `net`'s, and everything it says goes through
+/// `con`, so a test drives it without waiting and without touching the real standard streams.
 fn execute(s: Session, net: gp.Net, con: *gp.Console, p: Parsed) anyerror!u8 {
     const entry = (try credentials.load(s.arena, s.config_dir, s.config.api_url)) orelse {
         con.fail("not logged in to {s}; run 'mopm login'\n", .{s.config.stage});
@@ -141,21 +106,14 @@ fn execute(s: Session, net: gp.Net, con: *gp.Console, p: Parsed) anyerror!u8 {
         con.fail("{s} serves no API version 2, which organization namespaces need\n", .{s.config.stage});
         return 1;
     }
-    return switch (p.verb) {
-        .create => create(s, net, con, entry.token, p.org),
-        .add => add(s, net, con, entry.token, p),
-        .remove => remove(s, net, con, entry.token, p),
-        .list => list(s, net, con, entry.token, p.org),
-    };
+    return create(s, net, con, entry.token, p.org);
 }
 
 const Session = rc.Session;
 
 /// The device flow of the registration, as `mopm login`'s.
 fn create(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, org: []const u8) anyerror!u8 {
-    const start_params: v2.CreateNamespace.Params = .{ .body = .{ .namespace = org } };
-    const request = (try v2.CreateNamespace.body(s.arena, start_params)).?;
-    const started = try net.once(s.arena, v2.CreateNamespace.method, try v2.url(v2.CreateNamespace, s.arena, s.config.api_v2_url, start_params), .{ .token = token, .body = request });
+    const started = try v2.sendOnce(v2.CreateNamespace, s.arena, net, s.config.api_v2_url, token, .{ .body = .{ .namespace = org } });
     if (!started.ok()) {
         rc.reportFailure(con, started);
         return 1;
@@ -164,13 +122,10 @@ fn create(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, org: []c
     con.say("To register the GitHub organization {s} on {s}, open {s} and enter the code {s}\n", .{ org, s.config.stage, start.verification_uri, start.user_code });
 
     var interval = @max(start.interval, 1);
-    const poll_params: v2.PollNamespace.Params = .{ .body = .{ .device_code = start.device_code } };
-    const body = (try v2.PollNamespace.body(s.arena, poll_params)).?;
-    const poll_url = try v2.url(v2.PollNamespace, s.arena, s.config.api_v2_url, poll_params);
     const deadline = net.now() + start.expires_in + 30;
     while (net.now() < deadline) {
         net.pause(@intCast(interval));
-        const polled = try net.once(s.arena, v2.PollNamespace.method, poll_url, .{ .token = token, .body = body });
+        const polled = try v2.sendOnce(v2.PollNamespace, s.arena, net, s.config.api_v2_url, token, .{ .body = .{ .device_code = start.device_code } });
         if (!polled.ok()) {
             rc.reportFailure(con, polled);
             return 1;
@@ -200,42 +155,6 @@ fn create(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, org: []c
     return 1;
 }
 
-fn add(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, p: Parsed) anyerror!u8 {
-    const params: v2.SetMember.Params = .{ .namespace = p.org, .user = p.user, .body = .{ .role = if (p.owner) .owner else .member } };
-    const body = (try v2.SetMember.body(s.arena, params)).?;
-    const answer = try net.once(s.arena, v2.SetMember.method, try v2.url(v2.SetMember, s.arena, s.config.api_v2_url, params), .{ .token = token, .body = body });
-    if (!answer.ok()) {
-        rc.reportFailure(con, answer);
-        return 1;
-    }
-    con.say("{s} is now {s} of {s} on {s}.\n", .{ p.user, if (p.owner) "an owner" else "a member", p.org, s.config.stage });
-    return 0;
-}
-
-fn remove(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, p: Parsed) anyerror!u8 {
-    const params: v2.RemoveMember.Params = .{ .namespace = p.org, .user = p.user };
-    const answer = try net.once(s.arena, v2.RemoveMember.method, try v2.url(v2.RemoveMember, s.arena, s.config.api_v2_url, params), .{ .token = token });
-    if (!answer.ok()) {
-        rc.reportFailure(con, answer);
-        return 1;
-    }
-    con.say("Removed {s} from {s} on {s}.\n", .{ p.user, p.org, s.config.stage });
-    return 0;
-}
-
-fn list(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, org: []const u8) anyerror!u8 {
-    const params: v2.ListMembers.Params = .{ .namespace = org };
-    const answer = try net.request(s.arena, v2.ListMembers.method, try v2.url(v2.ListMembers, s.arena, s.config.api_v2_url, params), .{ .token = token });
-    if (!answer.ok()) {
-        rc.reportFailure(con, answer);
-        return 1;
-    }
-    const members = try v2.decode(v2.ListMembers, s.arena, answer.body);
-    con.say("{s} on {s}:\n", .{ org, s.config.stage });
-    for (members.members) |m| con.say("  {s} ({s})\n", .{ m.user, @tagName(m.role) });
-    return 0;
-}
-
 // ---------------------------------------------------------------------------- tests
 
 const gt = @import("group_publish_test.zig");
@@ -260,8 +179,6 @@ fn pollStep(comptime body: []const u8) gt.Script.Step {
     return reply(.POST, "/namespaces/poll", 200, body);
 }
 
-const refusal = "{\"error\":{\"code\":\"not_namespace_owner\",\"message\":\"You are not an owner of 'acme'.\",\"hint\":\"Ask an owner of 'acme'; 'mopm org list acme' shows them.\"}}";
-
 /// The text `mopm` prints for the failed answer `status` with `body` (what `reportFailure` says).
 fn failureText(a: Allocator, status: u16, body: []const u8) ![]const u8 {
     const text = try http.describe(a, .{ .status = status, .body = body, .request_id = "req-test" });
@@ -281,44 +198,28 @@ fn run(a: Allocator, dir: []const u8, login: bool, args: []const []const u8, ste
     return r;
 }
 
-test "org arguments: each verb with its names, the flags in any place, and every other shape is a usage error" {
+test "org arguments: create with its name, the flags in any place, and every other shape is a usage error" {
     const c = parse(&.{ "create", "acme" }).?;
-    try std.testing.expectEqual(Verb.create, c.verb);
     try std.testing.expectEqualStrings("acme", c.org);
     try std.testing.expectEqualStrings("prod", c.flags.registry);
     try std.testing.expect(c.flags.config_dir == null);
-    try std.testing.expect(!c.owner);
 
-    const a = parse(&.{ "add", "--registry", "beta", "acme", "--owner", "ada", "--config-dir", "/cfg" }).?;
-    try std.testing.expectEqual(Verb.add, a.verb);
+    const a = parse(&.{ "create", "--registry", "beta", "acme", "--config-dir", "/cfg" }).?;
     try std.testing.expectEqualStrings("acme", a.org);
-    try std.testing.expectEqualStrings("ada", a.user);
-    try std.testing.expect(a.owner);
     try std.testing.expectEqualStrings("beta", a.flags.registry);
     try std.testing.expectEqualStrings("/cfg", a.flags.config_dir.?);
-    try std.testing.expect(!parse(&.{ "add", "acme", "ada" }).?.owner);
-
-    const r = parse(&.{ "remove", "acme", "ada" }).?;
-    try std.testing.expectEqual(Verb.remove, r.verb);
-    try std.testing.expectEqualStrings("ada", r.user);
-    const l = parse(&.{ "list", "acme" }).?;
-    try std.testing.expectEqual(Verb.list, l.verb);
-    try std.testing.expectEqualStrings("", l.user);
 
     const bad = [_][]const []const u8{
         &.{},
         &.{"destroy"},
+        &.{ "add", "acme", "ada" },
+        &.{ "remove", "acme", "ada" },
+        &.{ "list", "acme" },
         &.{"create"},
         &.{ "create", "acme", "extra" },
-        &.{ "add", "acme" },
-        &.{ "add", "acme", "ada", "bob" },
-        &.{ "remove", "acme" },
-        &.{ "list", "acme", "ada" },
         &.{ "create", "acme", "--owner" },
-        &.{ "remove", "acme", "ada", "--owner" },
-        &.{ "list", "acme", "--token", "x" },
-        &.{ "list", "acme", "--registry" },
-        &.{ "list", "acme", "--config-dir" },
+        &.{ "create", "acme", "--registry" },
+        &.{ "create", "acme", "--config-dir" },
     };
     for (bad) |args| try std.testing.expect(parse(args) == null);
 }
@@ -337,11 +238,8 @@ test "org names are checked against the namespace grammar before any request, an
     try std.testing.expect(!namesValid(&con, parse(&.{ "create", "Acme" }).?));
     try std.testing.expectEqualStrings("mopm: 'Acme' is not a valid namespace\n", con.err.items);
     var con2 = gp.Console.init(a, null);
-    try std.testing.expect(!namesValid(&con2, parse(&.{ "add", "acme", "Ada_1" }).?));
-    try std.testing.expectEqualStrings("mopm: 'Ada_1' is not a valid namespace\n", con2.err.items);
-    var con3 = gp.Console.init(a, null);
-    try std.testing.expect(namesValid(&con3, parse(&.{ "add", "acme", "ada" }).?));
-    try std.testing.expectEqualStrings("", con3.err.items);
+    try std.testing.expect(namesValid(&con2, parse(&.{ "create", "acme" }).?));
+    try std.testing.expectEqualStrings("", con2.err.items);
 }
 
 test "org create prints the code, pauses as the registry says, and reports the namespace the registry made" {
@@ -433,93 +331,21 @@ test "org create prints the failure the registry gave, at the start and at a pol
     try std.testing.expectEqual(@as(u64, 4), at_poll.script.slept);
 }
 
-test "org add sets the role the flag names and says so; the registry's refusal is printed" {
+test "org create without a stored login says so, exits 1 and sends nothing" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const dir = try tmp.dir.realpathAlloc(a, ".");
-    const member = try run(a, dir, true, &.{ "add", "acme", "bob" }, &.{reply(.PUT, "/namespaces/acme/members/bob", 201, "{}")});
-    try std.testing.expectEqual(@as(u8, 0), member.code);
-    try std.testing.expectEqualStrings("bob is now a member of acme on beta.\n", member.con.out.items);
-    try std.testing.expectEqualStrings("{\"role\":\"member\"}", member.script.seen.items[0].body.?);
-    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/namespaces/acme/members/bob", member.script.seen.items[0].url);
-    try std.testing.expectEqualStrings("mopm_tok", member.script.seen.items[0].token.?);
-    try std.testing.expectEqual(std.http.Method.PUT, member.script.seen.items[0].method);
-
-    const owner = try run(a, dir, true, &.{ "add", "acme", "bob", "--owner" }, &.{reply(.PUT, "/namespaces/acme/members/bob", 200, "{}")});
-    try std.testing.expectEqual(@as(u8, 0), owner.code);
-    try std.testing.expectEqualStrings("bob is now an owner of acme on beta.\n", owner.con.out.items);
-    try std.testing.expectEqualStrings("{\"role\":\"owner\"}", owner.script.seen.items[0].body.?);
-
-    const refused = try run(a, dir, true, &.{ "add", "acme", "bob" }, &.{reply(.PUT, "/namespaces/acme/members/bob", 403, refusal)});
-    try std.testing.expectEqual(@as(u8, 1), refused.code);
-    try std.testing.expectEqualStrings(try failureText(a, 403, refusal), refused.con.err.items);
-    try std.testing.expectEqualStrings("", refused.con.out.items);
+    const r = try run(a, dir, false, &.{ "create", "acme" }, &.{reply(.GET, "/namespaces", 200, "{}")});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expectEqual(@as(usize, 0), r.script.seen.items.len);
+    try std.testing.expectEqualStrings("mopm: not logged in to beta; run 'mopm login'\n", r.con.err.items);
+    try std.testing.expectEqualStrings("", r.con.out.items);
 }
 
-test "org remove sends a DELETE with no body and says who was removed; the registry's refusal is printed" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(a, ".");
-    const done = try run(a, dir, true, &.{ "remove", "acme", "bob" }, &.{.{ .method = .DELETE, .suffix = "/namespaces/acme/members/bob", .status = 204 }});
-    try std.testing.expectEqual(@as(u8, 0), done.code);
-    try std.testing.expectEqualStrings("Removed bob from acme on beta.\n", done.con.out.items);
-    try std.testing.expectEqual(std.http.Method.DELETE, done.script.seen.items[0].method);
-    try std.testing.expect(done.script.seen.items[0].body == null);
-    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/namespaces/acme/members/bob", done.script.seen.items[0].url);
-    try std.testing.expectEqualStrings("mopm_tok", done.script.seen.items[0].token.?);
-
-    const last = "{\"error\":{\"code\":\"last_owner\",\"message\":\"'bob' is the last owner of 'acme'.\",\"hint\":\"Make another member an owner first.\"}}";
-    const refused = try run(a, dir, true, &.{ "remove", "acme", "bob" }, &.{reply(.DELETE, "/namespaces/acme/members/bob", 409, last)});
-    try std.testing.expectEqual(@as(u8, 1), refused.code);
-    try std.testing.expectEqualStrings(try failureText(a, 409, last), refused.con.err.items);
-}
-
-test "org list prints the organization and one line per member in the order the registry sent" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(a, ".");
-    const listed = try run(a, dir, true, &.{ "list", "acme" }, &.{reply(.GET, "/namespaces/acme/members", 200,
-        \\{"namespace":"acme","members":[{"user":"ada","handle":"Ada","github_id":7,"role":"owner","added_at":"2026-09-02T00:00:00Z"},{"user":"bob","handle":"bob","github_id":8,"role":"member","added_at":"2026-09-03T00:00:00Z"}]}
-    )});
-    try std.testing.expectEqual(@as(u8, 0), listed.code);
-    try std.testing.expectEqualStrings("acme on beta:\n  ada (owner)\n  bob (member)\n", listed.con.out.items);
-    try std.testing.expectEqual(std.http.Method.GET, listed.script.seen.items[0].method);
-    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/namespaces/acme/members", listed.script.seen.items[0].url);
-    try std.testing.expectEqualStrings("mopm_tok", listed.script.seen.items[0].token.?);
-
-    const refused = try run(a, dir, true, &.{ "list", "acme" }, &.{reply(.GET, "/namespaces/acme/members", 403, "{\"error\":{\"code\":\"not_namespace_member\",\"message\":\"You cannot write in 'acme'.\",\"hint\":\"Ask an owner of 'acme'.\"}}")});
-    try std.testing.expectEqual(@as(u8, 1), refused.code);
-    try std.testing.expectEqualStrings("", refused.con.out.items);
-    try std.testing.expect(std.mem.startsWith(u8, refused.con.err.items, "mopm: You cannot write in 'acme'.\n"));
-}
-
-test "every org verb without a stored login says so, exits 1 and sends nothing" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(a, ".");
-    const all = [_][]const []const u8{ &.{ "create", "acme" }, &.{ "add", "acme", "bob" }, &.{ "remove", "acme", "bob" }, &.{ "list", "acme" } };
-    for (all) |args| {
-        const r = try run(a, dir, false, args, &.{reply(.GET, "/namespaces", 200, "{}")});
-        try std.testing.expectEqual(@as(u8, 1), r.code);
-        try std.testing.expectEqual(@as(usize, 0), r.script.seen.items.len);
-        try std.testing.expectEqualStrings("mopm: not logged in to beta; run 'mopm login'\n", r.con.err.items);
-        try std.testing.expectEqualStrings("", r.con.out.items);
-    }
-}
-
-test "org on a registry with no API version 2 says so and sends nothing" {
+test "org create on a registry with no API version 2 says so and sends nothing" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
@@ -531,7 +357,7 @@ test "org on a registry with no API version 2 says so and sends nothing" {
     session.config.api_v2_url = "";
     var con = gp.Console.init(a, null);
     var script = gt.Script{ .steps = &.{reply(.GET, "/namespaces", 200, "{}")}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 1), try execute(session, script.net(), &con, parse(&.{ "list", "acme" }).?));
+    try std.testing.expectEqual(@as(u8, 1), try execute(session, script.net(), &con, parse(&.{ "create", "acme" }).?));
     try std.testing.expectEqual(@as(usize, 0), script.seen.items.len);
     try std.testing.expectEqualStrings("mopm: beta serves no API version 2, which organization namespaces need\n", con.err.items);
 }

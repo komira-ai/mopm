@@ -1,0 +1,30 @@
+usage: mopm yank <namespace>/<name> <version> [--reason <reason>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Yank a version: new resolutions no longer pick it.
+
+`yanked: true` hides the version from new resolution; its files stay
+downloadable at their exact URLs, so existing locks keep working.
+`yanked: false` restores it. Allowed for an account that can write the
+namespace, or a token with the `yank` or `publish` scope for the package. Repeating the same change
+is a no-op and returns 200. A change the version's state does not
+allow is refused with `invalid_transition` (409): yanking a version
+that is still pending or is tombstoned, unyanking a version that is
+not yanked, or any change to a tombstoned version. A tombstoned
+version (taken down by an administrator) never changes state.
+
+arguments:
+  <namespace>/<name>
+      The namespace of the package, a GitHub login in lower case.
+      Normalised package name, the part of the full name after the `/`.
+  <version>
+options:
+  --reason <reason>
+      Required when `yanked` is true. Shown to people who locked the version.
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends PUT /api/v2/packages/{namespace}/{name}/{version}/yank (setYanked) with the token 'mopm login' stored, or $MOPM_TOKEN.

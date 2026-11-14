@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const http = @import("http.zig");
 
 pub const sources_sha256 = "0aac2bb4653455110c313b186a5742fedfd10281ab1615eaaa591dfd7702cfda";
 
@@ -2969,6 +2970,29 @@ pub fn isSuccess(comptime Op: type, status: u16) bool {
     return false;
 }
 
+/// What a call came to: the operation's response, or the answer of a refusal (not 2xx) for the caller to report.
+pub fn Result(comptime Op: type) type {
+    return union(enum) { ok: Op.Response, refused: http.Answer };
+}
+
+/// Sends the operation once: its method, `api_root` and its target, its body as JSON, `token` as the bearer token.
+/// `io` is anything with `once(arena, method, url, http.Options) !http.Answer` (src/cli/group_io.zig `Net`, http.Real).
+pub fn sendOnce(comptime Op: type, arena: Allocator, io: anytype, api_root: []const u8, token: ?[]const u8, p: Op.Params) anyerror!http.Answer {
+    return io.once(arena, Op.method, try url(Op, arena, api_root, p), .{ .token = token, .body = try Op.body(arena, p) });
+}
+
+/// `sendOnce`, repeated by `policy` as http.retrying repeats an idempotent request (`io` also has `pause(secs)`).
+pub fn send(comptime Op: type, arena: Allocator, io: anytype, policy: http.Policy, api_root: []const u8, token: ?[]const u8, p: Op.Params) anyerror!http.Answer {
+    return http.retrying(arena, io, Op.method, try url(Op, arena, api_root, p), .{ .token = token, .body = try Op.body(arena, p) }, policy);
+}
+
+/// `send`, and the answer read: a 2xx as the operation's response, anything else as a refusal.
+pub fn call(comptime Op: type, arena: Allocator, io: anytype, policy: http.Policy, api_root: []const u8, token: ?[]const u8, p: Op.Params) anyerror!Result(Op) {
+    const answer = try send(Op, arena, io, policy, api_root, token, p);
+    if (!answer.ok()) return .{ .refused = answer };
+    return .{ .ok = try decode(Op, arena, answer.body) };
+}
+
 /// Writes `s` with every byte but `A-Za-z0-9-._~` as `%XX` (upper case hex).
 pub fn percentEncode(w: anytype, s: []const u8) !void {
     const hex = "0123456789ABCDEF";
@@ -2985,17 +3009,73 @@ const TailOp = struct {
     const Params = struct { name: []const u8 };
     const Response = struct { count: i64 };
     const success = [_]u16{ 200, 201 };
+    const method: std.http.Method = .GET;
     fn target(arena: Allocator, p: Params) Allocator.Error![]const u8 {
         var out = std.ArrayList(u8).init(arena);
         try out.appendSlice("/x/");
         try percentEncode(out.writer(), p.name);
         return out.toOwnedSlice();
     }
+    fn body(_: Allocator, _: Params) Allocator.Error!?[]const u8 {
+        return null;
+    }
+};
+
+/// An operation that sends a body and is not idempotent.
+const TailPostOp = struct {
+    const Params = TailOp.Params;
+    const Response = TailOp.Response;
+    const success = TailOp.success;
+    const method: std.http.Method = .POST;
+    fn target(arena: Allocator, p: Params) Allocator.Error![]const u8 {
+        return TailOp.target(arena, p);
+    }
+    fn body(arena: Allocator, p: Params) Allocator.Error!?[]const u8 {
+        return try std.fmt.allocPrint(arena, "{{\"name\":\"{s}\"}}", .{p.name});
+    }
 };
 
 const TailVoidOp = struct {
+    const Params = TailOp.Params;
     const Response = void;
+    const success = [_]u16{204};
+    const method: std.http.Method = .DELETE;
+    fn target(arena: Allocator, p: Params) Allocator.Error![]const u8 {
+        return TailOp.target(arena, p);
+    }
+    fn body(_: Allocator, _: Params) Allocator.Error!?[]const u8 {
+        return null;
+    }
 };
+
+/// An `io` that answers from a list (the last repeats) and records the last request it was sent and how often it was asked.
+const TailIo = struct {
+    results: []const anyerror!http.Answer,
+    calls: usize = 0,
+    pauses: usize = 0,
+    method: std.http.Method = .GET,
+    url: []const u8 = "",
+    token: ?[]const u8 = null,
+    body: ?[]const u8 = null,
+
+    fn once(io: *TailIo, _: Allocator, method: std.http.Method, request_url: []const u8, options: http.Options) anyerror!http.Answer {
+        io.method = method;
+        io.url = request_url;
+        io.token = options.token;
+        io.body = options.body;
+        const result = io.results[@min(io.calls, io.results.len - 1)];
+        io.calls += 1;
+        return result;
+    }
+
+    fn pause(io: *TailIo, _: u64) void {
+        io.pauses += 1;
+    }
+};
+
+fn tailAnswer(status: u16, body: []const u8) http.Answer {
+    return .{ .status = status, .body = body };
+}
 
 test "percentEncode keeps unreserved bytes and encodes the rest in upper case" {
     var out = std.ArrayList(u8).init(std.testing.allocator);
@@ -3025,6 +3105,95 @@ test "isSuccess is true for the operation's success statuses only" {
     try std.testing.expect(isSuccess(TailOp, 201));
     try std.testing.expect(!isSuccess(TailOp, 204));
     try std.testing.expect(!isSuccess(TailOp, 404));
+}
+
+test "sendOnce sends the method, the joined url, the token and the body once" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var io = TailIo{ .results = &.{tailAnswer(201, "{}")} };
+    const got = try sendOnce(TailPostOp, a, &io, "http://h/api/v2", "tok", .{ .name = "a b" });
+    try std.testing.expectEqual(@as(u16, 201), got.status);
+    try std.testing.expectEqual(@as(usize, 1), io.calls);
+    try std.testing.expectEqual(std.http.Method.POST, io.method);
+    try std.testing.expectEqualStrings("http://h/api/v2/x/a%20b", io.url);
+    try std.testing.expectEqualStrings("tok", io.token.?);
+    try std.testing.expectEqualStrings("{\"name\":\"a b\"}", io.body.?);
+
+    var plain = TailIo{ .results = &.{tailAnswer(200, "{}")} };
+    _ = try sendOnce(TailOp, a, &plain, "http://h/api/v2", null, .{ .name = "n" });
+    try std.testing.expectEqual(std.http.Method.GET, plain.method);
+    try std.testing.expect(plain.token == null);
+    try std.testing.expect(plain.body == null);
+}
+
+test "sendOnce passes a transport error through without trying again" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var io = TailIo{ .results = &.{error.ConnectionRefused} };
+    try std.testing.expectError(error.ConnectionRefused, sendOnce(TailOp, arena_state.allocator(), &io, "http://h/api/v2", null, .{ .name = "n" }));
+    try std.testing.expectEqual(@as(usize, 1), io.calls);
+    try std.testing.expectEqual(@as(usize, 0), io.pauses);
+}
+
+test "send repeats a 503 of a GET and does not repeat a POST" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var get = TailIo{ .results = &.{ tailAnswer(503, ""), tailAnswer(200, "{\"count\":1}") } };
+    const got = try send(TailOp, a, &get, .{}, "http://h/api/v2", "tok", .{ .name = "n" });
+    try std.testing.expectEqual(@as(u16, 200), got.status);
+    try std.testing.expectEqual(@as(usize, 2), get.calls);
+    try std.testing.expectEqual(@as(usize, 1), get.pauses);
+    try std.testing.expectEqualStrings("http://h/api/v2/x/n", get.url);
+    try std.testing.expectEqualStrings("tok", get.token.?);
+
+    var post = TailIo{ .results = &.{ tailAnswer(503, ""), tailAnswer(200, "{\"count\":1}") } };
+    const refused = try send(TailPostOp, a, &post, .{}, "http://h/api/v2", "tok", .{ .name = "n" });
+    try std.testing.expectEqual(@as(u16, 503), refused.status);
+    try std.testing.expectEqual(@as(usize, 1), post.calls);
+    try std.testing.expectEqual(@as(usize, 0), post.pauses);
+    try std.testing.expectEqualStrings("{\"name\":\"n\"}", post.body.?);
+}
+
+test "call reads a 2xx as the response, any other status as a refusal, and a void response as done" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var ok_io = TailIo{ .results = &.{tailAnswer(200, "{\"count\":7,\"extra\":true}")} };
+    switch (try call(TailOp, a, &ok_io, .{}, "http://h/api/v2", null, .{ .name = "n" })) {
+        .ok => |r| try std.testing.expectEqual(@as(i64, 7), r.count),
+        .refused => return error.TestUnexpectedResult,
+    }
+
+    var no_io = TailIo{ .results = &.{tailAnswer(404, "{\"error\":{}}")} };
+    switch (try call(TailOp, a, &no_io, .{}, "http://h/api/v2", null, .{ .name = "n" })) {
+        .ok => return error.TestUnexpectedResult,
+        .refused => |r| {
+            try std.testing.expectEqual(@as(u16, 404), r.status);
+            try std.testing.expectEqualStrings("{\"error\":{}}", r.body);
+        },
+    }
+    try std.testing.expectEqual(@as(usize, 1), no_io.calls);
+
+    var void_io = TailIo{ .results = &.{tailAnswer(204, "")} };
+    switch (try call(TailVoidOp, a, &void_io, .{}, "http://h/api/v2", null, .{ .name = "n" })) {
+        .ok => {},
+        .refused => return error.TestUnexpectedResult,
+    }
+    try std.testing.expectEqual(std.http.Method.DELETE, void_io.method);
+}
+
+test "call passes a transport error and an unreadable 2xx body through" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var down = TailIo{ .results = &.{error.ConnectionRefused} };
+    try std.testing.expectError(error.ConnectionRefused, call(TailOp, a, &down, .{ .retries = 0 }, "http://h/api/v2", null, .{ .name = "n" }));
+    try std.testing.expectEqual(@as(usize, 1), down.calls);
+
+    var bad = TailIo{ .results = &.{tailAnswer(200, "{\"count\":")} };
+    try std.testing.expectError(error.UnexpectedEndOfInput, call(TailOp, a, &bad, .{}, "http://h/api/v2", null, .{ .name = "n" }));
 }
 
 /// Helpers of the reflection tests below, which read this file's own declarations.

@@ -71,8 +71,10 @@ fn bareMessage(arena: Allocator, bare: []const u8, stage: []const u8, found: ?[]
 /// when the request fails, is not answered 2xx or is not a package list.
 fn searchNames(arena: Allocator, net: Net, api_v2_url: []const u8, bare: []const u8) Allocator.Error!?[]const []const u8 {
     if (api_v2_url.len == 0) return null;
-    const url = try v2.url(v2.SearchPackages, arena, api_v2_url, .{ .q = bare, .limit = search_limit });
-    const answer = net.once(arena, v2.SearchPackages.method, url, .{}) catch return null;
+    const answer = v2.sendOnce(v2.SearchPackages, arena, net, api_v2_url, null, .{ .q = bare, .limit = search_limit }) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
     if (!answer.ok()) return null;
     const hits = v2.decode(v2.SearchPackages, arena, answer.body) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,

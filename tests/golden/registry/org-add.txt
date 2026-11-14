@@ -1,0 +1,26 @@
+usage: mopm org add <namespace> <user> [--role <owner|member>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Add a member to a namespace, or change a member's role.
+
+Needs a fresh session of an `owner` of the namespace (a `member` is `not_namespace_owner`; an account that is
+is not in it at all is `not_namespace_member`). `user` is a mopm username: the user namespace of the account, which an
+account gets at its first login; any other string is `user_not_found`. Answers 201 when the account was
+added, 200 when its role changed or already was the one asked. Making the only owner a `member` is
+`last_owner`.
+
+arguments:
+  <namespace>
+      The namespace of the package, a GitHub login in lower case.
+  <user>
+      A mopm username, the user namespace of an account (its GitHub login in lower case).
+options:
+  --role <owner|member>
+      default: member.
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends PUT /api/v2/namespaces/{namespace}/members/{user} (setMember) with the token 'mopm login' stored, or $MOPM_TOKEN.
