@@ -157,8 +157,8 @@ fn greeter(cx: *Cx) !void {
     try cx.refuses("greeter: homepage is an unknown key of [package]", "greeter_homepage", &.{"metadata"}, 1, "unknown key 'homepage' in [package]");
     try cx.variant("greeter_keywords", "greeter/mopm.toml", "license = \"Apache-2.0\"\n", "license = \"Apache-2.0\"\nkeywords = [\"hello\"]\n");
     try cx.refuses("greeter: keywords is an unknown key of [package]", "greeter_keywords", &.{"metadata"}, 1, "unknown key 'keywords' in [package]");
-    try cx.variant("greeter_name", "greeter/mopm.toml", "name = \"greeter\"", "name = \"Greeter\"");
-    try cx.refuses("greeter: a package name is a lowercase identifier", "greeter_name", &.{"metadata"}, 1, "package name 'Greeter' must start with a lowercase letter");
+    try cx.variant("greeter_name", "greeter/mopm.toml", "name = \"example/greeter\"", "name = \"example/Greeter\"");
+    try cx.refuses("greeter: a package name is a lowercase identifier", "greeter_name", &.{"metadata"}, 1, "package name 'example/Greeter' is not in lower case; write 'example/greeter'");
     try cx.variant("greeter_version", "greeter/mopm.toml", "version = \"0.1.0\"", "version = \"0.1\"");
     try cx.refuses("greeter: a version is MAJOR.MINOR.PATCH", "greeter_version", &.{"metadata"}, 1, "must be exactly MAJOR.MINOR.PATCH");
     try cx.variant("greeter_typo", "greeter/mopm.toml", "[targets]", "[target]");
@@ -176,7 +176,7 @@ fn app(cx: *Cx) !void {
     cx.rep.check("app: locking again changes nothing", again.code == 0 and std.mem.eql(u8, again.stdout, "locked 1 packages for mojo 1.0.0\n"), again.stdout);
     try cx.prints("app: mopm tree", "app", &.{"tree"}, "app/expected/tree.txt");
     // A registry requirement needs the registry: with it down, the same project is not locked.
-    try cx.variant("app_registry", "app/mopm.toml", "# http_client = \"0.4\"", "http_client = \"0.4\"");
+    try cx.variant("app_registry", "app/mopm.toml", "# \"example/http_client\" = \"0.4\"", "\"example/http_client\" = \"0.4\"");
     try cx.refuses("app: a registry dependency needs the registry", "app_registry", &.{ "lock", "--registry", dead_registry }, 1, "cannot reach http://127.0.0.1:1");
 }
 
@@ -200,17 +200,17 @@ fn workspace(cx: *Cx) !void {
     // A dependency may have a path and a version: the path is what lock, tree and plan use, and the version is only
     // what pack publishes. Same bytes of lock and tree as with the path alone, and no request to the dead registry.
     try h.copyTree(cx.a, try h.join(cx.a, &.{ cx.tree, "workspace" }), try h.join(cx.a, &.{ cx.tree, "workspace_both" }));
-    try cx.variant("workspace_both", "workspace/mopm.toml", "core = { path = \"core\" }", "core = { path = \"core\", version = \"0.1\" }");
+    try cx.variant("workspace_both", "workspace/mopm.toml", "\"example/core\" = { path = \"core\" }", "\"example/core\" = { path = \"core\", version = \"0.1\" }");
     try std.fs.cwd().deleteFile(try h.join(cx.a, &.{ cx.tree, "workspace_both/mopm.lock" }));
     try cx.prints("workspace: a dependency with a path and a version is locked at its path, offline", "workspace_both", &.{ "lock", "--registry", dead_registry }, "workspace/expected/lock.txt");
     cx.rep.same("workspace: the lock of a dependency with a path and a version is the lock of the path alone", try cx.committed("workspace/mopm.lock"), try cx.copied("workspace_both/mopm.lock"));
     try cx.prints("workspace: mopm tree of a dependency with a path and a version", "workspace_both", &.{"tree"}, "workspace/expected/tree.txt");
     // The version must be a version requirement.
-    try cx.variant("workspace_badreq", "workspace/mopm.toml", "core = { path = \"core\" }", "core = { path = \"core\", version = \"one\" }");
-    try cx.refuses("workspace: the version of a dependency with a path must be a requirement", "workspace_badreq", &.{"metadata"}, 1, "dependency 'core' has an invalid version requirement 'one'");
+    try cx.variant("workspace_badreq", "workspace/mopm.toml", "\"example/core\" = { path = \"core\" }", "\"example/core\" = { path = \"core\", version = \"one\" }");
+    try cx.refuses("workspace: the version of a dependency with a path must be a requirement", "workspace_badreq", &.{"metadata"}, 1, "dependency 'example/core' has an invalid version requirement 'one'");
     // One name, one path: util is core's dependency at util, and here also testkit's directory.
     try h.copyTree(cx.a, try h.join(cx.a, &.{ cx.tree, "workspace" }), try h.join(cx.a, &.{ cx.tree, "workspace_other" }));
-    try cx.variant("workspace_other", "workspace/mopm.toml", "util = { path = \"util\" }", "util = { path = \"testkit\" }");
+    try cx.variant("workspace_other", "workspace/mopm.toml", "\"example/util\" = { path = \"util\" }", "\"example/util\" = { path = \"testkit\" }");
     try cx.refuses("workspace: a name cannot be two directories", "workspace_other", &.{ "lock", "--registry", dead_registry }, 1, "one name, one path");
 }
 
@@ -259,19 +259,19 @@ fn publish(cx: *Cx) !void {
     try cx.variant("publish_pre", "publish/mopm.toml", "version = \"1.2.0\"", "version = \"1.2.0-rc.1\"");
     try cx.put("publish_pre/slug.mojoc", stand_in);
     try cx.refuses("publish: a pre-release version cannot be packed", "publish_pre", &args, 1, "must be exactly MAJOR.MINOR.PATCH");
-    try cx.variant("publish_path", "publish/mopm.toml", "text_tools = \"0.3\"", "text_tools = { path = \"../text_tools\" }");
+    try cx.variant("publish_path", "publish/mopm.toml", "\"example/text_tools\" = \"0.3\"", "\"example/text_tools\" = { path = \"../text_tools\" }");
     try cx.put("publish_path/slug.mojoc", stand_in);
-    try cx.refuses("publish: a path dependency with no version cannot be packed", "publish_path", &args, 1, "dependency 'text_tools' is a path dependency with no version; add 'version' beside its 'path'");
+    try cx.refuses("publish: a path dependency with no version cannot be packed", "publish_path", &args, 1, "dependency 'example/text_tools' is a path dependency with no version; add 'version' beside its 'path'");
     // With a version beside the path, pack writes the version and not the path: the same package file as the version alone.
-    try cx.put("text_tools/mopm.toml", "[package]\nname = \"text_tools\"\nversion = \"0.3.4\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
-    try cx.variant("publish_pathver", "publish/mopm.toml", "text_tools = \"0.3\"", "text_tools = { path = \"../text_tools\", version = \"0.3\" }");
+    try cx.put("text_tools/mopm.toml", "[package]\nname = \"example/text_tools\"\nversion = \"0.3.4\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
+    try cx.variant("publish_pathver", "publish/mopm.toml", "\"example/text_tools\" = \"0.3\"", "\"example/text_tools\" = { path = \"../text_tools\", version = \"0.3\" }");
     try cx.put("publish_pathver/slug.mojoc", stand_in);
     const pathver = try cx.run("publish_pathver", &args);
     cx.rep.check("publish: pack of a dependency with a path and a version makes the package of the version alone", pathver.code == 0 and pathver.stderr.len == 0 and std.mem.eql(u8, pathver.stdout, pack.stdout), try cx.fmt("exit {d}: {s}{s}\n--- version alone\n{s}", .{ pathver.code, pathver.stdout, pathver.stderr, pack.stdout }));
     // The package at the path must be a version the requirement accepts.
-    try cx.variant("publish_pathver_old", "publish/mopm.toml", "text_tools = \"0.3\"", "text_tools = { path = \"../text_tools\", version = \"0.4\" }");
+    try cx.variant("publish_pathver_old", "publish/mopm.toml", "\"example/text_tools\" = \"0.3\"", "\"example/text_tools\" = { path = \"../text_tools\", version = \"0.4\" }");
     try cx.put("publish_pathver_old/slug.mojoc", stand_in);
-    try cx.refuses("publish: pack refuses a path whose package does not satisfy the version", "publish_pathver_old", &args, 1, "dependency 'text_tools' requires version \"0.4\", but the package at '../text_tools' is version 0.3.4");
+    try cx.refuses("publish: pack refuses a path whose package does not satisfy the version", "publish_pathver_old", &args, 1, "dependency 'example/text_tools' requires version \"0.4\", but the package at '../text_tools' is version 0.3.4");
     try cx.variant("publish_native", "publish/mopm.toml", "[targets]", "[native-dependencies]\nzlib = \"1.2\"\n\n[targets]");
     try cx.put("publish_native/slug.mojoc", stand_in);
     try cx.refuses("publish: native dependencies to link cannot be packed yet", "publish_native", &args, 1, "native dependency 'zlib' is mode = \"link\"; only mode = \"load\" is packed");

@@ -9,6 +9,7 @@ const std = @import("std");
 const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const manifest = @import("manifest.zig");
+const names = @import("names.zig");
 
 pub const Kind = enum { lib, bin };
 
@@ -20,7 +21,7 @@ pub const File = struct { path: []const u8, contents: []const u8 };
 
 const manifest_lib =
     \\[package]
-    \\name = "@NAME@"
+    \\name = "@FULL@"
     \\version = "0.1.0"
     \\
     \\[toolchain]
@@ -36,7 +37,7 @@ const manifest_lib =
 
 const manifest_bin =
     \\[package]
-    \\name = "@NAME@"
+    \\name = "@FULL@"
     \\version = "0.1.0"
     \\
     \\[toolchain]
@@ -86,7 +87,7 @@ const test_mojo =
 ;
 
 const readme_md =
-    \\# @NAME@
+    \\# @FULL@
     \\
     \\A Mojo package.
     \\
@@ -104,30 +105,34 @@ const gitignore =
     \\
 ;
 
-fn fill(arena: Allocator, template: []const u8, name: []const u8) Allocator.Error![]const u8 {
-    const named = try std.mem.replaceOwned(u8, arena, template, "@NAME@", name);
+/// `@FULL@` is the full name (`example/demo`), `@NAME@` the import name (`demo`).
+fn fill(arena: Allocator, template: []const u8, full: []const u8, name: []const u8) Allocator.Error![]const u8 {
+    const fulled = try std.mem.replaceOwned(u8, arena, template, "@FULL@", full);
+    const named = try std.mem.replaceOwned(u8, arena, fulled, "@NAME@", name);
     return try std.mem.replaceOwned(u8, arena, named, "@MOJO@", default_mojo);
 }
 
-/// The files of a new package called `name` (already checked with
-/// `manifest.nameProblem`), in a fixed order.
-pub fn files(arena: Allocator, name: []const u8, kind: Kind) Allocator.Error![]const File {
+/// The files of a new package called `full` (`<namespace>/<name>`, already
+/// checked with `names.fullNameProblem`), in a fixed order. The directories,
+/// the test file and the binary use the import name, the part after the `/`.
+pub fn files(arena: Allocator, full: []const u8, kind: Kind) Allocator.Error![]const File {
+    const name = if (names.split(full)) |parts| parts.name else full;
     var out = std.ArrayList(File).init(arena);
     const toml_template = switch (kind) {
         .lib => manifest_lib,
         .bin => manifest_bin,
     };
-    try out.append(.{ .path = "mopm.toml", .contents = try fill(arena, toml_template, name) });
+    try out.append(.{ .path = "mopm.toml", .contents = try fill(arena, toml_template, full, name) });
     try out.append(.{
         .path = try std.fmt.allocPrint(arena, "src/{s}/__init__.mojo", .{name}),
-        .contents = try fill(arena, init_mojo, name),
+        .contents = try fill(arena, init_mojo, full, name),
     });
-    if (kind == .bin) try out.append(.{ .path = "src/main.mojo", .contents = try fill(arena, main_mojo, name) });
+    if (kind == .bin) try out.append(.{ .path = "src/main.mojo", .contents = try fill(arena, main_mojo, full, name) });
     try out.append(.{
         .path = try std.fmt.allocPrint(arena, "tests/test_{s}.mojo", .{name}),
-        .contents = try fill(arena, test_mojo, name),
+        .contents = try fill(arena, test_mojo, full, name),
     });
-    try out.append(.{ .path = "README.md", .contents = try fill(arena, readme_md, name) });
+    try out.append(.{ .path = "README.md", .contents = try fill(arena, readme_md, full, name) });
     try out.append(.{ .path = ".gitignore", .contents = gitignore });
     return try out.toOwnedSlice();
 }
@@ -158,7 +163,7 @@ fn expectTree(dir_path: []const u8, kind: Kind) !void {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const fs = try files(arena, "demo", kind);
+    const fs = try files(arena, "example/demo", kind);
 
     var dir = try std.fs.cwd().openDir(try testroot.path(arena, dir_path), .{ .iterate = true });
     defer dir.close();
@@ -195,6 +200,7 @@ fn expectTree(dir_path: []const u8, kind: Kind) !void {
         std.debug.print("generated mopm.toml refused at {d}:{d}: {s}\n", .{ diag.pos.line, diag.pos.col, diag.message });
         return e;
     };
+    try std.testing.expectEqualStrings("example/demo", m.package.full_name);
     try std.testing.expectEqualStrings("demo", m.package.name);
     try std.testing.expectEqual(@as(usize, if (kind == .bin) 1 else 0), m.targets.bins.len);
 }
@@ -207,12 +213,29 @@ test "golden: a new binary package equals tests/new/bin" {
     try expectTree("tests/new/bin", .bin);
 }
 
+test "a package of a full name is named by it and laid out by its import name" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const fs = try files(a, "acme-co/http_client", .bin);
+    try std.testing.expectEqualStrings("mopm.toml", fs[0].path);
+    try std.testing.expectEqualStrings("src/http_client/__init__.mojo", fs[1].path);
+    try std.testing.expectEqualStrings("src/main.mojo", fs[2].path);
+    try std.testing.expectEqualStrings("tests/test_http_client.mojo", fs[3].path);
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, fs[0].contents, &diag);
+    try std.testing.expectEqualStrings("acme-co/http_client", m.package.full_name);
+    try std.testing.expectEqualStrings("acme-co", m.package.namespace);
+    try std.testing.expectEqualStrings("http_client", m.package.name);
+    try std.testing.expect(std.mem.startsWith(u8, fs[4].contents, "# acme-co/http_client\n"));
+}
+
 test "an existing file is found before anything is written" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
-    const fs = try files(arena_state.allocator(), "demo", .lib);
+    const fs = try files(arena_state.allocator(), "example/demo", .lib);
     try std.testing.expect(firstExisting(tmp.dir, fs) == null);
     try tmp.dir.writeFile("README.md", "mine\n");
     try std.testing.expectEqualStrings("README.md", firstExisting(tmp.dir, fs).?);

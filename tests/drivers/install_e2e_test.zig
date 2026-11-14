@@ -42,7 +42,7 @@
 //!     With the original bytes back, the same sync succeeds, so the refusals
 //!     came from the bytes and nothing else.
 //!
-//! A path dependency (`local = { path = "local" }`) is locked with
+//! A path dependency (`"example/local" = { path = "local" }`) is locked with
 //! `source = path`, its own mopm.toml's version and no sha256; sync must not
 //! download it (it has no url, so a download would fail) nor install it, and
 //! must see a lock that holds an older version of it as stale.
@@ -110,7 +110,7 @@ const Ctx = struct {
         try fs.cwd().makePath(d);
         try h.writeFile(try h.join(c.a, &.{ d, "mopm.toml" }), try h.fmt(c.a,
             \\[package]
-            \\name = "app"
+            \\name = "example/app"
             \\version = "0.1.0"
             \\
             \\[toolchain]
@@ -236,7 +236,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     c.cache = try h.join(a, &.{ work, "cache" });
     const reg = [_][]const u8{ "--registry", fake.base };
 
-    const app = try c.project("app", "greet = \"1\"", mojo_version);
+    const app = try c.project("app", "\"example/greet\" = \"1\"", mojo_version);
 
     var r = try c.sync(app, &.{"--locked"});
     rep.check("sync --locked without a lock fails and installs nothing", r.code == 1 and h.contains(r.stderr, "--locked: there is no mopm.lock") and !c.exists(app, ".mopm"), c.detail(r));
@@ -285,23 +285,23 @@ fn run(a: Allocator, rep: *h.Report) !void {
     // ------------------------------------------------ stale locks
     const Stale = struct { what: []const u8, deps: []const u8, mojo: []const u8, want: []const u8 };
     const stale = [_]Stale{
-        .{ .what = "a requirement the locked version does not meet", .deps = "greet = \"2\"", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.toml needs greet \"2\", but mopm.lock has greet 1.0.0" },
-        .{ .what = "a new dependency", .deps = "greet = \"1\"\nother = \"1\"", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.toml needs other, which mopm.lock does not lock" },
+        .{ .what = "a requirement the locked version does not meet", .deps = "\"example/greet\" = \"2\"", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.toml needs greet \"2\", but mopm.lock has greet 1.0.0" },
+        .{ .what = "a new dependency", .deps = "\"example/greet\" = \"1\"\n\"example/other\" = \"1\"", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.toml needs other, which mopm.lock does not lock" },
         .{ .what = "a removed dependency", .deps = "", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.lock locks greet 1.0.0, which nothing in mopm.toml needs" },
-        .{ .what = "another toolchain", .deps = "greet = \"1\"", .mojo = "1.1.0", .want = "mopm.lock is out of date with mopm.toml: mopm.lock is for mojo 1.0.0; mopm.toml's [toolchain] allows 1.1.0" },
+        .{ .what = "another toolchain", .deps = "\"example/greet\" = \"1\"", .mojo = "1.1.0", .want = "mopm.lock is out of date with mopm.toml: mopm.lock is for mojo 1.0.0; mopm.toml's [toolchain] allows 1.1.0" },
     };
     for (stale) |s| {
         _ = try c.project("app", s.deps, s.mojo);
         r = try c.sync(app, &.{"--locked"});
         rep.check(try h.fmt(a, "stale lock ({s}): sync --locked fails, naming it", .{s.what}), r.code == 1 and h.contains(r.stderr, s.want) and std.mem.eql(u8, c.read(app, "mopm.lock") orelse "", lock), c.detail(r));
     }
-    _ = try c.project("app", "greet = \"1\"", mojo_version);
+    _ = try c.project("app", "\"example/greet\" = \"1\"", mojo_version);
 
     // ------------------------------------------------ tampered artifacts
     const flipped = try a.dupe(u8, good);
     flipped[flipped.len / 2] ^= 0x01;
     const longer = try std.mem.concat(a, u8, &.{ good, "\x00" });
-    const fresh = try c.project("fresh", "greet = \"1\"", mojo_version);
+    const fresh = try c.project("fresh", "\"example/greet\" = \"1\"", mojo_version);
     try fs.cwd().copyFile(try h.join(a, &.{ app, "mopm.lock" }), fs.cwd(), try h.join(a, &.{ fresh, "mopm.lock" }), .{});
     const kept_rel = ".mopm/pkgs/" ++ filename;
     const url = try h.fmt(a, "{s}/channel/{s}/{s}", .{ c.base, subdir, filename });
@@ -334,7 +334,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     // Locked as source = path with its own version and no file; sync uses it
     // from its directory and never downloads it (it has no url: a download
     // would fail the sync).
-    const withpath = try c.project("withpath", "greet = \"1\"\nlocal = { path = \"local\" }", mojo_version);
+    const withpath = try c.project("withpath", "\"example/greet\" = \"1\"\n\"example/local\" = { path = \"local\" }", mojo_version);
     try localVersion(&c, withpath, "0.2.0");
     r = try c.sync(withpath, &reg);
     {
@@ -375,5 +375,5 @@ fn run(a: Allocator, rep: *h.Report) !void {
 fn localVersion(c: *Ctx, withpath: []const u8, v: []const u8) !void {
     const d = try h.join(c.a, &.{ withpath, "local" });
     try fs.cwd().makePath(d);
-    try h.writeFile(try h.join(c.a, &.{ d, "mopm.toml" }), try h.fmt(c.a, "[package]\nname = \"local\"\nversion = \"{s}\"\n", .{v}));
+    try h.writeFile(try h.join(c.a, &.{ d, "mopm.toml" }), try h.fmt(c.a, "[package]\nname = \"example/local\"\nversion = \"{s}\"\n", .{v}));
 }

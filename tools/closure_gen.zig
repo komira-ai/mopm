@@ -4,6 +4,14 @@
 //!   mopm-closure --natives <natives.pixi.lock> <natives.txt> <closure directory>
 //!
 //!   mopm-closure --natives-libs <closure directory> <natives.libs>
+//!   mopm-closure --std-modules <closure directory> <toolchain directory>
+//!
+//! The fourth form writes <toolchain directory>/mojo-<version>.std-modules.txt for each version of
+//! <toolchain directory>/versions.txt, the top-level modules of the Mojo standard library (src/core/std_modules.zig):
+//! it downloads the version's linux-64 mojo-compiler package from <closure directory>/mojo-<version>-linux-64.json,
+//! checks it against its pinned size and sha256 (a mismatch is exit 1, naming both), and reads its lib/mojo/std.mojoc.
+//! It then writes <closure directory>/std-modules.txt, the union over the versions, which mopm embeds. It downloads
+//! into `.std-modules-part` of the working directory and removes that when it is done.
 //!
 //! The third form brings toolchain/natives.libs up to date with the natives-<subdir>.json files of the directory
 //! (src/core/natives_libs.zig): a package whose sha256 the file already holds is not read again; any other is
@@ -30,6 +38,7 @@ const native_catalog = core.native_catalog;
 const natives_libs = core.natives_libs;
 const pkg_fetch = core.pkg_fetch;
 const conda_unpack = core.conda_unpack;
+const std_modules = core.std_modules;
 
 pub fn main() !u8 {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -39,8 +48,9 @@ pub fn main() !u8 {
     const stderr = std.io.getStdErr().writer();
     if (args.len == 5 and std.mem.eql(u8, args[1], "--natives")) return natives(a, args[2], args[3], args[4]);
     if (args.len == 4 and std.mem.eql(u8, args[1], "--natives-libs")) return nativesLibs(a, args[2], args[3]);
+    if (args.len == 4 and std.mem.eql(u8, args[1], "--std-modules")) return stdModules(a, args[2], args[3]);
     if (args.len != 3) {
-        try stderr.writeAll("usage: mopm-closure <mojo-<version>.pixi.lock> <output directory>\n       mopm-closure --natives <natives.pixi.lock> <natives.txt> <closure directory>\n       mopm-closure --natives-libs <closure directory> <natives.libs>\n");
+        try stderr.writeAll("usage: mopm-closure <mojo-<version>.pixi.lock> <output directory>\n       mopm-closure --natives <natives.pixi.lock> <natives.txt> <closure directory>\n       mopm-closure --natives-libs <closure directory> <natives.libs>\n       mopm-closure --std-modules <closure directory> <toolchain directory>\n");
         return 2;
     }
     const lock_text = std.fs.cwd().readFileAlloc(a, args[1], 64 << 20) catch |e| {
@@ -204,5 +214,69 @@ fn nativesLibs(a: std.mem.Allocator, dir_path: []const u8, libs_path: []const u8
     };
     try std.fs.cwd().writeFile(libs_path, text);
     try stdout.print("{s}: {d} bytes\n", .{ libs_path, text.len });
+    return 0;
+}
+
+/// The fourth form: each version's standard library modules, then their union (see the top of this file).
+fn stdModules(a: std.mem.Allocator, closure_dir: []const u8, toolchain_dir: []const u8) !u8 {
+    const stderr = std.io.getStdErr().writer();
+    const stdout = std.io.getStdOut().writer();
+    const versions_path = try std.fs.path.join(a, &.{ toolchain_dir, "versions.txt" });
+    const versions = std.fs.cwd().readFileAlloc(a, versions_path, 1 << 16) catch |e| {
+        try stderr.print("mopm-closure: {s}: {s}\n", .{ versions_path, @errorName(e) });
+        return 1;
+    };
+    var part = try std.fs.cwd().makeOpenPath(".std-modules-part", .{});
+    defer {
+        part.close();
+        std.fs.cwd().deleteTree(".std-modules-part") catch {};
+    }
+    const window = try a.alloc(u8, conda_unpack.window_size);
+    var texts = std.ArrayList([]const u8).init(a);
+    for (try std_modules.versionsOf(a, versions)) |ver| {
+        const closure_path = try std.fmt.allocPrint(a, "{s}/mojo-{s}-linux-64.json", .{ closure_dir, ver });
+        const closure_text = std.fs.cwd().readFileAlloc(a, closure_path, 16 << 20) catch |e| {
+            try stderr.print("mopm-closure: {s}: {s}\n", .{ closure_path, @errorName(e) });
+            return 1;
+        };
+        const c = try closure.parse(a, closure_text);
+        var compiler: ?closure.Package = null;
+        for (c.packages) |q| {
+            if (std.mem.eql(u8, q.name, "mojo-compiler")) compiler = q;
+        }
+        const p = compiler orelse {
+            try stderr.print("mopm-closure: {s} pins no mojo-compiler\n", .{closure_path});
+            return 1;
+        };
+        var fetch_diag = pkg_fetch.Diag{};
+        const file = closure.fileName(p);
+        pkg_fetch.fetch(a, part, file, try closure.urlOf(a, c, p), .{ .sha256 = p.sha256, .size = p.size }, &fetch_diag) catch |e| {
+            try stderr.print("mopm-closure: {s}: {s}: {s}\n", .{ file, @errorName(e), fetch_diag.message });
+            return 1;
+        };
+        const bytes = try part.readFileAlloc(a, file, 1 << 30);
+        var unpack_diag = conda_unpack.Diag{};
+        const found = conda_unpack.readFilesLimited(a, bytes, window, &.{"lib/mojo/std.mojoc"}, .{ .total = 4 << 30 }, &unpack_diag) catch |e| {
+            try stderr.print("mopm-closure: {s}: {s}: {s}\n", .{ file, @errorName(e), unpack_diag.message });
+            return 1;
+        };
+        const mojoc = found[0] orelse {
+            try stderr.print("mopm-closure: {s} holds no lib/mojo/std.mojoc\n", .{file});
+            return 1;
+        };
+        var why: []const u8 = "";
+        const modules = std_modules.fromMojoc(a, mojoc, window, &why) catch |e| {
+            try stderr.print("mopm-closure: {s}: lib/mojo/std.mojoc: {s}: {s}\n", .{ file, @errorName(e), why });
+            return 1;
+        };
+        const text = try std_modules.renderVersion(a, modules);
+        const out = try std.fmt.allocPrint(a, "{s}/mojo-{s}.std-modules.txt", .{ toolchain_dir, ver });
+        try std.fs.cwd().writeFile(out, text);
+        try stdout.print("{s}: {d} modules\n", .{ out, modules.len });
+        try texts.append(text);
+    }
+    const union_path = try std.fmt.allocPrint(a, "{s}/std-modules.txt", .{closure_dir});
+    try std.fs.cwd().writeFile(union_path, try std_modules.renderUnion(a, texts.items));
+    try stdout.print("{s}: the union of {d} versions\n", .{ union_path, texts.items.len });
     return 0;
 }

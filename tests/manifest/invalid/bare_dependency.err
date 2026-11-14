@@ -1,0 +1,1 @@
+6:1: dependency 'json' has no namespace: write it "<namespace>/json" = "0.1"

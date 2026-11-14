@@ -34,7 +34,7 @@ const work = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'mopm-pack-')
 mkdirSync(join(work, 'pkg'));
 writeFileSync(
   join(work, 'pkg', 'mopm.toml'),
-  '[package]\nname = "confdemo"\nversion = "1.2.3"\n\n[toolchain]\nmojo = "1.0.0"\n\n[dependencies]\nconfdep = "^1.2"\nother_dep = ">=0.3, <0.5"\n',
+  '[package]\nname = "example/confdemo"\nversion = "1.2.3"\n\n[toolchain]\nmojo = "1.0.0"\n\n[dependencies]\n"example/confdep" = "^1.2"\n"example/other_dep" = ">=0.3, <0.5"\n',
 );
 // Bytes only: the validator does not open a .mojoc.
 const mojoc = Buffer.alloc(300000);
@@ -97,7 +97,7 @@ mkdirSync(join(work, 'nat', 'linux'), { recursive: true });
 mkdirSync(join(work, 'nat', 'osx'), { recursive: true });
 writeFileSync(
   join(work, 'nat', 'mopm.toml'),
-  '[package]\nname = "natdemo"\nversion = "2.4.0"\n\n[toolchain]\nmojo = "1.0.0"\n\n[native.nat_sys]\nkind = "static"\nneeds = ["libz.a"]\nexclusive = "libnat"\n',
+  '[package]\nname = "example/natdemo"\nversion = "2.4.0"\n\n[toolchain]\nmojo = "1.0.0"\n\n[native.nat_sys]\nkind = "static"\nneeds = ["libz.a"]\nexclusive = "libnat"\n',
 );
 writeFileSync(join(work, 'nat', 'natdemo.mojoc'), mojoc);
 writeFileSync(join(work, 'nat', 'linux', 'libnat_sys.a'), '!<arch>\nlinux members\n');

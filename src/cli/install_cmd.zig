@@ -189,7 +189,7 @@ fn readManifest(arena: Allocator, cmd: Command, path: []const u8) !?manifest.Man
 /// one (reported).
 pub fn parseManifest(arena: Allocator, cmd: Command, path: []const u8, src: []const u8) !?manifest.Manifest {
     var diag: manifest.Diagnostic = .{};
-    return manifest.parse(arena, src, &diag) catch |e| {
+    const m = manifest.parse(arena, src, &diag) catch |e| {
         if (e == error.Invalid) {
             err(cmd, "{s}:{d}:{d}: {s}\n", .{ path, diag.pos.line, diag.pos.col, diag.message });
         } else {
@@ -197,6 +197,8 @@ pub fn parseManifest(arena: Allocator, cmd: Command, path: []const u8, src: []co
         }
         return null;
     };
+    for (m.warnings) |w| err(cmd, "warning: {s}:{s}\n", .{ path, w });
+    return m;
 }
 
 /// `dir` joined with `rel`, `/`-separated, with `.` and `..` resolved
@@ -207,29 +209,35 @@ fn joinPath(arena: Allocator, dir: []const u8, rel: []const u8) ![]const u8 {
     return std.fs.path.resolvePosix(arena, &.{ dir, r });
 }
 
-/// Reads the path dependency `name` at `path` (relative to the project) and,
-/// through it, its own dependencies. False when it failed (reported).
-fn addPathDep(arena: Allocator, cmd: Command, name: []const u8, path: []const u8, needed_by: []const u8, roots: *std.ArrayList(resolve.Root), paths: *std.ArrayList(plan.PathDep)) anyerror!bool {
-    for (paths.items) |q| {
+/// Reads the path dependency `full` (flat name `name`, its import name) at `path` (relative to the project) and,
+/// through it, its own dependencies. `fulls` holds the full name of each entry of `paths`, in step. False when it
+/// failed (reported).
+fn addPathDep(arena: Allocator, cmd: Command, full: []const u8, name: []const u8, path: []const u8, needed_by: []const u8, roots: *std.ArrayList(resolve.Root), paths: *std.ArrayList(plan.PathDep), fulls: *std.ArrayList([]const u8)) anyerror!bool {
+    for (paths.items, 0..) |q, i| {
         if (!std.mem.eql(u8, q.name, name)) continue;
+        if (!std.mem.eql(u8, fulls.items[i], full)) {
+            err(cmd, "{s} and {s} ({s}) have the same import name {s}; one project holds one package per import name\n", .{ fulls.items[i], full, needed_by, name });
+            return false;
+        }
         if (std.mem.eql(u8, q.path, path)) return true;
-        err(cmd, "{s} is the path dependency {s} and also {s} ({s}); one name, one path\n", .{ name, q.path, path, needed_by });
+        err(cmd, "{s} is the path dependency {s} and also {s} ({s}); one name, one path\n", .{ full, q.path, path, needed_by });
         return false;
     }
     const file = try std.fmt.allocPrint(arena, "{s}/{s}", .{ path, manifest_path });
     const m = (try readManifest(arena, cmd, file)) orelse return false;
-    if (!std.mem.eql(u8, m.package.name, name)) {
-        err(cmd, "{s} names the package {s}, but {s} calls it {s}\n", .{ file, m.package.name, needed_by, name });
+    if (!std.mem.eql(u8, m.package.full_name, full)) {
+        err(cmd, "{s} names the package {s}, but {s} calls it {s}\n", .{ file, m.package.full_name, needed_by, full });
         return false;
     }
     const at = paths.items.len;
     try paths.append(.{ .name = name, .version = m.package.version, .path = path, .native_deps = m.native_dependencies });
+    try fulls.append(full);
     var names = std.ArrayList([]const u8).init(arena);
     for (m.dependencies) |d| {
         try names.append(d.name);
         switch (d.source) {
             .version => |req| try roots.append(.{ .name = d.name, .requirement = req, .from = file }),
-            .path => |p| if (!try addPathDep(arena, cmd, d.name, try joinPath(arena, path, p), file, roots, paths)) return false,
+            .path => |p| if (!try addPathDep(arena, cmd, d.full_name, d.name, try joinPath(arena, path, p), file, roots, paths, fulls)) return false,
         }
     }
     std.mem.sort([]const u8, names.items, {}, struct {
@@ -257,6 +265,7 @@ pub fn readProject(arena: Allocator, cmd: Command) !?Project {
 pub fn projectOf(arena: Allocator, cmd: Command, m: manifest.Manifest) !?Project {
     var roots = std.ArrayList(resolve.Root).init(arena);
     var paths = std.ArrayList(plan.PathDep).init(arena);
+    var fulls = std.ArrayList([]const u8).init(arena);
     var lists = [2]std.ArrayList([]const u8){ std.ArrayList([]const u8).init(arena), std.ArrayList([]const u8).init(arena) };
     for ([_][]const manifest.Dep{ m.dependencies, m.dev_dependencies }, 0..) |group, g| {
         for (group) |d| {
@@ -266,7 +275,7 @@ pub fn projectOf(arena: Allocator, cmd: Command, m: manifest.Manifest) !?Project
                     try lists[g].append(d.name);
                 },
                 .path => |p| {
-                    if (!try addPathDep(arena, cmd, d.name, try joinPath(arena, "", p), manifest_path, &roots, &paths)) return null;
+                    if (!try addPathDep(arena, cmd, d.full_name, d.name, try joinPath(arena, "", p), manifest_path, &roots, &paths, &fulls)) return null;
                     try lists[g].append(d.name);
                 },
             }
@@ -829,4 +838,35 @@ test "fetchConda reads a package file up to its limit and refuses a longer one b
     try std.testing.expectEqual(@as(usize, 2000), ok.len);
     try std.testing.expectError(error.ResolveFailed, (ChannelSource{ .channel_url = url, .max_conda = 1999 }).fetchConda(a, "linux-64", "f.conda", &diag));
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "f.conda is larger than 1999 bytes, the most a package file may be") != null);
+}
+
+test "path dependencies are matched by full name: one import name in two namespaces is refused, one namespace is read" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    const pkg = "[package]\nname = \"{s}\"\nversion = \"0.1.0\"\n";
+    try tmp.dir.makePath("util");
+    try tmp.dir.makePath("mid_same");
+    try tmp.dir.makePath("mid_other");
+    try tmp.dir.makePath("other_util");
+    try tmp.dir.writeFile("util/mopm.toml", try std.fmt.allocPrint(a, pkg, .{"example/util"}));
+    try tmp.dir.writeFile("other_util/mopm.toml", try std.fmt.allocPrint(a, pkg, .{"other/util"}));
+    // mid_same needs example/util at the same path as the root; mid_other needs other/util, another package with
+    // the import name util.
+    const mid = "[package]\nname = \"example/{s}\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"{s}\" = {{ path = \"{s}\" }}\n";
+    try tmp.dir.writeFile("mid_same/mopm.toml", try std.fmt.allocPrint(a, mid, .{ "mid_same", "example/util", "../util" }));
+    try tmp.dir.writeFile("mid_other/mopm.toml", try std.fmt.allocPrint(a, mid, .{ "mid_other", "other/util", "../other_util" }));
+
+    const top = "[package]\nname = \"example/app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"example/util\" = {{ path = \"{s}/util\" }}\n\"example/{s}\" = {{ path = \"{s}/{s}\" }}\n";
+    var diag: manifest.Diagnostic = .{};
+    const same = try manifest.parse(a, try std.fmt.allocPrint(a, top, .{ root, "mid_same", root, "mid_same" }), &diag);
+    const p = (try projectOf(a, .lock, same)).?;
+    try std.testing.expectEqual(@as(usize, 2), p.paths.len);
+    try std.testing.expectEqualStrings("util", p.paths[0].name);
+
+    const other = try manifest.parse(a, try std.fmt.allocPrint(a, top, .{ root, "mid_other", root, "mid_other" }), &diag);
+    try std.testing.expect((try projectOf(a, .lock, other)) == null);
 }

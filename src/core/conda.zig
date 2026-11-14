@@ -697,6 +697,7 @@ pub fn nativeDepsOf(arena: Allocator, m: manifest.Manifest, why: *[]const u8) er
 }
 
 /// The version of the package a path dependency names, read by the caller from the dependency's own mopm.toml.
+/// `name` is the FULL name of the package (`<namespace>/<name>`), as the dependency key that names it.
 pub const PathVersion = struct { name: []const u8, version: []const u8 };
 
 /// Refusal of a path dependency that has no `version`: it names no versions for a consumer to use.
@@ -726,31 +727,31 @@ pub fn depsOf(arena: Allocator, m: manifest.Manifest, path_versions: []const Pat
         const text: []const u8 = switch (d.source) {
             .path => |p| blk: {
                 const v = d.requirement orelse {
-                    why.* = try std.fmt.allocPrint(arena, path_no_version_fmt, .{d.name});
+                    why.* = try std.fmt.allocPrint(arena, path_no_version_fmt, .{d.full_name});
                     return error.Unpackable;
                 };
                 var found: ?[]const u8 = null;
                 for (path_versions) |pv| {
-                    if (std.mem.eql(u8, pv.name, d.name)) found = pv.version;
+                    if (std.mem.eql(u8, pv.name, d.full_name)) found = pv.version;
                 }
                 const have = found orelse {
-                    why.* = try std.fmt.allocPrint(arena, "dependency '{s}': the package at '{s}' was not read", .{ d.name, p });
+                    why.* = try std.fmt.allocPrint(arena, "dependency '{s}': the package at '{s}' was not read", .{ d.full_name, p });
                     return error.Unpackable;
                 };
                 var bad: []const u8 = "";
                 const req = semver.parseReq(arena, v, &bad) catch |e| switch (e) {
                     error.Invalid => {
-                        why.* = try std.fmt.allocPrint(arena, "dependency '{s}' = \"{s}\": {s}", .{ d.name, v, bad });
+                        why.* = try std.fmt.allocPrint(arena, "dependency '{s}' = \"{s}\": {s}", .{ d.full_name, v, bad });
                         return error.Unpackable;
                     },
                     error.OutOfMemory => return error.OutOfMemory,
                 };
                 const ver = semver.parseVersion(have) orelse {
-                    why.* = try std.fmt.allocPrint(arena, "dependency '{s}': the package at '{s}' has the version '{s}', which is not MAJOR.MINOR.PATCH", .{ d.name, p, have });
+                    why.* = try std.fmt.allocPrint(arena, "dependency '{s}': the package at '{s}' has the version '{s}', which is not MAJOR.MINOR.PATCH", .{ d.full_name, p, have });
                     return error.Unpackable;
                 };
                 if (!req.matches(ver)) {
-                    why.* = try std.fmt.allocPrint(arena, path_unsatisfied_fmt, .{ d.name, v, p, have });
+                    why.* = try std.fmt.allocPrint(arena, path_unsatisfied_fmt, .{ d.full_name, v, p, have });
                     return error.Unpackable;
                 }
                 break :blk v;
@@ -760,7 +761,7 @@ pub fn depsOf(arena: Allocator, m: manifest.Manifest, path_versions: []const Pat
         var reason: []const u8 = "";
         const range = condaRange(arena, text, &reason) catch |e| switch (e) {
             error.Unpackable => {
-                why.* = try std.fmt.allocPrint(arena, "dependency '{s}' = \"{s}\": {s}", .{ d.name, text, reason });
+                why.* = try std.fmt.allocPrint(arena, "dependency '{s}' = \"{s}\": {s}", .{ d.full_name, text, reason });
                 return error.Unpackable;
             },
             error.OutOfMemory => return error.OutOfMemory,
@@ -1068,15 +1069,15 @@ test "a manifest: dependencies, and what cannot be packed" {
     var diag: manifest.Diagnostic = .{};
     const ok = try manifest.parse(a,
         \\[package]
-        \\name = "demo"
+        \\name = "example/demo"
         \\version = "0.1.0"
         \\
         \\[toolchain]
         \\mojo = "1.0.0"
         \\
         \\[dependencies]
-        \\zeta = "^1.0"
-        \\alpha = { version = ">=0.3" }
+        \\"example/zeta" = "^1.0"
+        \\"example/alpha" = { version = ">=0.3" }
         \\
     , &diag);
     var why: []const u8 = "";
@@ -1089,7 +1090,7 @@ test "a manifest: dependencies, and what cannot be packed" {
 
     const native = try manifest.parse(a,
         \\[package]
-        \\name = "demo"
+        \\name = "example/demo"
         \\version = "0.1.0"
         \\
         \\[toolchain]
@@ -1105,7 +1106,7 @@ test "a manifest: dependencies, and what cannot be packed" {
 
 const path_dep_head =
     \\[package]
-    \\name = "demo"
+    \\name = "example/demo"
     \\version = "0.1.0"
     \\
     \\[toolchain]
@@ -1125,9 +1126,9 @@ test "a path dependency with no version cannot be packed, and the message says t
     defer st.deinit();
     const a = st.allocator();
     var why: []const u8 = "";
-    const m = try pathDepManifest(a, "local = { path = \"../local\" }");
-    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "local", .version = "0.3.0" }}, &why));
-    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, path_no_version_fmt, .{"local"}), why);
+    const m = try pathDepManifest(a, "\"example/local\" = { path = \"../local\" }");
+    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "example/local", .version = "0.3.0" }}, &why));
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, path_no_version_fmt, .{"example/local"}), why);
     try std.testing.expect(std.mem.indexOf(u8, why, "add 'version' beside its 'path'") != null);
 }
 
@@ -1136,8 +1137,8 @@ test "a path dependency with a version: the version is packed when the package s
     defer st.deinit();
     const a = st.allocator();
     var why: []const u8 = "";
-    const m = try pathDepManifest(a, "local = { path = \"../local\", version = \"^0.3\" }");
-    const deps = try depsOf(a, m, &.{.{ .name = "local", .version = "0.3.7" }}, &why);
+    const m = try pathDepManifest(a, "\"example/local\" = { path = \"../local\", version = \"^0.3\" }");
+    const deps = try depsOf(a, m, &.{.{ .name = "example/local", .version = "0.3.7" }}, &why);
     try std.testing.expectEqual(@as(usize, 1), deps.len);
     try std.testing.expectEqualStrings("local", deps[0].name);
     try std.testing.expectEqualStrings(">=0.3,<0.4", deps[0].range);
@@ -1163,13 +1164,13 @@ test "a path dependency whose package does not satisfy its version cannot be pac
     defer st.deinit();
     const a = st.allocator();
     var why: []const u8 = "";
-    const m = try pathDepManifest(a, "local = { path = \"../local\", version = \"^0.3\" }");
+    const m = try pathDepManifest(a, "\"example/local\" = { path = \"../local\", version = \"^0.3\" }");
     // Below, above and exactly at the edges of ^0.3 (>=0.3.0, <0.4.0).
-    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "local", .version = "0.2.9" }}, &why));
-    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, path_unsatisfied_fmt, .{ "local", "^0.3", "../local", "0.2.9" }), why);
-    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "local", .version = "0.4.0" }}, &why));
-    _ = try depsOf(a, m, &.{.{ .name = "local", .version = "0.3.0" }}, &why);
-    _ = try depsOf(a, m, &.{.{ .name = "local", .version = "0.3.99" }}, &why);
+    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "example/local", .version = "0.2.9" }}, &why));
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, path_unsatisfied_fmt, .{ "example/local", "^0.3", "../local", "0.2.9" }), why);
+    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "example/local", .version = "0.4.0" }}, &why));
+    _ = try depsOf(a, m, &.{.{ .name = "example/local", .version = "0.3.0" }}, &why);
+    _ = try depsOf(a, m, &.{.{ .name = "example/local", .version = "0.3.99" }}, &why);
     // A package nobody read is not assumed to satisfy anything.
     try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{}, &why));
 }
@@ -1179,22 +1180,22 @@ test "a path dependency that depsOf cannot judge is refused with the reason" {
     defer st.deinit();
     const a = st.allocator();
     var why: []const u8 = "";
-    var m = try pathDepManifest(a, "local = { path = \"../local\", version = \"^0.3\" }");
+    var m = try pathDepManifest(a, "\"example/local\" = { path = \"../local\", version = \"^0.3\" }");
 
     // The package at the path has a version that is not MAJOR.MINOR.PATCH.
-    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "local", .version = "0.3" }}, &why));
-    try std.testing.expectEqualStrings("dependency 'local': the package at '../local' has the version '0.3', which is not MAJOR.MINOR.PATCH", why);
+    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "example/local", .version = "0.3" }}, &why));
+    try std.testing.expectEqualStrings("dependency 'example/local': the package at '../local' has the version '0.3', which is not MAJOR.MINOR.PATCH", why);
 
     // The package was never read.
-    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "other", .version = "0.3.0" }}, &why));
-    try std.testing.expectEqualStrings("dependency 'local': the package at '../local' was not read", why);
+    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "example/other", .version = "0.3.0" }}, &why));
+    try std.testing.expectEqualStrings("dependency 'example/local': the package at '../local' was not read", why);
 
     // A requirement the parser would have refused (a hand-made manifest) is refused here too, and not read as `*`.
     const bad = try a.alloc(manifest.Dep, 1);
-    bad[0] = .{ .name = "local", .source = .{ .path = "../local" }, .requirement = "=>1" };
+    bad[0] = .{ .full_name = "example/local", .namespace = "example", .name = "local", .source = .{ .path = "../local" }, .requirement = "=>1" };
     m.dependencies = bad;
-    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "local", .version = "0.3.0" }}, &why));
-    try std.testing.expect(std.mem.startsWith(u8, why, "dependency 'local' = \"=>1\": "));
+    try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "example/local", .version = "0.3.0" }}, &why));
+    try std.testing.expect(std.mem.startsWith(u8, why, "dependency 'example/local' = \"=>1\": "));
 }
 
 // ---------------------------------------------------------------------------
@@ -1365,7 +1366,7 @@ test "a manifest's native libraries: static, link mode packs; shared, both or lo
     const a = st.allocator();
     var diag: manifest.Diagnostic = .{};
     var why: []const u8 = "";
-    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const head = "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
     const ok = try manifest.parse(a, head ++ "[native.tls_sys]\nkind = \"static\"\nneeds = [\"libz.a\"]\nexclusive = \"libtls\"\n", &diag);
     _ = try depsOf(a, ok, &.{}, &why);
     try std.testing.expectEqualStrings("libz.a", ok.native[0].needs[0]);
@@ -1393,14 +1394,14 @@ test "native dependencies to load are conda dependencies, in the order of their 
     var diag: manifest.Diagnostic = .{};
     const head =
         \\[package]
-        \\name = "demo"
+        \\name = "example/demo"
         \\version = "0.1.0"
         \\
         \\[toolchain]
         \\mojo = "1.0.0"
         \\
         \\[dependencies]
-        \\alpha = "^1.0"
+        \\"example/alpha" = "^1.0"
         \\
         \\[native-dependencies]
         \\
@@ -1445,7 +1446,7 @@ test "native dependencies that cannot be packed are refused with their reason" {
     var diag: manifest.Diagnostic = .{};
     const head =
         \\[package]
-        \\name = "demo"
+        \\name = "example/demo"
         \\version = "0.1.0"
         \\
         \\[toolchain]
@@ -1511,7 +1512,7 @@ test "a native's link names are in the published metadata, in order, and read ba
     defer st.deinit();
     const a = st.allocator();
     var diag: manifest.Diagnostic = .{};
-    const m = try manifest.parse(a, "[package]\nname = \"snappy_sys\"\nversion = \"1.2.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[native.snappy]\nkind = \"static\"\nprovided = true\nlink = [\"m\", \"c++\"]\n", &diag);
+    const m = try manifest.parse(a, "[package]\nname = \"example/snappy_sys\"\nversion = \"1.2.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[native.snappy]\nkind = \"static\"\nprovided = true\nlink = [\"m\", \"c++\"]\n", &diag);
     const n = m.native[0];
     const input = Input{
         .name = "snappy_sys",

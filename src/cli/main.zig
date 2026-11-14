@@ -38,9 +38,9 @@ const usage =
     \\  link-plan <file>...     print the link plan for installed packages,
     \\                          given their <name>.mopm.json files
     \\  metadata [mopm.toml]    check a package manifest and print it as JSON
-    \\  new <name> [--lib|--bin]
+    \\  new <namespace>/<name> [--lib|--bin]
     \\                          make a package in a new directory <name>
-    \\  init [--lib|--bin] [--name <name>]
+    \\  init [--lib|--bin] [--name <namespace>/<name>]
     \\                          make a package in this directory
     \\  build <file.mojo> [-o <out>]
     \\  build [--out-dir <dir>] with no program: the [targets] of mopm.toml, the
@@ -136,13 +136,13 @@ const usage =
     \\                          --cache (default ~/.cache/mopm/pkgs);
     \\                          --toolchain <file> names another closure (a
     \\                          mirror). build, run and repl use .mopm/env
-    \\  add <package>[@<req>] [--dev] [--path <dir>] [--registry ...] [--overlay <staged set>]
+    \\  add <namespace>/<name>[@<req>] [--dev] [--path <dir>] [--registry ...] [--overlay <staged set>]
     \\                          add a dependency to mopm.toml ([dev-dependencies]
     \\                          with --dev): <req>, else ^ the newest version
     \\                          that fits, or { path = "<dir>" }; then lock.
     \\                          Comments and layout are kept; nothing is
     \\                          written if it does not resolve
-    \\  remove <package> [--dev] [--registry ...]
+    \\  remove <namespace>/<name> [--dev] [--registry ...]
     \\                          take a dependency out of mopm.toml and lock
     \\  plan --unit-graph --locked [--mojo <version>] [--workspace-root <dir>] [-o <file>]
     \\                          print the unit graph (spec/unit-graph.md) of
@@ -206,6 +206,7 @@ fn metadataCmd(arena: std.mem.Allocator, args: []const []const u8) u8 {
         }
         return 1;
     };
+    for (m.warnings) |w| std.debug.print("mopm: warning: {s}:{s}\n", .{ path, w });
     var buf = std.ArrayList(u8).init(arena);
     core.manifest.writeJson(m, buf.writer()) catch return 1;
     std.io.getStdOut().writeAll(buf.items) catch return 1;
@@ -240,28 +241,41 @@ fn scaffoldArgs(cmd: []const u8, args: []const []const u8) ?ScaffoldArgs {
     return out;
 }
 
+/// Why `full` cannot name a new package, worded for `mopm <cmd>`, or null. `hint` ends a message about a bare name.
+fn scaffoldProblem(arena: std.mem.Allocator, cmd: []const u8, full: []const u8, hint: []const u8) std.mem.Allocator.Error!?[]const u8 {
+    if (core.names.split(full) == null) {
+        return try std.fmt.allocPrint(arena, "mopm {s} {s} needs a namespace: name it, as in 'mopm {s} <your GitHub login>/{s}'{s}", .{ cmd, full, cmd, full, hint });
+    }
+    if (try core.names.fullNameProblem(arena, "package name", full, .refuse)) |problem| {
+        return try std.fmt.allocPrint(arena, "mopm {s}: {s}", .{ cmd, problem });
+    }
+    return null;
+}
+
 /// `mopm new` (into a new directory) and `mopm init` (into this one).
 fn scaffoldCmd(arena: std.mem.Allocator, cmd: []const u8, args: []const []const u8) u8 {
     const parsed = scaffoldArgs(cmd, args) orelse {
-        std.debug.print("usage: mopm new <name> [--lib|--bin]\n       mopm init [--lib|--bin] [--name <name>]\n", .{});
+        std.debug.print("usage: mopm new <namespace>/<name> [--lib|--bin]\n       mopm init [--lib|--bin] [--name <namespace>/<name>]\n", .{});
         return 2;
     };
     const is_new = std.mem.eql(u8, cmd, "new");
     var hint: []const u8 = "";
-    const name = parsed.name orelse blk: {
+    const full = parsed.name orelse blk: {
         const here = std.fs.cwd().realpathAlloc(arena, ".") catch |e| {
             std.debug.print("mopm init: {s}\n", .{@errorName(e)});
             return 1;
         };
-        hint = " (the name comes from this directory; pass --name <name>)";
+        hint = " (the name comes from this directory; pass --name <namespace>/<name>)";
         break :blk std.fs.path.basename(here);
     };
-    const problem = core.manifest.nameProblem(arena, "package name", name) catch return 1;
+    const problem = scaffoldProblem(arena, cmd, full, hint) catch return 1;
     if (problem) |message| {
-        std.debug.print("mopm {s}: {s}{s}\n", .{ cmd, message, hint });
+        std.debug.print("{s}\n", .{message});
         return 1;
     }
-    const files = core.scaffold.files(arena, name, parsed.kind) catch return 1;
+    // The directory, like src/<name>/, is named by the import name; `scaffoldProblem` has checked the `/`.
+    const name = if (core.names.split(full)) |parts| parts.name else full;
+    const files = core.scaffold.files(arena, full, parsed.kind) catch return 1;
 
     var dir = std.fs.cwd();
     var opened: ?std.fs.Dir = null;
@@ -295,9 +309,9 @@ fn scaffoldCmd(arena: std.mem.Allocator, cmd: []const u8, args: []const []const 
     };
     const out = std.io.getStdOut().writer();
     if (is_new) {
-        out.print("created {s} package '{s}' in {s}/\n", .{ what, name, name }) catch return 1;
+        out.print("created {s} package '{s}' in {s}/\n", .{ what, full, name }) catch return 1;
     } else {
-        out.print("created {s} package '{s}'\n", .{ what, name }) catch return 1;
+        out.print("created {s} package '{s}'\n", .{ what, full }) catch return 1;
     }
     return 0;
 }
@@ -655,6 +669,29 @@ test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(!isPlanned("remove"));
     try std.testing.expect(!isPlanned("--version"));
     try std.testing.expect(!isPlanned("frobnicate"));
+}
+
+test "new and init refuse a name that is not a full name, with the command's own words" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try std.testing.expect((try scaffoldProblem(a, "new", "komira-ai/json", "")) == null);
+    try std.testing.expectEqualStrings(
+        "mopm new json needs a namespace: name it, as in 'mopm new <your GitHub login>/json'",
+        (try scaffoldProblem(a, "new", "json", "")).?,
+    );
+    try std.testing.expectEqualStrings(
+        "mopm init demo needs a namespace: name it, as in 'mopm init <your GitHub login>/demo' (the name comes from this directory; pass --name <namespace>/<name>)",
+        (try scaffoldProblem(a, "init", "demo", " (the name comes from this directory; pass --name <namespace>/<name>)")).?,
+    );
+    try std.testing.expectEqualStrings(
+        "mopm new: package name 'example/async': the import name 'async' is a Mojo keyword; choose another name",
+        (try scaffoldProblem(a, "new", "example/async", "")).?,
+    );
+    try std.testing.expectEqualStrings(
+        "mopm init: package name 'Example/demo' is not in lower case; write 'example/demo'",
+        (try scaffoldProblem(a, "init", "Example/demo", "")).?,
+    );
 }
 
 test "new and init arguments" {

@@ -1,0 +1,40 @@
+# The top-level modules of the Mojo standard library, the union over every Mojo version of toolchain/versions.txt
+# (one toolchain/mojo-<version>.std-modules.txt each). No package's import name may be one (src/core/names.zig).
+# Written by `mopm-closure --std-modules`, never by hand (toolchain/README.md).
+algorithm
+atomic
+base64
+benchmark
+bit
+builtin
+collections
+compile
+complex
+documentation
+ffi
+format
+gpu
+hashlib
+io
+iter
+itertools
+logger
+math
+memory
+origin
+os
+pathlib
+prelude
+pwd
+python
+random
+reflection
+runtime
+stat
+subprocess
+sys
+tempfile
+testing
+time
+traits
+utils

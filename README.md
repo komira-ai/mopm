@@ -56,8 +56,8 @@ repository's release workflow.
 ## Command tour
 
 ```text
-mopm new my_pkg            # create a package with a mopm.toml
-mopm add http_client       # add a dependency
+mopm new alice/my_pkg      # create a package with a mopm.toml (names are <namespace>/<name>)
+mopm add alice/http_client # add a dependency
 mopm build                 # build, linking native libraries for you
 mopm run                   # mojo run with the right -Xlinker list
 mopm repl                  # mojo repl with natives preloaded
@@ -72,7 +72,7 @@ Working today:
 mopm --version
 mopm link-plan tests/fixtures/chain/http_client.mopm.json tests/fixtures/chain/crypto.mopm.json
 mopm metadata tests/manifest/valid/full.toml
-mopm new my_package --lib      # or --bin; `mopm init` makes one in the current directory
+mopm new alice/my_package --lib  # or --bin; `mopm init` makes one in the current directory
 mopm build hello.mojo -o hello   # -Xlinker -L/-l (Linux: --no-as-needed) plus a run path to <env>/lib
 mopm run hello.mojo              # one -Xlinker <shared object> per library
 mopm repl                        # LD_PRELOAD (macOS DYLD_INSERT_LIBRARIES) for the JIT

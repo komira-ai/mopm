@@ -12,8 +12,8 @@ const install_plan = @import("install_plan.zig");
 
 const Graph = ug.Graph;
 
-const toml_app = "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\nutil = { path = \"util\" }\n";
-const toml_util_head = "[package]\nname = \"util\"\nversion = \"0.3.0\"\nmojo = [\"1.0.0\"]\n";
+const toml_app = "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\"example/util\" = { path = \"util\" }\n";
+const toml_util_head = "[package]\nname = \"example/util\"\nversion = \"0.3.0\"\nmojo = [\"1.0.0\"]\n";
 /// util ships two archives built elsewhere; s2n leaves its symbols to awslc.
 const toml_util_provided = toml_util_head ++
     "\n[native.awslc]\nkind = \"static\"\nprovided = true\nexclusive = \"libawslc\"\n" ++

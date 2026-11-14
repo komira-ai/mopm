@@ -1,3 +1,3 @@
 [package]
-name = "HttpClient"
+name = "example/HttpClient"
 version = "0.1.0"

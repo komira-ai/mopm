@@ -82,7 +82,7 @@ fn exists(path: []const u8) bool {
 }
 
 fn tomlText(a: Allocator, name: []const u8, version: []const u8, extra: []const u8) ![]u8 {
-    return std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n{s}", .{ name, version, extra });
+    return std.fmt.allocPrint(a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n{s}", .{ name, version, extra });
 }
 
 /// A file of `n` 'a' bytes.
@@ -295,12 +295,12 @@ fn staticNatives(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc:
 /// before any request (a publish is pointed at nothing); a dev-dependency on it, and a package without the key, are packed.
 fn publishFalse(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc: []const u8) !void {
     const helper_dir = try h.join(a, &.{ work, "pf", "helper" });
-    try h.writeFile(try h.join(a, &.{ helper_dir, "mopm.toml" }), "[package]\nname = \"helper\"\nversion = \"0.1.0\"\npublish = false\n\n[toolchain]\nmojo = \"1.0.0\"\n");
-    const dep = "[dependencies]\nhelper = { path = \"../helper\", version = \"0.1\" }\n";
+    try h.writeFile(try h.join(a, &.{ helper_dir, "mopm.toml" }), "[package]\nname = \"example/helper\"\nversion = \"0.1.0\"\npublish = false\n\n[toolchain]\nmojo = \"1.0.0\"\n");
+    const dep = "[dependencies]\n\"example/helper\" = { path = \"../helper\", version = \"0.1\" }\n";
     const needs = try h.join(a, &.{ work, "pf", "needs", "mopm.toml" });
     try h.writeFile(needs, try tomlText(a, "needs", "0.1.0", dep));
     const tests_only = try h.join(a, &.{ work, "pf", "tests_only", "mopm.toml" });
-    try h.writeFile(tests_only, try tomlText(a, "tests_only", "0.1.0", "[dev-dependencies]\nhelper = { path = \"../helper\", version = \"0.1\" }\n"));
+    try h.writeFile(tests_only, try tomlText(a, "tests_only", "0.1.0", "[dev-dependencies]\n\"example/helper\" = { path = \"../helper\", version = \"0.1\" }\n"));
     const plain = try h.join(a, &.{ work, "pf", "plain", "mopm.toml" });
     try h.writeFile(plain, try tomlText(a, "plain", "0.1.0", ""));
     const helper = try h.join(a, &.{ helper_dir, "mopm.toml" });
@@ -309,7 +309,7 @@ fn publishFalse(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc: 
     const cases = [_]Case{
         .{ .label = "pack of a publish = false package", .cmd = "pack", .manifest = helper, .code = 1, .want = "helper has publish = false" },
         .{ .label = "publish of a publish = false package", .cmd = "publish", .manifest = helper, .code = 1, .want = "helper has publish = false" },
-        .{ .label = "pack of a package that needs a publish = false one", .cmd = "pack", .manifest = needs, .code = 1, .want = "needs depends on helper" },
+        .{ .label = "pack of a package that needs a publish = false one", .cmd = "pack", .manifest = needs, .code = 1, .want = "example/needs depends on example/helper" },
         .{ .label = "publish of a package that needs a publish = false one", .cmd = "publish", .manifest = needs, .code = 1, .want = "which has publish = false" },
         .{ .label = "pack of a package with a publish = false dev-dependency", .cmd = "pack", .manifest = tests_only, .code = 0, .want = "packed " },
         .{ .label = "pack of a package without the key", .cmd = "pack", .manifest = plain, .code = 0, .want = "packed " },
@@ -427,15 +427,15 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     // --- a path dependency with a version: the path package is read beside the manifest named, not beside the
     // directory mopm runs in; and it must be the package the dependency names.
     const mono_manifest = try h.join(a, &.{ work, "mono", "app", "mopm.toml" });
-    try h.writeFile(mono_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\nutil = { path = \"../util\", version = \"0.3\" }\n"));
+    try h.writeFile(mono_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\n\"example/util\" = { path = \"../util\", version = \"0.3\" }\n"));
     try h.writeFile(try h.join(a, &.{ work, "mono", "util", "mopm.toml" }), try tomlText(a, "util", "0.3.4", ""));
     r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", mono_manifest, "--registry", dead, "--config-dir", conf, "--dry-run" }, null);
     rep.check("a path dependency is read beside the manifest named, from any directory", r.code == 0 and h.contains(r.stdout, "would commit mojo-pubdemo 0.1.0") and r.stderr.len == 0, try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     const other_manifest = try h.join(a, &.{ work, "mono_other", "app", "mopm.toml" });
-    try h.writeFile(other_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\nutil = { path = \"../util\", version = \"0.3\" }\n"));
+    try h.writeFile(other_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\n\"example/util\" = { path = \"../util\", version = \"0.3\" }\n"));
     try h.writeFile(try h.join(a, &.{ work, "mono_other", "util", "mopm.toml" }), try tomlText(a, "other", "0.3.4", ""));
     r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", other_manifest, "--registry", dead, "--config-dir", conf, "--dry-run" }, null);
-    rep.check("a path package named other than its dependency is refused", r.code == 1 and h.contains(r.stderr, "names the package other, but dependency 'util' calls it util") and !h.contains(r.stdout, "would commit"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    rep.check("a path package named other than its dependency is refused", r.code == 1 and h.contains(r.stderr, "names the package example/other, but dependency 'example/util' calls it example/util") and !h.contains(r.stdout, "would commit"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
 
     r = try m.run(&(pub_args ++ flags), null);
     rep.check("publishing without a login or MOPM_TOKEN says to log in", r.code == 1 and h.contains(r.stderr, "not logged in to beta; run 'mopm login' or set MOPM_TOKEN"), r.stderr);

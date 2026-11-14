@@ -77,7 +77,7 @@ fn parseWith(a: Allocator, bins: []const u8) !manifest.Manifest {
     var diag: manifest.Diagnostic = .{};
     return manifest.parse(a, try std.fmt.allocPrint(a,
         \\[package]
-        \\name = "benchy"
+        \\name = "example/benchy"
         \\version = "1.0.0"
         \\
         \\[toolchain]

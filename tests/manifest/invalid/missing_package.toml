@@ -1,2 +1,2 @@
 [dependencies]
-http_core = "1.2"
+"example/http_core" = "1.2"

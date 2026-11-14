@@ -13,11 +13,20 @@ const toml = @import("toml.zig");
 const metadata = @import("metadata.zig");
 const native_link = @import("native_link.zig");
 const semver = @import("semver.zig");
+const names = @import("names.zig");
 
 pub const Diagnostic = toml.Diagnostic;
 pub const Error = toml.Error;
 
 pub const Package = struct {
+    /// `[package] name` as written: `<namespace>/<name>` (src/core/names.zig).
+    full_name: []const u8,
+    /// The part of `full_name` before the `/`: a GitHub login in lower case.
+    namespace: []const u8,
+    /// The part of `full_name` after the `/`: the import name, which Mojo code imports and which names the library
+    /// directory and its `.mojoc`. The lock, the index, the channel, the staged set and the unit graph still key a
+    /// package by this name alone; their namespaced versions (docs/design/namespaces.md, section 13, ns-C3) key it by
+    /// `full_name`.
     name: []const u8,
     version: []const u8,
     description: ?[]const u8 = null,
@@ -37,7 +46,15 @@ pub const Source = union(enum) { version: []const u8, path: []const u8 };
 
 /// `requirement` is the `version` of a dependency that also has a `path`: `source` is then the path (lock, build
 /// and sync use it), and the requirement is what `pack` and `publish` write in its place.
-pub const Dep = struct { name: []const u8, source: Source, requirement: ?[]const u8 = null };
+pub const Dep = struct {
+    /// The key as written: `<namespace>/<name>`.
+    full_name: []const u8,
+    namespace: []const u8,
+    /// The import name, the part after the `/` (see `Package.name`).
+    name: []const u8,
+    source: Source,
+    requirement: ?[]const u8 = null,
+};
 
 /// What a native dependency asks for.
 pub const NativeDepKind = enum { shared, static };
@@ -113,24 +130,9 @@ pub const Manifest = struct {
     native_dependencies: []const NativeDep = &.{},
     native: []const NativeLib = &.{},
     targets: Targets = .{},
-};
-
-/// Words a package may not be named: Mojo's keywords, and the builtins a
-/// package of that name would shadow when imported.
-const keywords = [_][]const u8{
-    "alias",  "and",    "as",       "assert",   "async",  "await",  "borrowed", "break",
-    "class",  "comptime", "continue", "def",    "deinit", "del",    "elif",     "else",
-    "except", "finally", "fn",      "for",      "from",   "global", "if",       "import",
-    "in",     "inout",  "is",       "lambda",   "let",    "mut",    "nonlocal", "not",
-    "or",     "out",    "owned",    "pass",     "raise",  "raises", "read",     "ref",
-    "return", "self",   "struct",   "trait",    "try",    "var",    "while",    "with",
-    "yield",
-};
-const builtins = [_][]const u8{
-    "abs",   "all",   "any",  "bool",   "chr",  "divmod", "enumerate", "float",
-    "hash",  "input", "int",  "isinstance", "iter", "len", "list",     "max",
-    "min",   "next",  "ord",  "pow",    "print", "range", "repr",      "reversed",
-    "round", "sorted", "str", "sum",    "type", "zip",
+    /// What mopm says about the file without refusing it, one line each (the callers print them): a dependency key
+    /// whose import name is a module of the Mojo standard library.
+    warnings: []const []const u8 = &.{},
 };
 
 fn isOneOf(word: []const u8, list: []const []const u8) bool {
@@ -140,32 +142,14 @@ fn isOneOf(word: []const u8, list: []const []const u8) bool {
     return false;
 }
 
-/// Why `name` cannot name a package (or a Mojo dependency), or null if it can:
-/// a package name is a lowercase identifier that is not a Mojo keyword or
-/// builtin. `what` starts the message ("package name").
-pub fn nameProblem(arena: Allocator, what: []const u8, name: []const u8) Allocator.Error!?[]const u8 {
-    if (name.len == 0) return try std.fmt.allocPrint(arena, "{s} is empty", .{what});
-    if (!std.ascii.isLower(name[0])) {
-        return try std.fmt.allocPrint(arena, "{s} '{s}' must start with a lowercase letter", .{ what, name });
-    }
-    for (name) |b| {
-        if (!std.ascii.isLower(b) and !std.ascii.isDigit(b) and b != '_') {
-            return try std.fmt.allocPrint(arena, "{s} '{s}' may contain only lowercase letters, digits and '_'", .{ what, name });
-        }
-    }
-    if (isOneOf(name, &keywords)) {
-        return try std.fmt.allocPrint(arena, "{s} '{s}' is a Mojo keyword; choose another name", .{ what, name });
-    }
-    if (isOneOf(name, &builtins)) {
-        return try std.fmt.allocPrint(arena, "{s} '{s}' would shadow the Mojo builtin '{s}'; choose another name", .{ what, name, name });
-    }
-    return null;
-}
+/// Why `name` cannot be an import name, or null if it can (src/core/names.zig). `overlay.zig` checks the flat member
+/// names of a version 1 plan.json with it.
+pub const nameProblem = names.nameProblem;
 
 /// Parses and checks a mopm.toml, or fails with `diag` set.
 pub fn parse(arena: Allocator, src: []const u8, diag: *Diagnostic) Error!Manifest {
     const root = try toml.parse(arena, src, diag);
-    var c = Checker{ .arena = arena, .diag = diag };
+    var c = Checker{ .arena = arena, .diag = diag, .warnings = std.ArrayList([]const u8).init(arena) };
     return c.manifest(root);
 }
 
@@ -175,6 +159,7 @@ const Entry = *const toml.Entry;
 const Checker = struct {
     arena: Allocator,
     diag: *Diagnostic,
+    warnings: std.ArrayList([]const u8),
 
     fn fail(c: *Checker, at: toml.Pos, comptime fmt: []const u8, args: anytype) Error {
         return toml.fail(c.arena, c.diag, at, fmt, args);
@@ -229,8 +214,11 @@ const Checker = struct {
         return try out.toOwnedSlice();
     }
 
-    fn packageName(c: *Checker, name: []const u8, at: toml.Pos, what: []const u8) Error!void {
-        if (try nameProblem(c.arena, what, name)) |message| return c.fail(at, "{s}", .{message});
+    /// `full` checked as a full name and split; `bare` is the message for a name without a namespace.
+    fn fullName(c: *Checker, full: []const u8, at: toml.Pos, what: []const u8, bare: []const u8, std_modules: names.StdModules) Error!names.FullName {
+        const parts = names.split(full) orelse return c.fail(at, "{s}", .{bare});
+        if (try names.fullNameProblem(c.arena, what, full, std_modules)) |message| return c.fail(at, "{s}", .{message});
+        return parts;
     }
 
     fn manifest(c: *Checker, root: Table) Error!Manifest {
@@ -248,9 +236,11 @@ const Checker = struct {
         if (root.get("toolchain")) |e| m.mojo = try c.toolchain(try c.table(e, "mopm.toml"));
         if (root.get("dependencies")) |e| m.dependencies = try c.deps(try c.table(e, "mopm.toml"), "[dependencies]");
         if (root.get("dev-dependencies")) |e| m.dev_dependencies = try c.deps(try c.table(e, "mopm.toml"), "[dev-dependencies]");
+        try c.oneImportName(m, root);
         if (root.get("native-dependencies")) |e| m.native_dependencies = try c.nativeDeps(try c.table(e, "mopm.toml"));
         if (root.get("native")) |e| m.native = try c.nativeLibs(try c.table(e, "mopm.toml"));
-        if (root.get("targets")) |e| m.targets = try c.targets(try c.table(e, "mopm.toml"));
+        if (root.get("targets")) |e| m.targets = try c.targets(try c.table(e, "mopm.toml"), m.package.name);
+        m.warnings = c.warnings.items;
         return m;
     }
 
@@ -259,14 +249,17 @@ const Checker = struct {
         try c.onlyKeys(t, where, &.{ "name", "version", "description", "license", "repository", "readme", "publish", "mojo", "metadata" });
         const name_e = t.get("name") orelse return c.fail(t.pos, "[package] is missing 'name'", .{});
         const name = try c.str(name_e, where);
-        try c.packageName(name, name_e.pos, "package name");
+        const bare = try std.fmt.allocPrint(c.arena, "package name '{s}' has no namespace: write name = \"<namespace>/{s}\"", .{ name, name });
+        const parts = try c.fullName(name, name_e.pos, "package name", bare, .refuse);
         const version_e = t.get("version") orelse return c.fail(t.pos, "[package] is missing 'version'", .{});
         const version = try c.str(version_e, where);
         if (!semver.isPackageVersion(version)) {
             return c.fail(version_e.pos, "version '{s}' must be exactly MAJOR.MINOR.PATCH (digits, no leading zeros, no pre-release or build part, such as 0.1.0)", .{version});
         }
         return .{
-            .name = name,
+            .full_name = name,
+            .namespace = parts.namespace,
+            .name = parts.name,
             .version = version,
             .description = try c.optStr(t, "description", where),
             .license = try c.optStr(t, "license", where),
@@ -275,6 +268,30 @@ const Checker = struct {
             .publish = try c.optBool(t, "publish", where, true),
             .metadata = if (t.get("metadata")) |e| try c.table(e, where) else null,
         };
+    }
+
+    /// Mojo imports a package by its import name, so the package and its dependencies, both tables together, have
+    /// one full name per import name (the key of the later entry is the position). The lock, which still keys a package
+    /// by its import name alone, could not tell two of them apart.
+    fn oneImportName(c: *Checker, m: Manifest, root: Table) Error!void {
+        const tables = [_][]const u8{ "dependencies", "dev-dependencies" };
+        const lists = [_][]const Dep{ m.dependencies, m.dev_dependencies };
+        for (lists, 0..) |list, li| {
+            for (list, 0..) |d, di| {
+                const at = root.get(tables[li]).?.value.table.get(d.full_name).?.pos;
+                if (std.mem.eql(u8, d.name, m.package.name) and !std.mem.eql(u8, d.full_name, m.package.full_name)) {
+                    return c.fail(at, "dependency '{s}' has the import name '{s}' of the package {s} itself; Mojo imports a package by the part after '/', so one name holds one package", .{ d.full_name, d.name, m.package.full_name });
+                }
+                const earlier = [_][]const Dep{ if (li == 0) list[0..di] else m.dependencies, if (li == 1) list[0..di] else &.{} };
+                for (earlier) |prev| {
+                    for (prev) |o| {
+                        if (std.mem.eql(u8, o.name, d.name) and !std.mem.eql(u8, o.full_name, d.full_name)) {
+                            return c.fail(at, "dependencies '{s}' and '{s}' have the same import name '{s}'; Mojo imports a package by the part after '/', so one name holds one package", .{ o.full_name, d.full_name, d.name });
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn toolchain(c: *Checker, t: Table) Error![]const []const u8 {
@@ -303,7 +320,10 @@ const Checker = struct {
     fn deps(c: *Checker, t: Table, where: []const u8) Error![]const Dep {
         var out = std.ArrayList(Dep).init(c.arena);
         for (t.entries.items) |*e| {
-            try c.packageName(e.key, e.pos, "dependency name");
+            const parts = try c.fullName(e.key, e.pos, "dependency", try bareDep(c.arena, e), .allow);
+            if (names.isStdModule(parts.name)) {
+                try c.warnings.append(try std.fmt.allocPrint(c.arena, "{d}:{d}: dependency '{s}' has the import name '{s}', a module of the Mojo standard library (std.{s}); code that imports it shadows the standard module", .{ e.pos.line, e.pos.col, e.key, parts.name, parts.name }));
+            }
             var requirement: ?[]const u8 = null;
             const source: Source = switch (e.value) {
                 .string => |s| .{ .version = s },
@@ -332,7 +352,7 @@ const Checker = struct {
                     error.OutOfMemory => return error.OutOfMemory,
                 };
             }
-            try out.append(.{ .name = e.key, .source = source, .requirement = requirement });
+            try out.append(.{ .full_name = e.key, .namespace = parts.namespace, .name = parts.name, .source = source, .requirement = requirement });
         }
         return try out.toOwnedSlice();
     }
@@ -463,7 +483,8 @@ const Checker = struct {
         return items;
     }
 
-    fn targets(c: *Checker, t: Table) Error!Targets {
+    /// `import_name` is the package's: the library directory must have that name.
+    fn targets(c: *Checker, t: Table, import_name: []const u8) Error!Targets {
         const where = "[targets]";
         try c.onlyKeys(t, where, &.{ "lib", "bins", "tests" });
         var out = Targets{};
@@ -471,7 +492,13 @@ const Checker = struct {
             const lib = try c.table(e, where);
             try c.onlyKeys(lib, "[targets] lib", &.{"path"});
             const path = lib.get("path") orelse return c.fail(e.pos, "'lib' in [targets] needs a 'path'", .{});
-            out.lib = try c.str(path, "[targets] lib");
+            const lib_path = try c.str(path, "[targets] lib");
+            // Mojo imports a package by its directory's name, so that is the import name the closure check uses.
+            const last = std.fs.path.basenamePosix(lib_path);
+            if (!std.mem.eql(u8, last, import_name)) {
+                return c.fail(path.pos, "'lib' in [targets]: the path '{s}' ends in '{s}', not in the import name '{s}'; Mojo imports a package by its directory's name, so name the directory {s}", .{ lib_path, last, import_name, import_name });
+            }
+            out.lib = lib_path;
         }
         if (t.get("bins")) |e| {
             const items = switch (e.value) {
@@ -495,6 +522,40 @@ const Checker = struct {
         return out;
     }
 };
+
+/// The message for the dependency `e` whose key has no namespace: the entry as it would be written with one.
+fn bareDep(arena: Allocator, e: Entry) Allocator.Error![]const u8 {
+    var value = std.ArrayList(u8).init(arena);
+    const w = value.writer();
+    switch (e.value) {
+        .string => |s| try tomlStr(w, s),
+        .table => |sub| {
+            try w.writeAll("{ ");
+            var first = true;
+            for ([_][]const u8{ "version", "path" }) |k| {
+                const v = sub.get(k) orelse continue;
+                if (v.value != .string) continue;
+                if (!first) try w.writeAll(", ");
+                first = false;
+                try w.print("{s} = ", .{k});
+                try tomlStr(w, v.value.string);
+            }
+            try w.writeAll(" }");
+        },
+        else => try w.writeAll("..."),
+    }
+    return std.fmt.allocPrint(arena, "dependency '{s}' has no namespace: write it \"<namespace>/{s}\" = {s}", .{ e.key, e.key, value.items });
+}
+
+fn tomlStr(w: anytype, s: []const u8) !void {
+    try w.writeByte('"');
+    for (s) |b| switch (b) {
+        '"' => try w.writeAll("\\\""),
+        '\\' => try w.writeAll("\\\\"),
+        else => try w.writeByte(b),
+    };
+    try w.writeByte('"');
+}
 
 fn isIdentifier(s: []const u8) bool {
     if (s.len == 0 or !std.ascii.isLower(s[0])) return false;
@@ -545,7 +606,7 @@ fn isNativeName(s: []const u8) bool {
 pub fn writeJson(m: Manifest, w: anytype) !void {
     const p = m.package;
     try w.writeAll("{\n  \"package\": {\n    \"name\": ");
-    try jsonStr(w, p.name);
+    try jsonStr(w, p.full_name);
     try w.writeAll(",\n    \"version\": ");
     try jsonStr(w, p.version);
     try w.writeAll(",\n    \"description\": ");
@@ -592,7 +653,7 @@ pub fn writeJson(m: Manifest, w: anytype) !void {
 
 fn writeDep(w: anytype, d: Dep) !void {
     try w.writeAll("{\"name\": ");
-    try jsonStr(w, d.name);
+    try jsonStr(w, d.full_name);
     switch (d.source) {
         .version => |v| {
             try w.writeAll(", \"version\": ");
@@ -816,8 +877,8 @@ test "a dependency with a path and a version keeps both; the path is its source"
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     var diag: Diagnostic = .{};
-    const head = "[package]\nname = \"a\"\nversion = \"0.1.0\"\n\n[dependencies]\n";
-    const m = try parse(arena, head ++ "both = { version = \"^0.3\", path = \"../both\" }\nonly_path = { path = \"../p\" }\nonly_version = \"1\"\n", &diag);
+    const head = "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n";
+    const m = try parse(arena, head ++ "\"example/both\" = { version = \"^0.3\", path = \"../both\" }\n\"example/only_path\" = { path = \"../p\" }\n\"example/only_version\" = \"1\"\n", &diag);
     try std.testing.expectEqual(@as(usize, 3), m.dependencies.len);
     try std.testing.expectEqualStrings("../both", m.dependencies[0].source.path);
     try std.testing.expectEqualStrings("^0.3", m.dependencies[0].requirement.?);
@@ -827,9 +888,9 @@ test "a dependency with a path and a version keeps both; the path is its source"
     try std.testing.expect(m.dependencies[2].requirement == null);
 
     // Each half is still checked: the requirement is a requirement, the path is not empty, a third key is unknown.
-    try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"=>1\", path = \"../b\" }\n", &diag));
-    try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"1\", path = \"\" }\n", &diag));
-    try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"1\", path = \"../b\", git = \"x\" }\n", &diag));
+    try std.testing.expectError(error.Invalid, parse(arena, head ++ "\"example/bb\" = { version = \"=>1\", path = \"../b\" }\n", &diag));
+    try std.testing.expectError(error.Invalid, parse(arena, head ++ "\"example/bb\" = { version = \"1\", path = \"\" }\n", &diag));
+    try std.testing.expectError(error.Invalid, parse(arena, head ++ "\"example/bb\" = { version = \"1\", path = \"../b\", git = \"x\" }\n", &diag));
 }
 
 test "a package's own version is exactly MAJOR.MINOR.PATCH; the registry takes nothing else" {
@@ -839,7 +900,7 @@ test "a package's own version is exactly MAJOR.MINOR.PATCH; the registry takes n
     var diag: Diagnostic = .{};
 
     for ([_][]const u8{ "0.1.123", "10.20.30", "0.0.0" }) |v| {
-        const src = try std.fmt.allocPrint(arena, "[package]\nname = \"a\"\nversion = \"{s}\"\n", .{v});
+        const src = try std.fmt.allocPrint(arena, "[package]\nname = \"example/demo\"\nversion = \"{s}\"\n", .{v});
         const m = parse(arena, src, &diag) catch |e| {
             std.debug.print("refused {s}: {s}\n", .{ v, diag.message });
             return e;
@@ -848,7 +909,7 @@ test "a package's own version is exactly MAJOR.MINOR.PATCH; the registry takes n
     }
 
     for ([_][]const u8{ "1.0.0+b1", "1.0.0-rc.1", "1.0.0.1", "01.0.0", "1.0", "1.0.0+", "1.0.00", "1.0.0 ", "v1.0.0", "1.0.1234567890123456789" }) |v| {
-        const src = try std.fmt.allocPrint(arena, "[package]\nname = \"a\"\nversion = \"{s}\"\n", .{v});
+        const src = try std.fmt.allocPrint(arena, "[package]\nname = \"example/demo\"\nversion = \"{s}\"\n", .{v});
         if (parse(arena, src, &diag)) |_| {
             std.debug.print("accepted package version '{s}'\n", .{v});
             return error.TestUnexpectedResult;
@@ -866,8 +927,8 @@ test "dependency requirements keep the full requirement grammar" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     var diag: Diagnostic = .{};
-    const head = "[package]\nname = \"a\"\nversion = \"0.1.0\"\n\n[dependencies]\n";
-    const m = parse(arena, head ++ "b = \">=0.1,<0.2\"\nc = \"^1.2.3-rc.1\"\nd = \"~1.2\"\n", &diag) catch |e| {
+    const head = "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n";
+    const m = parse(arena, head ++ "\"example/bb\" = \">=0.1,<0.2\"\n\"example/cc\" = \"^1.2.3-rc.1\"\n\"example/dd\" = \"~1.2\"\n", &diag) catch |e| {
         std.debug.print("refused: {s}\n", .{diag.message});
         return e;
     };
@@ -878,7 +939,7 @@ test "[package] publish is a boolean that defaults to true; anything else names 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n";
+    const head = "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n";
     var diag: Diagnostic = .{};
     try std.testing.expect((try parse(a, head, &diag)).package.publish);
     try std.testing.expect((try parse(a, head ++ "publish = true\n", &diag)).package.publish);

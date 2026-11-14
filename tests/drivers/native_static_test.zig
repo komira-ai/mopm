@@ -45,12 +45,12 @@ const test_mojo =
 
 const probe_toml =
     \\[package]
-    \\name = "probe_sys"
+    \\name = "example/probe_sys"
     \\version = "1.0.0"
     \\mojo = ["1.0.0"]
     \\
     \\[dependencies]
-    \\base_sys = { path = "base", version = "1.0" }
+    \\"example/base_sys" = { path = "base", version = "1.0" }
     \\
     \\[native.probe_sys]
     \\kind = "static"
@@ -61,7 +61,7 @@ const probe_toml =
 
 const base_toml =
     \\[package]
-    \\name = "base_sys"
+    \\name = "example/base_sys"
     \\version = "1.0.0"
     \\mojo = ["1.0.0"]
     \\
@@ -73,12 +73,12 @@ const base_toml =
 
 const app_toml =
     \\[package]
-    \\name = "app"
+    \\name = "example/app"
     \\version = "1.0.0"
     \\mojo = ["1.0.0"]
     \\
     \\[dependencies]
-    \\probe_sys = "1.0"
+    \\"example/probe_sys" = "1.0"
     \\
 ;
 

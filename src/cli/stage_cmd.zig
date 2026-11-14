@@ -186,17 +186,30 @@ pub fn discover(arena: Allocator, root: []const u8) !Result([]Member) {
     if (found.items.len == 0) return bad([]Member, arena, "{s} holds no mopm.toml: there are no members to stage", .{root});
     for (found.items, 0..) |m, i| {
         for (found.items[0..i]) |other| {
+            if (std.mem.eql(u8, other.m.package.full_name, m.m.package.full_name)) {
+                return bad([]Member, arena, "{s} and {s} are both the package {s}", .{ other.dir, m.dir, m.m.package.full_name });
+            }
             if (std.mem.eql(u8, other.name, m.name)) {
-                return bad([]Member, arena, "{s} and {s} are both the package {s}", .{ other.dir, m.dir, m.name });
+                return bad([]Member, arena, "{s} and {s} are {s} and {s}, which have the same import name {s}; a staged set holds one package per import name", .{ other.dir, m.dir, other.m.package.full_name, m.m.package.full_name, m.name });
             }
         }
     }
     return .{ .ok = found.items };
 }
 
-fn indexOfName(members: []const Member, name: []const u8) ?usize {
+/// The member with the full name `full`.
+fn indexOfFullName(members: []const Member, full: []const u8) ?usize {
     for (members, 0..) |m, i| {
-        if (std.mem.eql(u8, m.name, name)) return i;
+        if (std.mem.eql(u8, m.m.package.full_name, full)) return i;
+    }
+    return null;
+}
+
+/// The member a name on the command line means: the one with that full name, or else the one with that import name.
+fn indexOfNamed(members: []const Member, named: []const u8) ?usize {
+    if (indexOfFullName(members, named)) |i| return i;
+    for (members, 0..) |m, i| {
+        if (std.mem.eql(u8, m.name, named)) return i;
     }
     return null;
 }
@@ -213,14 +226,14 @@ pub fn link(arena: Allocator, members: []Member) !?[]const u8 {
                     for (members, 0..) |other, i| {
                         if (std.mem.eql(u8, other.dir, abs)) at = i;
                     }
-                    const i = at orelse return try std.fmt.allocPrint(arena, "{s} depends on '{s}' at the path '{s}', which is not a member of the workspace", .{ m.name, d.name, p });
-                    if (!std.mem.eql(u8, members[i].name, d.name)) {
-                        return try std.fmt.allocPrint(arena, "{s} calls the package at '{s}' {s}, but it is {s}", .{ m.name, p, d.name, members[i].name });
+                    const i = at orelse return try std.fmt.allocPrint(arena, "{s} depends on '{s}' at the path '{s}', which is not a member of the workspace", .{ m.m.package.full_name, d.full_name, p });
+                    if (!std.mem.eql(u8, members[i].m.package.full_name, d.full_name)) {
+                        return try std.fmt.allocPrint(arena, "{s} calls the package at '{s}' {s}, but it is {s}", .{ m.m.package.full_name, p, d.full_name, members[i].m.package.full_name });
                     }
-                    if (d.requirement == null) return try std.fmt.allocPrint(arena, "{s}: " ++ conda.path_no_version_fmt, .{ m.name, d.name });
+                    if (d.requirement == null) return try std.fmt.allocPrint(arena, "{s}: " ++ conda.path_no_version_fmt, .{ m.m.package.full_name, d.full_name });
                     break :blk i;
                 },
-                .version => indexOfName(members, d.name) orelse continue,
+                .version => indexOfFullName(members, d.full_name) orelse continue,
             };
             const text: []const u8 = switch (d.source) {
                 .path => d.requirement.?,
@@ -231,7 +244,7 @@ pub fn link(arena: Allocator, members: []Member) !?[]const u8 {
             const req = try semver.parseReq(arena, text, &why);
             const have = semver.parseVersion(members[target].version) orelse return error.InvalidVersion;
             if (!req.matches(have)) {
-                return try std.fmt.allocPrint(arena, "{s} requires {s} \"{s}\", but the workspace has {s} {s}; change the requirement or the version", .{ m.name, d.name, text, d.name, members[target].version });
+                return try std.fmt.allocPrint(arena, "{s} requires {s} \"{s}\", but the workspace has {s} {s}; change the requirement or the version", .{ m.m.package.full_name, d.full_name, text, d.full_name, members[target].version });
             }
             var seen = false;
             for (edges.items) |e| seen = seen or e == target;
@@ -253,7 +266,7 @@ pub fn order(arena: Allocator, members: []const Member, named: []const []const u
         if (wanted[i]) try stack.append(i);
     }
     for (named) |n| {
-        const i = indexOfName(members, n) orelse return bad([]const usize, arena, "{s} is not a member of the workspace", .{n});
+        const i = indexOfNamed(members, n) orelse return bad([]const usize, arena, "{s} is not a member of the workspace", .{n});
         if (!members[i].m.package.publish) return bad([]const usize, arena, "{s} has publish = false in its mopm.toml, so it cannot be staged or published; remove the key to publish it", .{n});
         if (!wanted[i]) {
             wanted[i] = true;
@@ -263,7 +276,7 @@ pub fn order(arena: Allocator, members: []const Member, named: []const []const u
     while (stack.popOrNull()) |i| {
         for (members[i].deps) |d| {
             if (!members[d].m.package.publish) {
-                return bad([]const usize, arena, "{s} is staged for publishing but depends on {s}, which has publish = false; a published package cannot need one that is never published (a dev-dependency may)", .{ members[i].name, members[d].name });
+                return bad([]const usize, arena, "{s} is staged for publishing but depends on {s}, which has publish = false; a published package cannot need one that is never published (a dev-dependency may)", .{ members[i].m.package.full_name, members[d].m.package.full_name });
             }
             if (!wanted[d]) {
                 wanted[d] = true;
@@ -348,8 +361,8 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
         switch (d.source) {
             .path => |p| {
                 try paths.append(p);
-                const i = indexOfName(members, d.name) orelse continue;
-                try path_versions.append(.{ .name = d.name, .version = members[i].version });
+                const i = indexOfFullName(members, d.full_name) orelse continue;
+                try path_versions.append(.{ .name = d.full_name, .version = members[i].version });
             },
             .version => {},
         }
@@ -360,11 +373,12 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
     // The programs of `[targets] bins`, as source: the same files in every subdir's package.
     const bins = bins_mod.read(arena, m.m, m.dir, &why) catch |e| return if (e == error.Unpackable) try bad(T, arena, "{s}: {s}", .{ m.name, why }) else error.OutOfMemory;
     // The packed dependencies on members are the edges, no more and no fewer.
-    for (deps) |d| {
-        const is_member = indexOfName(members, d.name) != null;
+    // A dependency is on a member by full name: a member of another namespace with the same import name is not it.
+    for (m.m.dependencies) |d| {
+        const is_member = indexOfFullName(members, d.full_name) != null;
         var edge = false;
-        for (m.deps) |e| edge = edge or std.mem.eql(u8, members[e].name, d.name);
-        if (is_member != edge) return bad(T, arena, "{s}: the packed dependency on {s} is not the one the workspace has", .{ m.name, d.name });
+        for (m.deps) |e| edge = edge or std.mem.eql(u8, members[e].m.package.full_name, d.full_name);
+        if (is_member != edge) return bad(T, arena, "{s}: the packed dependency on {s} is not the one the workspace has", .{ m.m.package.full_name, d.full_name });
     }
 
     var packs = std.ArrayList(conda.Packed).init(arena);

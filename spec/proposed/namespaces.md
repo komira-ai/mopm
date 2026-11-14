@@ -20,15 +20,16 @@ what the code does.
 - A **full name** is `<namespace>/<name>`. The namespace is at most 39 characters (a GitHub login); a reader checks
   that length as well as the pattern.
 - The **import name** is the name, the part after `/`. It is not a Mojo keyword or builtin (the lists in
-  `src/core/manifest.zig`) nor `mopm`, `mojo`, `max`, `modular`, `std` or `stdlib`, nor a top-level module of the Mojo
-  standard library. The client and the registry both refuse those.
+  `src/core/names.zig`), nor `mopm`, `mojo`, `max`, `modular`, `std` or `stdlib`, nor a top-level module of the Mojo
+  standard library. The client refuses those (`spec/mopm-toml.md`, "Names"); the registry is to refuse them too.
 - The **standard library's modules** are those of every Mojo version in `toolchain/versions.txt`, one file per version,
   `toolchain/mojo-<version>.std-modules.txt`, read from the `lib/mojo/std.mojoc` of that version's pinned
-  `mojo-compiler` package. For Mojo 1.0.0: `algorithm`, `atomic`, `base64`, `benchmark`, `bit`, `builtin`,
-  `collections`, `compile`, `complex`, `documentation`, `ffi`, `format`, `gpu`, `hashlib`, `io`, `iter`, `itertools`,
-  `logger`, `math`, `memory`, `origin`, `os`, `pathlib`, `prelude`, `pwd`, `python`, `random`, `reflection`, `runtime`,
-  `stat`, `subprocess`, `sys`, `tempfile`, `testing`, `time`, `traits`, `utils`. The registry refuses creating a package
-  with such an import name; the client refuses it as `[package] name` and warns when a dependency key has it.
+  `mojo-compiler` package (`mopm-closure --std-modules`). For Mojo 1.0.0: `algorithm`, `atomic`, `base64`, `benchmark`,
+  `bit`, `builtin`, `collections`, `compile`, `complex`, `documentation`, `ffi`, `format`, `gpu`, `hashlib`, `io`,
+  `iter`, `itertools`, `logger`, `math`, `memory`, `origin`, `os`, `pathlib`, `prelude`, `pwd`, `python`, `random`,
+  `reflection`, `runtime`, `stat`, `subprocess`, `sys`, `tempfile`, `testing`, `time`, `traits`, `utils`. The registry
+  is to refuse creating a package with such an import name; the client refuses it as `[package] name` and warns when a
+  dependency key has it (live in `spec/mopm-toml.md`).
 - The **conda name** of `<namespace>/<name>` is `mojo-<namespace>.<name>`.
 - Lower case only, one spelling. Nothing normalises a namespace; `Komira-AI` is refused, with the lower-case form in
   the message.
@@ -37,21 +38,11 @@ what the code does.
 
 ## mopm-toml.md
 
-Replaces, under `[package]`, the dependency tables and `[targets]`:
+The names of `[package]`, `[dependencies]` and `[dev-dependencies]`, the refusal of a name without a namespace, the
+import-name rules and the library directory rule are live in `spec/mopm-toml.md` ("Names", "`[targets]`"). What is left:
 
-- `[package] name` is a full name: `name = "komira-ai/parquet"`. Its import name is the name Mojo code imports. An
-  import name that is a module of the Mojo standard library is an error:
-  `package name 'collections' is a module of the Mojo standard library (std.collections); choose another name`. As a
-  dependency key's import name it is a warning naming the module and the dependency.
-- `[targets] lib` defaults to `src/<import name>`. A `path` whose last component is not the import name is an error
-  naming both.
-- The keys of `[dependencies]` and `[dev-dependencies]` are full names, quoted because they hold `/`:
-  `"komira-ai/json" = "0.1"`. A path dependency's key equals the `[package] name` at the path.
-- A name without a namespace is an error naming the key and giving the full form:
-  `dependency 'json' has no namespace: write it "<namespace>/json" = "0.1"`;
-  `package name 'json' has no namespace: write name = "<namespace>/json"`, where mopm puts the user namespace stored
-  by `mopm login` in place of `<namespace>` when it has one.
-- `[native-dependencies]` keys are unchanged (conda names).
+- In the refusal of a name without a namespace, mopm puts the user namespace stored by `mopm login` in place of
+  `<namespace>` when it has one.
 - New rule (under "Rules"): two packages in one dependency closure (the root, path packages and registry packages, from
   `[dependencies]` and `[dev-dependencies]`) may not have the same import name. There is no rename.
 
