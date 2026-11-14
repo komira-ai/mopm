@@ -37,7 +37,7 @@ const membership = (id: number, login: string, role = 'member', state = 'active'
   organization: { id, login, url: `https://api.github.com/orgs/${login}` },
   user: { id: 4242, login: 'octo' },
 });
-const orgCalls = (calls: Array<{ url: string }>) => calls.filter((c) => c.url.includes('/user/memberships/orgs'));
+const orgCalls = <C extends { url: string }>(calls: C[]) => calls.filter((c) => c.url.includes('/user/memberships/orgs'));
 
 describe('the user namespace at login', () => {
   test('the first login creates the user namespace, bound to the account id; the next one changes nothing', async () => {
@@ -149,7 +149,7 @@ describe('the organization memberships read at login (read:org, for whoami only)
     ]);
     const call = orgCalls(fake.state.calls)[0]!;
     expect(call).toMatchObject({ method: 'GET', url: 'https://api.github.com/user/memberships/orgs?state=active&per_page=100&page=1' });
-    expect((call as { headers: Record<string, string> }).headers.authorization).toBe('Bearer gho_faketoken');
+    expect(call.headers.authorization).toBe('Bearer gho_faketoken');
     expect(JSON.stringify(store.dumpTokens())).not.toContain('gho_faketoken');
     expect(JSON.stringify(await store.getUser(4242))).not.toContain('gho_faketoken');
   });
