@@ -45,6 +45,9 @@ export const TABLES: TableDef[] = [
   // Owner namespaces (docs/design/namespaces.md): keyed by the namespace string, bound to a GitHub numeric id. A login makes
   // the user's own (service/api/src/auth/namespaces.ts); the index lists an account's namespaces for whoami.
   { id: 'namespaces', pk: 'namespace', gsi: { name: 'by_github_id', pk: 'github_id', sk: 'namespace' } },
+  // A passed organization membership check, kept 5 minutes per (organization id, account id) (docs/design/namespaces.md
+  // 2.2; service/api/src/auth/org-membership.ts). Expiry is decided in code; TTL only removes old rows.
+  { id: 'membership_passes', pk: 'key', ttl: 'expires_at' },
   { id: 'audit', pk: 'name', sk: 'ts_seq', appendOnly: true },
   { id: 'reserved_names', pk: 'name' },
   // Publish pipeline. `publishes` holds publish records, the per-version commit lock and the rate counters (told apart by

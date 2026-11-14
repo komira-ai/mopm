@@ -111,6 +111,23 @@ const CHECKS: Record<string, Check> = {
     (await s.listNamespaces(4242))[0]!.namespace = 'x';
     expect(await s.getNamespace('octo')).toEqual(rec('octo', 4242));
   },
+  'bindInstallation changes only the installation id of an org row of that id, and answers the stored row': async (s) => {
+    const org = rec('komira-ai', 77, { kind: 'org', installation_id: 5555 });
+    await s.createNamespace(org);
+    expect(await s.bindInstallation('komira-ai', 77, 6666)).toEqual({ ...org, installation_id: 6666 });
+    expect(await s.getNamespace('komira-ai')).toEqual({ ...org, installation_id: 6666 });
+    expect(await s.listNamespaces(77)).toEqual([{ ...org, installation_id: 6666 }]);
+  },
+  'bindInstallation writes nothing for an absent row, another id, or a user namespace': async (s) => {
+    await s.createNamespace(rec('komira-ai', 77, { kind: 'org', installation_id: 5555 }));
+    await s.createNamespace(rec('octo', 4242));
+    expect(await s.bindInstallation('nobody', 77, 6666)).toBeUndefined();
+    expect(await s.bindInstallation('komira-ai', 78, 6666)).toBeUndefined();
+    expect(await s.bindInstallation('octo', 4242, 6666)).toBeUndefined();
+    expect(await s.getNamespace('nobody')).toBeUndefined();
+    expect(await s.getNamespace('komira-ai')).toEqual(rec('komira-ai', 77, { kind: 'org', installation_id: 5555 }));
+    expect(await s.getNamespace('octo')).toEqual(rec('octo', 4242));
+  },
 };
 
 const lambdaDoc = () => new FakeAuthDoc({ pageSize: 2, grants: LAMBDA_GRANTS });
@@ -139,6 +156,38 @@ describe('the DynamoDB adapter', () => {
     const s = new DynamoNamespaceStore(doc, 'mopm-t-namespaces');
     await expect(s.createNamespace(rec('octo', 4242))).rejects.toMatchObject({ name: 'AccessDeniedException' });
     expect(doc.dump('namespaces')).toEqual([]);
+  });
+
+  test('bindInstallation is a PutItem conditional on the GitHub id and kind it read: never an UpdateItem', async () => {
+    const doc = lambdaDoc();
+    const s = new DynamoNamespaceStore(doc, 'mopm-t-namespaces');
+    await s.createNamespace(rec('komira-ai', 77, { kind: 'org', installation_id: 5555 }));
+    doc.commands.length = 0;
+    await s.bindInstallation('komira-ai', 77, 6666);
+    expect(doc.commands).toEqual(['GetCommand', 'PutCommand']);
+    expect(doc.dump('namespaces')).toEqual([
+      { namespace: 'komira-ai', kind: 'org', github_id: '77', github_id_num: 77, created_at: NOW, installation_id: 6666 },
+    ]);
+  });
+
+  test('bindInstallation answers undefined when the row changed between its read and its write (the condition fails)', async () => {
+    const doc = lambdaDoc();
+    const s = new DynamoNamespaceStore(doc, 'mopm-t-namespaces');
+    await s.createNamespace(rec('komira-ai', 77, { kind: 'org', installation_id: 5555 }));
+    const send = doc.send.bind(doc);
+    // Between the read and the write, the row is replaced by one of another id (rows are never rebound; this is the guard).
+    doc.send = async (cmd) => {
+      if (cmd.constructor.name === 'PutCommand') doc.seed('namespaces', { namespace: 'komira-ai', kind: 'org', github_id: '78', github_id_num: 78, created_at: NOW });
+      return send(cmd);
+    };
+    expect(await s.bindInstallation('komira-ai', 77, 6666)).toBeUndefined();
+    expect(doc.dump('namespaces')).toEqual([{ namespace: 'komira-ai', kind: 'org', github_id: '78', github_id_num: 78, created_at: NOW }]);
+  });
+
+  test('bindInstallation surfaces an error other than the condition', async () => {
+    const doc = new FakeAuthDoc({ grants: { ...LAMBDA_GRANTS, namespaces: { actions: ['dynamodb:GetItem'] } } });
+    doc.seed('namespaces', { namespace: 'komira-ai', kind: 'org', github_id: '77', github_id_num: 77, created_at: NOW, installation_id: 5555 });
+    await expect(new DynamoNamespaceStore(doc, 'mopm-t-namespaces').bindInstallation('komira-ai', 77, 6666)).rejects.toMatchObject({ name: 'AccessDeniedException' });
   });
 
   test('without the index grant the list is AccessDenied: the role needs by_github_id by name', async () => {
@@ -204,6 +253,7 @@ describe('ensureUserNamespace: the user namespace made at login', () => {
       getNamespace: async (ns) => (asked.push(`get ${ns}`), undefined),
       createNamespace: async (r) => (asked.push(`create ${r.namespace}`), { created: true, record: r }),
       listNamespaces: async () => [],
+      bindInstallation: async () => undefined,
     };
     expect(await ensureUserNamespace(s, 4242, login, NOW)).toEqual({ status, namespace: login.toLowerCase() });
     expect(asked).toEqual([]);
@@ -217,6 +267,7 @@ describe('ensureUserNamespace: the user namespace made at login', () => {
       getNamespace: async () => undefined,
       createNamespace: async (r) => ({ created: false, record: { ...r, github_id: winner } }),
       listNamespaces: async () => [],
+      bindInstallation: async () => undefined,
     };
     expect(await ensureUserNamespace(s, 4242, 'octo', NOW)).toEqual({ status, namespace: 'octo' });
   });
@@ -228,6 +279,7 @@ describe('ensureUserNamespace: the user namespace made at login', () => {
       },
       createNamespace: async (r) => ({ created: true, record: r }),
       listNamespaces: async () => [],
+      bindInstallation: async () => undefined,
     };
     await expect(ensureUserNamespace(s, 4242, 'octo', NOW)).rejects.toThrow('store down');
   });

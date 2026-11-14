@@ -4,5 +4,6 @@
   "device_logins": { "actions": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"] },
   "trusted_publishers": { "actions": ["dynamodb:GetItem", "dynamodb:Query"] },
   "owners": { "actions": ["dynamodb:GetItem", "dynamodb:Query"], "indexes": ["by_github_id"] },
-  "namespaces": { "actions": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"], "indexes": ["by_github_id"] }
+  "namespaces": { "actions": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"], "indexes": ["by_github_id"] },
+  "membership_passes": { "actions": ["dynamodb:GetItem", "dynamodb:PutItem"] }
 }

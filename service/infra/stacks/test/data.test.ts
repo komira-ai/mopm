@@ -13,7 +13,7 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     expect(tables.map((r) => r.Properties.TableName).sort()).toEqual(
       TABLES.map((d) => `mopm-${stage}-${d.id}`).sort(),
     );
-    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'device_logins', 'trusted_publishers', 'audit', 'namespaces']) {
+    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'device_logins', 'trusted_publishers', 'audit', 'namespaces', 'membership_passes']) {
       expect(TABLES.map((d) => d.id)).toContain(id);
     }
   });
@@ -52,6 +52,13 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     });
     const ns = tables.find((r) => r.Properties.TableName === `mopm-${stage}-namespaces`);
     expect(ns.Properties.TimeToLiveSpecification).toBeUndefined();
+  });
+
+  test('membership_passes is keyed on the pair, with TTL on expires_at and no index', () => {
+    const t2 = tables.find((r) => r.Properties.TableName === `mopm-${stage}-membership_passes`);
+    expect(t2.Properties.KeySchema).toEqual([{ AttributeName: 'key', KeyType: 'HASH' }]);
+    expect(t2.Properties.TimeToLiveSpecification).toEqual({ AttributeName: 'expires_at', Enabled: true });
+    expect(t2.Properties.GlobalSecondaryIndexes).toBeUndefined();
   });
 
   test('deletion protection and retention only on prod', () => {

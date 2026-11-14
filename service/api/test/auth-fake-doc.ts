@@ -31,6 +31,7 @@ const DEFS: Record<string, TableDef> = {
   trusted_publishers: { pk: 'name', sk: 'publisher' },
   owners: { pk: 'name', sk: 'github_id', gsis: { by_github_id: { pk: 'github_id', sk: 'name' } } },
   namespaces: { pk: 'namespace', gsis: { by_github_id: { pk: 'github_id', sk: 'namespace' } } },
+  membership_passes: { pk: 'key', ttl: 'expires_at' },
 };
 
 const KEYWORDS = new Set(['SET', 'REMOVE', 'AND', 'attribute_exists', 'attribute_not_exists']);
@@ -48,7 +49,7 @@ const conditionFailed = () => Object.assign(new Error('The conditional request f
  * - with `grants`, a command the role is not allowed to make answers AccessDeniedException (DeleteItem is never
  *   granted; table and index are separate resources).
  * Supports Get, Put, Update (SET, REMOVE), Delete, Query (table or index; key condition `#a = :a [AND #b = :b]`),
- * paged `pageSize` items at a time. Conditions: attribute_exists, attribute_not_exists, joined by AND.
+ * paged `pageSize` items at a time. Conditions: attribute_exists, attribute_not_exists, `#a = :v`, joined by AND.
  */
 export class FakeAuthDoc {
   tables = new Map<string, Map<string, Item>>();
@@ -97,10 +98,12 @@ export class FakeAuthDoc {
     for (const v of Object.keys(c.values ?? {})) if (!new RegExp(`${v}\\b`).test(text)) throw validation(`unused ExpressionAttributeValues ${v}`);
   }
 
-  private holds(cond: string | undefined, names: Record<string, string> = {}, existing?: Item): boolean {
+  private holds(cond: string | undefined, names: Record<string, string> = {}, existing?: Item, values: Record<string, unknown> = {}): boolean {
     if (!cond) return true;
     return cond.split(' AND ').every((raw) => {
       const clause = raw.trim();
+      const eq = /^(#\w+) = (:\w+)$/.exec(clause);
+      if (eq) return !!existing && existing[names[eq[1]!]!] === values[eq[2]!];
       let m = /^attribute_not_exists\((#\w+)\)$/.exec(clause);
       if (m) return !(existing && names[m[1]!]! in existing);
       m = /^attribute_exists\((#\w+)\)$/.exec(clause);
@@ -125,7 +128,7 @@ export class FakeAuthDoc {
       this.checkExpressions({ exprs: [ConditionExpression], names: ExpressionAttributeNames, values: ExpressionAttributeValues });
       this.checkItem(d, Item!);
       const key = this.keyOf(d, Item!);
-      if (!this.holds(ConditionExpression, ExpressionAttributeNames, this.rows(TableName!).get(key))) throw conditionFailed();
+      if (!this.holds(ConditionExpression, ExpressionAttributeNames, this.rows(TableName!).get(key), ExpressionAttributeValues)) throw conditionFailed();
       this.rows(TableName!).set(key, structuredClone(Item!));
       return {};
     }
@@ -136,7 +139,7 @@ export class FakeAuthDoc {
       this.checkExpressions({ exprs: [UpdateExpression, ConditionExpression], names: n, values: v });
       const key = this.keyOf(d, Key!);
       const existing = this.rows(TableName!).get(key);
-      if (!this.holds(ConditionExpression, n, existing)) throw conditionFailed();
+      if (!this.holds(ConditionExpression, n, existing, v)) throw conditionFailed();
       const m = /^SET (.+?)(?: REMOVE (.+))?$/.exec(UpdateExpression!) ?? /^()REMOVE (.+)$/.exec(UpdateExpression!);
       if (!m) throw new Error(`fake: unsupported update ${UpdateExpression}`);
       const next: Item = existing ? structuredClone(existing) : { ...Key! };

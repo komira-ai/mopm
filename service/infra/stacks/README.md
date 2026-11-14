@@ -41,4 +41,7 @@ Account ids come from the CDK environment at deploy time and are never committed
   consumed, and DynamoDB TTL removes expired rows later (typically within two days), so expiry is decided in code.
   A login also makes the account's user namespace in the `namespaces` table (keyed by the namespace, with a
   `by_github_id` index; created together with its index, so it is one deploy): a PutItem conditional on the key being
-  absent, so the role can create a namespace and never rebind or remove one (docs/design/namespaces.md).
+  absent, so the role can create a namespace and never remove one or change its GitHub id (docs/design/namespaces.md).
+  Binding a new GitHub App installation to an organization namespace is a PutItem conditional on the GitHub id and kind
+  it read. A passed organization membership check is kept in `membership_passes` (keyed by organization and account
+  id, TTL `expires_at`) for 5 minutes; the code decides expiry, TTL removes the rows later.
