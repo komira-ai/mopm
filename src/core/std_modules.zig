@@ -8,6 +8,8 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const closure = @import("closure.zig");
+const conda_unpack = @import("conda_unpack.zig");
 
 /// The prefix of a source path of the standard library, as `std.mojoc` records it.
 const source_prefix = "mojo/stdlib/std/";
@@ -126,9 +128,58 @@ pub fn versionsOf(arena: Allocator, text: []const u8) Allocator.Error![]const []
     return entries(arena, text);
 }
 
+/// `mopm-closure --std-modules`: for each version of `toolchain_dir/versions.txt`, the linux-64 mojo-compiler that
+/// `closure_dir/mojo-<version>-linux-64.json` pins is got through `fetcher` (`bytesOf(arena, file, url, sha256,
+/// size) ![]const u8`), checked against its pinned size and sha256, and its `lib/mojo/std.mojoc` read; the version's
+/// modules are written to `toolchain_dir/mojo-<version>.std-modules.txt`, and their union to
+/// `closure_dir/std-modules.txt`. The answer is the number of versions; on `error.Refused`, `why` names the file and
+/// the reason, and the union is not written.
+pub fn regenerate(arena: Allocator, closure_dir: std.fs.Dir, toolchain_dir: std.fs.Dir, window: []u8, fetcher: anytype, why: *[]const u8) RegenError!usize {
+    const versions = toolchain_dir.readFileAlloc(arena, "versions.txt", 1 << 16) catch |e| return refuse(arena, why, "versions.txt: {s}", .{@errorName(e)});
+    var texts = std.ArrayList([]const u8).init(arena);
+    for (try versionsOf(arena, versions)) |ver| {
+        const name = try std.fmt.allocPrint(arena, "mojo-{s}-linux-64.json", .{ver});
+        const text = closure_dir.readFileAlloc(arena, name, 16 << 20) catch |e| return refuse(arena, why, "{s}: {s}", .{ name, @errorName(e) });
+        const c = closure.parse(arena, text) catch |e| return refuse(arena, why, "{s}: {s}", .{ name, @errorName(e) });
+        var compiler: ?closure.Package = null;
+        for (c.packages) |q| {
+            if (std.mem.eql(u8, q.name, "mojo-compiler")) compiler = q;
+        }
+        const p = compiler orelse return refuse(arena, why, "{s} pins no mojo-compiler", .{name});
+        const file = closure.fileName(p);
+        const url = closure.urlOf(arena, c, p) catch |e| return refuse(arena, why, "{s}: {s}: {s}", .{ name, file, @errorName(e) });
+        const bytes = fetcher.bytesOf(arena, file, url, p.sha256, p.size) catch |e| return refuse(arena, why, "{s}: {s}", .{ url, @errorName(e) });
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+        const hex = std.fmt.bytesToHex(digest, .lower);
+        if (bytes.len != p.size or !std.mem.eql(u8, &hex, p.sha256)) {
+            return refuse(arena, why, "{s} is {d} bytes with sha256 {s}, but {s} pins {d} bytes with sha256 {s}", .{ file, bytes.len, &hex, name, p.size, p.sha256 });
+        }
+        var unpack_diag = conda_unpack.Diag{};
+        const found = conda_unpack.readFilesLimited(arena, bytes, window, &.{"lib/mojo/std.mojoc"}, .{ .total = 4 << 30 }, &unpack_diag) catch |e| return refuse(arena, why, "{s}: {s}: {s}", .{ file, @errorName(e), unpack_diag.message });
+        const mojoc = found[0] orelse return refuse(arena, why, "{s} holds no lib/mojo/std.mojoc", .{file});
+        var mojoc_why: []const u8 = "";
+        const modules = fromMojoc(arena, mojoc, window, &mojoc_why) catch |e| return refuse(arena, why, "{s}: lib/mojo/std.mojoc: {s}: {s}", .{ file, @errorName(e), mojoc_why });
+        const out_text = try renderVersion(arena, modules);
+        const out_name = try std.fmt.allocPrint(arena, "mojo-{s}.std-modules.txt", .{ver});
+        toolchain_dir.writeFile(out_name, out_text) catch |e| return refuse(arena, why, "{s}: {s}", .{ out_name, @errorName(e) });
+        try texts.append(out_text);
+    }
+    if (texts.items.len == 0) return refuse(arena, why, "versions.txt names no Mojo version", .{});
+    closure_dir.writeFile("std-modules.txt", try renderUnion(arena, texts.items)) catch |e| return refuse(arena, why, "std-modules.txt: {s}", .{@errorName(e)});
+    return texts.items.len;
+}
+
+pub const RegenError = error{Refused} || Allocator.Error;
+
+fn refuse(arena: Allocator, why: *[]const u8, comptime fmt: []const u8, args: anytype) RegenError {
+    why.* = try std.fmt.allocPrint(arena, fmt, args);
+    return error.Refused;
+}
+
 const testing = std.testing;
 const conda = @import("conda.zig");
-const conda_unpack = @import("conda_unpack.zig");
+const conda_fixture = @import("conda_fixture.zig");
 const testroot = @import("testroot.zig");
 
 /// A `std.mojoc` holding `content`: `MPKG`, a 92-byte header, then the content as one zstd frame.
@@ -208,4 +259,88 @@ test "the embedded list is the union of the list of every version of toolchain/v
         std.debug.print("src/core/toolchain/std-modules.txt is not the union of the toolchain/mojo-<version>.std-modules.txt files; run mopm-closure --std-modules src/core/toolchain toolchain\n", .{});
         return error.TestUnexpectedResult;
     }
+}
+
+/// The fetcher of the tests: the bytes it was given, whatever is asked, and the url it was asked for.
+const FakeFetcher = struct {
+    bytes: []const u8,
+    fail: bool = false,
+    asked: []const u8 = "",
+
+    pub fn bytesOf(self: *FakeFetcher, arena: Allocator, file: []const u8, url: []const u8, sha256: []const u8, size: u64) ![]const u8 {
+        _ = sha256;
+        _ = size;
+        self.asked = try std.fmt.allocPrint(arena, "{s} {s}", .{ file, url });
+        if (self.fail) return error.DownloadFailed;
+        return self.bytes;
+    }
+};
+
+/// A closure file pinning `compiler` (the package's bytes) as the mojo-compiler of mojo 1.0.0, or no compiler.
+fn closureJson(a: Allocator, compiler: ?[]const u8) ![]u8 {
+    const pkgs = if (compiler) |bytes|
+        try std.fmt.allocPrint(a, "{{\"name\": \"mojo-compiler\", \"version\": \"1.0.0\", \"build\": \"release\", \"subdir\": \"linux-64\", \"channel\": \"max\", \"path\": \"linux-64/mojo-compiler-1.0.0-release.conda\", \"sha256\": \"{s}\", \"size\": {d}}}", .{ try conda_fixture.sha256Hex(a, bytes), bytes.len })
+    else
+        "";
+    return std.fmt.allocPrint(a, "{{\"mojo\": \"1.0.0\", \"subdir\": \"linux-64\", \"channels\": [{{\"name\": \"max\", \"url\": \"https://conda.example/max/\"}}], \"packages\": [{s}]}}", .{pkgs});
+}
+
+test "--std-modules writes each version's list and the union from the pinned mojo-compiler, and refuses what does not check out" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const window = try a.alloc(u8, conda_unpack.window_size);
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var cdir = try tmp.dir.makeOpenPath("closures", .{});
+    defer cdir.close();
+    var tdir = try tmp.dir.makeOpenPath("toolchain", .{});
+    defer tdir.close();
+    try tdir.writeFile("versions.txt", "# the versions\n1.0.0\n");
+
+    const mojoc = try fakeMojoc(a, "oss/modular/mojo/stdlib/std/os/path.mojo\x00oss/modular/mojo/stdlib/std/collections/list.mojo");
+    const pkg = try conda_fixture.simple(a, "mojo-compiler", "1.0.0", &.{.{ .name = "lib/mojo/std.mojoc", .data = mojoc }});
+    try cdir.writeFile("mojo-1.0.0-linux-64.json", try closureJson(a, pkg));
+    var why: []const u8 = "";
+    var good = FakeFetcher{ .bytes = pkg };
+    try testing.expectEqual(@as(usize, 1), try regenerate(a, cdir, tdir, window, &good, &why));
+    try testing.expectEqualStrings("mojo-compiler-1.0.0-release.conda https://conda.example/max/linux-64/mojo-compiler-1.0.0-release.conda", good.asked);
+    try testing.expectEqualStrings("collections\nos\n", try tdir.readFileAlloc(a, "mojo-1.0.0.std-modules.txt", 1 << 16));
+    try testing.expectEqualStrings(union_header ++ "collections\nos\n", try cdir.readFileAlloc(a, "std-modules.txt", 1 << 16));
+
+    // Other bytes than the pin: refused, naming both, and nothing more is written.
+    try cdir.deleteFile("std-modules.txt");
+    var other = FakeFetcher{ .bytes = "not the package" };
+    try testing.expectError(error.Refused, regenerate(a, cdir, tdir, window, &other, &why));
+    const want = try std.fmt.allocPrint(a, "mojo-compiler-1.0.0-release.conda is 15 bytes with sha256 {s}, but mojo-1.0.0-linux-64.json pins {d} bytes with sha256 {s}", .{ try conda_fixture.sha256Hex(a, "not the package"), pkg.len, try conda_fixture.sha256Hex(a, pkg) });
+    try testing.expectEqualStrings(want, why);
+    try testing.expectError(error.FileNotFound, cdir.access("std-modules.txt", .{}));
+
+    var down = FakeFetcher{ .bytes = pkg, .fail = true };
+    try testing.expectError(error.Refused, regenerate(a, cdir, tdir, window, &down, &why));
+    try testing.expectEqualStrings("https://conda.example/max/linux-64/mojo-compiler-1.0.0-release.conda: DownloadFailed", why);
+
+    // A package without the library, and one whose library is not a .mojoc.
+    const empty = try conda_fixture.simple(a, "mojo-compiler", "1.0.0", &.{.{ .name = "lib/other.txt", .data = "x" }});
+    try cdir.writeFile("mojo-1.0.0-linux-64.json", try closureJson(a, empty));
+    var no_lib = FakeFetcher{ .bytes = empty };
+    try testing.expectError(error.Refused, regenerate(a, cdir, tdir, window, &no_lib, &why));
+    try testing.expectEqualStrings("mojo-compiler-1.0.0-release.conda holds no lib/mojo/std.mojoc", why);
+    const junk = try conda_fixture.simple(a, "mojo-compiler", "1.0.0", &.{.{ .name = "lib/mojo/std.mojoc", .data = "junk" }});
+    try cdir.writeFile("mojo-1.0.0-linux-64.json", try closureJson(a, junk));
+    var bad_lib = FakeFetcher{ .bytes = junk };
+    try testing.expectError(error.Refused, regenerate(a, cdir, tdir, window, &bad_lib, &why));
+    try testing.expectEqualStrings("mojo-compiler-1.0.0-release.conda: lib/mojo/std.mojoc: NotMojoc: the file does not start with MPKG: not a .mojoc", why);
+
+    // A closure that pins no compiler, a version with no closure, and no version at all.
+    try cdir.writeFile("mojo-1.0.0-linux-64.json", try closureJson(a, null));
+    try testing.expectError(error.Refused, regenerate(a, cdir, tdir, window, &good, &why));
+    try testing.expectEqualStrings("mojo-1.0.0-linux-64.json pins no mojo-compiler", why);
+    try tdir.writeFile("versions.txt", "1.0.0\n9.9.9\n");
+    try cdir.writeFile("mojo-1.0.0-linux-64.json", try closureJson(a, pkg));
+    try testing.expectError(error.Refused, regenerate(a, cdir, tdir, window, &good, &why));
+    try testing.expectEqualStrings("mojo-9.9.9-linux-64.json: FileNotFound", why);
+    try tdir.writeFile("versions.txt", "# none\n");
+    try testing.expectError(error.Refused, regenerate(a, cdir, tdir, window, &good, &why));
+    try testing.expectEqualStrings("versions.txt names no Mojo version", why);
 }

@@ -217,66 +217,45 @@ fn nativesLibs(a: std.mem.Allocator, dir_path: []const u8, libs_path: []const u8
     return 0;
 }
 
-/// The fourth form: each version's standard library modules, then their union (see the top of this file).
-fn stdModules(a: std.mem.Allocator, closure_dir: []const u8, toolchain_dir: []const u8) !u8 {
+/// The fourth form's downloads: `pkg_fetch` into the part directory, which checks the pinned size and sha256.
+const PartFetcher = struct {
+    dir: std.fs.Dir,
+    diag: pkg_fetch.Diag = .{},
+
+    pub fn bytesOf(self: *PartFetcher, arena: std.mem.Allocator, file: []const u8, url: []const u8, sha256: []const u8, size: u64) ![]const u8 {
+        pkg_fetch.fetch(arena, self.dir, file, url, .{ .sha256 = sha256, .size = size }, &self.diag) catch |e| {
+            std.io.getStdErr().writer().print("mopm-closure: {s}: {s}\n", .{ url, self.diag.message }) catch {};
+            return e;
+        };
+        return self.dir.readFileAlloc(arena, file, 1 << 30);
+    }
+};
+
+/// The fourth form: each version's standard library modules, then their union (src/core/std_modules.zig `regenerate`).
+fn stdModules(a: std.mem.Allocator, closure_path: []const u8, toolchain_path: []const u8) !u8 {
     const stderr = std.io.getStdErr().writer();
-    const stdout = std.io.getStdOut().writer();
-    const versions_path = try std.fs.path.join(a, &.{ toolchain_dir, "versions.txt" });
-    const versions = std.fs.cwd().readFileAlloc(a, versions_path, 1 << 16) catch |e| {
-        try stderr.print("mopm-closure: {s}: {s}\n", .{ versions_path, @errorName(e) });
+    var closure_dir = std.fs.cwd().openDir(closure_path, .{}) catch |e| {
+        try stderr.print("mopm-closure: {s}: {s}\n", .{ closure_path, @errorName(e) });
         return 1;
     };
+    defer closure_dir.close();
+    var toolchain_dir = std.fs.cwd().openDir(toolchain_path, .{}) catch |e| {
+        try stderr.print("mopm-closure: {s}: {s}\n", .{ toolchain_path, @errorName(e) });
+        return 1;
+    };
+    defer toolchain_dir.close();
     var part = try std.fs.cwd().makeOpenPath(".std-modules-part", .{});
     defer {
         part.close();
         std.fs.cwd().deleteTree(".std-modules-part") catch {};
     }
+    var fetcher = PartFetcher{ .dir = part };
     const window = try a.alloc(u8, conda_unpack.window_size);
-    var texts = std.ArrayList([]const u8).init(a);
-    for (try std_modules.versionsOf(a, versions)) |ver| {
-        const closure_path = try std.fmt.allocPrint(a, "{s}/mojo-{s}-linux-64.json", .{ closure_dir, ver });
-        const closure_text = std.fs.cwd().readFileAlloc(a, closure_path, 16 << 20) catch |e| {
-            try stderr.print("mopm-closure: {s}: {s}\n", .{ closure_path, @errorName(e) });
-            return 1;
-        };
-        const c = try closure.parse(a, closure_text);
-        var compiler: ?closure.Package = null;
-        for (c.packages) |q| {
-            if (std.mem.eql(u8, q.name, "mojo-compiler")) compiler = q;
-        }
-        const p = compiler orelse {
-            try stderr.print("mopm-closure: {s} pins no mojo-compiler\n", .{closure_path});
-            return 1;
-        };
-        var fetch_diag = pkg_fetch.Diag{};
-        const file = closure.fileName(p);
-        pkg_fetch.fetch(a, part, file, try closure.urlOf(a, c, p), .{ .sha256 = p.sha256, .size = p.size }, &fetch_diag) catch |e| {
-            try stderr.print("mopm-closure: {s}: {s}: {s}\n", .{ file, @errorName(e), fetch_diag.message });
-            return 1;
-        };
-        const bytes = try part.readFileAlloc(a, file, 1 << 30);
-        var unpack_diag = conda_unpack.Diag{};
-        const found = conda_unpack.readFilesLimited(a, bytes, window, &.{"lib/mojo/std.mojoc"}, .{ .total = 4 << 30 }, &unpack_diag) catch |e| {
-            try stderr.print("mopm-closure: {s}: {s}: {s}\n", .{ file, @errorName(e), unpack_diag.message });
-            return 1;
-        };
-        const mojoc = found[0] orelse {
-            try stderr.print("mopm-closure: {s} holds no lib/mojo/std.mojoc\n", .{file});
-            return 1;
-        };
-        var why: []const u8 = "";
-        const modules = std_modules.fromMojoc(a, mojoc, window, &why) catch |e| {
-            try stderr.print("mopm-closure: {s}: lib/mojo/std.mojoc: {s}: {s}\n", .{ file, @errorName(e), why });
-            return 1;
-        };
-        const text = try std_modules.renderVersion(a, modules);
-        const out = try std.fmt.allocPrint(a, "{s}/mojo-{s}.std-modules.txt", .{ toolchain_dir, ver });
-        try std.fs.cwd().writeFile(out, text);
-        try stdout.print("{s}: {d} modules\n", .{ out, modules.len });
-        try texts.append(text);
-    }
-    const union_path = try std.fmt.allocPrint(a, "{s}/std-modules.txt", .{closure_dir});
-    try std.fs.cwd().writeFile(union_path, try std_modules.renderUnion(a, texts.items));
-    try stdout.print("{s}: the union of {d} versions\n", .{ union_path, texts.items.len });
+    var why: []const u8 = "";
+    const n = std_modules.regenerate(a, closure_dir, toolchain_dir, window, &fetcher, &why) catch |e| {
+        try stderr.print("mopm-closure: --std-modules: {s}: {s}\n", .{ @errorName(e), why });
+        return 1;
+    };
+    try std.io.getStdOut().writer().print("{s}/std-modules.txt: the standard library modules of {d} Mojo versions\n", .{ closure_path, n });
     return 0;
 }
