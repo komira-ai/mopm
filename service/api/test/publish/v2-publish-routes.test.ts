@@ -565,3 +565,10 @@ describe('/api/v1 after names moved into namespaces', () => {
     expect((await r.h.registry.getVersion('old_pkg', '1.0.0'))?.published_by).toBe('flatty');
   });
 });
+
+describe('PublishService.begin on its own', () => {
+  test.each(['Bad', 'alice/Bad', 'alice/j/x', '/json', 'alice/'])('%s is invalid_name before anything is read', async (name) => {
+    const r = await rig();
+    await expect(r.h.service.begin({ kind: 'user', github_id: ALICE } as never, name, '1.0.0', fileFacts('alice/json'))).rejects.toMatchObject({ code: 'invalid_name' });
+  });
+});

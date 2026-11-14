@@ -124,7 +124,8 @@ export class NamespaceAccess {
         }
       }
     }
-    const byName = (a: WriteRight, b: WriteRight) => (a.record.namespace < b.record.namespace ? -1 : a.record.namespace > b.record.namespace ? 1 : 0);
+    // Namespaces are unique keys of the store, so no two rows compare equal.
+    const byName = (a: WriteRight, b: WriteRight) => (a.record.namespace < b.record.namespace ? -1 : 1);
     return [...own.sort(byName), ...orgs.sort(byName)];
   }
 

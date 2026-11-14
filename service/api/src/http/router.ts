@@ -68,8 +68,8 @@ function respond(statusCode: number, requestId: string, body?: unknown): HttpRes
 }
 
 function errorResponse(requestId: string, code: string, status: number, detail: Record<string, string>): HttpResponse {
-  const entry = templateFor(code);
-  if (!entry) return errorResponse(requestId, 'internal_error', HTTP_STATUS.internal_error, {});
+  // Both callers pass a code the catalogue holds (the catch below checks it first).
+  const entry = templateFor(code)!;
   return respond(status, requestId, {
     error: { code, message: render(entry.message, detail), hint: flatCreationHint(code, detail) ?? render(entry.hint, detail) },
   });
