@@ -136,7 +136,7 @@ describe.each(RIGS)('a group in namespaces: %s', (_label, make) => {
   test('a group yank leaves a member yanked by hand alone and rewrites only the directories of the members it yanked', async () => {
     const s = await committed();
     await chain.drain();
-    await rig.store.updateVersion('ns-two/beta', '1.0.0', { type: 'yank', reason: 'by hand' }, { name: 'ns-two/beta', ts: '2026-01-01T00:00:00Z', id: 'by_hand', actor: 'u:1', action: 'yank', version: '1.0.0' });
+    await rig.store.updateVersion('ns-two/beta', '1.0.0', { type: 'yank', reason: 'by hand' }, { name: 'ns-two/beta', ts: '2026-10-01T00:00:00Z', id: 'by_hand', actor: 'u:1', action: 'yank', version: '1.0.0' });
     const untouched = repodataBytes('ns-two/noarch');
     expect((await yankPut(s, { yanked: true, reason: 'broken' })).statusCode).toBe(202);
     const ran = (await chain.drain()).map(label);
