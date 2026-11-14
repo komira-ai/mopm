@@ -172,11 +172,11 @@ fn reply(method: std.http.Method, comptime suffix: []const u8, status: u16, comp
 }
 
 fn beginStep(comptime expires_in: []const u8, comptime interval: []const u8) gt.Script.Step {
-    return reply(.POST, "/namespaces", 202, "{\"device_code\":\"dc\",\"user_code\":\"AB-12\",\"verification_uri\":\"https://example.test/device\",\"expires_in\":" ++ expires_in ++ ",\"interval\":" ++ interval ++ "}");
+    return reply(.POST, v2.CreateNamespace.path_template, 202, "{\"device_code\":\"dc\",\"user_code\":\"AB-12\",\"verification_uri\":\"https://example.test/device\",\"expires_in\":" ++ expires_in ++ ",\"interval\":" ++ interval ++ "}");
 }
 
 fn pollStep(comptime body: []const u8) gt.Script.Step {
-    return reply(.POST, "/namespaces/poll", 200, body);
+    return reply(.POST, v2.PollNamespace.path_template, 200, body);
 }
 
 /// The text `mopm` prints for the failed answer `status` with `body` (what `reportFailure` says).

@@ -11,6 +11,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
+const v2 = core.registry_v2;
 const ci_oidc = core.ci_oidc;
 const gp = @import("group_publish.zig");
 const plan_mod = @import("group_plan.zig");
@@ -49,7 +50,7 @@ const gt = @import("group_publish_test.zig");
 fn script(a: Allocator, exchange: []const u8) gt.Script {
     const steps = a.dupe(gt.Script.Step, &.{
         .{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = "{\"value\":\"head.payload.sig\"}" },
-        .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = 200, .body = exchange },
+        .{ .method = .POST, .suffix = v2.ExchangeOidcToken.path_template, .status = 200, .body = exchange },
     }) catch @panic("out of memory");
     return .{ .steps = steps, .seen = std.ArrayList(gt.Script.Seen).init(a) };
 }

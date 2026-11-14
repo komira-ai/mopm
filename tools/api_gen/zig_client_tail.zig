@@ -115,7 +115,7 @@ pub const text =
     \\    token: ?[]const u8 = null,
     \\    body: ?[]const u8 = null,
     \\
-    \\    fn once(io: *TailIo, _: Allocator, method: std.http.Method, request_url: []const u8, options: http.Options) anyerror!http.Answer {
+    \\    pub fn once(io: *TailIo, _: Allocator, method: std.http.Method, request_url: []const u8, options: http.Options) anyerror!http.Answer {
     \\        io.method = method;
     \\        io.url = request_url;
     \\        io.token = options.token;
@@ -125,7 +125,7 @@ pub const text =
     \\        return result;
     \\    }
     \\
-    \\    fn pause(io: *TailIo, _: u64) void {
+    \\    pub fn pause(io: *TailIo, _: u64) void {
     \\        io.pauses += 1;
     \\    }
     \\};

@@ -71,6 +71,8 @@ fn writeScalar(w: Writer, v: Value) Allocator.Error!void {
     switch (v) {
         .string => |s| try w.writeAll(s),
         .number_string => |s| try w.writeAll(s),
+        // std.json writes a float in scientific notation (`1.5e0`); text reads better as the plain decimal.
+        .float => |f| try w.print("{d}", .{f}),
         else => try std.json.stringify(v, .{}, w),
     }
 }

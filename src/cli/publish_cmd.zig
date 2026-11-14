@@ -613,6 +613,7 @@ const EmptyBody = struct {
         var sent = options;
         sent.body = "";
         sent.content_type = null;
+        // not the registry API: the transport under v2.send for createPackage, which sends no Content-Type and an empty body
         return self.net.once(arena, method, url, sent);
     }
 

@@ -8,7 +8,7 @@
 //!      does not call `.request(`, `.once(`, `.vtable.request(`, `http.request(` or `http.retrying(`;
 //!   3. nor does it hold a string literal that builds a registry path: `/api/v1/` or `/api/v2/` inside it, or a first
 //!      path segment of the client's routes (`/me`, `/packages/...`) at its start.
-//! A request that is not the registry's API says so with `// not the registry API: <why>` on its line or the line above.
+//! A request that is not the registry's API says so with `// not the registry API: <why>` on its line or on a comment line directly above.
 //! Comment lines, multi-line string lines and the bodies of `test "..." {` blocks are not code.
 
 const std = @import("std");
@@ -197,7 +197,8 @@ fn checkFile(a: Allocator, f: File, roots: []const []const u8, out: *std.ArrayLi
         const multiline = std.mem.startsWith(u8, t, "\\\\");
         const sp = try split(a, line);
         const prev = above;
-        above = if (multiline) "" else sp.comment;
+        // Only a line that is nothing but a comment speaks for the line below it; a trailing marker covers its own line.
+        above = if (!multiline and std.mem.startsWith(u8, t, "//")) sp.comment else "";
         if (multiline) continue;
         if (!in_test and std.mem.startsWith(u8, line, "test ")) {
             in_test = true;

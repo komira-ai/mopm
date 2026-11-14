@@ -4,7 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const http = @import("http.zig");
 
-pub const sources_sha256 = "0aac2bb4653455110c313b186a5742fedfd10281ab1615eaaa591dfd7702cfda";
+pub const sources_sha256 = "69479a746fc5bc96b9b09349e37d1947f487855c4ad33cb4191263953a74069b";
 
 pub const base_path = "/api/v2";
 
@@ -3058,7 +3058,7 @@ const TailIo = struct {
     token: ?[]const u8 = null,
     body: ?[]const u8 = null,
 
-    fn once(io: *TailIo, _: Allocator, method: std.http.Method, request_url: []const u8, options: http.Options) anyerror!http.Answer {
+    pub fn once(io: *TailIo, _: Allocator, method: std.http.Method, request_url: []const u8, options: http.Options) anyerror!http.Answer {
         io.method = method;
         io.url = request_url;
         io.token = options.token;
@@ -3068,7 +3068,7 @@ const TailIo = struct {
         return result;
     }
 
-    fn pause(io: *TailIo, _: u64) void {
+    pub fn pause(io: *TailIo, _: u64) void {
         io.pauses += 1;
     }
 };

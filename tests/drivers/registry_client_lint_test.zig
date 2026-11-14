@@ -127,10 +127,10 @@ test "rule 2: the generated client's calls are not findings" {
     try expectCode("const r = try v2.send(Op, a, net, net.policy, root, token, p);\nconst s = try v2.sendOnce(Op, a, net, root, token, p);\nconst t = try v2.call(Op, a, net, net.policy, root, token, p);\n", &.{});
 }
 
-test "rule 2: the marker on the same line or the line above exempts the call" {
+test "rule 2: the marker on the same line or on a comment line above exempts the call; a trailing marker above does not" {
     try expectCode("const r = net.once(a, .PUT, u, .{}); // not the registry API: a presigned upload\n", &.{});
     try expectCode("// not the registry API: the readme object store\nconst r = net.once(a, .PUT, u, .{});\n", &.{});
-    try expectCode("const x = 1; // not the registry API: the static index\nconst r = net.once(a, .PUT, u, .{});\n", &.{});
+    try expectCode("const x = 1; // not the registry API: the static index\nconst r = net.once(a, .PUT, u, .{});\n", &.{"src/cli/x.zig:2: " ++ msg_call});
 }
 
 test "rule 2: a marker two lines above, or without a why, exempts nothing" {
@@ -164,7 +164,7 @@ test "rule 2: a test block is skipped, the code after it is not" {
         \\}
         \\
     ;
-    try expectCode(data, &.{"src/cli/x.zig:16: " ++ msg_call});
+    try expectCode(data, &.{"src/cli/x.zig:15: " ++ msg_call});
 }
 
 test "rule 2: braces in strings and character literals do not end a test block early" {

@@ -230,15 +230,15 @@ test "account command flags" {
 const gt = @import("group_publish_test.zig");
 
 fn begun(comptime expires_in: []const u8, comptime interval: []const u8) gt.Script.Step {
-    return .{ .method = .POST, .suffix = "/auth/device", .status = 200, .body = "{\"device_code\":\"dc\",\"user_code\":\"AB-12\",\"verification_uri\":\"https://example.test/device\",\"expires_in\":" ++ expires_in ++ ",\"interval\":" ++ interval ++ "}" };
+    return .{ .method = .POST, .suffix = v2.StartDeviceLogin.path_template, .status = 200, .body = "{\"device_code\":\"dc\",\"user_code\":\"AB-12\",\"verification_uri\":\"https://example.test/device\",\"expires_in\":" ++ expires_in ++ ",\"interval\":" ++ interval ++ "}" };
 }
 
 fn poll(comptime body: []const u8) gt.Script.Step {
-    return .{ .method = .POST, .suffix = "/auth/device/poll", .status = 200, .body = body };
+    return .{ .method = .POST, .suffix = v2.PollDeviceLogin.path_template, .status = 200, .body = body };
 }
 
 fn me_step(comptime body: []const u8) gt.Script.Step {
-    return .{ .method = .GET, .suffix = "/me", .status = 200, .body = body };
+    return .{ .method = .GET, .suffix = v2.GetMe.path_template, .status = 200, .body = body };
 }
 
 const me_ada = "{\"github_id\":7,\"handle\":\"ada\",\"namespaces\":[{\"namespace\":\"ada\",\"kind\":\"user\",\"role\":\"owner\",\"packages\":[]}]}";
