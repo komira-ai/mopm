@@ -877,6 +877,13 @@ Registry:
 - ns-R4 (M) Index v2 and the per-namespace channel writer: index paths, records, per-namespace repodata, conda names,
   `config.json` keys, the root repodata with only the kept `kci_*` entries. Infra: the `namespace_members` table.
 
+- ns-P1 (L) The contract of `/api/v2` as protos (`spec/api/mopm/registry/v2/*.proto`): every operation, its
+  messages, the error codes as an enum with the catalogue, and the HTTP mapping as `google.api.http`. `tools/api_gen.zig`
+  (`zig build gen-api`) writes `spec/api/openapi-v2.yaml`, the service's types and route table and the CLI's client from
+  them; a test fails when a checked-in output differs. The YAML it writes is the same document as the hand-written one
+  it replaces.
+- ns-P2 (L) The registry commands of the CLI generated from those protos.
+
 Client:
 
 - ns-C5 (S) The fake registry (`registry/fake`) serves v2 and namespaces. First, since ns-C2 to ns-C4 test against it.

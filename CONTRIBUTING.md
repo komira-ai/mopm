@@ -36,7 +36,9 @@ Two builds describe the same program, and both stay.
   and `//:sync_cache_e2e` (`mopm sync` against a moved, damaged, interrupted or concurrently synced project; each refusal and
   what it leaves; the cache layout, system libraries and conflicting paths; on every pull request), `//:gen_errors_current` (the committed
   `registry/fake/errors.zig` is what `./buck2 run //:gen_errors -- spec/api/openapi.yaml registry/fake/errors.zig`
-  makes of the spec; the former `gen_errors.py`), and the
+  makes of the spec; the former `gen_errors.py`), `//:api_gen_test` (`spec/api/openapi-v2.yaml`,
+  `service/api/src/gen/registry-v2.ts` and `src/core/registry_v2.zig` are what `zig build gen-api` makes of
+  `spec/api/mopm/registry/v2/*.proto`; `zig build test` and `lint.yml` run it too), and the
   contract checks: `//:contract` (the OpenAPI
   document, the JSON Schemas, the API cases and the examples),
   `//:contract_replay` (the fake registry against the API

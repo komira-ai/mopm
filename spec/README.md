@@ -10,7 +10,8 @@ contract. Nothing here describes the registry's internals.
 | `mopm-toml.md` | the `mopm.toml` manifest authors write (draft) |
 | `package-metadata.schema.json` | `<name>.mopm.json`, embedded in every package |
 | `api/openapi.yaml` | the HTTP API under `/api/v1`: login, tokens, publish, yank, owners, packages, search, health; the error catalogue; auth schemes; the additive-only versioning rule |
-| `api/openapi-v2.yaml` | the HTTP API under `/api/v2`, served beside v1: package names in owner namespaces (`komira-ai/json`), namespaces, no owners or claims; its own error catalogue |
+| `api/mopm/registry/v2/*.proto` | the source of the HTTP API under `/api/v2`: every operation, its messages, the error codes and catalogue, and the HTTP mapping (`google.api.http`); `options.proto` says how the JSON and the OpenAPI keywords follow from them |
+| `api/openapi-v2.yaml` | the HTTP API under `/api/v2`, served beside v1, generated from the protos above by `zig build gen-api` (`tools/api_gen.zig`): package names in owner namespaces (`komira-ai/json`), namespaces, no owners or claims; its own error catalogue |
 | `channel.md` | the conda channel at `conda.<site>`: layout, naming, immutability and yank as clients see them |
 | `index.md`, `index-record.schema.json`, `index-config.schema.json`, `takedowns.schema.json` | the static sparse index the CLI reads |
 | `lock.md`, `lock.schema.json` | `mopm.lock`, the resolved closure (version 2: one build per Mojo version) |
