@@ -10,7 +10,8 @@ import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, Vers
  * - A (name, version) is created at most once, ever: a second `createVersion` of `1.0.0` fails with
  *   version_exists, whatever state the first one is in (a tombstone keeps the number burned). Two concurrent creates: exactly one wins.
  * - Every change to a version also appends its audit entry, atomically with it.
- * - Version rows are never deleted.
+ * - Version rows are never deleted through this port. The one tool that deletes registry rows, the held deletion of the
+ *   global names (src/ops/delete-global-names), goes through `RowDeleter` below, under a role the tables let delete.
  * - Every read of a version row (`getVersion`, `listVersions`, `versionsOf`, and the row `updateVersion` starts
  *   from) returns the projection of src/group.ts: a row that belongs to a group that has not committed is
  *   `pending`; one that has is `published`. A row without a group is returned as stored, at no extra read.
@@ -67,6 +68,19 @@ export interface Store {
   appendAudit(entry: AuditEntry): Promise<void>;
   /** Oldest first. */
   listAudit(name: string): Promise<AuditEntry[]>;
+}
+
+/**
+ * The deletes of the held tool that removes the global names (src/ops/delete-global-names, docs/design/namespaces.md
+ * section 12.4). Nothing in the service calls these: the tables' resource policy refuses DeleteItem to every role but the
+ * takedown role (and the cleanup role on a disposable stage), so only an operator's run of that tool can. Both are
+ * idempotent: deleting a row that is not there does nothing.
+ */
+export interface RowDeleter {
+  /** Delete one version row, by the package name and the canonical version (the row's key). */
+  deleteVersionRow(name: string, canonical: string): Promise<void>;
+  /** Delete one package row. The tool deletes it last, after every version, owner and publisher row of the name. */
+  deletePackageRow(name: string): Promise<void>;
 }
 
 export const byVersion = (a: VersionRecord, b: VersionRecord) => compareVersions(a.version, b.version);

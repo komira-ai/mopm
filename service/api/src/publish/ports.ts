@@ -11,6 +11,21 @@ export interface ObjectStore {
   delete(key: string): Promise<void>;
 }
 
+/** An object a listing found: its key and its size in bytes. */
+export interface ListedObject {
+  key: string;
+  size: number;
+}
+
+/**
+ * The channel bucket with a prefix listing. Only the held deletion tool of the global names reads it
+ * (src/ops/delete-global-names): the service itself never lists the bucket.
+ */
+export interface ListableObjectStore extends ObjectStore {
+  /** Every object whose key starts with `prefix`, all pages, in key order. Throws on any failure. */
+  list(prefix: string): Promise<ListedObject[]>;
+}
+
 export interface PresignedPut {
   url: string;
   /** The caller must send these exactly: they are part of the signature. */

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Invalidator, ObjectStore, PresignedPut, Presigner, Queue, QueueMessage } from './ports';
+import type { Invalidator, ListableObjectStore, ListedObject, PresignedPut, Presigner, Queue, QueueMessage } from './ports';
 import { credentialsFromEnv, presignUrl, signRequest, uriEncode } from './sigv4';
 import type { AwsCredentials } from './sigv4';
 
@@ -40,7 +40,7 @@ class AwsError extends Error {
 
 const b64 = (hex: string) => Buffer.from(hex, 'hex').toString('base64');
 
-export class S3Channel implements ObjectStore {
+export class S3Channel implements ListableObjectStore {
   private readonly host: string;
   private readonly http: HttpFn;
   private readonly creds: () => AwsCredentials;
@@ -67,8 +67,29 @@ export class S3Channel implements ObjectStore {
     const r = await this.request('GET', '', {}, undefined, [['list-type', '2'], ['max-keys', '1'], ['prefix', key]]);
     const xml = await r.text();
     if (r.status !== 200) throw new AwsError('s3', r.status, `list ${key}: ${xml}`);
-    const keys = [...xml.matchAll(/<Key>([^<]*)<\/Key>/g)].map((m) => m[1]!.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&'));
+    const keys = [...xml.matchAll(/<Key>([^<]*)<\/Key>/g)].map((m) => xmlText(m[1]!));
     return keys.some((k) => k === key);
+  }
+
+  /** ListObjectsV2 under `prefix`, following the continuation token to the last page. Needs s3:ListBucket for the prefix. */
+  async list(prefix: string): Promise<ListedObject[]> {
+    const out: ListedObject[] = [];
+    let token: string | undefined;
+    do {
+      const query: Array<[string, string]> = [['list-type', '2'], ['prefix', prefix], ...(token ? [['continuation-token', token] as [string, string]] : [])];
+      const r = await this.request('GET', '', {}, undefined, query);
+      const xml = await r.text();
+      if (r.status !== 200) throw new AwsError('s3', r.status, `list ${prefix}: ${xml}`);
+      for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+        const key = /<Key>([^<]*)<\/Key>/.exec(m[1]!);
+        const size = /<Size>(\d+)<\/Size>/.exec(m[1]!);
+        if (!key || !size) throw new AwsError('s3', r.status, `list ${prefix}: an entry without a key or a size`);
+        out.push({ key: xmlText(key[1]!), size: Number(size[1]) });
+      }
+      token = /<IsTruncated>true<\/IsTruncated>/.test(xml) ? xmlText(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/.exec(xml)?.[1] ?? '') : undefined;
+      if (token === '') throw new AwsError('s3', r.status, `list ${prefix}: truncated without a continuation token`);
+    } while (token);
+    return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   }
 
   /** Without s3:ListBucket a missing key answers 403, so 403 and 404 both mean "not there" for a read. */
@@ -124,6 +145,9 @@ export class S3Channel implements ObjectStore {
     if (r.status !== 204 && r.status !== 200 && r.status !== 404) throw new AwsError('s3', r.status, await r.text());
   }
 }
+
+/** The text of an XML element as S3 escapes it. */
+const xmlText = (t: string) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
 const encodePath = (path: string) => path.split('/').map((s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
 
