@@ -27,6 +27,8 @@ pub const test_filter = @import("test_filter.zig");
 pub const child_env = @import("child_env.zig");
 pub const http = @import("http.zig");
 pub const registry = @import("registry.zig");
+/// The client of the registry API, version 2, generated from spec/api/mopm/registry/v2/*.proto (tools/api_gen.zig).
+pub const registry_v2 = @import("registry_v2.zig");
 pub const credentials = @import("credentials.zig");
 pub const ci_oidc = @import("ci_oidc.zig");
 pub const conda = @import("conda.zig");
@@ -56,6 +58,7 @@ pub const target_cpu = @import("target_cpu.zig");
 pub const debugserver = @import("debugserver.zig");
 
 test {
+    _ = @import("registry_v2.zig");
     _ = @import("metadata.zig");
     _ = @import("link_planner.zig");
     _ = @import("toml.zig");
