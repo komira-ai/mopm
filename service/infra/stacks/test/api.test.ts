@@ -3,7 +3,7 @@ import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, V2_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
-import { STAGES, stageConfig, tableName } from '../lib/config';
+import { STAGES, appSecretName, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
 const acts = (s: any): string[] => ([] as string[]).concat(s.Action);
@@ -11,11 +11,11 @@ const flat = (v: any): string => (typeof v === 'string' ? v : JSON.stringify(v))
 
 /**
  * Everything the handler's role may do, checked as rules. Allowed: GetItem/Query on the four read tables; per WRITE_GRANTS on the publish tables; per AUTH_GRANTS
- * on the four auth tables (indexes by name only); GetSecretValue on the one OAuth secret. Returns what breaks them.
+ * on the four auth tables (indexes by name only); GetSecretValue on the OAuth secret and the GitHub App secret. Returns what breaks them.
  */
 function policyViolations(stage: string, statements: any[]): string[] {
   const out: string[] = [];
-  const secret = `secret:mopm/${stage}/github-oauth-??????`;
+  const secrets = [`secret:mopm/${stage}/github-oauth-??????`, `secret:mopm/${stage}/github-app-??????`];
   for (const s of statements) {
     if (s.Effect !== 'Allow') continue;
     const res = ([] as any[]).concat(s.Resource).map(flat);
@@ -23,7 +23,7 @@ function policyViolations(stage: string, statements: any[]): string[] {
       if (a === '*' || a.endsWith(':*')) out.push(`wildcard action ${a}`);
       if (a.startsWith('secretsmanager:')) {
         if (a !== 'secretsmanager:GetSecretValue') out.push(`secret action ${a}`);
-        for (const r of res) if (!r.endsWith(secret) && !r.includes(`${secret}"`)) out.push(`secret resource ${r}`);
+        for (const r of res) if (!secrets.some((secret) => r.endsWith(secret) || r.includes(`${secret}"`))) out.push(`secret resource ${r}`);
       }
       if (!a.startsWith('dynamodb:')) continue;
       for (const r of res) {
@@ -309,14 +309,23 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(flatten(allowing[0].Resource)).not.toContain('index/*');
   });
 
-  test('the role may read exactly one secret, the stage OAuth app, and nothing else in Secrets Manager', () => {
+  test('the role may read exactly two secrets, the stage OAuth app and the registry GitHub App, one statement each, and nothing else in Secrets Manager', () => {
     const st = statements().filter((s) => acts(s).some((a) => a.startsWith('secretsmanager:')));
-    expect(st).toHaveLength(1);
-    expect(acts(st[0])).toEqual(['secretsmanager:GetSecretValue']);
-    const res = flatten(st[0].Resource);
-    expect(res).toContain(`secret:mopm/${stage}/github-oauth-??????`);
-    expect(res).not.toContain('"*"');
-    expect(([] as any[]).concat(st[0].Resource)).toHaveLength(1);
+    expect(st).toHaveLength(2);
+    const bySid = (sid: string) => st.find((s) => s.Sid === sid);
+    for (const [sid, name] of [['ReadGitHubOAuthSecret', 'github-oauth'], ['ReadGitHubAppSecret', 'github-app']] as const) {
+      const one = bySid(sid);
+      expect(one).toBeDefined();
+      expect(acts(one)).toEqual(['secretsmanager:GetSecretValue']);
+      expect(([] as any[]).concat(one.Resource)).toHaveLength(1);
+      expect(flatten(one.Resource)).toContain(`secret:mopm/${stage}/${name}-??????`);
+      expect(flatten(one.Resource)).not.toContain('"*"');
+    }
+    // The App secret's name is derived from the stage by the function (service/api/src/http/app-secret.ts): no environment
+    // variable configures it, and nothing carries its value.
+    for (const fn of Object.values(t.findResources('AWS::Lambda::Function'))) {
+      expect(Object.keys((fn as any).Properties?.Environment?.Variables ?? {})).not.toContain('MOPM_APP_SECRET_NAME');
+    }
     t.hasResourceProperties('AWS::Lambda::Function', {
       Environment: { Variables: Match.objectLike({ MOPM_OAUTH_SECRET_NAME: `mopm/${stage}/github-oauth`, MOPM_REQUIRE_2FA: 'true' }) },
     });
@@ -423,6 +432,8 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       'Query on every tokens index': withExtra({ Action: 'dynamodb:Query', Resource: `${tbl('tokens')}/index/*` }),
       'secret read widened to every secret': withExtra({ Action: 'secretsmanager:GetSecretValue', Resource: '*' }),
       'a second secret': withExtra({ Action: 'secretsmanager:GetSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/e2e/test-identity-??????` }),
+      'a third secret under the stage prefix': withExtra({ Action: 'secretsmanager:GetSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/github-app-extra-??????` }),
+      'App secret write': withExtra({ Action: 'secretsmanager:PutSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/github-app-??????` }),
       'secret write': withExtra({ Action: 'secretsmanager:PutSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/github-oauth-??????` }),
     };
     expect(policyViolations(stage, base)).toEqual([]);
@@ -593,4 +604,15 @@ test('no stage allows another stage\'s origin (the three origin lists are pairwi
   const all = origins.flat();
   expect(new Set(all).size).toBe(all.length);
   expect(all.sort()).toEqual(['https://beta.mopm.dev', 'https://gamma.mopm.dev', 'https://mopm.dev']);
+});
+
+// The API derives the App secret's name from its stage (no setting names it); the IAM grant above uses config.ts's rule. The
+// two definitions must be the same rule, or the function would be denied its own secret.
+test('the GitHub App secret the API reads is the one its role may read, on every stage', () => {
+  const src = fs.readFileSync(path.resolve(__dirname, '../../../api/src/http/app-secret.ts'), 'utf8');
+  const m = /export const appSecretName = \(stage: string\): string => `([^`]*)`;/.exec(src);
+  expect(m).not.toBeNull();
+  for (const stage of STAGES) expect(m![1]!.replace('${stage}', stage)).toBe(appSecretName(stage));
+  // A different rule in the API is caught: the same check on a changed copy fails.
+  expect(m![1]!.replace('github-app', 'github-app2').replace('${stage}', 'beta')).not.toBe(appSecretName('beta'));
 });

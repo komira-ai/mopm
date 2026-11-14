@@ -5,10 +5,12 @@ import {
   parseCiPublishers,
   DeviceLogin,
   DynamoAuthStore,
+  DynamoMembershipPassStore,
   DynamoNamespaceStore,
   GithubJwtVerifier,
   HttpGitHubApi,
   type NamespaceAccess,
+  OrgMembership,
   OidcExchange,
   ownedPackagesFrom,
   TokenService,
@@ -20,6 +22,7 @@ import type { Store } from '../store';
 import type { V2Deps } from './v2-routes';
 import type { Flags } from '../publish/ports';
 import type { AuthServices } from './auth-routes';
+import { appSecretName, SecretGitHubAppApi } from './app-secret';
 import { OAuthSecretSource, readSecretFromAws, type SecretReader } from './oauth-secret';
 import { route, type RouterDeps, type Stage } from './router';
 
@@ -101,19 +104,41 @@ export function packagesInFrom(registry: Pick<Store, 'searchPackages'>): (namesp
 
 /**
  * What `/api/v2` needs (src/http/v2-routes.ts). `getMe` and `createToken` need the auth tables, so they are wired with login
- * (MOPM_OAUTH_SECRET_NAME); `createPackage` with the publish side. No GitHub App is configured yet: `createNamespace`
- * answers `unavailable`.
+ * (MOPM_OAUTH_SECRET_NAME); `createPackage` with the publish side; `createNamespace` with the organization check
+ * (`membership`, built by `membershipFor`; while the stage's GitHub App secret is absent `createNamespace` answers `unavailable`).
  */
-export function configureV2(stage: Stage, doc: DocClient, env: NodeJS.ProcessEnv, registry: Store, access: NamespaceAccess, creates: V2Deps['creates']): V2Deps {
+export function configureV2(
+  stage: Stage,
+  doc: DocClient,
+  env: NodeJS.ProcessEnv,
+  registry: Store,
+  access: NamespaceAccess,
+  creates: V2Deps['creates'],
+  membership?: OrgMembership,
+): V2Deps {
   const namespaces = new DynamoNamespaceStore(doc, authTablesFor(stage).namespaces);
   return {
     access,
     namespaces,
     ...(creates ? { creates } : {}),
+    ...(membership ? { membership } : {}),
     ...(env.MOPM_OAUTH_SECRET_NAME
       ? { tokens: new TokenServiceV2({ store: new DynamoAuthStore(doc, authTablesFor(stage)), access, packagesIn: packagesInFrom(registry) }) }
       : {}),
   };
+}
+
+/**
+ * The organization membership check. Its GitHub App credentials are the stage's secret `appSecretName(stage)`, a name derived
+ * from the stage, not configured. The secret is read on the first organization question, not here; while it is absent or
+ * malformed that question answers `unavailable`, and everything else is served.
+ */
+export function membershipFor(stage: Stage, doc: DocClient, read: SecretReader = readSecretFromAws): OrgMembership {
+  return new OrgMembership({
+    app: new SecretGitHubAppApi({ secretId: appSecretName(stage), read }),
+    passes: new DynamoMembershipPassStore(doc, authTablesFor(stage).membership_passes),
+    now: () => new Date(),
+  });
 }
 
 function configure(): Configured {
@@ -122,7 +147,8 @@ function configure(): Configured {
   const flags = flagsFor(process.env, doc, stage);
   const envReadOnly = process.env.MOPM_READ_ONLY === 'true';
   const store = new DynamoStore(doc, tablesFor(stage));
-  const access = namespaceAccessFor(doc, stage);
+  const membership = membershipFor(stage, doc);
+  const access = namespaceAccessFor(doc, stage, membership);
   const publish = publishApiFor(process.env, doc, stage, flags, access);
   return {
     deps: {
@@ -133,7 +159,7 @@ function configure(): Configured {
       readOnly: envReadOnly,
       publish,
       auth: configureAuth(stage, doc, process.env),
-      v2: configureV2(stage, doc, process.env, store, access, publish?.creates),
+      v2: configureV2(stage, doc, process.env, store, access, publish?.creates, membership),
       ...(process.env.MOPM_API_DOMAIN && process.env.MOPM_CHANNEL_DOMAIN
         ? { indexConfig: { apiDomain: process.env.MOPM_API_DOMAIN, channelDomain: process.env.MOPM_CHANNEL_DOMAIN } }
         : {}),

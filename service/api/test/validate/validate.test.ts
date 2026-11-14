@@ -5,7 +5,7 @@ import fc from 'fast-check';
 import { DEFAULT_LIMITS } from '../../src/validate/limits';
 import { validatePackage, RULE_TO_REJECTION } from '../../src/validate';
 import type { PublishExpectation, RejectionCode, RuleCode, ValidatorOptions, Verdict } from '../../src/validate';
-import { METADATA_SCHEMA_VERSION, NATIVE_KINDS, NATIVE_MODES, SONAME_PATTERN, EXCLUSIVE_PATTERN } from '../../src/validate/metadata';
+import { FULL_NAME_SCHEMA_VERSION, METADATA_SCHEMA_VERSION, NATIVE_KINDS, NATIVE_MODES, SONAME_PATTERN, EXCLUSIVE_PATTERN } from '../../src/validate/metadata';
 import { buildConda, buildTarBz2, bzip2, tar, zip, zst, zstdRleBomb } from './builder';
 import type { Built, Spec } from './builder';
 
@@ -513,7 +513,7 @@ describe('the verdict codes are the contract', () => {
   });
   test('the constants the validator hand-codes match spec/package-metadata.schema.json', () => {
     const schema = JSON.parse(readFileSync(join(__dirname, '../../../../spec/package-metadata.schema.json'), 'utf8'));
-    expect(schema.properties.schema.enum).toContain(METADATA_SCHEMA_VERSION);
+    expect(schema.properties.schema.enum).toEqual([METADATA_SCHEMA_VERSION, FULL_NAME_SCHEMA_VERSION]);
     expect(schema.required).toEqual(['schema', 'name']);
     const native = schema.properties.native.items;
     expect(native.required).toEqual(['id', 'soname']);

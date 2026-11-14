@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { indexKey, TAKEDOWNS_KEY } from '../index-files';
+import { indexKey, TAKEDOWNS_KEY, TAKEDOWNS_V2_KEY } from '../index-files';
 
 /**
  * The reader of the static sparse index (spec/index.md): `GET /index/<aa>/<bb>/<name>` and `GET /index/takedowns.json`
- * answer with the bytes stored under the same key of the channel bucket. (`/index/config.json` is not here: it is built
+ * (version 1, flat names), `GET /index/v2/<aa>/<bb>/<namespace>/<name>` and `GET /index/v2/takedowns.json` (version 2,
+ * full names) answer with the bytes stored under the same key of the channel bucket. (`/index/config.json` is not here: it is built
  * from code by the API router and is never an object.)
  */
 export interface IndexObjects {
@@ -25,15 +26,31 @@ export interface IndexResponse {
 }
 
 const FILE = /^\/index\/([a-z0-9_]{2})\/([a-z0-9_]{2})\/([a-z][a-z0-9_]{1,63})$/;
+// The directories of version 2 are the namespace's first four characters, so they may hold a `-`.
+const FILE_V2 = /^\/index\/v2\/([a-z0-9_-]{2})\/([a-z0-9_-]{2})\/([a-z0-9-]{1,39})\/([a-z][a-z0-9_]{1,63})$/;
 export const TAKEDOWNS_PATH = '/index/takedowns.json';
+export const TAKEDOWNS_V2_PATH = '/index/v2/takedowns.json';
 
 /**
- * The key a request path names, or undefined. The name must be a package name and the two directories must be the ones
- * derived from it. The key is recomputed from the validated name, never copied from the request. Raw, undecoded: an
+ * The key a request path names, or undefined. The name must be a package name (a full name for `/index/v2/`) and the two
+ * directories must be the ones derived from it. The key is recomputed from the validated name, never copied from the request. Raw, undecoded: an
  * encoded dot or slash does not match the character classes, so it is refused rather than interpreted.
  */
 export function keyOfPath(path: string): { key: string; contentType: string } | undefined {
   if (path === TAKEDOWNS_PATH) return { key: TAKEDOWNS_KEY, contentType: 'application/json' };
+  if (path === TAKEDOWNS_V2_PATH) return { key: TAKEDOWNS_V2_KEY, contentType: 'application/json' };
+  const v2 = FILE_V2.exec(path);
+  if (v2) {
+    const [, aa, bb, namespace, name] = v2 as unknown as [string, string, string, string, string];
+    // indexKey validates the whole full name (the namespace grammar and length) and derives the directories.
+    let key: string;
+    try {
+      key = indexKey(`${namespace}/${name}`);
+    } catch {
+      return undefined;
+    }
+    return key === `index/v2/${aa}/${bb}/${namespace}/${name}` ? { key, contentType: 'application/x-ndjson' } : undefined;
+  }
   const m = FILE.exec(path);
   if (!m) return undefined;
   const [, aa, bb, name] = m as unknown as [string, string, string, string];

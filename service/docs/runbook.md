@@ -29,6 +29,23 @@ old pinned-hash test guarded; the pin moved to `service/api/test/publish/empty-i
 - Rebuilding is always safe and idempotent: the writer derives the file from the registry's records. After a manual change to
   a version row, send the same message for each affected subdir.
 
+## Namespace channels
+
+Each namespace is its own channel (`spec/channel.md`): a package `<namespace>/<name>` has its files at
+`<namespace>/<subdir>/mojo-<namespace>.<name>-<version>-<build>.conda` and is listed in `<namespace>/<subdir>/repodata.json(.zst)`.
+The root `<subdir>/repodata.json` lists only packages of flat names (on prod, once the held deletion has run, only the kept
+`kci_*` ones). Everything above about a subdir holds for a "repodata directory": `<subdir>` at the root, `<namespace>/<subdir>`
+in a namespace (`service/api/src/channel-paths.ts`).
+
+- To rebuild a namespace's subdir, send `{"type":"index","subdir":"<namespace>/<subdir>"}` with `MessageGroupId`
+  `<namespace>/<subdir>`. The first job of a namespace creates that namespace's other three empty subdirs.
+- A full name's sparse-index file is `index/v2/<aa>/<bb>/<namespace>/<name>` (`aa`, `bb` from the namespace), and
+  `{"type":"index_takedowns"}` writes both `index/takedowns.json` (flat names) and `index/v2/takedowns.json` (full names).
+- Deploy order: the publish stack's index writer must run the namespace-aware code before an API or validator sends a
+  `<namespace>/<subdir>` message. An older writer logs such a message as an unknown subdir and drops it, leaving that publish
+  `indexing`; it is fixed by a rebuild message once the new writer runs. `deploy.yml` deploys every stack in one run (`cdk deploy
+  --all`); only a namespace publish inside the minutes between two stacks can be caught.
+
 ## The sparse index writer
 
 The index writer also owns `index/<aa>/<bb>/<name>` (one NDJSON file per package, `spec/index.md`) and
@@ -103,8 +120,8 @@ dead-letter queue and the indexer's logs (`index_takedowns` is logged on success
 `POST /packages/{name}/{version}/files` (begin) reserves the version number as `pending`, records the declared file
 and answers with a presigned PUT into `quarantine/<upload id>/<file>` pinned to the exact length and sha256.
 `POST .../publish` (commit) takes the version lock, queues the publish on `mopm-<stage>-validate.fifo` (group = package) and answers 202.
-The validator Lambda reads the quarantined object, runs the validator, copies the file to `<subdir>/<file>`,
-publishes the version, and queues `mopm-<stage>-index.fifo` (group = subdir); the index writer rebuilds the subdir's
+The validator Lambda reads the quarantined object, runs the validator, copies the file to `<subdir>/<file>` (`<namespace>/<subdir>/<file>` for a full name),
+publishes the version, and queues `mopm-<stage>-index.fifo` (group = the repodata directory); the index writer rebuilds that directory's
 repodata and invalidates its two CloudFront paths. The job that lists the last subdir marks the publish `index_pending` and
 queues one `index_pkg` message (group `pkg:<name>`); that job writes the package's sparse-index file and only then marks the
 publish `published`. See "The sparse index writer" below.
@@ -123,7 +140,7 @@ publish `published`. See "The sparse index writer" below.
   committed to validation (`POST /groups/{id}/commit`, which `read_only` also refuses), validated, committed and then released into the
   channel's files and made `visible` (the chain, below).
 - **The chain after a commit.** A commit makes the group's members show in the API at once. The channel's files follow, one step at a
-  time, and each step is a message: a repodata hop for each subdir the group has files in (index queue, FIFO group = the subdir), then
+  time, and each step is a message: a repodata hop for each repodata directory the group has files in (index queue, FIFO group = the directory), then
   an index hop for each member in the header's `write_order` (dependencies first; a dependency cycle is ordered by name; FIFO group
   `pkg:<name>`), then the flip (group queue): every member row becomes `published` at the commit time (a yanked or taken-down member is
   left as it is) and the header becomes `visible`, which also takes it out of the sweeper's index. A hop first sets its gate on the

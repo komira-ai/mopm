@@ -30,7 +30,7 @@ function configure(): IndexerDeps {
 }
 
 /**
- * SQS (FIFO, group = subdir, `pkg:<name>` or `takedowns`, batch size 1) -> the index writer. Errors are rethrown:
+ * SQS (FIFO, group = the repodata directory (`<subdir>` or `<namespace>/<subdir>`), `pkg:<name>` or `takedowns`, batch size 1) -> the index writer. Errors are rethrown:
  * retry, then the DLQ and its alarm. A message of no known kind is logged and dropped.
  */
 export const handler = async (event: SqsEvent): Promise<void> => {

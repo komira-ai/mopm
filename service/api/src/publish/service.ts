@@ -17,6 +17,7 @@ import type { DisplayMeta } from './display';
 import { invalidRequest, PublishError, uploadInvalid } from './errors';
 import { expireIfDue, isDead, orphanFree } from './group-lifecycle';
 import type { ObjectStore, Presigner, PublishStore, Queue } from './ports';
+import { repodataDirsOf } from '../channel-paths';
 import { packageRev } from '../index-files';
 import { sendIndexPkg } from './indexer';
 import type { Actor, IndexMessage, PublishRecord, UploadRecord, ValidateMessage } from './types';
@@ -32,7 +33,7 @@ export interface PublishServiceDeps {
   objects: Pick<ObjectStore, 'head'>;
   presigner: Presigner;
   validateQueue: Queue;
-  /** The index writer's queue (one FIFO group per subdir). Yank and unyank send to it; absent, they answer `unavailable`. */
+  /** The index writer's queue (one FIFO group per repodata directory). Yank and unyank send to it; absent, they answer `unavailable`. */
   indexQueue?: Queue;
   config: PublishConfig;
   now?: () => Date;
@@ -351,8 +352,8 @@ export class PublishService {
   // --- yank -----------------------------------------------------------------------------------------------
 
   /**
-   * setYanked: yank (with a reason) or unyank a version, then ask the index writer to rewrite every subdir the
-   * version has files in, so repodata `packages.conda` and `removed` follow the state, and the package's
+   * setYanked: yank (with a reason) or unyank a version, then ask the index writer to rewrite every repodata directory
+   * (src/channel-paths.ts) the version has files in, so repodata `packages.conda` and `removed` follow the state, and the package's
    * sparse-index file (a yank queues it at once; an unyank chains it after the last subdir, see IndexMessage.then). The state change comes first
    * (it is the truth); the messages come after it, and they are sent again on a repeat of the same request, so a
    * crash between the two leaves a state that the next identical request repairs. A repeat of a change already made
@@ -378,7 +379,7 @@ export class PublishService {
       detail: detailVia(p, { by: handle, ...(req.yanked ? { reason: req.reason } : {}) }),
     };
     const after = await this.d.registry.updateVersion(name, version, req.yanked ? { type: 'yank', reason: req.reason } : { type: 'unyank' }, audit);
-    const subdirs = [...new Set(after.files.map((f) => f.subdir))].sort();
+    const subdirs = repodataDirsOf(name, after.files.map((f) => f.subdir));
     const rev = packageRev(await this.d.registry.listVersions(name));
     if (!req.yanked && subdirs.length > 0) {
       // Unyank: the sparse index must not say `published` before repodata lists the file (the CLI fails closed on
