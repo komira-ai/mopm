@@ -12,6 +12,8 @@
 
 const std = @import("std");
 const model = @import("model.zig");
+/// The part of the generated file that does not depend on the API, written verbatim.
+const tail = @import("zig_client_tail.zig").text;
 const Allocator = std.mem.Allocator;
 
 pub const Error = Allocator.Error || error{Invalid};
@@ -450,93 +452,6 @@ fn literal(arena: Allocator, text: []const u8) Allocator.Error![]const u8 {
     try out.append('"');
     return out.items;
 }
-
-/// The part of the generated file that does not depend on the API, written verbatim.
-pub const tail =
-    \\/// `api_root` (the registry's `/api/v2` URL) followed by the operation's target.
-    \\pub fn url(comptime Op: type, arena: Allocator, api_root: []const u8, p: Op.Params) ![]const u8 {
-    \\    return std.mem.concat(arena, u8, &.{ api_root, try Op.target(arena, p) });
-    \\}
-    \\
-    \\/// The answer's JSON as the operation's response; fields this client does not know are ignored.
-    \\pub fn decode(comptime Op: type, arena: Allocator, text: []const u8) !Op.Response {
-    \\    if (Op.Response == void) {
-    \\        return {};
-    \\    } else {
-    \\        return std.json.parseFromSliceLeaky(Op.Response, arena, text, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
-    \\    }
-    \\}
-    \\
-    \\/// The registry's error body, or null when `text` is not one.
-    \\pub fn decodeError(arena: Allocator, text: []const u8) ?Error {
-    \\    return std.json.parseFromSliceLeaky(Error, arena, text, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch null;
-    \\}
-    \\
-    \\/// Whether `status` is one of the operation's success statuses.
-    \\pub fn isSuccess(comptime Op: type, status: u16) bool {
-    \\    for (Op.success) |s| if (s == status) return true;
-    \\    return false;
-    \\}
-    \\
-    \\/// Writes `s` with every byte but `A-Za-z0-9-._~` as `%XX` (upper case hex).
-    \\pub fn percentEncode(w: anytype, s: []const u8) !void {
-    \\    const hex = "0123456789ABCDEF";
-    \\    for (s) |c| {
-    \\        if (std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~') {
-    \\            try w.writeByte(c);
-    \\        } else {
-    \\            try w.writeAll(&[_]u8{ '%', hex[c >> 4], hex[c & 15] });
-    \\        }
-    \\    }
-    \\}
-    \\
-    \\const TailOp = struct {
-    \\    const Params = struct { name: []const u8 };
-    \\    const Response = struct { count: i64 };
-    \\    const success = [_]u16{ 200, 201 };
-    \\    fn target(arena: Allocator, p: Params) Allocator.Error![]const u8 {
-    \\        var out = std.ArrayList(u8).init(arena);
-    \\        try out.appendSlice("/x/");
-    \\        try percentEncode(out.writer(), p.name);
-    \\        return out.toOwnedSlice();
-    \\    }
-    \\};
-    \\
-    \\const TailVoidOp = struct {
-    \\    const Response = void;
-    \\};
-    \\
-    \\test "percentEncode keeps unreserved bytes and encodes the rest in upper case" {
-    \\    var out = std.ArrayList(u8).init(std.testing.allocator);
-    \\    defer out.deinit();
-    \\    try percentEncode(out.writer(), "aZ09-._~ /?&=\xc3\xa9");
-    \\    try std.testing.expectEqualStrings("aZ09-._~%20%2F%3F%26%3D%C3%A9", out.items);
-    \\}
-    \\
-    \\test "url joins the api root and the target" {
-    \\    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    \\    defer arena_state.deinit();
-    \\    const got = try url(TailOp, arena_state.allocator(), "http://h/api/v2", .{ .name = "a b" });
-    \\    try std.testing.expectEqualStrings("http://h/api/v2/x/a%20b", got);
-    \\}
-    \\
-    \\test "decode ignores unknown fields and a void response has no body" {
-    \\    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    \\    defer arena_state.deinit();
-    \\    const got = try decode(TailOp, arena_state.allocator(), "{\"count\":3,\"extra\":{\"a\":[1]}}");
-    \\    try std.testing.expectEqual(@as(i64, 3), got.count);
-    \\    try decode(TailVoidOp, arena_state.allocator(), "");
-    \\    try std.testing.expectError(error.UnexpectedEndOfInput, decode(TailOp, arena_state.allocator(), "{\"count\":"));
-    \\}
-    \\
-    \\test "isSuccess is true for the operation's success statuses only" {
-    \\    try std.testing.expect(isSuccess(TailOp, 200));
-    \\    try std.testing.expect(isSuccess(TailOp, 201));
-    \\    try std.testing.expect(!isSuccess(TailOp, 204));
-    \\    try std.testing.expect(!isSuccess(TailOp, 404));
-    \\}
-    \\
-;
 
 // Tests. `test_api` is a small API with one of every shape the writer handles.
 

@@ -8,7 +8,9 @@ const gen = @import("api_gen/gen.zig");
 test {
     _ = @import("api_gen/model.zig");
     _ = @import("api_gen/proto.zig");
+    _ = @import("api_gen/proto_test.zig");
     _ = @import("api_gen/openapi.zig");
+    _ = @import("api_gen/openapi_test.zig");
     _ = @import("api_gen/typescript.zig");
     _ = @import("api_gen/zig_client.zig");
 }
