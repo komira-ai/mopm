@@ -21,6 +21,49 @@ pub fn split(full: []const u8) ?FullName {
     return .{ .namespace = full[0..slash], .name = full[slash + 1 ..] };
 }
 
+/// The import name of `full`: the part after its `/` (`json` for `komira-ai/json`), or the whole of a bare name.
+/// Mojo imports a package by it; it names the package's library directory, its `lib/mojo/<import name>.mojoc` and
+/// `lib/mojo/<import name>.mopm.json`, and a unit's output.
+pub fn importName(full: []const u8) []const u8 {
+    return if (split(full)) |f| f.name else full;
+}
+
+/// The namespace of `full`: the part before its `/`, or "" for a bare name.
+pub fn namespaceOf(full: []const u8) []const u8 {
+    return if (split(full)) |f| f.namespace else "";
+}
+
+/// The conda package name of `full`, `mojo-<namespace>.<name>` (spec/channel.md, "Package naming"): `.` is in neither
+/// part of a full name, so the conda name maps back to one full name (`fullOfConda`).
+pub fn condaName(arena: Allocator, full: []const u8) Allocator.Error![]const u8 {
+    const f = split(full) orelse return std.fmt.allocPrint(arena, "mojo-{s}", .{full});
+    return std.fmt.allocPrint(arena, "mojo-{s}.{s}", .{ f.namespace, f.name });
+}
+
+/// The full name a conda name `mojo-<namespace>.<name>` stands for, or null when `conda` is not of that shape.
+pub fn fullOfConda(arena: Allocator, conda: []const u8) Allocator.Error!?[]const u8 {
+    const prefix = "mojo-";
+    if (!std.mem.startsWith(u8, conda, prefix)) return null;
+    const rest = conda[prefix.len..];
+    const dot = std.mem.indexOfScalar(u8, rest, '.') orelse return null;
+    const full = try std.fmt.allocPrint(arena, "{s}/{s}", .{ rest[0..dot], rest[dot + 1 ..] });
+    return if (isFullName(full)) full else null;
+}
+
+/// Whether `full` has the grammar of a full name, `^[a-z0-9]+(-[a-z0-9]+)*/[a-z][a-z0-9_]{1,63}$` with a namespace of at
+/// most 39 characters. Nothing else is checked (keywords, reserved names): a reader of the index, a lock or package
+/// metadata checks the shape, and the manifest checks the rest (`fullNameProblem`).
+pub fn isFullName(full: []const u8) bool {
+    const f = split(full) orelse return false;
+    if (f.namespace.len > max_namespace_len or !isNamespaceShape(f.namespace)) return false;
+    if (f.name.len < min_name_len or f.name.len > max_name_len) return false;
+    if (!std.ascii.isLower(f.name[0])) return false;
+    for (f.name) |b| {
+        if (!std.ascii.isLower(b) and !std.ascii.isDigit(b) and b != '_') return false;
+    }
+    return true;
+}
+
 /// Mojo's keywords: a package of one of these names cannot be imported.
 const keywords = [_][]const u8{
     "alias",  "and",      "as",       "assert", "async",  "await",  "borrowed", "break",
@@ -34,10 +77,10 @@ const keywords = [_][]const u8{
 
 /// The builtins a package of that name would shadow when imported.
 const builtins = [_][]const u8{
-    "abs",   "all",    "any", "bool", "chr",   "divmod", "enumerate",  "float",
-    "hash",  "input",  "int", "isinstance", "iter", "len", "list", "max",
-    "min",   "next",   "ord", "pow",  "print", "range",  "repr",       "reversed",
-    "round", "sorted", "str", "sum",  "type",  "zip",
+    "abs",   "all",    "any", "bool",       "chr",   "divmod", "enumerate", "float",
+    "hash",  "input",  "int", "isinstance", "iter",  "len",    "list",      "max",
+    "min",   "next",   "ord", "pow",        "print", "range",  "repr",      "reversed",
+    "round", "sorted", "str", "sum",        "type",  "zip",
 };
 
 /// Names kept for mopm and Modular: never a package's import name.
@@ -289,4 +332,42 @@ test "a dependency may have a standard library module's name, which its caller w
     try expectProblem("dependency 'example/std': the import name 'std' is reserved; choose another name", try fullNameProblem(a, "dependency", "example/std", .allow));
     // Refused when the caller says so; upper case is then not fixable by lower-casing alone.
     try expectProblem("dependency 'Example/collections': the namespace 'Example' is not a GitHub login in lower case (letters, digits and single hyphens between them)", try fullNameProblem(a, "dependency", "Example/collections", .refuse));
+}
+
+test "the import name, namespace and conda name of a full name, and back" {
+    var st = std.heap.ArenaAllocator.init(testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    try testing.expectEqualStrings("json", importName("komira-ai/json"));
+    try testing.expectEqualStrings("json", importName("json"));
+    try testing.expectEqualStrings("komira-ai", namespaceOf("komira-ai/json"));
+    try testing.expectEqualStrings("", namespaceOf("json"));
+    try testing.expectEqualStrings("mojo-komira-ai.json", try condaName(a, "komira-ai/json"));
+    try testing.expectEqualStrings("mojo-a.b_c", try condaName(a, "a/b_c"));
+    try testing.expectEqualStrings("komira-ai/json", (try fullOfConda(a, "mojo-komira-ai.json")).?);
+    // Not of the shape: no prefix, no '.', a part outside its grammar, the toolchain's own conda names.
+    for ([_][]const u8{ "json", "mojo-json", "mojo-compiler", "mojo-.json", "mojo-Komira.json", "mojo-a.b.c", "mojo-a.1x" }) |bad| {
+        if (try fullOfConda(a, bad)) |got| {
+            std.debug.print("{s} read as {s}\n", .{ bad, got });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "the grammar of a full name: one '/', a namespace of at most 39, a name of 2 to 64" {
+    for ([_][]const u8{ "komira-ai/json", "a/bc", "a1-b2-c3/x_9", "a" ** 39 ++ "/json", "ns/" ++ "a" ** 64 }) |ok| {
+        if (!isFullName(ok)) {
+            std.debug.print("refused {s}\n", .{ok});
+            return error.TestUnexpectedResult;
+        }
+    }
+    for ([_][]const u8{
+        "json",     "/json", "ns/",      "Ns/json",  "ns/Json", "-ns/json",  "ns-/json",           "n--s/json",
+        "n_s/json", "ns/j",  "ns/1json", "ns/js-on", "ns/a/b",  "ns.x/json", "a" ** 40 ++ "/json", "ns/" ++ "a" ** 65,
+    }) |bad| {
+        if (isFullName(bad)) {
+            std.debug.print("accepted {s}\n", .{bad});
+            return error.TestUnexpectedResult;
+        }
+    }
 }

@@ -100,7 +100,7 @@ test "a stamped environment that no longer matches its stamp is repaired; no sta
     // A changed native library of a locked package.
     try h.writeFile(c.path(&.{ b.env_dir, "lib/libgreet.so" }), "tampered\n");
     r = try c.run(b.app, try c.cat(&.{ &.{ "sync", "--locked" }, b.with_t }));
-    rep.same("a changed native library: stderr names both hashes", try c.fmt("mopm sync: .mopm/env does not match its stamp (lib/libgreet.so of mojo-greet 1.0.0 has sha256 {s}; mopm.lock pins {s}; refused); installing it again\n", .{ try cp.sha256Hex(a, "tampered\n"), try cp.sha256Hex(a, lib_bytes) }), r.stderr);
+    rep.same("a changed native library: stderr names both hashes", try c.fmt("mopm sync: .mopm/env does not match its stamp (lib/libgreet.so of mojo-example.greet 1.0.0 has sha256 {s}; mopm.lock pins {s}; refused); installing it again\n", .{ try cp.sha256Hex(a, "tampered\n"), try cp.sha256Hex(a, lib_bytes) }), r.stderr);
     rep.check("a changed native library is the pinned one again", r.code == 0 and std.mem.eql(u8, try c.fingerprint(b.env_dir), b.print), c.detail(r));
 
     // No stamp, then a garbled one: a plain install with nothing on stderr.

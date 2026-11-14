@@ -92,7 +92,8 @@ pub const Yanker = struct {
     arena: Allocator,
     net: gp.Net,
     console: *gp.Console,
-    api_url: []const u8,
+    /// The registry's version 2 API root (`api_v2_url`).
+    api_v2_url: []const u8,
     token: []const u8,
     group: []const u8,
     unyank: bool,
@@ -100,7 +101,7 @@ pub const Yanker = struct {
     wait_secs: i64,
 
     fn call(y: *Yanker, method: std.http.Method, path: []const u8, body: ?[]const u8) ?http.Answer {
-        const url = std.fmt.allocPrint(y.arena, "{s}{s}", .{ y.api_url, path }) catch return null;
+        const url = std.fmt.allocPrint(y.arena, "{s}{s}", .{ y.api_v2_url, path }) catch return null;
         return y.net.vtable.request(y.net.ptr, y.arena, method, url, .{ .token = y.token, .body = body }) catch |e| {
             y.console.fail("{s} {s}: {s}\n", .{ @tagName(method), path, @errorName(e) });
             return null;
@@ -206,7 +207,7 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
         .arena = arena,
         .net = gp.realNet(),
         .console = &console,
-        .api_url = s.config.api_url,
+        .api_v2_url = s.config.api_v2_url,
         .token = token,
         .group = flags.group,
         .unyank = flags.unyank,
@@ -231,7 +232,7 @@ fn yanker(a: Allocator, script: *gt.Script, console: *gp.Console, unyank: bool) 
         .arena = a,
         .net = script.net(),
         .console = console,
-        .api_url = "http://127.0.0.1:1/api/v1",
+        .api_v2_url = "http://127.0.0.1:1/api/v2",
         .token = "mopm_test_token",
         .group = gid,
         .unyank = unyank,

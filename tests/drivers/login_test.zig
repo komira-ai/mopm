@@ -11,10 +11,11 @@ const std = @import("std");
 const h = @import("harness.zig");
 const Allocator = std.mem.Allocator;
 
-/// A registry whose config.json names a plain-http, non-loopback API; every
-/// GET gets it. Served from a thread that lives until the process ends.
+/// A registry whose config.json is `body`; every GET gets it. Served from a
+/// thread that lives until the process ends.
 const BadConfig = struct {
     server: std.net.Server,
+    body: []const u8,
 
     fn serve(self: *BadConfig) void {
         while (true) {
@@ -23,13 +24,21 @@ const BadConfig = struct {
             var buf: [8192]u8 = undefined;
             var http = std.http.Server.init(conn, &buf);
             var req = http.receiveHead() catch continue;
-            const body =
-                \\{"index_version":1,"stage":"beta","api_url":"http://registry.example/api/v1","channel_url":"https://conda.example/","min_cli_version":"0.0.1"}
-            ;
-            req.respond(body, .{ .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }}, .keep_alive = false }) catch {};
+            req.respond(self.body, .{ .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }}, .keep_alive = false }) catch {};
         }
     }
 };
+
+/// Serves `body` as every answer from a loopback port; the base URL of that registry.
+fn serveConfig(a: Allocator, body: []const u8) ![]const u8 {
+    const addr = try std.net.Address.parseIp("127.0.0.1", 0);
+    const server = try addr.listen(.{ .reuse_address = true });
+    const bad = try a.create(BadConfig);
+    bad.* = .{ .server = server, .body = body };
+    const thread = try std.Thread.spawn(.{}, BadConfig.serve, .{bad});
+    thread.detach();
+    return std.fmt.allocPrint(a, "http://127.0.0.1:{d}", .{server.listen_address.getPort()});
+}
 
 const Mopm = struct {
     a: Allocator,
@@ -113,15 +122,24 @@ test "mopm login, whoami and logout against the fake registry" {
     rep.check("an unknown registry name is refused", r.code == 1 and h.contains(r.stderr, "a registry is prod, gamma, beta, or a URL"), r.stderr);
 
     {
-        const addr = try std.net.Address.parseIp("127.0.0.1", 0);
-        const server = try addr.listen(.{ .reuse_address = true });
-        const bad = try a.create(BadConfig);
-        bad.* = .{ .server = server };
-        const thread = try std.Thread.spawn(.{}, BadConfig.serve, .{bad});
-        thread.detach();
-        const url = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}", .{server.listen_address.getPort()});
+        const url = try serveConfig(a,
+            \\{"index_version":1,"index_versions":[1,2],"stage":"beta","api_url":"http://registry.example/api/v1","api_v2_url":"https://registry.example/api/v2","channel_url":"https://conda.example/","min_cli_version":"0.0.1"}
+        );
         r = try m.run(&.{ "whoami", "--registry", url, "--config-dir", conf });
         rep.check("a config.json that names a non-loopback http URL is refused", r.code == 1 and h.contains(r.stderr, "plain http only to a loopback host"), r.stderr);
+    }
+
+    // A registry that serves index version 1 only has no namespaced packages: refused, naming it.
+    for ([_][]const u8{
+        \\{"index_version":1,"stage":"beta","api_url":"https://registry.example/api/v1","channel_url":"https://conda.example/","min_cli_version":"0.0.1"}
+        ,
+        \\{"index_version":1,"index_versions":[1],"stage":"beta","api_url":"https://registry.example/api/v1","channel_url":"https://conda.example/","min_cli_version":"0.0.1"}
+        ,
+    }) |body| {
+        const url = try serveConfig(a, body);
+        r = try m.run(&.{ "whoami", "--registry", url, "--config-dir", conf });
+        const want = try std.fmt.allocPrint(a, "{s}: the registry at {s} serves no namespaced packages (index version 2); it is older than this mopm\n", .{ url, url });
+        rep.check("a registry whose config.json lacks index version 2 is refused, naming the registry", r.code == 1 and h.contains(r.stderr, want), r.stderr);
     }
 
     r = try m.run(&whoami_args);

@@ -10,7 +10,7 @@
 //!   workspace  four packages in one repository, joined by path dependencies at two depths, and no [workspace] table
 //!   testing    discovery: bare and self-hosted files, a helper, a test beside the source, an ignored test, a selection
 //!   publish    `mopm pack` and `mopm publish --dry-run` (the .mojoc is a stand-in file; no registry is contacted)
-//!   toolchain  `[package] mojo`: a version 2 lock with the toolchain closure hash, the unit graph, an unpinned version
+//!   toolchain  `[package] mojo`: a version 3 lock with the toolchain closure hash, the unit graph, an unpinned version
 //!
 //! The last part of each example is a refusal, so that a check that cannot fail is not what holds the page: the same
 //! package with one thing changed must be refused, with the message the page quotes.
@@ -189,7 +189,7 @@ fn workspace(cx: *Cx) !void {
     try cx.prints("workspace: mopm tree", "workspace", &.{"tree"}, "workspace/expected/tree.txt");
     // Members below the root are what a build system takes: the unit graph has a unit for each.
     const plan = try cx.run("workspace", &.{ "plan", "--unit-graph", "--locked" });
-    const units = [_][]const u8{ "\"id\": \"util@0.1.0#mojo1.0.0/lib\"", "\"id\": \"core@0.1.0#mojo1.0.0/lib\"", "\"id\": \"testkit@0.1.0#mojo1.0.0/lib\"", "\"id\": \"app@0.2.0#mojo1.0.0/bin:run\"" };
+    const units = [_][]const u8{ "\"id\": \"example/util@0.1.0#mojo1.0.0/lib\"", "\"id\": \"example/core@0.1.0#mojo1.0.0/lib\"", "\"id\": \"example/testkit@0.1.0#mojo1.0.0/lib\"", "\"id\": \"example/app@0.2.0#mojo1.0.0/bin:run\"" };
     var all = plan.code == 0;
     for (units) |u| all = all and h.contains(plan.stdout, u);
     cx.rep.check("workspace: mopm plan has a unit for each member and for the program", all, try cx.fmt("exit {d}: {s}{s}", .{ plan.code, plan.stdout, plan.stderr }));
@@ -236,7 +236,7 @@ fn publish(cx: *Cx) !void {
     const pack = try cx.run("publish", &.{ "pack", "--compiler", "1.0.0", "--mojoc", "linux-64=slug.mojoc", "-o", "dist" });
     cx.rep.check("publish: mopm pack exits 0", pack.code == 0 and pack.stderr.len == 0, try cx.fmt("exit {d}: {s}", .{ pack.code, pack.stderr }));
     cx.rep.same("publish: mopm pack names the file and its digests", try cx.committed("publish/expected/pack.txt"), try scrub(cx.a, pack.stdout));
-    const conda = try cx.copied("publish/dist/linux-64/mojo-slug-1.2.0-mojo1.0.0_0.conda");
+    const conda = try cx.copied("publish/dist/linux-64/mojo-example.slug-1.2.0-mojo1.0.0_0.conda");
     cx.rep.check("publish: the .conda is written where pack said", conda.len > 0, "empty");
 
     const dry = try cx.run("publish", &.{ "publish", "--compiler", "1.0.0", "--mojoc", "linux-64=slug.mojoc", "--dry-run", "--registry", dead_registry });
@@ -285,9 +285,9 @@ fn publish(cx: *Cx) !void {
 
 fn toolchain(cx: *Cx) !void {
     try cx.prints("toolchain: mopm lock", "toolchain", &.{ "lock", "--registry", dead_registry }, "toolchain/expected/lock.txt");
-    cx.rep.same("toolchain: a version 2 lock with the closure hash of the pinned toolchain", try cx.committed("toolchain/expected/mopm.lock"), try scrub(cx.a, try cx.copied("toolchain/mopm.lock")));
+    cx.rep.same("toolchain: a version 3 lock with the closure hash of the pinned toolchain", try cx.committed("toolchain/expected/mopm.lock"), try scrub(cx.a, try cx.copied("toolchain/mopm.lock")));
     const plan = try cx.run("toolchain", &.{ "plan", "--unit-graph", "--locked" });
-    cx.rep.check("toolchain: mopm plan prints the unit graph of the lock", plan.code == 0 and h.contains(plan.stdout, "\"unit_graph\": 2") and h.contains(plan.stdout, "\"id\": \"pinned@0.1.0#mojo1.0.0/lib\"") and h.contains(plan.stdout, "\"closure_sha256\": \""), try cx.fmt("exit {d}: {s}{s}", .{ plan.code, plan.stdout, plan.stderr }));
+    cx.rep.check("toolchain: mopm plan prints the unit graph of the lock", plan.code == 0 and h.contains(plan.stdout, "\"unit_graph\": 6") and h.contains(plan.stdout, "\"id\": \"example/pinned@0.1.0#mojo1.0.0/lib\"") and h.contains(plan.stdout, "\"closure_sha256\": \""), try cx.fmt("exit {d}: {s}{s}", .{ plan.code, plan.stdout, plan.stderr }));
     // A Mojo version mopm pins no toolchain for cannot be listed.
     try cx.variant("toolchain_unpinned", "toolchain/mopm.toml", "mojo = [\"1.0.0\"]", "mojo = [\"1.0.0\", \"1.1.0\"]");
     try cx.put("toolchain_unpinned/src/pinned/__init__.mojo", try cx.committed("toolchain/src/pinned/__init__.mojo"));

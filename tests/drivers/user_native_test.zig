@@ -98,6 +98,7 @@ fn stepWith(a: Allocator, rep: *h.Report, tag: []const u8, program_output: []con
         .fixture = try h.join(a, &.{ base, "tests/e2e/natws/shimlib" }),
         .registry = fake.base,
         .session = session,
+        .namespace = "native-user",
         .zig = try h.join(a, &.{ try h.toolPathAbs(a, "ZIG_DIR"), "zig" }),
         .mojo_env = prefix,
         .sync_args = &.{ "--toolchain", closure.closure, "--cache", try h.join(a, &.{ work, "cache" }) },

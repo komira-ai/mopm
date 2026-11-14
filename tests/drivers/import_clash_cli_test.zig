@@ -6,7 +6,9 @@
 //!     registry dependency of the same import name, with exit 1, the full message and each package's path from
 //!     the root; an existing mopm.lock keeps its bytes, and none is written where there was none;
 //!   - `mopm tree` and `mopm sync --locked` refuse a lock whose closure holds the root's import name a second time,
-//!     with exit 1 and the message, and leave the lock as it was; the same project with a sound lock draws its tree.
+//!     with exit 1 and the message, and leave the lock as it was; the same project with a sound lock draws its tree;
+//!   - a lock of version 1 or 2 predates namespaces: `mopm tree` and `mopm sync --locked` refuse it with exit 1 and
+//!     the message that says so, and leave it as it was; `mopm lock` takes it for no lock and writes a version 3 one.
 //! Every refusal comes before any request: no case needs a registry or a network.
 //!
 //! Run by Buck2 (//:import_clash_cli) and by `zig build test`; MOPM is the built CLI.
@@ -51,14 +53,18 @@ fn pkg(a: Allocator, full: []const u8, version: []const u8, deps: []const u8) ![
     return std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n{s}", .{ full, version, deps });
 }
 
-fn entry(a: Allocator, name: []const u8, version: []const u8, comptime sha: u8, deps: []const u8) ![]u8 {
+/// A registry entry of a version 3 lock for the full name `full`, in linux-64, built for mojo 1.0.0.
+fn entry(a: Allocator, full: []const u8, version: []const u8, comptime sha: u8, deps: []const u8) ![]u8 {
+    const slash = std.mem.indexOfScalar(u8, full, '/').?;
+    const ns = full[0..slash];
+    const import_name = full[slash + 1 ..];
     return std.fmt.allocPrint(a,
-        \\    {{"name": "{s}", "version": "{s}", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/", "url": "https://conda.mopm.dev/linux-64/mojo-{s}-{s}-mojo1.0.0_0.conda", "sha256": "{s}", "size": 1000, "mojo": "1.0.0"{s}}}
-    , .{ name, version, name, version, &([_]u8{sha} ** 64), deps });
+        \\    {{"name": "{s}", "version": "{s}", "subdir": "linux-64", "channel": "https://conda.mopm.dev/{s}/", "artifacts": {{"1.0.0": {{"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/{s}/linux-64/mojo-{s}.{s}-{s}-mojo1.0.0_0.conda", "sha256": "{s}", "size": 1000}}}}{s}}}
+    , .{ full, version, ns, ns, ns, import_name, version, &([_]u8{sha} ** 64), deps });
 }
 
 fn lockOf(a: Allocator, entries: []const []const u8) ![]u8 {
-    return std.fmt.allocPrint(a, "{{\n  \"lock_version\": 1,\n  \"toolchain\": {{\"mojo\": \"1.0.0\"}},\n  \"channels\": [\"https://conda.mopm.dev/\"],\n  \"packages\": [\n{s}\n  ]\n}}\n", .{try std.mem.join(a, ",\n", entries)});
+    return std.fmt.allocPrint(a, "{{\n  \"lock_version\": 3,\n  \"mojo\": [\"1.0.0\"],\n  \"toolchain\": {{}},\n  \"channels\": [\"https://conda.mopm.dev/\"],\n  \"packages\": [\n{s}\n  ]\n}}\n", .{try std.mem.join(a, ",\n", entries)});
 }
 
 fn expectRefused(ran: h.Ran, want: []const u8) !void {
@@ -101,13 +107,13 @@ test "mopm lock, tree and sync refuse two packages of one import name, with path
         tail }));
     try std.testing.expect(!w.exists("path_registry/mopm.lock"));
 
-    // 3. A lock that pins a second json under the root example/json: tree and sync read it and refuse.
+    // 3. A lock that pins other/json under the root example/json: tree and sync read it and refuse.
     try w.put("lock_read/mopm.toml", try pkg(a, "example/json", "0.1.0", "\"example/http\" = \"0.3\"\n"));
-    const clash_lock = try lockOf(a, &.{ try entry(a, "http", "0.3.0", 'a', ", \"deps\": [\"json\"]"), try entry(a, "json", "1.2.0", 'b', "") });
+    const clash_lock = try lockOf(a, &.{ try entry(a, "example/http", "0.3.0", 'a', ", \"deps\": [\"other/json\"]"), try entry(a, "other/json", "1.2.0", 'b', "") });
     try w.put("lock_read/mopm.lock", clash_lock);
     const rows =
         "  example/json 0.1.0     example/json\n" ++
-        "  json 1.2.0             example/json -> example/http 0.3.0 -> json 1.2.0\n" ++
+        "  other/json 1.2.0       example/json -> example/http 0.3.0 -> other/json 1.2.0\n" ++
         tail;
     try expectRefused(try w.mopmIn("lock_read", &.{"tree"}), try std.mem.concat(a, u8, &.{ try std.fmt.allocPrint(a, head_fmt, .{ "tree", "json" }), rows }));
     try expectRefused(try w.mopmIn("lock_read", &.{ "sync", "--locked" }), try std.mem.concat(a, u8, &.{ try std.fmt.allocPrint(a, head_fmt, .{ "sync", "json" }), rows }));
@@ -115,11 +121,41 @@ test "mopm lock, tree and sync refuse two packages of one import name, with path
 
     // 4. The same lock without the second json: tree draws it.
     try w.put("sound/mopm.toml", try pkg(a, "example/json", "0.1.0", "\"example/http\" = \"0.3\"\n"));
-    try w.put("sound/mopm.lock", try lockOf(a, &.{try entry(a, "http", "0.3.0", 'a', "")}));
+    try w.put("sound/mopm.lock", try lockOf(a, &.{try entry(a, "example/http", "0.3.0", 'a', "")}));
     const ok = try w.mopmIn("sound", &.{"tree"});
     if (ok.signaled or ok.code != 0) {
         std.debug.print("tree on a sound lock: exit {d}; output:\n{s}\n", .{ ok.code, ok.text });
         return error.WrongExit;
     }
-    try std.testing.expect(h.contains(ok.text, "http 0.3.0"));
+    try std.testing.expect(h.contains(ok.text, "example/http 0.3.0"));
+}
+
+test "a lock of version 1 or 2 predates namespaces: tree and sync --locked refuse it, lock rewrites it as version 3" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var w = World{ .a = a, .mopm = try h.toolPath(a, "MOPM"), .root = try h.tmpPath(a, &tmp), .env = try h.environ(a) };
+
+    const v1 = "{\"lock_version\": 1, \"toolchain\": {\"mojo\": \"1.0.0\"}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": []}\n";
+    const v2 = "{\"lock_version\": 2, \"mojo\": [\"1.0.0\"], \"toolchain\": {}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": []}\n";
+    for ([_][]const u8{ v1, v2 }, [_][]const u8{ "1", "2" }, [_][]const u8{ "old_v1", "old_v2" }) |text, version, dir| {
+        const lock_rel = try h.join(a, &.{ dir, "mopm.lock" });
+        try w.put(try h.join(a, &.{ dir, "mopm.toml" }), try pkg(a, "example/app", "1.0.0", ""));
+        try w.put(lock_rel, text);
+        const stale = try std.fmt.allocPrint(a, "mopm {{s}}: mopm.lock predates namespaces (lock_version {s}); run 'mopm lock'\n", .{version});
+        try expectRefused(try w.mopmIn(dir, &.{"tree"}), try std.mem.replaceOwned(u8, a, stale, "{s}", "tree"));
+        try expectRefused(try w.mopmIn(dir, &.{ "sync", "--locked" }), try std.mem.replaceOwned(u8, a, stale, "{s}", "sync"));
+        try std.testing.expectEqualStrings(text, try w.read(lock_rel));
+
+        // No registry is asked: the project has no registry dependency. The lock written is the one of the
+        // no-package project tests/mojo_env keeps.
+        const locked = try w.mopmIn(dir, &.{"lock"});
+        if (locked.signaled or locked.code != 0) {
+            std.debug.print("lock on a version {s} lock: exit {d}; output:\n{s}\n", .{ version, locked.code, locked.text });
+            return error.WrongExit;
+        }
+        try std.testing.expectEqualStrings(try h.readFile(a, "tests/mojo_env/mopm.lock"), try w.read(lock_rel));
+    }
 }

@@ -11,7 +11,7 @@ const gp = @import("group_publish.zig");
 const plan_mod = @import("group_plan.zig");
 const stage = @import("stage_cmd.zig");
 
-const api = "http://registry.test/api/v1";
+const api = "http://registry.test/api/v2";
 const not_found = "{\"error\":{\"code\":\"version_not_found\",\"message\":\"no such version\",\"hint\":\"\"}}";
 
 fn request(_: *anyopaque, _: Allocator, _: std.http.Method, _: []const u8, _: http.Options) anyerror!http.Answer {
@@ -65,7 +65,7 @@ fn runStage(fx: Fx, out: []const u8, packages: []const []const u8) !Ran {
     var console = gp.Console.init(fx.a, null);
     var unused: u8 = 0;
     const net = gp.Net{ .ptr = &unused, .vtable = &.{ .request = request, .sleep = sleep, .now = now } };
-    const code = try stage.run(.{ .arena = fx.a, .net = net, .console = &console, .api_url = api, .flags = .{
+    const code = try stage.run(.{ .arena = fx.a, .net = net, .console = &console, .api_v2_url = api, .flags = .{
         .workspace_root = try std.fs.path.join(fx.a, &.{ fx.root, "ws" }),
         .packages = packages,
         .artifacts = try std.fs.path.join(fx.a, &.{ fx.root, "art" }),
@@ -101,9 +101,9 @@ test "stage with no names leaves out a member with publish = false and says so" 
     try fx.member("pkg_helper", "publish = false\n", "", "", false);
     const r = try runStage(fx, "out", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
-    try std.testing.expectEqualStrings("pkg_lib", try planNames(fx, "out"));
-    try std.testing.expect(has(r.out, "not staged pkg_helper 1.0.0: publish = false\n"));
-    try std.testing.expect(!has(r.out, "not staged pkg_lib"));
+    try std.testing.expectEqualStrings("example/pkg_lib", try planNames(fx, "out"));
+    try std.testing.expect(has(r.out, "not staged example/pkg_helper 1.0.0: publish = false\n"));
+    try std.testing.expect(!has(r.out, "not staged example/pkg_lib"));
     try std.testing.expect(has(r.out, "staged 1 members"));
 }
 
@@ -115,13 +115,13 @@ test "stage refuses a named package with publish = false, writes nothing, and a 
     defer fx.deinit();
     try fx.member("pkg_lib", "", "", try fx.dep("pkg_helper"), true);
     try fx.member("pkg_helper", "publish = false\n", "", "", true);
-    const refused = try runStage(fx, "refused", &.{"pkg_helper"});
+    const refused = try runStage(fx, "refused", &.{"example/pkg_helper"});
     try std.testing.expectEqual(@as(u8, 1), refused.code);
-    try std.testing.expect(has(refused.err, "pkg_helper has publish = false"));
+    try std.testing.expect(has(refused.err, "example/pkg_helper has publish = false"));
     try std.testing.expect(!fx.exists("refused"));
-    const ok = try runStage(fx, "named", &.{"pkg_lib"});
+    const ok = try runStage(fx, "named", &.{"example/pkg_lib"});
     try std.testing.expectEqual(@as(u8, 0), ok.code);
-    try std.testing.expectEqualStrings("pkg_lib", try planNames(fx, "named"));
+    try std.testing.expectEqualStrings("example/pkg_lib", try planNames(fx, "named"));
     try std.testing.expect(fx.exists("named"));
     try std.testing.expect(!has(ok.out, "not staged"));
 }
@@ -141,7 +141,7 @@ test "stage refuses a publishable member that needs a publish = false one, direc
     try std.testing.expect(has(all.err, "example/pkg_mid is staged for publishing but depends on example/pkg_helper, which has publish = false"));
     try std.testing.expect(!fx.exists("all"));
     // Naming the top reaches the same member through its closure.
-    const top = try runStage(fx, "top", &.{"pkg_top"});
+    const top = try runStage(fx, "top", &.{"example/pkg_top"});
     try std.testing.expectEqual(@as(u8, 1), top.code);
     try std.testing.expect(has(top.err, "pkg_mid") and has(top.err, "pkg_helper"));
     try std.testing.expect(!fx.exists("top"));
@@ -158,7 +158,7 @@ test "stage with no publish key anywhere stages every member, in the same order,
     try fx.member("pkg_a", "", try fx.dep("pkg_b"), "", true);
     const r = try runStage(fx, "out", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
-    try std.testing.expectEqualStrings("pkg_c,pkg_b,pkg_a", try planNames(fx, "out"));
+    try std.testing.expectEqualStrings("example/pkg_c,example/pkg_b,example/pkg_a", try planNames(fx, "out"));
     try std.testing.expect(!has(r.out, "not staged"));
 }
 

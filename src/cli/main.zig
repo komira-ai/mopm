@@ -645,6 +645,7 @@ test {
     _ = @import("group_stage_token.zig");
     _ = stage_cmd;
     _ = @import("stage_test.zig");
+    _ = @import("plan_v2_test.zig");
     _ = @import("publish_false_test.zig");
     _ = @import("bin_run.zig");
     _ = build_cmd;

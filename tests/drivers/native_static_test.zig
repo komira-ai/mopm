@@ -147,30 +147,33 @@ fn valueOf(a: Allocator, text: []const u8, key: []const u8) ![]const u8 {
     return "";
 }
 
-/// What a package of the registry is, as `mopm pack` made it.
+/// The namespace of both packages: its index files are `index/v2/ex/am/example/<name>` and its channel is `channel/example/<subdir>/`.
+const namespace = "example";
+
+/// What a package of the registry is, as `mopm pack` made it. `name` is the import name; the full name is `example/<name>`
+/// and the conda name `mojo-example.<name>`; `deps` is the JSON of the index record's dependencies (full names).
 const Pack = struct { name: []const u8, soname: []const u8, deps: []const u8, file: []const u8, bytes: []const u8, sha256: []const u8, manifest_sha256: []const u8 };
 
 fn writeRegistryFiles(a: Allocator, root: []const u8, base: []const u8, packs: []const Pack) !void {
     var entries = std.ArrayList(u8).init(a);
     for (packs) |p| {
-        const rec = try h.fmt(a,
-            "{{\"v\":1,\"name\":\"{s}\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"state\":\"published\",\"published_at\":\"2026-10-13T12:00:00Z\"," ++
+        const rec = try h.fmt(
+            a,
+            "{{\"v\":2,\"name\":\"{s}/{s}\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"state\":\"published\",\"published_at\":\"2026-10-13T12:00:00Z\"," ++
                 "\"requires_mojo\":\"==1.0.0\",\"deps\":[{s}],\"native\":[{{\"id\":\"{s}\",\"soname\":\"{s}\"}}]," ++
-                "\"files\":[{{\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d},\"subdir\":\"linux-64\",\"url\":\"{s}/channel/linux-64/{s}\"}}]," ++
+                "\"files\":[{{\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d},\"subdir\":\"linux-64\",\"url\":\"{s}/channel/{s}/linux-64/{s}\"}}]," ++
                 "\"manifest_sha256\":\"{s}\"}}\n",
-            .{ p.name, p.deps, p.name, p.soname, p.file, p.sha256, p.bytes.len, base, p.file, p.manifest_sha256 },
+            .{ namespace, p.name, p.deps, p.name, p.soname, p.file, p.sha256, p.bytes.len, base, namespace, p.file, p.manifest_sha256 },
         );
-        var padded: [4]u8 = "____".*;
-        for (p.name[0..@min(p.name.len, 4)], 0..) |b, i| padded[i] = b;
-        try h.writeFile(try h.fmt(a, "{s}/index/{s}/{s}/{s}", .{ root, padded[0..2], padded[2..4], p.name }), rec);
-        try h.writeFile(try h.fmt(a, "{s}/channel/linux-64/{s}", .{ root, p.file }), p.bytes);
+        try h.writeFile(try h.fmt(a, "{s}/index/v2/{s}/{s}/{s}/{s}", .{ root, namespace[0..2], namespace[2..4], namespace, p.name }), rec);
+        try h.writeFile(try h.fmt(a, "{s}/channel/{s}/linux-64/{s}", .{ root, namespace, p.file }), p.bytes);
         if (entries.items.len > 0) try entries.append(',');
         try entries.writer().print(
-            "\"{s}\":{{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"mojo-{s}\",\"sha256\":\"{s}\",\"size\":{d},\"subdir\":\"linux-64\",\"version\":\"1.0.0\"}}",
-            .{ p.file, p.name, p.sha256, p.bytes.len },
+            "\"{s}\":{{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"mojo-{s}.{s}\",\"sha256\":\"{s}\",\"size\":{d},\"subdir\":\"linux-64\",\"version\":\"1.0.0\"}}",
+            .{ p.file, namespace, p.name, p.sha256, p.bytes.len },
         );
     }
-    try h.writeFile(try h.fmt(a, "{s}/channel/linux-64/repodata.json", .{root}), try h.fmt(a, "{{\"info\":{{\"subdir\":\"linux-64\"}},\"packages\":{{}},\"packages.conda\":{{{s}}},\"removed\":[]}}\n", .{entries.items}));
+    try h.writeFile(try h.fmt(a, "{s}/channel/{s}/linux-64/repodata.json", .{ root, namespace }), try h.fmt(a, "{{\"info\":{{\"subdir\":\"linux-64\"}},\"packages\":{{}},\"packages.conda\":{{{s}}},\"removed\":[]}}\n", .{entries.items}));
 }
 
 test "native_static: an archive in an empty-module package, from mopm pack to a linked test (spikes of the natives design)" {
@@ -257,7 +260,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try cwd.makePath(deps);
     const lib_out = try h.join(a, &.{ work, "lib_out" });
     for ([_][]const u8{ "base_sys", "probe_sys" }) |name| {
-        r = try c.mopmRun(ws, &.{ "unit", "build", "--unit", try h.fmt(a, "{s}@1.0.0#mojo1.0.0/lib", .{name}), "--graph", ws_graph, "--out", lib_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.fmt(a, "{s}/stage_{s}", .{ work, name }) });
+        r = try c.mopmRun(ws, &.{ "unit", "build", "--unit", try h.fmt(a, "{s}/{s}@1.0.0#mojo1.0.0/lib", .{ namespace, name }), "--graph", ws_graph, "--out", lib_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.fmt(a, "{s}/stage_{s}", .{ work, name }) });
         try c.must(try h.fmt(a, "mopm unit build: the empty module {s} through the real `mojo precompile`", .{name}), r);
         const mojoc = try h.join(a, &.{ lib_out, try h.fmt(a, "{s}.mojoc", .{name}) });
         try cwd.copyFile(mojoc, cwd, try h.join(a, &.{ deps, try h.fmt(a, "{s}.mojoc", .{name}) }), .{});
@@ -271,16 +274,16 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const Spec = struct { name: []const u8, manifest: []const u8, soname: []const u8, lib: []const u8, deps: []const u8 };
     for ([_]Spec{
         .{ .name = "base_sys", .manifest = "base/mopm.toml", .soname = "libbase_sys.a", .lib = base_ar, .deps = "" },
-        .{ .name = "probe_sys", .manifest = "mopm.toml", .soname = "libprobe_sys.a", .lib = probe_ar, .deps = "{\"name\":\"base_sys\",\"range\":\"1.0\"}" },
+        .{ .name = "probe_sys", .manifest = "mopm.toml", .soname = "libprobe_sys.a", .lib = probe_ar, .deps = "{\"name\":\"example/base_sys\",\"range\":\"1.0\"}" },
     }) |s| {
         r = try c.mopmRun(ws, &.{
-            "pack",      "--compiler", "1.0.0",
-            "--manifest", s.manifest,  "-o",
-            dist,        "--mojoc",    try h.fmt(a, "linux-64={s}/{s}.mojoc", .{ deps, s.name }),
-            "--native",  try h.fmt(a, "{s}=linux-64:{s}", .{ s.name, s.lib }),
+            "pack",       "--compiler",                                         "1.0.0",
+            "--manifest", s.manifest,                                           "-o",
+            dist,         "--mojoc",                                            try h.fmt(a, "linux-64={s}/{s}.mojoc", .{ deps, s.name }),
+            "--native",   try h.fmt(a, "{s}=linux-64:{s}", .{ s.name, s.lib }),
         });
         try c.must(try h.fmt(a, "mopm pack {s} with its archive", .{s.name}), r);
-        const file = try h.fmt(a, "mojo-{s}-1.0.0-mojo1.0.0_0.conda", .{s.name});
+        const file = try h.fmt(a, "mojo-{s}.{s}-1.0.0-mojo1.0.0_0.conda", .{ namespace, s.name });
         const bytes = try h.readFile(a, try h.join(a, &.{ dist, "linux-64", file }));
         try packs.append(.{ .name = s.name, .soname = s.soname, .deps = s.deps, .file = file, .bytes = bytes, .sha256 = try sha256Hex(a, bytes), .manifest_sha256 = try valueOf(a, r.text, "manifest_sha256") });
     }
@@ -297,11 +300,13 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const lock_text = try h.readFile(a, try h.join(a, &.{ app, "mopm.lock" }));
     const probe_sha = try sha256Hex(a, probe_bytes);
     const base_sha = try sha256Hex(a, base_bytes);
-    rep.check("the lock pins libprobe_sys.a: the sha256 of the archive, its kind and its need", h.contains(lock_text, try h.fmt(a,
+    rep.check("the lock pins libprobe_sys.a: the sha256 of the archive, its kind and its need", h.contains(lock_text, try h.fmt(
+        a,
         "\"soname\": \"libprobe_sys.a\",\n          \"sha256\": \"{s}\",\n          \"kind\": \"static\",\n          \"needs\": [\n            \"libbase_sys.a\"\n          ]",
         .{probe_sha},
     )), lock_text);
-    rep.check("the lock pins libbase_sys.a: the sha256 of the archive and its kind", h.contains(lock_text, try h.fmt(a,
+    rep.check("the lock pins libbase_sys.a: the sha256 of the archive and its kind", h.contains(lock_text, try h.fmt(
+        a,
         "\"soname\": \"libbase_sys.a\",\n          \"sha256\": \"{s}\",\n          \"kind\": \"static\"",
         .{base_sha},
     )), lock_text);
@@ -310,7 +315,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const graph_path = try h.join(a, &.{ work, "graph.json" });
     r = try c.mopmRun(app, &.{ "plan", "--unit-graph", "--locked", "-o", graph_path });
     try c.must("mopm plan --unit-graph of the consumer", r);
-    const test_id = "app@1.0.0#mojo1.0.0/test:tests/test_probe.mojo";
+    const test_id = "example/app@1.0.0#mojo1.0.0/test:tests/test_probe.mojo";
     const graph = try h.parseJson(a, try h.readFile(a, graph_path));
     var order = std.ArrayList(u8).init(a);
     for ((graph.object.get("units") orelse return error.BadGraph).array.items) |u| {

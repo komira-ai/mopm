@@ -12,6 +12,11 @@ const fs = std.fs;
 
 pub const mojo = "1.0.0";
 pub const build_tag = "mojo" ++ mojo ++ "_0";
+/// The namespace every package of these drivers is in: `example/<name>` is `mojo-example.<name>` in conda and is served
+/// from the channel `channel/example/<subdir>/`.
+pub const ns = "example";
+/// What a package's conda name starts with: `mojo-<namespace>.`.
+pub const conda_prefix = "mojo-" ++ ns ++ ".";
 /// What `.mopm` holds after a sync: the environment, the locked files and the project lock.
 pub const beside = "env,pkgs,sync.lock";
 
@@ -181,31 +186,32 @@ pub const Cx = struct {
         return d;
     }
 
-    /// `<name>` 1.0.0 in the fake's sparse index and channel (spec/index.md, spec/channel.md), with `data` as its file.
+    /// `example/<name>` 1.0.0 in the fake's sparse index (index version 2) and in the channel of its namespace
+    /// (spec/index.md, spec/channel.md), with `data` as its file. `name` is the import name.
     pub fn publish(c: *Cx, name: []const u8, data: []const u8) !void {
-        const file = try c.fmt("mojo-{s}-1.0.0-{s}.conda", .{ name, build_tag });
+        const file = try c.fmt(conda_prefix ++ "{s}-1.0.0-{s}.conda", .{ name, build_tag });
         const sha = try cp.sha256Hex(c.a, data);
         const rec = try c.fmt(
-            \\{{"build":"{s}","deps":[],"files":[{{"filename":"{s}","sha256":"{s}","size":{d},"subdir":"{s}","url":"{s}/channel/{s}/{s}"}}],"manifest_sha256":"{s}","name":"{s}","native":[],"published_at":"2026-10-14T12:00:00Z","requires_mojo":"=={s}","state":"published","v":1,"version":"1.0.0"}}
+            \\{{"build":"{s}","deps":[],"files":[{{"filename":"{s}","sha256":"{s}","size":{d},"subdir":"{s}","url":"{s}/channel/{s}/{s}/{s}"}}],"manifest_sha256":"{s}","name":"{s}/{s}","native":[],"published_at":"2026-11-13T12:00:00Z","requires_mojo":"=={s}","state":"published","v":2,"version":"1.0.0"}}
             \\
-        , .{ build_tag, file, sha, data.len, c.subdir, c.fake.base, c.subdir, file, sha, name, mojo });
-        const index = c.path(&.{ c.fake_dir, "index", name[0..2], name[2..4], name });
+        , .{ build_tag, file, sha, data.len, c.subdir, c.fake.base, ns, c.subdir, file, sha, ns, name, mojo });
+        const index = c.path(&.{ c.fake_dir, "index/v2", ns[0..2], ns[2..4], ns, name });
         try fs.cwd().makePath(std.fs.path.dirname(index).?);
         try h.writeFile(index, rec);
         try c.entries.append(try c.fmt(
-            \\"{s}":{{"build":"{s}","build_number":0,"depends":["mojo-compiler =={s}"],"name":"mojo-{s}","sha256":"{s}","size":{d},"subdir":"{s}","version":"1.0.0"}}
-        , .{ file, build_tag, mojo, name, sha, data.len, c.subdir }));
+            \\"{s}":{{"build":"{s}","build_number":0,"depends":["mojo-compiler =={s}"],"name":"mojo-{s}.{s}","sha256":"{s}","size":{d},"subdir":"{s}","version":"1.0.0"}}
+        , .{ file, build_tag, mojo, ns, name, sha, data.len, c.subdir }));
         const repodata = try c.fmt(
             \\{{"info":{{"subdir":"{s}"}},"packages":{{}},"packages.conda":{{{s}}},"removed":[]}}
             \\
         , .{ c.subdir, try std.mem.join(c.a, ",", c.entries.items) });
         try c.serve(name, data);
-        try h.writeFile(c.path(&.{ c.fake_dir, "channel", c.subdir, "repodata.json" }), repodata);
+        try h.writeFile(c.path(&.{ c.fake_dir, "channel", ns, c.subdir, "repodata.json" }), repodata);
     }
 
-    /// The channel's copy of `<name>` 1.0.0, replaced by `data`.
+    /// The namespace channel's copy of `example/<name>` 1.0.0, replaced by `data`.
     pub fn serve(c: *Cx, name: []const u8, data: []const u8) !void {
-        const p = c.path(&.{ c.fake_dir, "channel", c.subdir, try c.fmt("mojo-{s}-1.0.0-{s}.conda", .{ name, build_tag }) });
+        const p = c.path(&.{ c.fake_dir, "channel", ns, c.subdir, try c.fmt(conda_prefix ++ "{s}-1.0.0-{s}.conda", .{ name, build_tag }) });
         try fs.cwd().makePath(std.fs.path.dirname(p).?);
         try h.writeFile(p, data);
     }
@@ -235,21 +241,21 @@ pub const stand_in_files = [_]cp.Entry{
     .{ .path = "bin/mojo-link", .link = "mojo", .mode = 0o777 },
 };
 
-/// The package `name` 1.0.0 as `mopm pack` lays one out: its metadata, one library, a link to it, and `extra`.
+/// The package `example/<name>` 1.0.0 as `mopm pack` lays one out: its metadata, one library, a link to it, and `extra`.
 pub fn packageOf(a: Allocator, subdir: []const u8, name: []const u8, extra: []const cp.Entry) ![]u8 {
-    const meta = try h.fmt(a, "{{\"deps\": [], \"name\": \"{s}\", \"schema\": 1, \"version\": \"1.0.0\"}}\n", .{name});
+    const meta = try h.fmt(a, "{{\"deps\": [], \"name\": \"" ++ ns ++ "/{s}\", \"schema\": 2, \"version\": \"1.0.0\"}}\n", .{name});
     const base = [_]cp.Entry{
         .{ .path = try h.fmt(a, "lib/mojo/{s}.mopm.json", .{name}), .data = meta },
         .{ .path = try h.fmt(a, "lib/lib{s}.so", .{name}), .data = try h.fmt(a, "the library of {s}\n", .{name}), .mode = 0o755 },
         .{ .path = try h.fmt(a, "lib/lib{s}-current.so", .{name}), .link = try h.fmt(a, "lib{s}.so", .{name}), .mode = 0o777 },
     };
-    return cp.package(a, try h.fmt(a, "mojo-{s}", .{name}), "1.0.0", build_tag, subdir, &.{"mojo-compiler ==" ++ mojo}, try std.mem.concat(a, cp.Entry, &.{ &base, extra }));
+    return cp.package(a, try h.fmt(a, conda_prefix ++ "{s}", .{name}), "1.0.0", build_tag, subdir, &.{"mojo-compiler ==" ++ mojo}, try std.mem.concat(a, cp.Entry, &.{ &base, extra }));
 }
 
 /// A package whose payload holds one whole file and then the start of a second one: the unpack fails in the middle.
 pub fn brokenPackage(a: Allocator, subdir: []const u8) ![]u8 {
-    const stem = "mojo-broken-1.0.0-" ++ build_tag;
-    const meta = "{\"deps\": [], \"name\": \"broken\", \"schema\": 1, \"version\": \"1.0.0\"}\n";
+    const stem = conda_prefix ++ "broken-1.0.0-" ++ build_tag;
+    const meta = "{\"deps\": [], \"name\": \"" ++ ns ++ "/broken\", \"schema\": 2, \"version\": \"1.0.0\"}\n";
     const second = "x" ** 2048;
     const whole = try cp.tar(a, &.{
         .{ .path = "lib/mojo/broken.mopm.json", .data = meta },
@@ -257,7 +263,7 @@ pub fn brokenPackage(a: Allocator, subdir: []const u8) ![]u8 {
     });
     // The first entry (one header, one block of data), the second header, and half of the second file.
     const cut = whole[0 .. 512 + 512 + 512 + 1024];
-    const index = try h.fmt(a, "{{\"build\": \"{s}\", \"build_number\": 0, \"depends\": [], \"name\": \"mojo-broken\", \"subdir\": \"{s}\", \"version\": \"1.0.0\"}}", .{ build_tag, subdir });
+    const index = try h.fmt(a, "{{\"build\": \"{s}\", \"build_number\": 0, \"depends\": [], \"name\": \"" ++ conda_prefix ++ "broken\", \"subdir\": \"{s}\", \"version\": \"1.0.0\"}}", .{ build_tag, subdir });
     const paths = try h.fmt(a, "{{\"paths\": [{{\"_path\": \"lib/mojo/broken.mopm.json\", \"path_type\": \"hardlink\", \"sha256\": \"{s}\", \"size_in_bytes\": {d}}}, {{\"_path\": \"lib/libbroken.so\", \"path_type\": \"hardlink\", \"sha256\": \"{s}\", \"size_in_bytes\": {d}}}], \"paths_version\": 1}}", .{ try cp.sha256Hex(a, meta), meta.len, try cp.sha256Hex(a, second), second.len });
     const info = try cp.tar(a, &.{
         .{ .path = "info/index.json", .data = index },
@@ -310,7 +316,7 @@ pub fn baseline(c: *Cx) !Base {
         .env_dir = env_dir,
         .cache = cache,
         .greet = greet,
-        .greet_file = "mojo-greet-1.0.0-" ++ build_tag ++ ".conda",
+        .greet_file = conda_prefix ++ "greet-1.0.0-" ++ build_tag ++ ".conda",
         .t = t,
         .t2 = t2,
         .reg = reg,
@@ -321,7 +327,7 @@ pub fn baseline(c: *Cx) !Base {
     };
 }
 
-/// A project manifest that lists its Mojo versions under `[package] mojo`, so `mopm lock` writes a version 2 lock.
+/// A project manifest that lists its Mojo versions under `[package] mojo` (no `[toolchain]` table).
 pub fn projectV2(c: *Cx, name: []const u8, deps: []const u8) ![]const u8 {
     const d = c.path(&.{ c.work, "proj", name });
     try fs.cwd().makePath(d);

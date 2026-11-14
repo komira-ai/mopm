@@ -12,7 +12,8 @@ replays the same API cases against the fake registry.
 
 Both are Zig tests and run on the build farm; there is no Python in them. The
 JSON Schema reader (`tests/drivers/jsonschema.zig`) implements only the
-keywords the schemas use and fails the run, naming the keyword, on any other:
+keywords the schemas use (including `$defs` with `$ref` to `#/$defs/...`, and
+`if`/`then`/`else`) and fails the run, naming the keyword, on any other:
 a schema that starts using a new keyword needs it implemented there first. The
 OpenAPI checks (`openapi_check.zig`) are structural (see its header); they are
 not the full OpenAPI 3.1 meta schema.
@@ -57,13 +58,17 @@ for every operation, a case for every error code and for every rejection code.
 
 | kind | schema | file type |
 |---|---|---|
-| `index-record` | `spec/index-record.schema.json` | `.ndjson`, named after the package |
+| `index-record` | `spec/index-record.schema.json` plus the rules in `spec/index.md` | `.ndjson`, named `<namespace>.<name>.ndjson` after the package `<namespace>/<name>` |
 | `index-config` | `spec/index-config.schema.json` | `.json` |
 | `takedowns` | `spec/takedowns.schema.json` | `.json` |
-| `lock` | `spec/lock.schema.json` plus the rules in `spec/lock.md` | `.json` |
+| `lock` | `spec/lock.schema.json` plus the rules in `spec/lock.md` (lock 3: full names, `artifacts` per Mojo version, channel `<root><namespace>/`, one package per import name) | `.json` |
 
 Everything under `valid/` must pass and everything under `invalid/` must fail.
 Each invalid file has one defect, named by the file name.
+
+The package metadata fixtures under `tests/fixtures` (`<import name>.mopm.json`,
+schema 2: `name` and `deps[].name` are full names) are checked against
+`spec/package-metadata.schema.json`.
 
 ## Adding to the contract
 

@@ -1,14 +1,16 @@
 //! The staged set that `mopm publish --staged <dir>` publishes, and the two records the run keeps beside it
 //! (spec/staged-set.md): `plan.json` (read), `state.json` and `report.json` (written).
 //!
-//! The directory holds a channel layout, `<subdir>/<file>.conda`, and `plan.json`, which names the members in
-//! dependency order and, for each, its action and the sha256 and size of every file. Nothing here talks to a registry.
+//! The directory holds a channel layout, `<subdir>/<file>.conda` (a file is `mojo-<namespace>.<name>-...`), and `plan.json`
+//! (version 2), which names the members, each by its full name `<namespace>/<name>`, in dependency order and, for each, its
+//! action and the sha256 and size of every file. Nothing here talks to a registry.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
 const conda = core.conda;
 const install = core.install;
+const names = core.names;
 
 /// The registry's limits on a group (spec/api/openapi.yaml, `CreateGroupRequest` and `GroupFile`).
 pub const max_members: usize = 500;
@@ -27,6 +29,7 @@ pub const Action = enum { upload, skip, refuse };
 pub const File = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64 };
 
 pub const Member = struct {
+    /// The full name, `<namespace>/<name>`.
     name: []const u8,
     version: []const u8,
     action: Action,
@@ -106,7 +109,8 @@ pub fn parsePlan(arena: Allocator, text: []const u8) Allocator.Error!Parsed {
         .integer => |n| n,
         else => return bad(arena, "has no integer 'version'", .{}),
     };
-    if (v != 1) return bad(arena, "is version {d}; this mopm reads version 1", .{v});
+    if (v == 1) return bad(arena, "is version 1 (it predates namespaces); stage the set again", .{});
+    if (v != 2) return bad(arena, "is version {d}; this mopm reads version 2", .{v});
     const list = switch (top.get("members") orelse std.json.Value{ .null = {} }) {
         .array => |a| a.items,
         else => return bad(arena, "has no 'members' array", .{}),
@@ -120,6 +124,7 @@ pub fn parsePlan(arena: Allocator, text: []const u8) Allocator.Error!Parsed {
             else => return bad(arena, "member {d} is not a JSON object", .{i}),
         };
         const name = str(o, "name") orelse return bad(arena, "member {d} has no 'name'", .{i});
+        if (!names.isFullName(name)) return bad(arena, "member {d} is named '{s}', which is not a full name <namespace>/<name>", .{ i, name });
         const version = str(o, "version") orelse return bad(arena, "{s} has no 'version'", .{name});
         if (!conda.exactVersion(version)) return bad(arena, "{s} has the version '{s}', which is not MAJOR.MINOR.PATCH", .{ name, version });
         for (members.items) |seen| {
@@ -384,7 +389,7 @@ pub const State = struct {
     /// A `--no-commit` run uploaded every file and stopped with the group open: a later run resumes that group, and says so
     /// clearly if the registry has ended it meanwhile (it does not open the group again behind the caller's back).
     staged: bool = false,
-    /// `<package>/<subdir>/<file name>` of each file the registry has taken.
+    /// `<namespace>/<name>/<subdir>/<file name>` of each file the registry has taken.
     uploaded: []const []const u8 = &.{},
 };
 
@@ -462,7 +467,6 @@ pub fn newRunId(arena: Allocator) Allocator.Error![]const u8 {
 const sha_a = "a" ** 64;
 const sha_b = "b" ** 64;
 
-
 // The helpers state what they check in one line each, so a failing test shows the refusal it got or the plan it accepted.
 fn okPlan(a: Allocator, text: []const u8) !Plan {
     const parsed = try parsePlan(a, text);
@@ -476,9 +480,9 @@ fn refused(a: Allocator, text: []const u8, needle: []const u8) !void {
 }
 
 const member_a =
-    \\{"name":"a","version":"1.0.0","action":"upload","manifest_sha256":"
+    \\{"name":"acme/alpha","version":"1.0.0","action":"upload","manifest_sha256":"
 ++ sha_a ++
-    \\","files":[{"subdir":"noarch","filename":"mojo-a-1.0.0-mojo1.0.0_0.conda","sha256":"
+    \\","files":[{"subdir":"noarch","filename":"mojo-acme.alpha-1.0.0-mojo1.0.0_0.conda","sha256":"
 ++ sha_b ++
     \\","size":10}]}
 ;
@@ -487,25 +491,25 @@ test "a plan names its members in order, with their actions and files" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
-    const plan = try okPlan(a, "{\"version\":1,\"members\":[" ++ member_a ++
-        ",{\"name\":\"b\",\"version\":\"2.1.0\",\"action\":\"skip\",\"reason\":\"already published\"}," ++
-        "{\"name\":\"c\",\"version\":\"0.0.1\",\"action\":\"refuse\",\"reason\":\"yanked\"}]}");
+    const plan = try okPlan(a, "{\"version\":2,\"members\":[" ++ member_a ++
+        ",{\"name\":\"acme/beta\",\"version\":\"2.1.0\",\"action\":\"skip\",\"reason\":\"already published\"}," ++
+        "{\"name\":\"acme/gamma\",\"version\":\"0.0.1\",\"action\":\"refuse\",\"reason\":\"yanked\"}]}");
     try std.testing.expectEqual(@as(usize, 3), plan.members.len);
-    try std.testing.expectEqualStrings("a", plan.members[0].name);
+    try std.testing.expectEqualStrings("acme/alpha", plan.members[0].name);
     try std.testing.expectEqual(Action.upload, plan.members[0].action);
-    try std.testing.expectEqualStrings("mojo-a-1.0.0-mojo1.0.0_0.conda", plan.members[0].files[0].filename);
+    try std.testing.expectEqualStrings("mojo-acme.alpha-1.0.0-mojo1.0.0_0.conda", plan.members[0].files[0].filename);
     try std.testing.expectEqual(@as(u64, 10), plan.members[0].files[0].size);
     try std.testing.expectEqualStrings("already published", plan.members[1].reason);
-    try std.testing.expectEqualStrings("c", refusedMember(plan).?.name);
+    try std.testing.expectEqualStrings("acme/gamma", refusedMember(plan).?.name);
     const up = try plan.uploads(a);
     try std.testing.expectEqual(@as(usize, 1), up.len);
     try std.testing.expectEqual(@as(usize, 64), plan.sha256.len);
     // The same bytes are the same plan; one byte more is another.
-    const again = try okPlan(a, "{\"version\":1,\"members\":[" ++ member_a ++ "]}");
+    const again = try okPlan(a, "{\"version\":2,\"members\":[" ++ member_a ++ "]}");
     try std.testing.expect(!std.mem.eql(u8, again.sha256, plan.sha256));
-    try std.testing.expectEqualStrings(again.sha256, (try okPlan(a, "{\"version\":1,\"members\":[" ++ member_a ++ "]}")).sha256);
+    try std.testing.expectEqualStrings(again.sha256, (try okPlan(a, "{\"version\":2,\"members\":[" ++ member_a ++ "]}")).sha256);
     try std.testing.expect(refusedMember(again) == null);
-    const readme = try okPlan(a, "{\"version\":1,\"members\":[" ++ member_a[0 .. member_a.len - 1] ++ ",\"readme\":\"docs/a.md\"}]}");
+    const readme = try okPlan(a, "{\"version\":2,\"members\":[" ++ member_a[0 .. member_a.len - 1] ++ ",\"readme\":\"docs/a.md\"}]}");
     try std.testing.expectEqualStrings("docs/a.md", readme.members[0].readme.?);
 }
 
@@ -513,24 +517,28 @@ test "a plan that is not one is refused, with the reason" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
-    const head = "{\"version\":1,\"members\":[";
-    const file = "{\"subdir\":\"noarch\",\"filename\":\"mojo-a-1.0.0-x.conda\",\"sha256\":\"" ++ sha_b ++ "\",\"size\":10}";
-    const upload = "{\"name\":\"a\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"" ++ sha_a ++ "\",\"files\":[";
+    const head = "{\"version\":2,\"members\":[";
+    const file = "{\"subdir\":\"noarch\",\"filename\":\"mojo-acme.alpha-1.0.0-x.conda\",\"sha256\":\"" ++ sha_b ++ "\",\"size\":10}";
+    const upload = "{\"name\":\"acme/alpha\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"" ++ sha_a ++ "\",\"files\":[";
     try refused(a, "not json", "is not JSON");
     try refused(a, "[]", "not a JSON object");
     try refused(a, "{}", "no integer 'version'");
-    try refused(a, "{\"version\":2,\"members\":[]}", "is version 2");
-    try refused(a, "{\"version\":1}", "no 'members' array");
+    try refused(a, "{\"version\":3,\"members\":[]}", "is version 3; this mopm reads version 2");
+    try std.testing.expectEqualStrings("plan.json: is version 1 (it predates namespaces); stage the set again", (try parsePlan(a, "{\"version\":1,\"members\":[" ++ member_a ++ "]}")).bad);
+    try std.testing.expectEqualStrings("plan.json: member 0 is named 'a', which is not a full name <namespace>/<name>", (try parsePlan(a, head ++ "{\"name\":\"a\",\"version\":\"1.0.0\",\"action\":\"skip\"}]}")).bad);
+    try refused(a, head ++ "{\"name\":\"acme/alpha/b\",\"version\":\"1.0.0\",\"action\":\"skip\"}]}", "which is not a full name");
+    try refused(a, head ++ "{\"name\":\"Acme/alpha\",\"version\":\"1.0.0\",\"action\":\"skip\"}]}", "which is not a full name");
+    try refused(a, "{\"version\":2}", "no 'members' array");
     try refused(a, head ++ "]}", "lists no members");
     try refused(a, head ++ "3]}", "member 0 is not a JSON object");
     try refused(a, head ++ "{}]}", "member 0 has no 'name'");
-    try refused(a, head ++ "{\"name\":\"a\"}]}", "a has no 'version'");
-    try refused(a, head ++ "{\"name\":\"a\",\"version\":\"1.0\"}]}", "not MAJOR.MINOR.PATCH");
-    try refused(a, head ++ "{\"name\":\"a\",\"version\":\"1.0.0\"}]}", "a has no 'action'");
-    try refused(a, head ++ "{\"name\":\"a\",\"version\":\"1.0.0\",\"action\":\"push\"}]}", "the action 'push'");
-    try refused(a, head ++ "{\"name\":\"a\",\"version\":\"1.0.0\",\"action\":\"skip\"},{\"name\":\"a\",\"version\":\"1.0.1\",\"action\":\"skip\"}]}", "lists a twice");
-    try refused(a, head ++ "{\"name\":\"a\",\"version\":\"1.0.0\",\"action\":\"upload\"}]}", "'manifest_sha256'");
-    try refused(a, head ++ "{\"name\":\"a\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"" ++ sha_a ++ "\"}]}", "no 'files' array");
+    try refused(a, head ++ "{\"name\":\"acme/alpha\"}]}", "acme/alpha has no 'version'");
+    try refused(a, head ++ "{\"name\":\"acme/alpha\",\"version\":\"1.0\"}]}", "not MAJOR.MINOR.PATCH");
+    try refused(a, head ++ "{\"name\":\"acme/alpha\",\"version\":\"1.0.0\"}]}", "acme/alpha has no 'action'");
+    try refused(a, head ++ "{\"name\":\"acme/alpha\",\"version\":\"1.0.0\",\"action\":\"push\"}]}", "the action 'push'");
+    try refused(a, head ++ "{\"name\":\"acme/alpha\",\"version\":\"1.0.0\",\"action\":\"skip\"},{\"name\":\"acme/alpha\",\"version\":\"1.0.1\",\"action\":\"skip\"}]}", "lists acme/alpha twice");
+    try refused(a, head ++ "{\"name\":\"acme/alpha\",\"version\":\"1.0.0\",\"action\":\"upload\"}]}", "'manifest_sha256'");
+    try refused(a, head ++ "{\"name\":\"acme/alpha\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"" ++ sha_a ++ "\"}]}", "no 'files' array");
     try refused(a, head ++ upload ++ "]}]}", "lists 0 files");
     try refused(a, head ++ upload ++ "3]}]}", "is not a JSON object");
     try refused(a, head ++ upload ++ "{}]}]}", "the subdir ''");
@@ -541,14 +549,14 @@ test "a plan that is not one is refused, with the reason" {
     try refused(a, head ++ upload ++ "{\"subdir\":\"noarch\",\"filename\":\"x.conda\",\"sha256\":\"" ++ sha_b ++ "\",\"size\":0}]}]}", "has the size 0");
     try refused(a, head ++ upload ++ "{\"subdir\":\"noarch\",\"filename\":\"x.conda\",\"sha256\":\"" ++ sha_b ++ "\",\"size\":100000001}]}]}", "has the size 100000001");
     try refused(a, head ++ upload ++ file ++ "," ++ file ++ "]}]}", "twice");
-    try refused(a, head ++ upload[0 .. upload.len] ++ file ++ "],\"readme\":\"/etc/passwd\"}]}", "not a path below the staged directory");
-    try refused(a, head ++ upload[0 .. upload.len] ++ file ++ "],\"readme\":\"../x.md\"}]}", "not a path below the staged directory");
+    try refused(a, head ++ upload[0..upload.len] ++ file ++ "],\"readme\":\"/etc/passwd\"}]}", "not a path below the staged directory");
+    try refused(a, head ++ upload[0..upload.len] ++ file ++ "],\"readme\":\"../x.md\"}]}", "not a path below the staged directory");
     // More members than a group may hold.
     var many = std.ArrayList(u8).init(a);
     try many.appendSlice(head);
     for (0..max_members + 1) |i| {
         if (i != 0) try many.append(',');
-        try many.writer().print("{{\"name\":\"p{d}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{s}]}}", .{ i, sha_a, file });
+        try many.writer().print("{{\"name\":\"acme/p{d}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{s}]}}", .{ i, sha_a, file });
     }
     try many.appendSlice("]}");
     try refused(a, many.items, "has 501 members to upload");
@@ -565,7 +573,7 @@ test "paths below the directory" {
     try std.testing.expect(belowDir("README.md"));
     try std.testing.expect(belowDir("docs/a/README.md"));
     for ([_][]const u8{ "", "/abs", "../up", "a/../b", "a//b", "./a", "a\\b" }) |p| try std.testing.expect(!belowDir(p));
-    try std.testing.expect(plainName("mojo-a-1.0.0-x.conda"));
+    try std.testing.expect(plainName("mojo-acme.alpha-1.0.0-x.conda"));
     for ([_][]const u8{ "", ".hidden", "a/b", "a\\b", ".." }) |p| try std.testing.expect(!plainName(p));
 }
 
@@ -579,12 +587,12 @@ test "verify finds a missing file, another size, another sha256 and a bad readme
     try tmp.dir.writeFile("noarch/f.conda", "0123456789");
     const sha = try install.sha256Hex(a, "0123456789");
     const text = try std.fmt.allocPrint(a,
-        \\{{"version":1,"members":[{{"name":"a","version":"1.0.0","action":"upload","manifest_sha256":"{s}","readme":"R.md",
+        \\{{"version":2,"members":[{{"name":"acme/alpha","version":"1.0.0","action":"upload","manifest_sha256":"{s}","readme":"R.md",
         \\"files":[{{"subdir":"noarch","filename":"f.conda","sha256":"{s}","size":10}}]}}]}}
     , .{ sha_a, sha });
     const plan = try okPlan(a, text);
     // The readme is missing at first.
-    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "the readme R.md of a: FileNotFound") != null);
+    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "the readme R.md of acme/alpha: FileNotFound") != null);
     try tmp.dir.writeFile("R.md", "# a\n");
     try std.testing.expect((try verify(a, tmp.dir, plan)) == .ok);
     try tmp.dir.writeFile("R.md", "\xff\xfe");
@@ -605,7 +613,7 @@ test "verify finds a missing file, another size, another sha256 and a bad readme
     try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "FileNotFound") != null);
     try std.testing.expect(std.mem.indexOf(u8, (try readChecked(a, tmp.dir, plan.members[0].files[0])).bad, "FileNotFound") != null);
     // Members that are not uploaded are not looked at.
-    const skipped = try okPlan(a, "{\"version\":1,\"members\":[{\"name\":\"a\",\"version\":\"1.0.0\",\"action\":\"skip\"}]}");
+    const skipped = try okPlan(a, "{\"version\":2,\"members\":[{\"name\":\"acme/alpha\",\"version\":\"1.0.0\",\"action\":\"skip\"}]}");
     try std.testing.expect((try verify(a, tmp.dir, skipped)) == .ok);
 }
 
@@ -616,21 +624,21 @@ test "the state and the report are written whole, and the state is read back" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try std.testing.expect((try loadState(a, tmp.dir)) == .none);
-    try saveState(a, tmp.dir, .{ .registry = "http://r/api/v1", .plan_sha256 = sha_a, .group_id = "grp_1", .attempt = 2, .committed = true, .uploaded = &.{"a/noarch/f.conda"} });
+    try saveState(a, tmp.dir, .{ .registry = "http://r/api/v2", .plan_sha256 = sha_a, .group_id = "grp_1", .attempt = 2, .committed = true, .uploaded = &.{"acme/alpha/noarch/f.conda"} });
     const loaded = (try loadState(a, tmp.dir)).ok;
     try std.testing.expectEqualStrings("grp_1", loaded.group_id);
     try std.testing.expectEqual(@as(u32, 2), loaded.attempt);
     try std.testing.expect(loaded.committed);
-    try std.testing.expectEqualStrings("a/noarch/f.conda", loaded.uploaded[0]);
+    try std.testing.expectEqualStrings("acme/alpha/noarch/f.conda", loaded.uploaded[0]);
     try tmp.dir.writeFile(state_name, "{not json");
     try std.testing.expect(std.mem.indexOf(u8, (try loadState(a, tmp.dir)).bad, "not a state file") != null);
     try tmp.dir.deleteFile(state_name);
     try tmp.dir.makeDir(state_name);
     try std.testing.expect((try loadState(a, tmp.dir)) == .bad);
 
-    try saveReport(a, tmp.dir, .{ .run_id = try newRunId(a), .registry = "http://r/api/v1", .outcome = "published", .members = &.{
-        .{ .name = "a", .version = "1.0.0", .outcome = "published", .files = &.{.{ .subdir = "noarch", .filename = "f.conda", .sha256 = sha_b }} },
-        .{ .name = "b", .version = "2.0.0", .outcome = "skipped", .code = "already published" },
+    try saveReport(a, tmp.dir, .{ .run_id = try newRunId(a), .registry = "http://r/api/v2", .outcome = "published", .members = &.{
+        .{ .name = "acme/alpha", .version = "1.0.0", .outcome = "published", .files = &.{.{ .subdir = "noarch", .filename = "f.conda", .sha256 = sha_b }} },
+        .{ .name = "acme/beta", .version = "2.0.0", .outcome = "skipped", .code = "already published" },
     } });
     const text = try tmp.dir.readFileAlloc(a, report_name, 1 << 16);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"outcome\": \"skipped\"") != null);

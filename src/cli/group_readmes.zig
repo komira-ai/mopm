@@ -34,7 +34,7 @@ pub fn hasReadme(entries: []const plan_mod.CommitEntry) bool {
     return false;
 }
 
-/// Whether `GET <api_url>/health` lists `feature`. An answer that is not a success, is not JSON or has no list of names is
+/// Whether `GET <api_v2_url>/health` lists `feature`. An answer that is not a success, is not JSON or has no list of names is
 /// "no"; a request that fails is an error (the GET is repeated by the policy first).
 pub fn takesObjects(arena: Allocator, net: io.Net, api_url: []const u8) anyerror!bool {
     const url = try std.fmt.allocPrint(arena, "{s}/health", .{api_url});

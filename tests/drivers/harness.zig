@@ -257,6 +257,11 @@ pub const Fake = struct {
         return std.fmt.allocPrint(a, "{s}/api/v1", .{self.base});
     }
 
+    /// The root of API version 2, the one every package operation uses.
+    pub fn apiV2(self: Fake, a: Allocator) ![]u8 {
+        return std.fmt.allocPrint(a, "{s}/api/v2", .{self.base});
+    }
+
     /// POST /_fake<path> with a JSON body, the JSON answer.
     pub fn control(self: Fake, a: Allocator, path: []const u8, body: []const u8) !std.json.Value {
         const full = try std.fmt.allocPrint(a, "/_fake{s}", .{path});

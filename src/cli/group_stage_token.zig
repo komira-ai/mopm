@@ -25,13 +25,14 @@ pub fn purposeOf(no_commit: bool, abort: bool) ci_oidc.Purpose {
     return if (no_commit) .stage else .publish;
 }
 
-/// The registry token of an `--oidc` staged run for `purpose`: one identity token, one exchange of the `packages` form. When
+/// The registry token of an `--oidc` staged run for `purpose`: one identity token, one exchange of the `packages` form, sent
+/// to the version 2 API (`api_v2_url`) with the members' full names. When
 /// `purpose` is `stage` and the registry answers a token of another kind, `notes` gets `publish_for_staging_notice` once
 /// (`notes` has a `writeAll`) and the token is returned all the same.
-pub fn token(arena: Allocator, net: gp.Net, act: ci_oidc.Actions, api_url: []const u8, stage: []const u8, uploads: []const plan_mod.Member, purpose: ci_oidc.Purpose, notes: anytype) anyerror!ci_oidc.Result {
+pub fn token(arena: Allocator, net: gp.Net, act: ci_oidc.Actions, api_v2_url: []const u8, stage: []const u8, uploads: []const plan_mod.Member, purpose: ci_oidc.Purpose, notes: anytype) anyerror!ci_oidc.Result {
     const packages = try arena.alloc(ci_oidc.Package, uploads.len);
     for (uploads, packages) |m, *p| p.* = .{ .name = m.name, .version = m.version };
-    switch (try ci_oidc.obtainPackagesFor(arena, net, net.policy, act, api_url, stage, packages, purpose)) {
+    switch (try ci_oidc.obtainPackagesFor(arena, net, net.policy, act, api_v2_url, stage, packages, purpose)) {
         .bad => |why| return .{ .bad = why },
         .ok => |minted| {
             if (purpose == .stage and minted.kind != .stage) try notes.writeAll(publish_for_staging_notice);
@@ -59,9 +60,9 @@ fn exchangeBody(s: *const gt.Script) []const u8 {
 }
 
 const job = ci_oidc.Actions{ .url = "https://pipelines.example/idtoken?api-version=2.0", .token = "request-token" };
-const api = "https://api.beta.mopm.dev/api/v1";
+const api = "https://api.beta.mopm.dev/api/v2";
 const members = [_]plan_mod.Member{
-    .{ .name = "a", .version = "1.0.0", .action = .upload },
+    .{ .name = "acme/aa", .version = "1.0.0", .action = .upload },
 };
 const new_registry = "{\"token\":\"tok\",\"token_kind\":\"stage\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"packages\":[]}";
 const publish_answer = "{\"token\":\"tok\",\"token_kind\":\"publish\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"packages\":[]}";
@@ -88,6 +89,7 @@ test "a staging run against a registry with stage tokens asks for purpose stage,
     const got = try run(a, &f, purposeOf(true, false), &notes);
     try std.testing.expectEqualStrings("tok", got.ok);
     try std.testing.expect(std.mem.indexOf(u8, exchangeBody(&f), "\"purpose\":\"stage\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, exchangeBody(&f), "\"name\":\"acme/aa\"") != null);
     try std.testing.expectEqual(@as(usize, 2), f.seen.items.len);
     try std.testing.expectEqual(@as(usize, 0), notes.items.len);
 }

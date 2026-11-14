@@ -1,22 +1,30 @@
 {
-  "lock_version": 1,
+  "lock_version": 3,
+  "mojo": [
+    "1.0.0"
+  ],
   "toolchain": {
-    "mojo": "1.0.0"
+    "1.0.0": {
+      "linux-64": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
   },
   "channels": [
     "http://127.0.0.1:8080/channel/"
   ],
   "packages": [
     {
-      "name": "http_core",
+      "name": "komira-ai/http_core",
       "version": "1.2.5",
-      "build": "mojo1.0.0_0",
       "subdir": "linux-64",
-      "channel": "http://127.0.0.1:8080/channel/",
-      "url": "http://127.0.0.1:8080/channel/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda",
-      "sha256": "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
-      "size": 1000,
-      "mojo": "1.0.0"
+      "channel": "http://127.0.0.1:8080/channel/komira-ai/",
+      "artifacts": {
+        "1.0.0": {
+          "build": "mojo1.0.0_0",
+          "url": "http://127.0.0.1:8080/channel/komira-ai/linux-64/mojo-komira-ai.http_core-1.2.5-mojo1.0.0_0.conda",
+          "sha256": "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
+          "size": 1000
+        }
+      }
     }
   ]
 }

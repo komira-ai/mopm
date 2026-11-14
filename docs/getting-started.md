@@ -261,7 +261,7 @@ mopm whoami
 
 mojo precompile -I <dep dirs> src/my_pkg -o my_pkg.mojoc    # build the .mojoc yourself (see below)
 
-mopm pack    --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc          # writes dist/<subdir>/mojo-my_pkg-<v>-mojo1.0.0_0.conda
+mopm pack    --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc          # writes dist/<subdir>/mojo-<namespace>.my_pkg-<v>-mojo1.0.0_0.conda
 mopm publish --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc --dry-run # pack and show what would be sent
 mopm publish --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc            # publish to prod
 mopm publish ... --registry beta                                       # prod (default), gamma, beta, or a URL
@@ -319,7 +319,7 @@ tests = ["tests"]
 [package.metadata.some_tool]     # settings for other tools: mopm preserves, never reads
 ```
 
-Use either `[package] mojo` (a list of exact versions; gives a version 2 lock) or `[toolchain] mojo` (the
+Use either `[package] mojo` (a list of exact versions) or `[toolchain] mojo` (the
 older form, a version or a list read as alternatives, locked for the first that resolves; what `mopm new`
 writes), never both. Version requirements follow cargo: `"1.2"`, `"~1.2"`, `"=1.2.3"`, `">=1.2, <1.5"`,
 `"*"`. mopm refuses keys and tables it does not know, so a typo is an error; `mopm metadata` shows exactly how
@@ -336,8 +336,10 @@ archive of each platform with `--native <id>=<subdir>:<file>` (see [configuratio
   to `127.0.0.1`, `[::1]` or `localhost` with a port (for a local or test registry).
 - Credentials are in `credentials.json` under `$XDG_CONFIG_HOME/mopm`, else `~/.config/mopm`; override with
   `--config-dir <dir>`. `MOPM_TOKEN`, when set, wins over a stored login for `publish`.
-- The channel for a project is the registry's channel (`https://conda.mopm.dev/` for prod). The lock records
-  it, and only the root project's choice counts.
+- The channel root for a project is the registry's (`https://conda.mopm.dev/` for prod); each namespace is its own
+  channel below it (`https://conda.mopm.dev/komira-ai/`). The lock records the root, and only the root project's
+  choice counts. A lock written before packages had namespaces (`lock_version` 1 or 2) is rewritten by `mopm lock`;
+  `mopm sync --locked` refuses it.
 
 ### Environment variables
 
@@ -403,7 +405,7 @@ mopm test --retries 3 --format json | jq '.tests[] | select(.status=="flaky") | 
 ```sh
 mopm lock
 mopm plan --unit-graph --locked --mojo 1.0.0 -o graph.json
-mopm unit build --unit 'greeter@0.1.0#mojo1.0.0/lib' --graph graph.json --out out --toolchain <toolchain dir>
+mopm unit build --unit 'example/greeter@0.1.0#mojo1.0.0/lib' --graph graph.json --out out --toolchain <toolchain dir>
 ```
 
 ## 9. Where to go next

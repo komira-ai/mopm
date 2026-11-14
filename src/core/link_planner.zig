@@ -341,7 +341,7 @@ pub fn render(p: Plan, w: anytype) !void {
     for (p.diagnostics) |d| try w.print("  [{s}] {s}: {s}\n", .{ @tagName(d.command), @tagName(d.code), d.message });
 }
 
-/// Read and parse a `<name>.mopm.json`; its directory anchors the native paths.
+/// Read and parse a `<import name>.mopm.json`; its directory anchors the native paths.
 pub fn loadInput(arena: Allocator, path: []const u8) !Input {
     const text = try std.fs.cwd().readFileAlloc(arena, path, 1 << 20);
     const meta = try metadata.parse(arena, text);
@@ -367,7 +367,7 @@ fn expectList(want: []const []const u8, got: []const []const u8) !void {
 }
 
 const pkg_shared =
-    \\{"schema": 1, "name": "app", "native": [
+    \\{"schema": 2, "name": "t/app", "native": [
     \\  {"id": "x", "soname": "libx.so.1", "file": "lib/libx.so.1"}]}
 ;
 
@@ -387,7 +387,7 @@ test "static-only library: archive by path for build, an error for run and repl"
     defer t.deinit();
     const a = t.allocator();
     const p = try plan(a, &.{try mk(a, "pk",
-        \\{"schema": 1, "name": "s", "native": [
+        \\{"schema": 2, "name": "t/ss", "native": [
         \\  {"id": "x", "soname": "libx.a", "kind": "static", "static_file": "lib/libx.a"}]}
     )});
     try expectList(&.{"pk/lib/libx.a"}, p.build);
@@ -403,7 +403,7 @@ test "kind both: the shared object is used, not the archive" {
     defer t.deinit();
     const a = t.allocator();
     const p = try plan(a, &.{try mk(a, "pk",
-        \\{"schema": 1, "name": "b", "native": [
+        \\{"schema": 2, "name": "t/bb", "native": [
         \\  {"id": "x", "soname": "libx.so.1", "kind": "both",
         \\   "file": "lib/libx.so.1", "static_file": "lib/libx.a"}]}
     )});
@@ -417,7 +417,7 @@ test "load mode contributes no flags" {
     defer t.deinit();
     const a = t.allocator();
     const p = try plan(a, &.{try mk(a, "pk",
-        \\{"schema": 1, "name": "l", "native": [
+        \\{"schema": 2, "name": "t/ll", "native": [
         \\  {"id": "x", "soname": "libx.so.1", "mode": "load", "file": "lib/libx.so.1"}]}
     )});
     try std.testing.expectEqual(@as(usize, 0), p.build.len);
@@ -427,11 +427,11 @@ test "load mode contributes no flags" {
 }
 
 const needs_b =
-    \\{"schema": 1, "name": "a", "deps": [{"name": "b"}], "native": [
+    \\{"schema": 2, "name": "t/aa", "deps": [{"name": "t/bb"}], "native": [
     \\  {"id": "a", "soname": "liba.so.1", "file": "lib/liba.so.1", "needs": ["libb.so.1"]}]}
 ;
 const provides_b =
-    \\{"schema": 1, "name": "b", "native": [
+    \\{"schema": 2, "name": "t/bb", "native": [
     \\  {"id": "b", "soname": "libb.so.1", "file": "lib/libb.so.1"}]}
 ;
 
@@ -468,21 +468,23 @@ test "a shared library that needs a load-mode library is told its owner does not
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
-    const p = try plan(a, &.{ try mk(a, "d", needs_b), try mk(a, "d",
-        \\{"schema": 1, "name": "b", "native": [
-        \\  {"id": "b", "soname": "libb.so.1", "mode": "load", "file": "lib/libb.so.1"}]}
-    ) });
+    const p = try plan(a, &.{
+        try mk(a, "d", needs_b), try mk(a, "d",
+            \\{"schema": 2, "name": "t/bb", "native": [
+            \\  {"id": "b", "soname": "libb.so.1", "mode": "load", "file": "lib/libb.so.1"}]}
+        ),
+    });
     try std.testing.expect(has(p, .not_in_preload_set, .all));
     try std.testing.expect(!has(p, .missing_library, .all));
 }
 
 // A static archive that needs another (the shape of a TLS library over a crypto library).
 const static_a_needs_b =
-    \\{"schema": 1, "name": "a", "deps": [{"name": "b"}], "native": [
+    \\{"schema": 2, "name": "t/aa", "deps": [{"name": "t/bb"}], "native": [
     \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.a"]}]}
 ;
 const static_b =
-    \\{"schema": 1, "name": "b", "native": [
+    \\{"schema": 2, "name": "t/bb", "native": [
     \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a"}]}
 ;
 
@@ -503,16 +505,21 @@ test "a static library may need a shared one; a shared library may not need an a
     defer t.deinit();
     const a = t.allocator();
     // static a -> shared b: both are linked, and b is in the preload set.
-    const ok = try plan(a, &.{ try mk(a, "d",
-        \\{"schema": 1, "name": "a", "deps": [{"name": "b"}], "native": [
-        \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.so.1"]}]}
-    ), try mk(a, "d", provides_b) });
+    const ok = try plan(a, &.{
+        try mk(a, "d",
+            \\{"schema": 2, "name": "t/aa", "deps": [{"name": "t/bb"}], "native": [
+            \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.so.1"]}]}
+        ),
+        try mk(a, "d", provides_b),
+    });
     try std.testing.expect(!has(ok, .not_in_preload_set, .all));
     // shared a -> static b: the loader cannot give a the symbols of an archive.
-    const bad = try plan(a, &.{ try mk(a, "d", needs_b), try mk(a, "d",
-        \\{"schema": 1, "name": "b", "native": [
-        \\  {"id": "b", "soname": "libb.so.1", "kind": "static", "static_file": "lib/libb.a"}]}
-    ) });
+    const bad = try plan(a, &.{
+        try mk(a, "d", needs_b), try mk(a, "d",
+            \\{"schema": 2, "name": "t/bb", "native": [
+            \\  {"id": "b", "soname": "libb.so.1", "kind": "static", "static_file": "lib/libb.a"}]}
+        ),
+    });
     try std.testing.expect(has(bad, .not_in_preload_set, .all));
 }
 
@@ -539,11 +546,11 @@ test "static archives are linked each before the ones it needs, whatever order t
     const chain = try plan(a, &.{
         try mk(a, "d", static_b),
         try mk(a, "d",
-            \\{"schema": 1, "name": "c", "native": [
+            \\{"schema": 2, "name": "t/cc", "native": [
             \\  {"id": "c", "soname": "libc.a", "kind": "static", "static_file": "lib/libc.a"}]}
         ),
         try mk(a, "d",
-            \\{"schema": 1, "name": "a", "deps": [{"name": "b"}, {"name": "c"}], "native": [
+            \\{"schema": 2, "name": "t/aa", "deps": [{"name": "t/bb"}, {"name": "t/cc"}], "native": [
             \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.a", "libc.a"]}]}
         ),
     });
@@ -555,7 +562,7 @@ test "static archives that do not constrain one another keep their input order" 
     defer t.deinit();
     const a = t.allocator();
     const c =
-        \\{"schema": 1, "name": "c", "native": [
+        \\{"schema": 2, "name": "t/cc", "native": [
         \\  {"id": "c", "soname": "libc.a", "kind": "static", "static_file": "lib/libc.a"}]}
     ;
     const p = try plan(a, &.{ try mk(a, "d", c), try mk(a, "d", static_b) });
@@ -563,11 +570,11 @@ test "static archives that do not constrain one another keep their input order" 
 }
 
 const cxx_a =
-    \\{"schema": 1, "name": "a", "deps": [{"name": "b"}], "native": [
+    \\{"schema": 2, "name": "t/aa", "deps": [{"name": "t/bb"}], "native": [
     \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.a"], "link": ["c++"]}]}
 ;
 const cxx_b =
-    \\{"schema": 1, "name": "b", "native": [
+    \\{"schema": 2, "name": "t/bb", "native": [
     \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a", "link": ["c++", "m"]}]}
 ;
 
@@ -607,11 +614,11 @@ test "the system libraries are in one order whatever order the archives are give
     defer t.deinit();
     const a = t.allocator();
     const pa =
-        \\{"schema": 1, "name": "a", "native": [
+        \\{"schema": 2, "name": "t/aa", "native": [
         \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "link": ["m"]}]}
     ;
     const pb =
-        \\{"schema": 1, "name": "b", "native": [
+        \\{"schema": 2, "name": "t/bb", "native": [
         \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a", "link": ["c++"]}]}
     ;
     const ba = try plan(a, &.{ try mk(a, "d", pb), try mk(a, "d", pa) });
@@ -628,10 +635,12 @@ test "static archives that need each other are refused, once, and are still all 
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
-    const p = try plan(a, &.{ try mk(a, "d", static_a_needs_b), try mk(a, "d",
-        \\{"schema": 1, "name": "b", "native": [
-        \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a", "needs": ["liba.a"]}]}
-    ) });
+    const p = try plan(a, &.{
+        try mk(a, "d", static_a_needs_b), try mk(a, "d",
+            \\{"schema": 2, "name": "t/bb", "native": [
+            \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a", "needs": ["liba.a"]}]}
+        ),
+    });
     try std.testing.expect(has(p, .needs_cycle, .all));
     var n: usize = 0;
     for (p.diagnostics) |d| {
@@ -645,10 +654,12 @@ test "two packages owning one native library are refused" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
-    const p = try plan(a, &.{ try mk(a, "d1", provides_b), try mk(a, "d2",
-        \\{"schema": 1, "name": "other", "native": [
-        \\  {"id": "b2", "soname": "libb.so.1", "file": "lib/libb.so.1"}]}
-    ) });
+    const p = try plan(a, &.{
+        try mk(a, "d1", provides_b), try mk(a, "d2",
+            \\{"schema": 2, "name": "t/other", "native": [
+            \\  {"id": "b2", "soname": "libb.so.1", "file": "lib/libb.so.1"}]}
+        ),
+    });
     try std.testing.expect(has(p, .duplicate_owner, .all));
     // only the first owner contributes flags
     try expectList(&.{"d1/lib/libb.so.1"}, p.preload);
@@ -668,7 +679,7 @@ test "a package with no natives plans nothing" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
-    const p = try plan(a, &.{try mk(a, ".", "{\"schema\": 1, \"name\": \"pure\"}")});
+    const p = try plan(a, &.{try mk(a, ".", "{\"schema\": 2, \"name\": \"t/pure\"}")});
     try std.testing.expect(p.ok());
     try std.testing.expectEqual(@as(usize, 0), p.build.len);
 }
@@ -687,7 +698,7 @@ test "an absolute directory is normalised: ../ from lib/mojo lands in lib" {
     defer t.deinit();
     const a = t.allocator();
     const p = try plan(a, &.{try mk(a, "/env/lib/mojo",
-        \\{"schema": 1, "name": "app", "native": [
+        \\{"schema": 2, "name": "t/app", "native": [
         \\  {"id": "x", "soname": "libx.so.1", "file": "../libx.so.1"}]}
     )});
     try expectList(&.{ "-L/env/lib", "-lx" }, p.build);
@@ -738,7 +749,7 @@ test "a library that needs its own soname is refused" {
     defer t.deinit();
     const a = t.allocator();
     const p = try plan(a, &.{try mk(a, "d",
-        \\{"schema": 1, "name": "a", "native": [
+        \\{"schema": 2, "name": "t/aa", "native": [
         \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["liba.a"]}]}
     )});
     try std.testing.expect(has(p, .needs_cycle, .all));
@@ -748,7 +759,7 @@ test "a library that needs its own soname is refused" {
 fn groupPkg(a: Allocator, name: []const u8, soname: []const u8, group: []const u8) !Input {
     const stem = soname[0 .. soname.len - 2];
     const text = try std.fmt.allocPrint(a,
-        \\{{"schema": 1, "name": "{s}", "native": [
+        \\{{"schema": 2, "name": "t/{s}", "native": [
         \\  {{"id": "{s}", "soname": "{s}", "kind": "static", "static_file": "lib/{s}"{s}{s}{s}}}]}}
     , .{ name, stem, soname, soname, if (group.len > 0) ", \"exclusive\": \"" else "", group, if (group.len > 0) "\"" else "" });
     return mk(a, "d", text);
@@ -767,7 +778,7 @@ test "two native libraries of one exclusive group are refused, naming both; othe
     for (bad.diagnostics) |d| {
         if (d.code != .exclusive_conflict) continue;
         found += 1;
-        try std.testing.expectEqualStrings("crypto_a (native libca) and crypto_b (native libcb) are both in exclusive group libcrypto; a closure links one library of a group", d.message);
+        try std.testing.expectEqualStrings("t/crypto_a (native libca) and t/crypto_b (native libcb) are both in exclusive group libcrypto; a closure links one library of a group", d.message);
     }
     try std.testing.expectEqual(@as(usize, 1), found);
     // Distinct groups, no group, and a group held once are all fine.
@@ -781,7 +792,7 @@ test "two native libraries of one exclusive group are refused, naming both; othe
     try std.testing.expect(!has(twice, .exclusive_conflict, .all));
     // Two libraries of one package in one group are two libraries too.
     const same_pkg = try plan(a, &.{try mk(a, "d",
-        \\{"schema": 1, "name": "both", "native": [
+        \\{"schema": 2, "name": "t/both", "native": [
         \\  {"id": "x", "soname": "libx.a", "kind": "static", "static_file": "lib/libx.a", "exclusive": "g"},
         \\  {"id": "y", "soname": "liby.a", "kind": "static", "static_file": "lib/liby.a", "exclusive": "g"}]}
     )});

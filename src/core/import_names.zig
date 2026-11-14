@@ -9,12 +9,8 @@
 //! that starts in `[dev-dependencies]` is marked `(dev)` and loses a tie to one that does not). Resolution is not
 //! changed to avoid a clash: the refusal is deterministic. There is no rename.
 //!
-//! `ofProject` makes the closure `check` reads from a manifest, its path packages and, when there is one, a lock.
-//! The lock and the sparse index still name a registry package by its import name alone (their namespaced forms are
-//! ns-C3 of the design), so a registry package takes the full name a manifest of the closure gives it; one that no
-//! manifest names is known by its bare name, which no full name equals. Until then a clash is found only between
-//! names the manifests give or the bare names of the lock: a registry package that needs `komira-ai/json` while the
-//! root names `alice/json` is one locked `json`, the same flat package, and is not told apart.
+//! `ofProject` makes the closure `check` reads from a manifest, its path packages and, when there is one, a lock,
+//! whose registry entries are each named by their own full name.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -25,12 +21,12 @@ const install_plan = @import("install_plan.zig");
 
 /// One package of a closure.
 pub const Package = struct {
-    /// The full name, `<namespace>/<name>`; a bare name for a registry package no manifest of the closure names.
+    /// The full name, `<namespace>/<name>`.
     full: []const u8,
     /// What follows the name in a message: the version, or, for a registry package not resolved yet, its
     /// requirement in quotes.
     label: []const u8,
-    /// The full (or bare) names of the packages it depends on. A name that is no package of the closure is skipped.
+    /// The full names of the packages it depends on. A name that is no package of the closure is skipped.
     deps: []const []const u8 = &.{},
 };
 
@@ -41,11 +37,6 @@ pub const Closure = struct {
     dev_deps: []const []const u8 = &.{},
     packages: []const Package = &.{},
 };
-
-/// The import name of `full`: the part after its `/`, or the whole of a bare name.
-pub fn importName(full: []const u8) []const u8 {
-    return if (names.split(full)) |f| f.name else full;
-}
 
 const no_node = std.math.maxInt(usize);
 
@@ -125,7 +116,7 @@ pub fn check(arena: Allocator, c: Closure) Allocator.Error!?[]const u8 {
     }
     std.mem.sort(usize, order.items, @as([]const Package, nodes.items), struct {
         fn less(ns: []const Package, a: usize, b: usize) bool {
-            return switch (std.mem.order(u8, importName(ns[a].full), importName(ns[b].full))) {
+            return switch (std.mem.order(u8, names.importName(ns[a].full), names.importName(ns[b].full))) {
                 .lt => true,
                 .gt => false,
                 .eq => std.mem.order(u8, ns[a].full, ns[b].full) == .lt,
@@ -137,9 +128,9 @@ pub fn check(arena: Allocator, c: Closure) Allocator.Error!?[]const u8 {
     const w = out.writer();
     var i: usize = 0;
     while (i < order.items.len) {
-        const name = importName(nodes.items[order.items[i]].full);
+        const name = names.importName(nodes.items[order.items[i]].full);
         var j = i + 1;
-        while (j < order.items.len and std.mem.eql(u8, importName(nodes.items[order.items[j]].full), name)) j += 1;
+        while (j < order.items.len and std.mem.eql(u8, names.importName(nodes.items[order.items[j]].full), name)) j += 1;
         const group = order.items[i..j];
         i = j;
         if (group.len < 2) continue;
@@ -177,58 +168,22 @@ fn writePath(arena: Allocator, w: anytype, nodes: []const Package, reach: []cons
 
 // ------------------------------------------------------------- the closure of a project
 
-/// Full names by import name: the registry dependencies the manifests of the closure name.
-const Known = std.StringArrayHashMap(std.ArrayList([]const u8));
-
-fn note(arena: Allocator, known: *Known, d: manifest.Dep) !void {
-    const got = try known.getOrPut(d.name);
-    if (!got.found_existing) got.value_ptr.* = std.ArrayList([]const u8).init(arena);
-    for (got.value_ptr.items) |f| {
-        if (std.mem.eql(u8, f, d.full_name)) return;
-    }
-    try got.value_ptr.append(d.full_name);
-}
-
-fn memberFull(d: install_plan.PathDep) []const u8 {
-    return if (d.full_name.len > 0) d.full_name else d.name;
-}
-
-/// The full names a lock's dependency `flat` stands for: the path packages of that import name, else the one
-/// registry dependency of that import name the manifests name, else the bare name. When the manifests name it in
-/// several namespaces, a lock entry does not say which one it needs, so the edge is left out rather than guessed: the
-/// clash is still found through the manifests that name them, and no path is shown through a package that may not
-/// need the package at its end.
-fn fullsOf(arena: Allocator, flat: []const u8, members: []const install_plan.PathDep, known: *const Known) ![]const []const u8 {
-    var out = std.ArrayList([]const u8).init(arena);
-    for (members) |d| {
-        if (std.mem.eql(u8, d.name, flat)) try out.append(memberFull(d));
-    }
-    if (out.items.len > 0) return out.items;
-    if (known.get(flat)) |list| return if (list.items.len == 1) list.items else &.{};
-    try out.append(flat);
-    return out.items;
-}
-
 /// The closure of the project whose manifest is `m`, with its path packages `members` (at any depth) and the lock
 /// `l`'s registry entries. With no lock, each registry dependency a manifest names is a package with no
 /// dependencies, labelled with its requirement: what can be checked before resolution. Path entries of `l` are not
 /// read: `members` are the path packages.
 pub fn ofProject(arena: Allocator, m: manifest.Manifest, members: []const install_plan.PathDep, l: ?lock.Lock) Allocator.Error!Closure {
-    var known = Known.init(arena);
-    var requirement = std.StringHashMap([]const u8).init(arena);
+    // The registry dependencies the manifests of the closure name, by full name, with their requirements.
+    var requirement = std.StringArrayHashMap([]const u8).init(arena);
     const lists = [_][]const manifest.Dep{ m.dependencies, m.dev_dependencies };
     for (lists) |group| {
         for (group) |d| {
-            if (d.source != .version) continue;
-            try note(arena, &known, d);
-            if (!requirement.contains(d.full_name)) try requirement.put(d.full_name, d.source.version);
+            if (d.source == .version and !requirement.contains(d.full_name)) try requirement.put(d.full_name, d.source.version);
         }
     }
     for (members) |p| {
         for (p.manifest_deps) |d| {
-            if (d.source != .version) continue;
-            try note(arena, &known, d);
-            if (!requirement.contains(d.full_name)) try requirement.put(d.full_name, d.source.version);
+            if (d.source == .version and !requirement.contains(d.full_name)) try requirement.put(d.full_name, d.source.version);
         }
     }
 
@@ -242,14 +197,14 @@ pub fn ofProject(arena: Allocator, m: manifest.Manifest, members: []const instal
         if (p.manifest_deps.len > 0) {
             for (p.manifest_deps) |d| try deps.append(d.full_name);
         } else {
-            for (p.deps) |d| try deps.appendSlice(try fullsOf(arena, d, members, &known));
+            try deps.appendSlice(p.deps);
         }
-        try packages.append(.{ .full = memberFull(p), .label = p.version, .deps = deps.items });
+        try packages.append(.{ .full = p.full(), .label = p.version, .deps = deps.items });
     }
 
     if (l) |locked| {
-        // One package per import name the lock holds (a version 2 lock may list one per subdir): the first entry's
-        // version, every entry's dependencies.
+        // One package per full name the lock holds (a lock lists one entry per subdir): the first entry's version,
+        // every entry's dependencies.
         var seen = std.StringArrayHashMap(usize).init(arena);
         var entries = std.ArrayList(struct { name: []const u8, version: []const u8, deps: std.ArrayList([]const u8) }).init(arena);
         for (locked.packages) |p| {
@@ -261,17 +216,10 @@ pub fn ofProject(arena: Allocator, m: manifest.Manifest, members: []const instal
             }
             try entries.items[got.value_ptr.*].deps.appendSlice(p.deps);
         }
-        for (entries.items) |e| {
-            var deps = std.ArrayList([]const u8).init(arena);
-            for (e.deps.items) |d| try deps.appendSlice(try fullsOf(arena, d, members, &known));
-            const fulls: []const []const u8 = if (known.get(e.name)) |list| list.items else try arena.dupe([]const u8, &.{e.name});
-            for (fulls) |f| try packages.append(.{ .full = f, .label = e.version, .deps = deps.items });
-        }
+        for (entries.items) |e| try packages.append(.{ .full = e.name, .label = e.version, .deps = e.deps.items });
     } else {
-        for (known.values()) |list| {
-            for (list.items) |f| {
-                try packages.append(.{ .full = f, .label = try std.fmt.allocPrint(arena, "\"{s}\"", .{requirement.get(f).?}) });
-            }
+        for (requirement.keys(), requirement.values()) |full, req| {
+            try packages.append(.{ .full = full, .label = try std.fmt.allocPrint(arena, "\"{s}\"", .{req}) });
         }
     }
     return .{

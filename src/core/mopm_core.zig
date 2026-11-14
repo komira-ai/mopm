@@ -81,9 +81,11 @@ test {
     _ = @import("credentials.zig");
     _ = @import("ci_oidc.zig");
     _ = @import("conda.zig");
+    _ = @import("conda_names_test.zig");
     _ = @import("bins.zig");
     _ = @import("resolve.zig");
     _ = @import("lock.zig");
+    _ = @import("lock_test.zig");
     _ = @import("install_plan.zig");
     _ = @import("install.zig");
     _ = @import("overlay.zig");
@@ -106,6 +108,7 @@ test {
     _ = @import("unit_graph_loads_test.zig");
     _ = @import("unit_graph_provided_test.zig");
     _ = @import("unit_graph_imports_test.zig");
+    _ = @import("unit_graph_names_test.zig");
     _ = @import("install_plan_loads_test.zig");
     _ = @import("lock_libs.zig");
     _ = @import("lock_libs_test.zig");
