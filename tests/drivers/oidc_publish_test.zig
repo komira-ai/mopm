@@ -20,7 +20,8 @@
 //!   creates, uploads and commits the group: every member is served. A set wholly in a namespace that does not trust the job's
 //!   repository, and one that names a package of such a namespace beside a trusting one, each refuse the exchange: the run ends 1 with the
 //!   registry's message, GitHub was asked once, and no group was made (a namespace trusts a repository with /_fake/trusted,
-//!   and every package is made with PUT /api/v2/packages/<namespace>/<name>: an exchange creates nothing);
+//!   and every package is made with PUT /api/v2/packages/<namespace>/<name>: an exchange creates nothing, and `mopm publish` sends that
+//!   PUT itself, with the exchanged token, before it uploads: the packages here exist already, so it answers 200 and says nothing);
 //! - `--no-commit --oidc` asks for a stage token: the fake registry counts the tokens its exchange mints by kind, and the staging
 //!   run's one exchange minted a stage token and no publish token (the fake enforces the scope, so the run staged with it and
 //!   printed no notice); the commit run's exchange minted a publish token and no stage token;
@@ -284,6 +285,7 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     // --- a publish: the token is the job's, whatever MOPM_TOKEN says
     r = try m.run(&(publish ++ with_trusted ++ to_fake), .both, "bogus-token-that-must-not-be-used");
     rep.check("--oidc publishes with the exchanged token, not with MOPM_TOKEN", r.code == 0 and h.contains(r.stdout, "published example/oidcdemo 0.1.0"), describe(a, r));
+    rep.check("the package was made beforehand, so the exchanged token's PUT of it answers 200 and publish does not say created", !h.contains(r.stdout, "created "), r.stdout);
     const version = try served(a, fake, "example/oidcdemo", "0.1.0");
     rep.check("the version is served, and its provenance names the trusted repository (only the exchange gives that)", version != null and
         h.contains(version.?.body, "\"kind\":\"oidc\"") and h.contains(version.?.body, "\"repository\":\"" ++ repository ++ "\""), if (version) |v| v.body else "not served");

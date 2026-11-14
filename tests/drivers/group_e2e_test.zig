@@ -193,8 +193,12 @@ const Stub = struct {
     /// What the registry saw, read after `stop`.
     requests: usize = 0,
     group_creates: usize = 0,
-    /// The `PUT /packages/<namespace>/<name>` the registry answered with 200 or 201.
+    /// The packages `PUT /packages/<namespace>/<name>` made (201): the first PUT of a full name. `mopm publish --staged` sends the
+    /// same PUT for each member before its group, and the registry answers 200 for a package it has.
     packages_made: usize = 0,
+    made_names: std.ArrayList([]const u8) = undefined,
+    /// Every `PUT /packages/<namespace>/<name>`, made or not.
+    package_puts: usize = 0,
     storage_puts: usize = 0,
     storage_auth_seen: bool = false,
     storage_header_missing: bool = false,
@@ -215,6 +219,7 @@ const Stub = struct {
             .groups = undefined,
         };
         s.groups = std.ArrayList(Grp).init(s.arena.allocator());
+        s.made_names = std.ArrayList([]const u8).init(s.arena.allocator());
         s.base = try std.fmt.allocPrint(s.arena.allocator(), "http://127.0.0.1:{d}", .{s.server.listen_address.getPort()});
         s.thread = try std.Thread.spawn(.{}, loop, .{s});
         return s;
@@ -325,10 +330,15 @@ const Stub = struct {
 
     // ---- packages ----
 
-    /// `PUT /packages/<namespace>/<name>`: 201; the token must be the right one.
+    /// `PUT /packages/<namespace>/<name>`: 201 for a package it did not have, 200 for one it did; the token must be the right one.
     fn createPackage(s: *Stub, a: Allocator, full: []const u8, authorization: ?[]const u8) !Reply {
         if (!s.authorized(authorization)) return fail(a, .unauthorized, "token_invalid", "the token is not valid");
         if (!core.names.isFullName(full)) return fail(a, .bad_request, "invalid_name", "not a full name");
+        s.package_puts += 1;
+        for (s.made_names.items) |n| {
+            if (std.mem.eql(u8, n, full)) return json(a, .ok, .{ .name = full });
+        }
+        try s.made_names.append(try s.arena.allocator().dupe(u8, full));
         s.packages_made += 1;
         return json(a, .created, .{ .name = full });
     }
@@ -819,7 +829,7 @@ fn tools() !*const Tools {
     const ws = try h.join(a, &.{ work, "prebuilt_ws" });
     const art = try h.join(a, &.{ work, "prebuilt_art" });
     try g.writeWorkspace(a, g.default_namespace, ws, "0.0.1", &g.members);
-    if (try g.precompileAll(a, t.prefix, t.env, ws, art)) |why| {
+    if (try g.precompileAll(a, t.prefix, t.env, g.default_namespace, ws, art)) |why| {
         std.debug.print("precompiling the packages failed: {s}\n", .{why});
         return error.PrecompileFailed;
     }
@@ -1018,6 +1028,9 @@ test "a registry that does it all right passes every check, and the token goes o
     try std.testing.expectEqual(@as(usize, 3), ran.stub.group_creates);
     // The three packages of the chain were made before anything was published, each by its full name.
     try std.testing.expectEqual(@as(usize, 3), ran.stub.packages_made);
+    // `mopm publish --staged` sent the PUT of each member of its set too (200 each: the packages were there), so there are
+    // more PUTs than packages made.
+    try std.testing.expect(ran.stub.package_puts > ran.stub.packages_made);
     try std.testing.expect(passed(ran.result, "packages: " ++ full_core ++ " is a package of the namespace"));
     try std.testing.expect(passed(ran.result, "packages: " ++ full_app ++ " is a package of the namespace"));
 }

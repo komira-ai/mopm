@@ -158,7 +158,7 @@ test "mopm login, whoami and logout against the fake registry" {
         }
         const rest = try finishLogin(a, &login.child);
         const out = try std.mem.concat(a, u8, &.{ login.first, "\n", rest.stdout });
-        rep.check("an approved login succeeds", rest.code == 0 and h.contains(out, "Logged in to beta as e2e-user."), rest.stderr);
+        rep.check("an approved login succeeds", rest.code == 0 and h.contains(out, "Logged in to beta as e2e-user; your namespace is e2e-user.\n"), rest.stderr);
         path = try h.join(a, &.{ conf, "credentials.json" });
         const exists = if (std.fs.cwd().access(path, .{})) true else |_| false;
         rep.check("the token file exists", exists, path);
@@ -170,11 +170,14 @@ test "mopm login, whoami and logout against the fake registry" {
             token = h.jsonString(entry, "token") orelse "";
             rep.check("the token is a token", std.mem.startsWith(u8, token, "mopm_"), token);
             rep.check("the token is never printed", !h.contains(out, token) and !h.contains(rest.stderr, token), "printed");
+            const ns = h.jsonString(entry, "namespace") orelse "";
+            rep.check("the login stores the user namespace", std.mem.eql(u8, ns, "e2e-user"), ns);
         }
     }
 
     r = try m.run(&whoami_args);
     rep.check("whoami names the account", r.code == 0 and hasWhoami(r.stdout), r.stdout);
+    rep.check("whoami lists the user namespace with its kind and role", r.code == 0 and h.contains(r.stdout, "namespaces:\n  e2e-user (user, owner)\n"), r.stdout);
 
     // A session lives 30 days: past that the registry refuses it, and mopm
     // prints the contract's message, hint and request id.

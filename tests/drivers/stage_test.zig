@@ -66,7 +66,7 @@ const World = struct {
         const manifest = try std.fmt.allocPrint(w.a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}", .{ name, version, deps });
         try h.writeFile(try w.path(&.{ w.work, ws, "src", name, "mopm.toml" }), manifest);
         try h.writeFile(try w.path(&.{ w.work, ws, "src", name, "README.md" }), try std.fmt.allocPrint(w.a, "# {s}\n", .{name}));
-        try h.writeFile(try w.path(&.{ w.work, art, "noarch", try std.fmt.allocPrint(w.a, "{s}.mojoc", .{name}) }), mojoc);
+        try h.writeFile(try w.path(&.{ w.work, art, "noarch", "example", try std.fmt.allocPrint(w.a, "{s}.mojoc", .{name}) }), mojoc);
     }
 
     fn chain(w: World, ws: []const u8, art: []const u8, version: []const u8, z_mojoc: []const u8) !void {
@@ -223,17 +223,17 @@ fn aNativeMember(w: World) !void {
     const archive = "!<arch>\nthe archive of stg_n\n";
     try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" }), "[package]\nname = \"example/stg_n\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.stg_n]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libstg\"\n");
     try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "README.md" }), "# stg_n\n");
-    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "stg_n.mojoc" }), "the mojoc of n");
+    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "example", "stg_n.mojoc" }), "the mojoc of n");
     var r = try w.stage("wsn", "artn", "set_n_missing", &.{});
     w.rep.check("a native member with no archive is refused, naming the member and the file it expected", r.code == 1 and h.contains(r.stderr, "example/stg_n: native library 'stg_n' has no archive for linux-64") and
-        h.contains(r.stderr, "stg_n.native/libstg_n.a") and !w.exists(&.{ w.work, "set_n_missing" }), try w.text(r));
-    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "stg_n.native", "libstg_n.a" }), archive);
+        h.contains(r.stderr, "example/stg_n.native/libstg_n.a") and !w.exists(&.{ w.work, "set_n_missing" }), try w.text(r));
+    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "example", "stg_n.native", "libstg_n.a" }), archive);
     r = try w.stage("wsn", "artn", "set_n", &.{});
     w.rep.check("a native member is staged from its archive", r.code == 0 and h.contains(r.stdout, "1 to upload"), try w.text(r));
     const conda_file = try h.readFile(w.a, try w.path(&.{ w.work, "set_n", "linux-64", "mojo-example.stg_n-1.0.0-mojo1.0.0_0.conda" }));
     w.rep.check("and the package holds the archive and declares the static native", h.contains(conda_file, "lib/libstg_n.a") and h.contains(conda_file, "stg_n"), "the archive is not in the package");
-    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artn", "linux-64", "stg_n.mojoc" })});
-    const native_arg = try std.fmt.allocPrint(w.a, "stg_n=linux-64:{s}", .{try w.path(&.{ w.work, "artn", "linux-64", "stg_n.native", "libstg_n.a" })});
+    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artn", "linux-64", "example", "stg_n.mojoc" })});
+    const native_arg = try std.fmt.allocPrint(w.a, "stg_n=linux-64:{s}", .{try w.path(&.{ w.work, "artn", "linux-64", "example", "stg_n.native", "libstg_n.a" })});
     const manifest_arg = try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" });
     const out_arg = try w.path(&.{ w.work, "packed_n" });
     const by_pack = try w.m.run(&.{ "pack", "--compiler", "1.0.0", "--mojoc", mojoc_arg, "--native", native_arg, "--manifest", manifest_arg, "-o", out_arg }, null);
@@ -249,7 +249,7 @@ fn aBinsMember(w: World) !void {
     const manifest_path = try w.path(&.{ w.work, "wsb", "src", "stg_b", "mopm.toml" });
     try h.writeFile(manifest_path, "[package]\nname = \"example/stg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{ name = \"ring_bench\", path = \"bench/ring.mojo\" }, { name = \"agg_bench\", path = \"bench/agg.mojo\" }]\n");
     try h.writeFile(try w.path(&.{ w.work, "wsb", "src", "stg_b", "README.md" }), "# stg_b\n");
-    try h.writeFile(try w.path(&.{ w.work, "artb", "linux-64", "stg_b.mojoc" }), "the mojoc of b");
+    try h.writeFile(try w.path(&.{ w.work, "artb", "linux-64", "example", "stg_b.mojoc" }), "the mojoc of b");
     var r = try w.stage("wsb", "artb", "set_b_missing", &.{});
     w.rep.check("a member whose program source is missing is refused, naming the member and the program", r.code == 1 and h.contains(r.stderr, "example/stg_b: [targets] bin 'ring_bench': cannot read") and
         !w.exists(&.{ w.work, "set_b_missing" }), try w.text(r));
@@ -260,7 +260,7 @@ fn aBinsMember(w: World) !void {
     const conda_file = try h.readFile(w.a, try w.path(&.{ w.work, "set_b", "linux-64", "mojo-example.stg_b-1.0.0-mojo1.0.0_0.conda" }));
     w.rep.check("and the package holds the source of each program, below lib/mojo/stg_b.bins", h.contains(conda_file, "lib/mojo/stg_b.bins/ring_bench.mojo") and
         h.contains(conda_file, "lib/mojo/stg_b.bins/agg_bench.mojo") and h.contains(conda_file, "def main(): print(\"ring\")"), "a program is not in the package");
-    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artb", "linux-64", "stg_b.mojoc" })});
+    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artb", "linux-64", "example", "stg_b.mojoc" })});
     const out_arg = try w.path(&.{ w.work, "packed_b" });
     const by_pack = try w.m.run(&.{ "pack", "--compiler", "1.0.0", "--mojoc", mojoc_arg, "--manifest", manifest_path, "-o", out_arg }, null);
     const packed_bytes = if (by_pack.code == 0) try h.readFile(w.a, try w.path(&.{ w.work, "packed_b", "linux-64", "mojo-example.stg_b-1.0.0-mojo1.0.0_0.conda" })) else "";

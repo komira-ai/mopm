@@ -56,7 +56,7 @@ repository's release workflow.
 ## Command tour
 
 ```text
-mopm new alice/my_pkg      # create a package with a mopm.toml (names are <namespace>/<name>)
+mopm new alice/my_pkg      # create a package with a mopm.toml (names are <namespace>/<name>; a bare name takes the namespace `mopm login` stored)
 mopm add alice/http_client # add a dependency
 mopm build                 # build, linking native libraries for you
 mopm run                   # mojo run with the right -Xlinker list

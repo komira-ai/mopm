@@ -6,6 +6,10 @@
 //!
 //! The run, in order:
 //!   1. read `<dir>/plan.json`, refuse a plan that has a refused member, and check every file against the plan;
+//!   1a. for a new group (state.json names none), `PUT /packages/<name>` for each member to upload, in plan order: the registry creates
+//!      the package when it does not have it (201, said as `created <name> on <stage>`; 200 for one it had, silent) after checking
+//!      the token's right to write the namespace, and a group needs every member's package to exist. A refusal stops the run
+//!      before the group is asked for. A resumed group, which the registry holds with its packages, sends none; `--dry-run` sends none;
 //!   2. `POST /groups` with the members to upload (the plan's order is dependency order): the registry answers one
 //!      reservation per member, and a URL for each file it does not yet hold;
 //!   3. PUT each file, member by member in that order; the PUT carries no token. When the registry takes readmes as objects
@@ -821,6 +825,11 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
     const creds = (try credentials(arena, net, flags, opened, uploads)) orelse return 1;
     const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, &console, "resuming")) orelse return 1;
 
+    // A new group needs every member's package to exist; a group the registry already holds has its packages.
+    if (loaded.state.group_id.len == 0) {
+        if (!try createPackages(arena, net, &console, creds.api_v2_url, creds.token, opened.session.config.stage, uploads)) return 1;
+    }
+
     var p = Publisher{
         .arena = arena,
         .net = net,
@@ -840,6 +849,16 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
     };
     const result = p.run();
     return p.finish(result);
+}
+
+/// Creates the package of every member to upload, in the plan's order, before the group that names them is asked for
+/// (`publish_cmd.ensurePackage`: `PUT /packages/<name>`, which says `created <name> on <stage>` for a package it made and is silent
+/// for one the registry had). The first refusal is printed and stops the run: the result is false and nothing after it is sent.
+pub fn createPackages(arena: Allocator, net: Net, console: *Console, api_v2_url: []const u8, token: []const u8, stage: []const u8, uploads: []const plan_mod.Member) Allocator.Error!bool {
+    for (uploads) |m| {
+        if (!try publish_cmd.ensurePackage(arena, net, console, api_v2_url, token, stage, m.name)) return false;
+    }
+    return true;
 }
 
 /// A notice of the run, on stderr, in the voice of the other messages.

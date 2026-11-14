@@ -107,6 +107,12 @@ const Stub = struct {
     put_checksum: []const u8 = "",
     put_has_authorization: bool = false,
     put_size: usize = 0,
+    /// `PUT /api/v2/packages/example/stubpkg`, which creates the package: answered 201, and what it carried.
+    package_put_seen: bool = false,
+    package_put_auth: []const u8 = "",
+    package_put_body_len: usize = 0,
+    /// The first upload began after the package was created.
+    begin_after_package: bool = false,
 
     fn base(self: *Stub, a: Allocator) ![]u8 {
         return std.fmt.allocPrint(a, "http://127.0.0.1:{d}", .{self.server.listen_address.getPort()});
@@ -174,6 +180,7 @@ const Stub = struct {
             const v = try std.json.parseFromSliceLeaky(std.json.Value, a, body, .{});
             const size: i64 = if (v == .object) (if (v.object.get("size")) |s| (if (s == .integer) s.integer else -2) else -3) else -4;
             self.begin_size = size;
+            self.begin_after_package = self.package_put_seen;
             self.begin_auth = if (auth) |x| x else "";
             return reply(req, .ok, try std.fmt.allocPrint(a,
                 \\{{"upload_id":"upl_1","put_url":"{s}/put/upl_1","put_headers":{{"content-length":"{d}","x-stub-checksum":"abc=="}},"expires_at":"2099-01-01T00:00:00Z"}}
@@ -183,6 +190,14 @@ const Stub = struct {
             self.commit_body = try std.heap.page_allocator.dupe(u8, body);
             return reply(req, .accepted,
                 \\{"publish_id":"pub_1","status_url":"/api/v2/publishes/pub_1"}
+            );
+        }
+        if (method == .PUT and std.mem.eql(u8, target, "/api/v2/packages/example/stubpkg")) {
+            self.package_put_seen = true;
+            self.package_put_auth = if (auth) |x| x else "";
+            self.package_put_body_len = body.len;
+            return reply(req, .created,
+                \\{"name":"example/stubpkg"}
             );
         }
         if (method == .PUT) {
@@ -444,6 +459,7 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     r = try m.run(&(pub_args ++ flags), api_token);
     try everything.appendSlice(r.stdout);
     try everything.appendSlice(r.stderr);
+    rep.check("publish of a package the registry already has does not say created", !h.contains(r.stdout, "created "), r.stdout);
     rep.check("publish ends with 'published'", r.code == 0 and h.contains(r.stdout, "uploaded " ++ conda_name) and
         h.contains(r.stdout, "committed, publish ") and h.contains(r.stdout, "published example/pubdemo 0.1.0"), r.stdout);
     resp = try h.request(a, "GET", fake.base, "/api/v2/packages/example/pubdemo/0.1.0", null, null);
@@ -475,6 +491,16 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     try everything.appendSlice(r.stderr);
     rep.check("publishing the same version again fails with version_exists", r.code == 1 and h.contains(r.stderr, "already exists") and h.contains(r.stderr, "versions are immutable"), r.stderr);
 
+    // --- an account that cannot write the namespace is refused at the creation, before anything is uploaded
+    const outsider = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"outsider\"}"), "token") orelse "";
+    const third_manifest = try h.join(a, &.{ work, "third", "mopm.toml" });
+    try h.writeFile(third_manifest, try tomlText(a, "pubdemo", "0.1.2", ""));
+    r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", third_manifest, "--registry", fake.base, "--config-dir", try h.join(a, &.{ work, "conf4" }) }, outsider);
+    try everything.appendSlice(r.stdout);
+    try everything.appendSlice(r.stderr);
+    rep.check("a publish by an account that cannot write the namespace prints the registry's refusal and uploads nothing", r.code == 1 and
+        h.contains(r.stderr, "You cannot write in 'example'.") and !h.contains(r.stdout, "uploaded") and !h.contains(r.stdout, "created "), r.stderr);
+
     // --- the login's session is not a publish token
     const conf2 = try h.join(a, &.{ work, "conf2" });
     try h.writeFile(try h.join(a, &.{ conf2, "credentials.json" }), try std.fmt.allocPrint(a, "{{\"{s}\":{{\"token\":\"{s}\",\"handle\":\"example\"}}}}", .{ api, session }));
@@ -503,6 +529,9 @@ test "mopm pack and publish against the fake registry, and a rejection against a
         h.contains(r.stderr, "rejected: path_not_allowed: bin/tool is not an allowed path") and !h.contains(r.stdout, "published"), r.stderr);
     stub.mutex.lock();
     defer stub.mutex.unlock();
+    rep.check("publish creates the package before the first upload: PUT with the bearer token and no body, and says created", stub.package_put_seen and stub.begin_after_package and
+        std.mem.eql(u8, stub.package_put_auth, "Bearer " ++ stub_token) and stub.package_put_body_len == 0 and
+        h.contains(r.stdout, "created example/stubpkg on stub\n"), stub.package_put_auth);
     rep.check("the PUT carries the headers the registry named, as given", stub.put_seen and std.mem.eql(u8, stub.put_checksum, "abc=="), stub.put_checksum);
     rep.check("the PUT carries no Authorization header", stub.put_seen and !stub.put_has_authorization, "an Authorization header was sent");
     rep.check("the PUT sends the declared number of bytes", stub.put_seen and @as(i64, @intCast(stub.put_size)) == stub.begin_size, "wrong size");

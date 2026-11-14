@@ -1,6 +1,8 @@
 //! mopm command line. `--version`, `link-plan`, `metadata`, `new`, `init`, and
 //! `build`/`run`/`repl`, which run the stock `mojo` with the environment's native
 //! libraries linked or preloaded (or print that command with `--print-cmd`).
+//!
+//! `new` and `init` are in scaffold_cmd.zig.
 
 const std = @import("std");
 const core = @import("mopm_core");
@@ -15,6 +17,7 @@ const yank_cmd = @import("yank_cmd.zig");
 const stage_cmd = @import("stage_cmd.zig");
 const build_cmd = @import("build_cmd.zig");
 const bin_run = @import("bin_run.zig");
+const scaffold_cmd = @import("scaffold_cmd.zig");
 
 /// The release version, from the build (`zig build -Dversion=`; the dev default in build_options.zig).
 pub const version = @import("build_options").version;
@@ -38,10 +41,14 @@ const usage =
     \\  link-plan <file>...     print the link plan for installed packages,
     \\                          given their <name>.mopm.json files
     \\  metadata [mopm.toml]    check a package manifest and print it as JSON
-    \\  new <namespace>/<name> [--lib|--bin]
-    \\                          make a package in a new directory <name>
-    \\  init [--lib|--bin] [--name <namespace>/<name>]
-    \\                          make a package in this directory
+    \\  new [<namespace>/]<name> [--lib|--bin] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                          make a package in a new directory <name>; with no
+    \\                          <namespace>/ it is the namespace 'mopm login'
+    \\                          stored for the registry (default prod), refused
+    \\                          when there is none; a full name needs no registry
+    \\  init [--lib|--bin] [--name [<namespace>/]<name>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                          make a package in this directory (named by it,
+    \\                          without --name), in the same namespaces as new
     \\  build <file.mojo> [-o <out>]
     \\  build [--out-dir <dir>] with no program: the [targets] of mopm.toml, the
     \\                          library as <dir>/<name>.mojoc and each program as
@@ -210,109 +217,6 @@ fn metadataCmd(arena: std.mem.Allocator, args: []const []const u8) u8 {
     var buf = std.ArrayList(u8).init(arena);
     core.manifest.writeJson(m, buf.writer()) catch return 1;
     std.io.getStdOut().writeAll(buf.items) catch return 1;
-    return 0;
-}
-
-const ScaffoldArgs = struct {
-    name: ?[]const u8 = null,
-    kind: core.scaffold.Kind = .lib,
-};
-
-/// `new <name> [--lib|--bin]` or `init [--lib|--bin] [--name <name>]`; null if
-/// the arguments are neither.
-fn scaffoldArgs(cmd: []const u8, args: []const []const u8) ?ScaffoldArgs {
-    const is_new = std.mem.eql(u8, cmd, "new");
-    var out = ScaffoldArgs{};
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        if (std.mem.eql(u8, a, "--lib")) {
-            out.kind = .lib;
-        } else if (std.mem.eql(u8, a, "--bin")) {
-            out.kind = .bin;
-        } else if (!is_new and std.mem.eql(u8, a, "--name") and i + 1 < args.len and out.name == null) {
-            i += 1;
-            out.name = args[i];
-        } else if (is_new and a.len > 0 and a[0] != '-' and out.name == null) {
-            out.name = a;
-        } else return null;
-    }
-    if (is_new and out.name == null) return null;
-    return out;
-}
-
-/// Why `full` cannot name a new package, worded for `mopm <cmd>`, or null. `hint` ends a message about a bare name.
-fn scaffoldProblem(arena: std.mem.Allocator, cmd: []const u8, full: []const u8, hint: []const u8) std.mem.Allocator.Error!?[]const u8 {
-    if (core.names.split(full) == null) {
-        return try std.fmt.allocPrint(arena, "mopm {s} {s} needs a namespace: name it, as in 'mopm {s} <your GitHub login>/{s}'{s}", .{ cmd, full, cmd, full, hint });
-    }
-    if (try core.names.fullNameProblem(arena, "package name", full, .refuse)) |problem| {
-        return try std.fmt.allocPrint(arena, "mopm {s}: {s}", .{ cmd, problem });
-    }
-    return null;
-}
-
-/// `mopm new` (into a new directory) and `mopm init` (into this one).
-fn scaffoldCmd(arena: std.mem.Allocator, cmd: []const u8, args: []const []const u8) u8 {
-    const parsed = scaffoldArgs(cmd, args) orelse {
-        std.debug.print("usage: mopm new <namespace>/<name> [--lib|--bin]\n       mopm init [--lib|--bin] [--name <namespace>/<name>]\n", .{});
-        return 2;
-    };
-    const is_new = std.mem.eql(u8, cmd, "new");
-    var hint: []const u8 = "";
-    const full = parsed.name orelse blk: {
-        const here = std.fs.cwd().realpathAlloc(arena, ".") catch |e| {
-            std.debug.print("mopm init: {s}\n", .{@errorName(e)});
-            return 1;
-        };
-        hint = " (the name comes from this directory; pass --name <namespace>/<name>)";
-        break :blk std.fs.path.basename(here);
-    };
-    const problem = scaffoldProblem(arena, cmd, full, hint) catch return 1;
-    if (problem) |message| {
-        std.debug.print("{s}\n", .{message});
-        return 1;
-    }
-    // The directory, like src/<name>/, is named by the import name; `scaffoldProblem` has checked the `/`.
-    const name = if (core.names.split(full)) |parts| parts.name else full;
-    const files = core.scaffold.files(arena, full, parsed.kind) catch return 1;
-
-    var dir = std.fs.cwd();
-    var opened: ?std.fs.Dir = null;
-    defer if (opened) |*d| d.close();
-    if (is_new) {
-        std.fs.cwd().makeDir(name) catch |e| {
-            if (e == error.PathAlreadyExists) {
-                std.debug.print("mopm new: '{s}' already exists\n", .{name});
-            } else {
-                std.debug.print("mopm new: {s}: {s}\n", .{ name, @errorName(e) });
-            }
-            return 1;
-        };
-        opened = std.fs.cwd().openDir(name, .{}) catch |e| {
-            std.debug.print("mopm new: {s}: {s}\n", .{ name, @errorName(e) });
-            return 1;
-        };
-        dir = opened.?;
-    }
-    if (core.scaffold.firstExisting(dir, files)) |path| {
-        std.debug.print("mopm {s}: {s} already exists; nothing was written\n", .{ cmd, path });
-        return 1;
-    }
-    core.scaffold.write(dir, files) catch |e| {
-        std.debug.print("mopm {s}: {s}\n", .{ cmd, @errorName(e) });
-        return 1;
-    };
-    const what = switch (parsed.kind) {
-        .lib => "library",
-        .bin => "binary",
-    };
-    const out = std.io.getStdOut().writer();
-    if (is_new) {
-        out.print("created {s} package '{s}' in {s}/\n", .{ what, full, name }) catch return 1;
-    } else {
-        out.print("created {s} package '{s}'\n", .{ what, full }) catch return 1;
-    }
     return 0;
 }
 
@@ -596,7 +500,7 @@ fn run(arena: std.mem.Allocator) u8 {
     }
     if (std.mem.eql(u8, cmd, "link-plan")) return linkPlan(arena, args[2..]);
     if (std.mem.eql(u8, cmd, "metadata")) return metadataCmd(arena, args[2..]);
-    if (std.mem.eql(u8, cmd, "new") or std.mem.eql(u8, cmd, "init")) return scaffoldCmd(arena, cmd, args[2..]);
+    if (std.mem.eql(u8, cmd, "new") or std.mem.eql(u8, cmd, "init")) return scaffold_cmd.scaffoldCmd(arena, cmd, args[2..], version);
     if (std.mem.eql(u8, cmd, "test")) return test_cmd.main(arena, args[2..]);
     if (std.mem.eql(u8, cmd, "login") or std.mem.eql(u8, cmd, "logout") or std.mem.eql(u8, cmd, "whoami")) {
         return registry_cmd.main(arena, cmd, args[2..], version);
@@ -648,6 +552,8 @@ test {
     _ = @import("plan_v2_test.zig");
     _ = @import("publish_false_test.zig");
     _ = @import("bin_run.zig");
+    _ = @import("scaffold_cmd.zig");
+    _ = @import("bare_name.zig");
     _ = build_cmd;
 }
 
@@ -672,42 +578,6 @@ test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(!isPlanned("frobnicate"));
 }
 
-test "new and init refuse a name that is not a full name, with the command's own words" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    try std.testing.expect((try scaffoldProblem(a, "new", "komira-ai/json", "")) == null);
-    try std.testing.expectEqualStrings(
-        "mopm new json needs a namespace: name it, as in 'mopm new <your GitHub login>/json'",
-        (try scaffoldProblem(a, "new", "json", "")).?,
-    );
-    try std.testing.expectEqualStrings(
-        "mopm init demo needs a namespace: name it, as in 'mopm init <your GitHub login>/demo' (the name comes from this directory; pass --name <namespace>/<name>)",
-        (try scaffoldProblem(a, "init", "demo", " (the name comes from this directory; pass --name <namespace>/<name>)")).?,
-    );
-    try std.testing.expectEqualStrings(
-        "mopm new: package name 'example/async': the import name 'async' is a Mojo keyword; choose another name",
-        (try scaffoldProblem(a, "new", "example/async", "")).?,
-    );
-    try std.testing.expectEqualStrings(
-        "mopm init: package name 'Example/demo' is not in lower case; write 'example/demo'",
-        (try scaffoldProblem(a, "init", "Example/demo", "")).?,
-    );
-}
-
-test "new and init arguments" {
-    try std.testing.expectEqualStrings("demo", scaffoldArgs("new", &.{ "demo", "--bin" }).?.name.?);
-    try std.testing.expectEqual(core.scaffold.Kind.bin, scaffoldArgs("new", &.{ "--bin", "demo" }).?.kind);
-    try std.testing.expectEqual(core.scaffold.Kind.lib, scaffoldArgs("new", &.{"demo"}).?.kind);
-    try std.testing.expectEqual(core.scaffold.Kind.lib, scaffoldArgs("new", &.{ "--bin", "--lib", "demo" }).?.kind);
-    try std.testing.expect(scaffoldArgs("new", &.{}) == null);
-    try std.testing.expect(scaffoldArgs("new", &.{ "a", "b" }) == null);
-    try std.testing.expect(scaffoldArgs("new", &.{ "--name", "a" }) == null);
-    try std.testing.expectEqualStrings("x", scaffoldArgs("init", &.{ "--name", "x" }).?.name.?);
-    try std.testing.expect(scaffoldArgs("init", &.{}).?.name == null);
-    try std.testing.expect(scaffoldArgs("init", &.{"x"}) == null);
-    try std.testing.expect(scaffoldArgs("init", &.{"--name"}) == null);
-}
 
 fn parseOk(a: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) !Opts {
     return switch (try parseOpts(a, tool, args)) {

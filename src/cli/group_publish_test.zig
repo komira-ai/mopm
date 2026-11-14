@@ -2106,3 +2106,116 @@ test "--no-commit and --abort are flags without a value, and they refuse each ot
 test "--oidc: the identity-token cap is the group member cap, so no set a group can hold is refused by the exchange" {
     try std.testing.expectEqual(plan_mod.max_members, core.ci_oidc.max_packages);
 }
+
+// ------------------------------------------------------- the packages of a new group are created first
+
+const put_pa = Script.Step{ .method = .PUT, .suffix = "/api/v2/packages/acme/pa", .status = 201, .body = "{\"name\":\"acme/pa\"}" };
+const put_pb = Script.Step{ .method = .PUT, .suffix = "/api/v2/packages/acme/pb", .status = 201, .body = "{\"name\":\"acme/pb\"}" };
+const put_pc = Script.Step{ .method = .PUT, .suffix = "/api/v2/packages/acme/pc", .status = 201, .body = "{\"name\":\"acme/pc\"}" };
+
+test "a new group's packages are created in plan order with the token and no body, each says created, and a skipped member gets no request" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, ",{\"name\":\"acme/pd\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
+    var script = newScript(a, &.{ put_pa, put_pb, put_pc });
+    var console = Console.init(a, null);
+    try std.testing.expect(try gp.createPackages(a, script.net(), &console, "http://127.0.0.1:1/api/v2", "mopm_test_token", "beta", try plan.uploads(a)));
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 3), script.seen.items.len);
+    const want = [_][]const u8{ "http://127.0.0.1:1/api/v2/packages/acme/pa", "http://127.0.0.1:1/api/v2/packages/acme/pb", "http://127.0.0.1:1/api/v2/packages/acme/pc" };
+    for (script.seen.items, want) |x, url| {
+        try std.testing.expectEqual(std.http.Method.PUT, x.method);
+        try std.testing.expectEqualStrings(url, x.url);
+        try std.testing.expectEqualStrings("mopm_test_token", x.token.?);
+        try std.testing.expectEqual(@as(usize, 0), if (x.body) |b| b.len else 0);
+        try std.testing.expect(!x.content_type_set);
+    }
+    try std.testing.expectEqualStrings("created acme/pa on beta\ncreated acme/pb on beta\ncreated acme/pc on beta\n", console.out.items);
+    try std.testing.expectEqualStrings("", console.err.items);
+}
+
+test "a refused package creation stops the set before the next package and before any group" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const refusals = [_]struct { status: u16, body: []const u8, err: []const u8 }{
+        .{
+            .status = 403,
+            .body = "{\"error\":{\"code\":\"not_namespace_member\",\"message\":\"You are not a member of the namespace 'acme'.\",\"hint\":\"Ask an owner to add you.\"}}",
+            .err = "mopm: You are not a member of the namespace 'acme'.\n  hint: Ask an owner to add you.\n  request id: req-test\n",
+        },
+        .{
+            .status = 400,
+            .body = "{\"error\":{\"code\":\"invalid_namespace\",\"message\":\"'acme' is not a valid namespace.\",\"hint\":\"Use lower case.\"}}",
+            .err = "mopm: 'acme' is not a valid namespace.\n  hint: Use lower case.\n  request id: req-test\n",
+        },
+    };
+    for (refusals) |r| {
+        // The first package is created, the second is refused; the third and the group are never asked for.
+        var script = newScript(a, &.{
+            put_pa,
+            .{ .method = .PUT, .suffix = "/api/v2/packages/acme/pb", .status = r.status, .body = r.body },
+            put_pc,
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        });
+        var console = Console.init(a, null);
+        try std.testing.expect(!(try gp.createPackages(a, script.net(), &console, "http://127.0.0.1:1/api/v2", "mopm_test_token", "beta", try plan.uploads(a))));
+        try std.testing.expect(script.mismatch == null);
+        try std.testing.expectEqual(@as(usize, 2), script.seen.items.len);
+        try std.testing.expectEqual(@as(usize, 0), script.count(.POST));
+        try std.testing.expectEqualStrings("created acme/pa on beta\n", console.out.items);
+        try std.testing.expectEqualStrings(r.err, console.err.items);
+    }
+}
+
+test "a request that fails before any answer stops the creation of packages and says which request" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{.{ .method = .PUT, .suffix = "/api/v2/packages/acme/pa", .status = 0, .err = error.InvalidUri }});
+    var console = Console.init(a, null);
+    try std.testing.expect(!(try gp.createPackages(a, script.net(), &console, "http://127.0.0.1:1/api/v2", "mopm_test_token", "beta", try plan.uploads(a))));
+    try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+    try std.testing.expectEqualStrings("", console.out.items);
+    try std.testing.expectEqualStrings("mopm: PUT /packages/acme/pa: InvalidUri\n", console.err.items);
+}
+
+test "packages the registry already has answer 200, say nothing, and the group is then created and published" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .PUT, .suffix = "/api/v2/packages/acme/pa", .status = 200, .body = "{\"name\":\"acme/pa\"}" },
+        .{ .method = .PUT, .suffix = "/api/v2/packages/acme/pb", .status = 200, .body = "{\"name\":\"acme/pb\"}" },
+        .{ .method = .PUT, .suffix = "/api/v2/packages/acme/pc", .status = 200, .body = "{\"name\":\"acme/pc\"}" },
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 200 },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    try std.testing.expect(try gp.createPackages(a, script.net(), &console, "http://127.0.0.1:1/api/v2", "mopm_test_token", "beta", try plan.uploads(a)));
+    try std.testing.expectEqualStrings("", console.out.items);
+    try std.testing.expectEqualStrings("", console.err.items);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 9), script.seen.items.len);
+    // The first request after the three package requests is the group's.
+    try std.testing.expectEqual(std.http.Method.POST, script.seen.items[3].method);
+    try std.testing.expect(std.mem.endsWith(u8, script.seen.items[3].url, "/groups"));
+}
