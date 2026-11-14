@@ -3,7 +3,9 @@ import { TokenServiceV2 } from '../../src/auth/tokens-v2';
 import { configureV2, packagesInFrom } from '../../src/http/lambda';
 import { MemoryStore } from '../../src/memory-store';
 import { CreateService } from '../../src/publish/create';
+import { publishApiFor } from '../../src/publish/wiring';
 import { FakeAuthDoc } from '../auth-fake-doc';
+import { MutableFlags } from '../publish/harness';
 
 // The wiring of /api/v2 in the API Lambda: which services a stage's environment gives it, and the package list of a namespace.
 
@@ -25,6 +27,37 @@ describe('packagesInFrom', () => {
 
   test('a namespace with no package is an empty list after one read', async () => {
     expect(await packagesInFrom(new MemoryStore())('alice')).toEqual([]);
+  });
+});
+
+describe('publishApiFor', () => {
+  const queue = (n: string) => `https://sqs.us-east-1.amazonaws.com/acct/${n}.fifo`;
+  const required = { MOPM_CHANNEL_BUCKET: 'bucket', MOPM_VALIDATE_QUEUE_URL: queue('validate') };
+  const held = (svc: unknown) => (svc as { d: Record<string, unknown> }).d;
+  const access = new NamespaceAccess({ namespaces: new MemoryNamespaceStore(), users: new MemoryAuthStore() });
+  const doc = () => new FakeAuthDoc({}) as never;
+
+  test('the index queue and the group queue are given to the services when their urls are set, and not otherwise', () => {
+    const without = publishApiFor(required, doc(), 't', new MutableFlags(), access)!;
+    expect(held(without.service).indexQueue).toBeUndefined();
+    expect(held(without.groups).groupQueue).toBeUndefined();
+    const both = publishApiFor({ ...required, MOPM_INDEX_QUEUE_URL: queue('index'), MOPM_GROUP_QUEUE_URL: queue('group') }, doc(), 't', new MutableFlags(), access)!;
+    expect(held(both.service).indexQueue).toBeDefined();
+    expect(held(both.groups).groupQueue).toBeDefined();
+  });
+
+  test('createPackage is wired only with the namespace access, which the publish and group services also receive', () => {
+    const wired = publishApiFor(required, doc(), 't', new MutableFlags(), access)!;
+    expect(wired.creates).toBeInstanceOf(CreateService);
+    expect(held(wired.service).namespaces).toBe(access);
+    expect(held(wired.groups).namespaces).toBe(access);
+    const bare = publishApiFor(required, doc(), 't', new MutableFlags())!;
+    expect(bare.creates).toBeUndefined();
+    expect(held(bare.service).namespaces).toBeUndefined();
+  });
+
+  test('without the upload bucket and queue there is no publish side', () => {
+    expect(publishApiFor({}, doc(), 't', new MutableFlags(), access)).toBeUndefined();
   });
 });
 

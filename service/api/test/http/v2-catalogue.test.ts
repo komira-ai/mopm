@@ -98,4 +98,13 @@ describe('errorViewV2', () => {
     expect(errorViewV2(new Error('boom')).body.error.code).toBe('internal_error');
     expect(errorViewV2(new RegistryError('owner_not_found', 'x')).body.error.code).toBe('internal_error');
   });
+
+  test('a reason is carried only by a publish error whose code lists it', () => {
+    const conflict = (reason?: 'number_held' | 'open_cap') => new PublishError('group_conflict', 'x', {}, undefined, reason);
+    expect(errorViewV2(conflict('number_held')).body.error).toMatchObject({ code: 'group_conflict', reason: 'number_held' });
+    expect(errorViewV2(conflict()).body.error).not.toHaveProperty('reason');
+    // A code that lists no reasons drops one the error holds; an error of another class never has one.
+    expect(errorViewV2(new PublishError('rate_limited', 'x', {}, 5, 'open_cap')).body.error).not.toHaveProperty('reason');
+    expect(errorViewV2(new RegistryError('route_not_found', 'x')).body.error).not.toHaveProperty('reason');
+  });
 });
