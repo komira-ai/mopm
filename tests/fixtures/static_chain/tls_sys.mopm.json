@@ -1,8 +1,8 @@
 {
-  "schema": 1,
-  "name": "tls_sys",
+  "schema": 2,
+  "name": "example/tls_sys",
   "version": "2.4.0",
-  "deps": [{"name": "crypto_sys"}],
+  "deps": [{"name": "example/crypto_sys"}],
   "native": [
     {
       "id": "tls_sys",

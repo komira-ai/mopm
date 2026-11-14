@@ -11,7 +11,7 @@
 //!   written, in the project or outside it;
 //! - a locked package that ships a file a toolchain package ships (other bytes, or a link where a file is) is refused,
 //!   naming the path and both packages; the same bytes at the same path are accepted;
-//! - a version 2 lock that records another toolchain closure than the one to install is refused before any download or
+//! - a lock that records another toolchain closure than the one to install is refused before any download or
 //!   any directory is made; a mirror (same pins, other urls) has the same closure hash and is accepted;
 //! - a locked file or a toolchain file whose body is shorter than its pin, or whose url answers 404, is refused with
 //!   the message of the download and no `*.part-*` is left. (A body cut off by a closed connection is the same short
@@ -50,7 +50,7 @@ test "a locked archive without its metadata, or with a native library the lock d
         try pkg.put("native", try h.parseJson(a, "[{\"id\": \"greet\", \"soname\": \"libgreet.so\", \"sha256\": \"" ++ pinned ++ "\"}]"));
         try c.writeLockValue(b.app, v);
         const r = try c.run(b.app, try c.cat(&.{ &.{ "sync", "--locked" }, b.with_t2 }));
-        const want = try c.fmt("mopm sync: cannot install into .mopm/env: lib/libgreet.so of mojo-greet 1.0.0 has sha256 {s}; mopm.lock pins {s}; refused; the environment is as it was\n", .{ try cp.sha256Hex(a, "the library of greet\n"), pinned });
+        const want = try c.fmt("mopm sync: cannot install into .mopm/env: lib/libgreet.so of mojo-example.greet 1.0.0 has sha256 {s}; mopm.lock pins {s}; refused; the environment is as it was\n", .{ try cp.sha256Hex(a, "the library of greet\n"), pinned });
         rep.same("a native library that is not the pinned one: the refusal", want, r.stderr);
         rep.check("a native library that is not the pinned one: exit 1", r.code == 1, c.detail(r));
         untouched(c, b, "a native library that is not the pinned one");
@@ -58,12 +58,12 @@ test "a locked archive without its metadata, or with a native library the lock d
 
     // The archive has the pinned bytes but no lib/mojo/nometa.mopm.json.
     {
-        const nometa = try cp.package(a, "mojo-nometa", "1.0.0", build_tag, c.subdir, &.{"mojo-compiler ==" ++ mojo}, &.{.{ .path = "lib/libnometa.so", .data = "the library of nometa\n", .mode = 0o755 }});
+        const nometa = try cp.package(a, fx.conda_prefix ++ "nometa", "1.0.0", build_tag, c.subdir, &.{"mojo-compiler ==" ++ mojo}, &.{.{ .path = "lib/libnometa.so", .data = "the library of nometa\n", .mode = 0o755 }});
         try c.publish("nometa", nometa);
         _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/nometa\" = \"1\"");
         const r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
-        rep.same("an archive without lib/mojo/nometa.mopm.json: the refusal", "mopm sync: cannot install into .mopm/env: mojo-nometa 1.0.0 is installed without lib/mojo/nometa.mopm.json: a corrupt package; the environment is as it was\n", r.stderr);
-        rep.check("an archive without its metadata: exit 1, the archive was downloaded and checked", r.code == 1 and h.contains(r.stdout, "downloading mojo-nometa-1.0.0-" ++ build_tag ++ ".conda"), c.detail(r));
+        rep.same("an archive without lib/mojo/nometa.mopm.json: the refusal", "mopm sync: cannot install into .mopm/env: mojo-example.nometa 1.0.0 is installed without lib/mojo/nometa.mopm.json: a corrupt package; the environment is as it was\n", r.stderr);
+        rep.check("an archive without its metadata: exit 1, the archive was downloaded and checked", r.code == 1 and h.contains(r.stdout, "downloading " ++ fx.conda_prefix ++ "nometa-1.0.0-" ++ build_tag ++ ".conda"), c.detail(r));
         untouched(c, b, "an archive without its metadata");
     }
     try rep.finish();
@@ -133,7 +133,7 @@ test "a locked package that ships a toolchain file with other contents is refuse
     for ([_][]const u8{ "clash", "linked" }) |name| {
         _ = try c.project("app", try c.fmt("\"example/greet\" = \"1\"\n\"example/{s}\" = \"1\"", .{name}));
         const r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
-        const want = try c.fmt("mopm sync: cannot install into .mopm/env: bin/mojo is installed by both mojo 1.0.0 and mojo-{s} 1.0.0 with different contents; refused; the environment is as it was\n", .{name});
+        const want = try c.fmt("mopm sync: cannot install into .mopm/env: bin/mojo is installed by both mojo 1.0.0 and mojo-example.{s} 1.0.0 with different contents; refused; the environment is as it was\n", .{name});
         rep.same(try c.fmt("{s} ships bin/mojo with other contents: the refusal", .{name}), want, r.stderr);
         rep.check(try c.fmt("{s} ships bin/mojo with other contents: exit 1", .{name}), r.code == 1, c.detail(r));
         untouched(c, b, name);
@@ -147,7 +147,7 @@ test "a locked package that ships a toolchain file with other contents is refuse
 
     _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/plain\" = \"1\"");
     r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
-    rep.same("plain ships bin/mojo with the same bytes but not executable: the refusal", "mopm sync: cannot install into .mopm/env: bin/mojo is installed by both mojo 1.0.0 and mojo-plain 1.0.0 with different permissions; refused; the environment is as it was\n", r.stderr);
+    rep.same("plain ships bin/mojo with the same bytes but not executable: the refusal", "mopm sync: cannot install into .mopm/env: bin/mojo is installed by both mojo 1.0.0 and mojo-example.plain 1.0.0 with different permissions; refused; the environment is as it was\n", r.stderr);
     rep.check("plain ships bin/mojo not executable: exit 1", r.code == 1, c.detail(r));
     untouched(c, b, "plain");
 
@@ -164,7 +164,7 @@ fn closureOf(stderr: []const u8, key: []const u8) []const u8 {
     return rest[0..@min(64, rest.len)];
 }
 
-test "a version 2 lock that records another toolchain closure is refused before any download; a mirror of the recorded one is accepted" {
+test "a lock that records another toolchain closure is refused before any download; a mirror of the recorded one is accepted" {
     var rig: fx.Rig = undefined;
     try rig.init();
     defer rig.deinit();
@@ -180,7 +180,7 @@ test "a version 2 lock that records another toolchain closure is refused before 
     const reg = [_][]const u8{ "--registry", c.fake.base };
 
     var r = try c.run(app, &(.{"lock"} ++ reg));
-    rep.check("mopm lock writes a version 2 lock with the closure of the built-in toolchain", r.code == 0 and h.contains(c.read(app, "mopm.lock") orelse "", "\"lock_version\": 2"), c.detail(r));
+    rep.check("mopm lock writes a lock with the closure of the built-in toolchain", r.code == 0 and h.contains(c.read(app, "mopm.lock") orelse "", "\"lock_version\": 3"), c.detail(r));
     const recorded_value = (try c.lockValue(app)).object.get("toolchain").?.object.get(mojo).?.object.get(c.subdir).?.string;
 
     const before = try c.served();
@@ -219,8 +219,8 @@ test "a short body and an HTTP 404 of a locked file or a toolchain file are refu
     // A locked file the project has not got yet: first with a body cut in two, then not served at all.
     const late = try fx.packageOf(a, c.subdir, "late", &.{});
     try c.publish("late", late);
-    const late_file = "mojo-late-1.0.0-" ++ build_tag ++ ".conda";
-    const late_url = try c.fmt("{s}/channel/{s}/{s}", .{ c.fake.base, c.subdir, late_file });
+    const late_file = fx.conda_prefix ++ "late-1.0.0-" ++ build_tag ++ ".conda";
+    const late_url = try c.fmt("{s}/channel/{s}/{s}/{s}", .{ c.fake.base, fx.ns, c.subdir, late_file });
     _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/late\" = \"1\"");
     try c.serve("late", late[0 .. late.len / 2]);
     var r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t }));
@@ -228,9 +228,9 @@ test "a short body and an HTTP 404 of a locked file or a toolchain file are refu
     rep.check("a locked file with a short body: exit 1 and the file is not kept", r.code == 1 and !c.exists(b.app, ".mopm/pkgs/" ++ late_file), c.detail(r));
     untouched(c, b, "a locked file with a short body");
 
-    try fs.cwd().deleteFile(c.path(&.{ c.fake_dir, "channel", c.subdir, late_file }));
+    try fs.cwd().deleteFile(c.path(&.{ c.fake_dir, "channel", fx.ns, c.subdir, late_file }));
     r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t }));
-    rep.same("a locked file the registry does not have: the refusal", try c.fmt("mopm sync: {s} answered HTTP 404: late 1.0.0 has been taken down or is unavailable\n", .{late_url}), r.stderr);
+    rep.same("a locked file the registry does not have: the refusal", try c.fmt("mopm sync: {s} answered HTTP 404: example/late 1.0.0 has been taken down or is unavailable\n", .{late_url}), r.stderr);
     rep.check("a locked file the registry does not have: exit 1", r.code == 1, c.detail(r));
     untouched(c, b, "a locked file the registry does not have");
 

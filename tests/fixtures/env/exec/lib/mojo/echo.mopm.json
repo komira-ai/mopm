@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "name": "echo",
+  "schema": 2,
+  "name": "example/echo",
   "version": "1.0.0",
   "native": [
     {

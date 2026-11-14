@@ -39,8 +39,10 @@ pub const Step = struct {
 };
 
 pub const Inputs = struct {
-    /// `[package] name`.
+    /// `[package] name` as an import name: the part after the `/`. The library is `<package>.mojoc`.
     package: []const u8,
+    /// `[package] name` in full, `<namespace>/<name>`: how the progress line names the library. Empty: `package`.
+    full_name: []const u8 = "",
     targets: manifest.Targets,
     /// Absolute environment prefix.
     prefix: []const u8,
@@ -68,7 +70,7 @@ pub fn steps(arena: Allocator, in: Inputs, plan: link_planner.Plan) Allocator.Er
     if (in.targets.lib) |lib| {
         const dest = try std.fs.path.join(arena, &.{ in.out_dir, try std.fmt.allocPrint(arena, "{s}.mojoc", .{in.package}) });
         try out.append(.{
-            .what = try std.fmt.allocPrint(arena, "library {s}", .{in.package}),
+            .what = try std.fmt.allocPrint(arena, "library {s}", .{if (in.full_name.len > 0) in.full_name else in.package}),
             .out = dest,
             .cmd = try mojo_cmd.constructLibrary(arena, .{ .prefix = in.prefix, .package_dir = lib, .include_dirs = in.dep_dirs, .out = dest }),
         });
@@ -166,6 +168,7 @@ pub fn run(arena: Allocator, o: Options) u8 {
     };
     const list = steps(arena, .{
         .package = project.m.package.name,
+        .full_name = project.m.package.full_name,
         .targets = project.m.targets,
         .prefix = tc.prefix,
         .os = o.os,
@@ -225,6 +228,7 @@ test "steps: the library with mojo precompile, then each binary with mojo build,
     const a = t.allocator();
     const list = try steps(a, .{
         .package = "app",
+        .full_name = "example/app",
         .targets = .{ .lib = "src/app", .bins = &.{ .{ .name = "app", .path = "src/main.mojo" }, .{ .name = "tool", .path = "src/tool.mojo" } } },
         .prefix = "/e",
         .os = .linux,
@@ -233,19 +237,20 @@ test "steps: the library with mojo precompile, then each binary with mojo build,
     }, try link_planner.plan(a, &.{}));
     try std.testing.expectEqual(@as(usize, 3), list.len);
 
-    try std.testing.expectEqualStrings("library app", list[0].what);
+    // The progress line names the package in full; the file and the directory are named by its import name.
+    try std.testing.expectEqualStrings("library example/app", list[0].what);
     try std.testing.expectEqualStrings("target/build/app.mojoc", list[0].out);
     try expectArgv(&.{ "/e/bin/mojo", "precompile", "-I", "/w/greet/src", "src/app", "-o", "target/build/app.mojoc" }, list[0].cmd.argv);
 
     try std.testing.expectEqualStrings("binary app", list[1].what);
     try std.testing.expectEqualStrings("target/build/app", list[1].out);
     try expectArgv(&.{
-        "/e/bin/mojo", "build",
-        "-I",          "/w/greet/src",
-        "-I",          "src",
-        "-Xlinker",    "-rpath",
-        "-Xlinker",    "/e/lib",
-        "-o",          "target/build/app",
+        "/e/bin/mojo",   "build",
+        "-I",            "/w/greet/src",
+        "-I",            "src",
+        "-Xlinker",      "-rpath",
+        "-Xlinker",      "/e/lib",
+        "-o",            "target/build/app",
         "src/main.mojo",
     }, list[1].cmd.argv);
     try expectArgv(&.{ "/e/bin/mojo", "build", "-I", "/w/greet/src", "-I", "src", "-Xlinker", "-rpath", "-Xlinker", "/e/lib", "-o", "target/build/tool", "src/tool.mojo" }, list[2].cmd.argv);
@@ -305,7 +310,7 @@ test "steps: natives of the environment are linked into a binary and not into th
     const a = t.allocator();
     const metadata = core.metadata;
     const plan = try link_planner.plan(a, &.{.{ .dir = "/e/lib/mojo", .meta = try metadata.parse(a,
-        \\{"schema": 1, "name": "s", "native": [{"id": "x", "soname": "libx.a", "kind": "static", "static_file": "../libx.a"}]}
+        \\{"schema": 2, "name": "t/ss", "native": [{"id": "x", "soname": "libx.a", "kind": "static", "static_file": "../libx.a"}]}
     ) }});
     const list = try steps(a, .{
         .package = "p",

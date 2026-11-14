@@ -513,7 +513,7 @@ describe('the verdict codes are the contract', () => {
   });
   test('the constants the validator hand-codes match spec/package-metadata.schema.json', () => {
     const schema = JSON.parse(readFileSync(join(__dirname, '../../../../spec/package-metadata.schema.json'), 'utf8'));
-    expect(schema.properties.schema.const).toBe(METADATA_SCHEMA_VERSION);
+    expect(schema.properties.schema.enum).toContain(METADATA_SCHEMA_VERSION);
     expect(schema.required).toEqual(['schema', 'name']);
     const native = schema.properties.native.items;
     expect(native.required).toEqual(['id', 'soname']);

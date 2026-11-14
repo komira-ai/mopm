@@ -13,19 +13,19 @@ const Script = gt.Script;
 const Console = gp.Console;
 const Result = gp.Result;
 
-pub const api = "http://127.0.0.1:1/api/v1";
+pub const api = "http://127.0.0.1:1/api/v2";
 pub const health_objects = "{\"status\":\"ok\",\"features\":[\"group_readme_objects\"]}";
 pub const health_plain = "{\"status\":\"ok\"}";
 pub const text_a = "# a readme\n";
 
-/// Members m0.. with the readmes `texts` (null: none), each with one file of 7 bytes.
+/// Members acme/m0.. with the readmes `texts` (null: none), each with one file of 7 bytes.
 pub fn stageSet(a: Allocator, tmp: *std.testing.TmpDir, texts: []const ?[]const u8) !plan_mod.Plan {
     var members = std.ArrayList(u8).init(a);
     try tmp.dir.makePath("noarch");
     const sha = try core.install.sha256Hex(a, "m-bytes");
     for (texts, 0..) |t, i| {
         if (i != 0) try members.append(',');
-        const filename = try std.fmt.allocPrint(a, "mojo-m{d}-1.0.0-x.conda", .{i});
+        const filename = try std.fmt.allocPrint(a, "mojo-acme.m{d}-1.0.0-x.conda", .{i});
         try tmp.dir.writeFile(try std.fmt.allocPrint(a, "noarch/{s}", .{filename}), "m-bytes");
         var key: []const u8 = "";
         if (t) |text| {
@@ -33,11 +33,11 @@ pub fn stageSet(a: Allocator, tmp: *std.testing.TmpDir, texts: []const ?[]const 
             key = try std.fmt.allocPrint(a, "\"readme\":\"R{d}.md\",", .{i});
         }
         try members.writer().print(
-            "{{\"name\":\"m{d}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",{s}\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":7}}]}}",
+            "{{\"name\":\"acme/m{d}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",{s}\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":7}}]}}",
             .{ i, gt.sha_x, key, filename, sha },
         );
     }
-    const text = try std.fmt.allocPrint(a, "{{\"version\":1,\"members\":[{s}]}}", .{members.items});
+    const text = try std.fmt.allocPrint(a, "{{\"version\":2,\"members\":[{s}]}}", .{members.items});
     try tmp.dir.writeFile(plan_mod.plan_name, text);
     const parsed = try plan_mod.parsePlan(a, text);
     try std.testing.expectEqualStrings("a plan", if (parsed == .ok) "a plan" else parsed.bad);
@@ -60,7 +60,7 @@ pub fn answerPartial(a: Allocator, texts: []const ?[]const u8, held_files: usize
     try w.print("{{\"group_id\":\"{s}\",\"status\":\"open\",\"attempt\":1,\"members\":[", .{gt.gid});
     for (texts, 0..) |t, i| {
         if (i != 0) try w.writeByte(',');
-        try w.print("{{\"name\":\"m{d}\",\"version\":\"1.0.0\",\"action\":\"new\",", .{i});
+        try w.print("{{\"name\":\"acme/m{d}\",\"version\":\"1.0.0\",\"action\":\"new\",", .{i});
         if (t) |text| if (ref != .none and text.len > 0) {
             const held_r = ref == .held or i < held_readmes;
             try w.print("\"readme\":{{\"sha256\":\"{s}\",\"size\":{d},\"upload_id\":\"upl_r{d}\",\"uploaded\":{s}", .{ try core.install.sha256Hex(a, text), text.len, i, if (held_r) "true" else "false" });
@@ -68,7 +68,7 @@ pub fn answerPartial(a: Allocator, texts: []const ?[]const u8, held_files: usize
             try w.writeAll("},");
         };
         const held = i < held_files;
-        try w.print("\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"mojo-m{d}-1.0.0-x.conda\",\"upload_id\":\"u{d}\",\"uploaded\":{s}", .{ i, i, if (held) "true" else "false" });
+        try w.print("\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"mojo-acme.m{d}-1.0.0-x.conda\",\"upload_id\":\"u{d}\",\"uploaded\":{s}", .{ i, i, if (held) "true" else "false" });
         if (!held) try w.print(",\"put_url\":\"http://127.0.0.1:1/put/f{d}{s}\",\"put_headers\":{{\"content-length\":\"7\",\"x-amz-checksum-sha256\":\"fff=\"}}", .{ i, variant });
         try w.writeAll("}]}");
     }
@@ -156,7 +156,7 @@ test "objects mode: the create declares the readme by digest and size, the readm
     try std.testing.expectEqual(@as(usize, 8), script.seen.items.len);
     try expectHealthFirst(&script);
 
-    // The create declares the readme of m0 and only that one.
+    // The create declares the readme of acme/m0 and only that one.
     const create = script.seen.items[1].body.?;
     try gt.expectContains(create, try std.fmt.allocPrint(a, "\"readme\":{{\"sha256\":\"{s}\",\"size\":11}}", .{sha}));
     try std.testing.expectEqual(@as(usize, 1), countOf(create, "\"readme\""));
@@ -174,7 +174,7 @@ test "objects mode: the create declares the readme by digest and size, the readm
     try std.testing.expectEqualStrings("http://127.0.0.1:1/put/f1", script.seen.items[4].url);
 
     // The commit carries refs and no text.
-    const expected = try std.fmt.allocPrint(a, "{{\"members\":[{{\"name\":\"m0\",\"manifest_sha256\":\"{s}\",\"readme\":{{\"sha256\":\"{s}\",\"size\":11}}}},{{\"name\":\"m1\",\"manifest_sha256\":\"{s}\"}},{{\"name\":\"m2\",\"manifest_sha256\":\"{s}\"}}]}}", .{ gt.sha_x, sha, gt.sha_x, gt.sha_x });
+    const expected = try std.fmt.allocPrint(a, "{{\"members\":[{{\"name\":\"acme/m0\",\"manifest_sha256\":\"{s}\",\"readme\":{{\"sha256\":\"{s}\",\"size\":11}}}},{{\"name\":\"acme/m1\",\"manifest_sha256\":\"{s}\"}},{{\"name\":\"acme/m2\",\"manifest_sha256\":\"{s}\"}}]}}", .{ gt.sha_x, sha, gt.sha_x, gt.sha_x });
     try std.testing.expectEqualStrings(expected, script.seen.items[6].body.?);
     try std.testing.expect(!gt.contains(script.seen.items[6].body.?, "# a readme"));
 
@@ -254,7 +254,7 @@ test "without the capability the readme goes inline: no /health feature, a 404, 
         try std.testing.expect(script.mismatch == null);
         try expectHealthFirst(&script);
         try std.testing.expect(!gt.contains(script.seen.items[1].body.?, "\"readme\""));
-        const expected = try std.fmt.allocPrint(a, "{{\"members\":[{{\"name\":\"m0\",\"manifest_sha256\":\"{s}\",\"readme\":\"# a readme\\n\"}},{{\"name\":\"m1\",\"manifest_sha256\":\"{s}\"}},{{\"name\":\"m2\",\"manifest_sha256\":\"{s}\"}}]}}", .{ gt.sha_x, gt.sha_x, gt.sha_x });
+        const expected = try std.fmt.allocPrint(a, "{{\"members\":[{{\"name\":\"acme/m0\",\"manifest_sha256\":\"{s}\",\"readme\":\"# a readme\\n\"}},{{\"name\":\"acme/m1\",\"manifest_sha256\":\"{s}\"}},{{\"name\":\"acme/m2\",\"manifest_sha256\":\"{s}\"}}]}}", .{ gt.sha_x, gt.sha_x, gt.sha_x });
         try std.testing.expectEqualStrings(expected, script.seen.items[5].body.?);
     }
 }
@@ -320,7 +320,7 @@ test "a set with no readme with text makes no /health request" {
     try std.testing.expect(script.mismatch == null);
     try std.testing.expectEqual(std.http.Method.POST, script.seen.items[0].method);
     // The empty readme stays inline.
-    const expected = try std.fmt.allocPrint(a, "{{\"members\":[{{\"name\":\"m0\",\"manifest_sha256\":\"{s}\"}},{{\"name\":\"m1\",\"manifest_sha256\":\"{s}\",\"readme\":\"\"}},{{\"name\":\"m2\",\"manifest_sha256\":\"{s}\"}}]}}", .{ gt.sha_x, gt.sha_x, gt.sha_x });
+    const expected = try std.fmt.allocPrint(a, "{{\"members\":[{{\"name\":\"acme/m0\",\"manifest_sha256\":\"{s}\"}},{{\"name\":\"acme/m1\",\"manifest_sha256\":\"{s}\",\"readme\":\"\"}},{{\"name\":\"acme/m2\",\"manifest_sha256\":\"{s}\"}}]}}", .{ gt.sha_x, gt.sha_x, gt.sha_x });
     try std.testing.expectEqualStrings(expected, script.seen.items[4].body.?);
 }
 
@@ -348,7 +348,7 @@ test "objects mode: an empty readme stays inline as \"\" and is not declared or 
     try std.testing.expect(script.mismatch == null);
     try std.testing.expectEqual(@as(usize, 1), countOf(script.seen.items[1].body.?, "\"readme\""));
     const commit = script.seen.items[6].body.?;
-    try gt.expectContains(commit, "{\"name\":\"m1\",\"manifest_sha256\":\"" ++ gt.sha_x ++ "\",\"readme\":\"\"}");
+    try gt.expectContains(commit, "{\"name\":\"acme/m1\",\"manifest_sha256\":\"" ++ gt.sha_x ++ "\",\"readme\":\"\"}");
     try std.testing.expectEqual(@as(usize, 1), countOf(commit, "\"sha256\":\""));
 }
 
@@ -376,7 +376,7 @@ test "a create answer that lacks the readme upload re-plans to the inline form w
     // The create asked for the object, the answer had none; the readme goes in the commit as text.
     try gt.expectContains(script.seen.items[1].body.?, "\"readme\":{\"sha256\":\"");
     try gt.expectContains(script.seen.items[5].body.?, "\"readme\":\"# a readme\\n\"}");
-    try gt.expectContains(console.out.items, "the registry no longer takes readmes as objects (its answer has no readme upload for m0); sending them inline\n");
+    try gt.expectContains(console.out.items, "the registry no longer takes readmes as objects (its answer has no readme upload for acme/m0); sending them inline\n");
     try std.testing.expect(!d.p.objects);
 }
 
@@ -425,7 +425,7 @@ test "a create answer that lacks the readme upload of a set too large inline is 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const over = try gt.stageReadmes(a, &tmp, gt.limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, "");
-    const state = plan_mod.State{ .registry = api, .plan_sha256 = over.sha256, .group_id = gt.gid, .attempt = 1, .staged = true, .uploaded = &.{"m0/noarch/mojo-m0-1.0.0-x.conda"} };
+    const state = plan_mod.State{ .registry = api, .plan_sha256 = over.sha256, .group_id = gt.gid, .attempt = 1, .staged = true, .uploaded = &.{"acme/m0/noarch/mojo-acme.m0-1.0.0-x.conda"} };
     try plan_mod.saveState(a, tmp.dir, state);
     const before = try tmp.dir.readFileAlloc(a, plan_mod.state_name, 1 << 20);
     var script = gt.newScript(a, &.{
@@ -438,7 +438,7 @@ test "a create answer that lacks the readme upload of a set too large inline is 
     try std.testing.expectEqual(Result.failed, d.result.?);
     try std.testing.expectEqual(@as(usize, 3), script.seen.items.len);
     try std.testing.expectEqual(@as(usize, 0), script.count(.PUT));
-    try gt.expectContains(console.err.items, "the registry no longer takes readmes as objects (its answer has no readme upload for m0), and sent inline they are too large: the commit request of the 90 members to upload is ");
+    try gt.expectContains(console.err.items, "the registry no longer takes readmes as objects (its answer has no readme upload for acme/m0), and sent inline they are too large: the commit request of the 90 members to upload is ");
     try gt.expectContains(console.err.items, "; nothing was uploaded\n");
     try std.testing.expectEqualStrings(before, try tmp.dir.readFileAlloc(a, plan_mod.state_name, 1 << 20));
 }
@@ -451,7 +451,7 @@ test "a staged group resumed after the capability disappeared is committed inlin
     defer tmp.cleanup();
     const texts = [_]?[]const u8{ text_a, null, null };
     const plan = try stageSet(a, &tmp, &texts);
-    const state = plan_mod.State{ .registry = api, .plan_sha256 = plan.sha256, .group_id = gt.gid, .attempt = 1, .staged = true, .uploaded = &.{ "m0/noarch/mojo-m0-1.0.0-x.conda", "m1/noarch/mojo-m1-1.0.0-x.conda", "m2/noarch/mojo-m2-1.0.0-x.conda" } };
+    const state = plan_mod.State{ .registry = api, .plan_sha256 = plan.sha256, .group_id = gt.gid, .attempt = 1, .staged = true, .uploaded = &.{ "acme/m0/noarch/mojo-acme.m0-1.0.0-x.conda", "acme/m1/noarch/mojo-acme.m1-1.0.0-x.conda", "acme/m2/noarch/mojo-acme.m2-1.0.0-x.conda" } };
     var script = gt.newScript(a, &.{
         step(.GET, "/health", 200, health_plain),
         step(.GET, gt.gid, 200, gt.group_status.of("open")),
@@ -473,9 +473,9 @@ test "an invalid_request about the readme of an objects-mode commit is shown wit
     defer st.deinit();
     const a = st.allocator();
     const texts = [_]?[]const u8{ text_a, null };
-    const refusal = "{\"error\":{\"code\":\"invalid_request\",\"message\":\"'readme' of 'm0' must be a string\",\"hint\":\"\"}}";
+    const refusal = "{\"error\":{\"code\":\"invalid_request\",\"message\":\"'readme' of 'acme/m0' must be a string\",\"hint\":\"\"}}";
     const other = "{\"error\":{\"code\":\"group_commit_refused\",\"message\":\"another request was committed\",\"hint\":\"\"}}";
-    const not_readme = "{\"error\":{\"code\":\"invalid_request\",\"message\":\"'description' of 'm0' is empty or too long\",\"hint\":\"\"}}";
+    const not_readme = "{\"error\":{\"code\":\"invalid_request\",\"message\":\"'description' of 'acme/m0' is empty or too long\",\"hint\":\"\"}}";
     const Case = struct { health: []const u8, ref: Ref, status: u16, body: []const u8, note: bool };
     for ([_]Case{
         .{ .health = health_objects, .ref = .held, .status = 400, .body = refusal, .note = true },
@@ -498,8 +498,8 @@ test "an invalid_request about the readme of an objects-mode commit is shown wit
         try std.testing.expect(!(try plan_mod.loadState(a, tmp.dir)).ok.committed);
         const note = "the registry did not take the readmes as objects (it may have been rolled back since /health was read); group " ++ gt.gid ++ " is still open: run the same command again, which sends them inline if /health no longer lists group_readme_objects\n";
         try std.testing.expectEqual(c.note, gt.contains(console.err.items, note));
-        if (c.body.ptr == refusal.ptr) try gt.expectContains(console.err.items, "'readme' of 'm0' must be a string");
-        if (c.body.ptr == not_readme.ptr) try gt.expectContains(console.err.items, "'description' of 'm0' is empty or too long");
+        if (c.body.ptr == refusal.ptr) try gt.expectContains(console.err.items, "'readme' of 'acme/m0' must be a string");
+        if (c.body.ptr == not_readme.ptr) try gt.expectContains(console.err.items, "'description' of 'acme/m0' is empty or too long");
     }
 }
 
@@ -598,7 +598,7 @@ test "a readme the registry gave no upload for stops the run, and a long run ask
     var c1 = Console.init(a, null);
     const d1 = try drive(a, &tmp, &lacking, &c1, null);
     try std.testing.expectEqual(Result.failed, d1.result.?);
-    try gt.expectContains(c1.err.items, "the registry's answer has no readme upload for m0\n");
+    try gt.expectContains(c1.err.items, "the registry's answer has no readme upload for acme/m0\n");
 
     // An answer whose readme has no URL.
     const no_url = try std.mem.replaceOwned(u8, a, try answerOf(a, &texts, 0, .pending, ""), "\"put_url\":\"http://127.0.0.1:1/put/r0\",", "");
@@ -610,7 +610,7 @@ test "a readme the registry gave no upload for stops the run, and a long run ask
     var c2 = Console.init(a, null);
     const d2 = try drive(a, &tmp, &bare, &c2, null);
     try std.testing.expectEqual(Result.failed, d2.result.?);
-    try gt.expectContains(c2.err.items, "the registry's answer for the readme of m0 is not an upload descriptor: it is not uploaded and has no put_url; nothing was uploaded\n");
+    try gt.expectContains(c2.err.items, "the registry's answer for the readme of acme/m0 is not an upload descriptor: it is not uploaded and has no put_url; nothing was uploaded\n");
     try std.testing.expectEqual(@as(usize, 0), bare.count(.PUT));
 
     // The file took long enough for the URLs to lapse: the readme waits for fresh ones.
@@ -630,7 +630,7 @@ test "a readme the registry gave no upload for stops the run, and a long run ask
     try std.testing.expect(slow.mismatch == null);
 
     // A refreshed answer without the member.
-    const missing = try std.mem.replaceOwned(u8, a, try answerOf(a, &texts, 1, .pending, "x"), "\"name\":\"m0\"", "\"name\":\"zz\"");
+    const missing = try std.mem.replaceOwned(u8, a, try answerOf(a, &texts, 1, .pending, "x"), "\"name\":\"acme/m0\"", "\"name\":\"acme/zz\"");
     var none = gt.newScript(a, &.{
         step(.GET, "/health", 200, health_objects),
         step(.POST, "/groups", 201, try answerOf(a, &texts, 0, .pending, "")),
@@ -641,7 +641,7 @@ test "a readme the registry gave no upload for stops the run, and a long run ask
     var c4 = Console.init(a, null);
     const d4 = try drive(a, &tmp, &none, &c4, null);
     try std.testing.expectEqual(Result.failed, d4.result.?);
-    try gt.expectContains(c4.err.items, "the registry's answer has no reservation for m0 1.0.0\n");
+    try gt.expectContains(c4.err.items, "the registry's answer has no reservation for acme/m0 1.0.0\n");
 }
 
 test "--dry-run reads /health without a token and says which form it would send; an oversized inline set is refused" {
@@ -664,9 +664,9 @@ test "--dry-run reads /health without a token and says which form it would send;
     try std.testing.expectEqual(@as(usize, 1), objects.seen.items.len);
     try std.testing.expectEqualStrings(try std.fmt.allocPrint(a,
         \\would create one group of 3 members (3 files), in this order:
-        \\  m0 1.0.0 (1 files)
-        \\  m1 1.0.0 (1 files)
-        \\  m2 1.0.0 (1 files)
+        \\  acme/m0 1.0.0 (1 files)
+        \\  acme/m1 1.0.0 (1 files)
+        \\  acme/m2 1.0.0 (1 files)
         \\would send the readmes as uploaded objects (the registry lists group_readme_objects); the commit request is {d} bytes
         \\would upload each file the registry does not hold, commit the group, and wait for it to be visible
         \\dry run: nothing was created or uploaded; the registry was only read (its config.json and GET /health)
@@ -678,9 +678,9 @@ test "--dry-run reads /health without a token and says which form it would send;
     try std.testing.expectEqual(@as(u8, 0), try readmes.dryRun(a, &c2, plain.net(), api, true, plan, uploads, checked.entries, checked.inlineCommit()));
     try std.testing.expectEqualStrings(try std.fmt.allocPrint(a,
         \\would create one group of 3 members (3 files), in this order:
-        \\  m0 1.0.0 (1 files)
-        \\  m1 1.0.0 (1 files)
-        \\  m2 1.0.0 (1 files)
+        \\  acme/m0 1.0.0 (1 files)
+        \\  acme/m1 1.0.0 (1 files)
+        \\  acme/m2 1.0.0 (1 files)
         \\would send the readmes inline; the commit request is {d} bytes
         \\would upload each file the registry does not hold, and stop with the group open (--no-commit)
         \\dry run: nothing was created or uploaded; the registry was only read (its config.json and GET /health)
@@ -703,8 +703,8 @@ test "--dry-run reads /health without a token and says which form it would send;
     try std.testing.expectEqual(@as(usize, 0), quiet.seen.items.len);
     try std.testing.expectEqualStrings(
         \\would create one group of 2 members (2 files), in this order:
-        \\  m0 1.0.0 (1 files)
-        \\  m1 1.0.0 (1 files)
+        \\  acme/m0 1.0.0 (1 files)
+        \\  acme/m1 1.0.0 (1 files)
         \\would upload each file the registry does not hold, commit the group, and wait for it to be visible
         \\dry run: nothing was sent
         \\

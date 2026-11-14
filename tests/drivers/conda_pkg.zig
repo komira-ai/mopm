@@ -146,7 +146,7 @@ pub fn zip(a: Allocator, members: []const Entry) ![]u8 {
     return out.items;
 }
 
-/// The bytes of `<name>-<version>-<build>.conda` holding `files`, with `depends` in its index.
+/// The bytes of `<name>-<version>-<build>.conda` (`name` is the conda name, `mojo-<namespace>.<name>` for a mopm package) holding `files`, with `depends` in its index.
 pub fn package(a: Allocator, name: []const u8, version: []const u8, build: []const u8, subdir: []const u8, depends: []const []const u8, files: []const Entry) ![]u8 {
     const stem = try std.fmt.allocPrint(a, "{s}-{s}-{s}", .{ name, version, build });
     var index = std.ArrayList(u8).init(a);

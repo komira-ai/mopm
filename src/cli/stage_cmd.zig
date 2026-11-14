@@ -14,20 +14,21 @@
 //! 2. Order. An edge is a dependency on a member: a path dependency (its `version` must be met by the member it names),
 //!    or a registry dependency whose name is a member's (its requirement must be met by that member). A dependency
 //!    comes before its dependents; a cycle is refused. Dev-dependencies are not packed and are not edges.
-//! 3. Pack. The `.mojoc` of a member for a subdir is `<artifacts>/<subdir>/<name>.mojoc`; each subdir that has one is
+//! 3. Pack. The `.mojoc` of a member for a subdir is `<artifacts>/<subdir>/<import name>.mojoc`; each subdir that has one is
 //!    packed, with the path of every path dependency dropped and its version requirement kept (src/core/conda.zig).
 //!    A member with `[native.<id>]` libraries also needs, per subdir, each one's static archive at
-//!    `<artifacts>/<subdir>/<name>.native/<archive name>` (`lib<id>.a`, or the native's `soname`), packed as
+//!    `<artifacts>/<subdir>/<import name>.native/<archive name>` (`lib<id>.a`, or the native's `soname`), packed as
 //!    `mopm pack --native` packs it; one missing is refused, and `noarch` cannot hold natives.
 //!    A member with `[targets] bins` ships each program's source (the `.mojo` file the entry names, below the member
-//!    directory) in every subdir's package, at `lib/mojo/<name>.bins/<bin>.mojo` (src/core/bins.zig); an unreadable,
+//!    directory) in every subdir's package, at `lib/mojo/<import name>.bins/<bin>.mojo` (src/core/bins.zig); an unreadable,
 //!    empty or badly named one is refused. Nothing built is packed: the program is built where it is run.
 //!    Every file is packed twice and the two must be the same bytes; the metadata inside must hold no URL, no lock
 //!    entry and no path.
-//! 4. Registry. `GET /packages/<name>/<version>` (no token) decides each member: not there, `upload`; published with
+//! 4. Registry. `GET <api_v2_url>/packages/<namespace>/<name>/<version>` (no token) decides each member: not there, `upload`; published with
 //!    the same files (same sha256s), `skip`; published with other bytes, yanked, or tombstoned (its number is burned),
 //!    `refuse`.
-//! 5. Write. `<out>/<subdir>/<file>.conda` for each upload member, its readme, and `plan.json` last, which a reader
+//! 5. Write. `<out>/<subdir>/<file>.conda` for each upload member (the file is `mojo-<namespace>.<name>-...`), its readme
+//!    at `<out>/<namespace>/<name>/README.md`, and `plan.json` (version 2, members named by full name) last, which a reader
 //!    treats as proof the set is complete. A set with a `refuse` member is written too (`publish --staged` refuses it
 //!    whole) and the run ends 1.
 //!
@@ -54,7 +55,7 @@ pub const usage =
     \\                  --out <dir> --registry <prod|gamma|beta|url>
     \\
     \\  pack the members of the workspace under <dir> (the named packages and what they depend on, or all)
-    \\  from <artifacts>/<subdir>/<name>.mojoc, check each version against the registry, and write the
+    \\  from <artifacts>/<subdir>/<import name>.mojoc, check each version against the registry, and write the
     \\  staged set (spec/staged-set.md) to <out>. Reads no token. --registry is required: there is no default.
     \\
 ;
@@ -117,7 +118,10 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
 // ----------------------------------------------------------------- members
 
 pub const Member = struct {
+    /// The full name, `<namespace>/<name>`: what the registry, the plan and every message call the package.
     name: []const u8,
+    /// The import name: what the artifacts' file names and the package's library files use.
+    import: []const u8,
     version: []const u8,
     /// Absolute, without a trailing separator.
     dir: []const u8,
@@ -154,7 +158,7 @@ fn walk(arena: Allocator, dir: []const u8, depth: usize, found: *std.ArrayList(M
                 try std.fmt.allocPrint(arena, "{s}: {s}", .{ file, @errorName(e) });
             return;
         };
-        try found.append(.{ .name = m.package.name, .version = m.package.version, .dir = dir, .m = m });
+        try found.append(.{ .name = m.package.full_name, .import = m.package.name, .version = m.package.version, .dir = dir, .m = m });
         return;
     } else |e| switch (e) {
         error.FileNotFound => {},
@@ -189,8 +193,8 @@ pub fn discover(arena: Allocator, root: []const u8) !Result([]Member) {
             if (std.mem.eql(u8, other.m.package.full_name, m.m.package.full_name)) {
                 return bad([]Member, arena, "{s} and {s} are both the package {s}", .{ other.dir, m.dir, m.m.package.full_name });
             }
-            if (std.mem.eql(u8, other.name, m.name)) {
-                return bad([]Member, arena, "{s} and {s} are {s} and {s}, which have the same import name {s}; a staged set holds one package per import name", .{ other.dir, m.dir, other.m.package.full_name, m.m.package.full_name, m.name });
+            if (std.mem.eql(u8, other.import, m.import)) {
+                return bad([]Member, arena, "{s} and {s} are {s} and {s}, which have the same import name {s}; a staged set holds one package per import name", .{ other.dir, m.dir, other.m.package.full_name, m.m.package.full_name, m.import });
             }
         }
     }
@@ -209,7 +213,7 @@ fn indexOfFullName(members: []const Member, full: []const u8) ?usize {
 fn indexOfNamed(members: []const Member, named: []const u8) ?usize {
     if (indexOfFullName(members, named)) |i| return i;
     for (members, 0..) |m, i| {
-        if (std.mem.eql(u8, m.name, named)) return i;
+        if (std.mem.eql(u8, m.import, named)) return i;
     }
     return null;
 }
@@ -383,7 +387,7 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
 
     var packs = std.ArrayList(conda.Packed).init(arena);
     for (conda.subdirs) |subdir| {
-        const file = try std.fmt.allocPrint(arena, "{s}/{s}/{s}.mojoc", .{ artifacts, subdir, m.name });
+        const file = try std.fmt.allocPrint(arena, "{s}/{s}/{s}.mojoc", .{ artifacts, subdir, m.import });
         const bytes = std.fs.cwd().readFileAlloc(arena, file, 1 << 30) catch |e| switch (e) {
             error.FileNotFound => continue,
             else => return bad(T, arena, "{s}: {s}", .{ file, @errorName(e) }),
@@ -397,7 +401,7 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
             }
             for (m.m.native) |n| {
                 const archive_name = try n.archiveName(arena);
-                const nfile = try std.fmt.allocPrint(arena, "{s}/{s}/{s}{s}/{s}", .{ artifacts, subdir, m.name, native_dir_suffix, archive_name });
+                const nfile = try std.fmt.allocPrint(arena, "{s}/{s}/{s}{s}/{s}", .{ artifacts, subdir, m.import, native_dir_suffix, archive_name });
                 const nbytes = std.fs.cwd().readFileAlloc(arena, nfile, 1 << 30) catch |e| switch (e) {
                     error.FileNotFound => return bad(T, arena, "{s}: native library '{s}' has no archive for {s}: expected {s}", .{ m.name, n.id, subdir, nfile }),
                     else => return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, @errorName(e) }),
@@ -416,7 +420,7 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
         try packs.append(p);
     }
     if (packs.items.len == 0) {
-        return bad(T, arena, "{s} has no build artifact: expected {s}/<subdir>/{s}.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{ m.name, artifacts, m.name });
+        return bad(T, arena, "{s} has no build artifact: expected {s}/<subdir>/{s}.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{ m.name, artifacts, m.import });
     }
     var staged = Staged{ .member = m, .packs = packs.items };
 
@@ -442,9 +446,9 @@ pub const Verdict = union(enum) { upload, skip, refuse: []const u8 };
 const RegistryFile = struct { subdir: []const u8 = "", filename: []const u8 = "", sha256: []const u8 = "" };
 const RegistryVersion = struct { state: []const u8 = "", yank_reason: ?[]const u8 = null, files: []const RegistryFile = &.{} };
 
-/// What the registry says about `name` `version` against the files `packs`, or why it could not be asked.
-pub fn check(arena: Allocator, net: Net, api_url: []const u8, name: []const u8, version: []const u8, packs: []const conda.Packed) !Result(Verdict) {
-    const url = try std.fmt.allocPrint(arena, "{s}/packages/{s}/{s}", .{ api_url, name, version });
+/// What the registry says about the package `name` (a full name) at `version` against the files `packs`, or why it could not be asked.
+pub fn check(arena: Allocator, net: Net, api_v2_url: []const u8, name: []const u8, version: []const u8, packs: []const conda.Packed) !Result(Verdict) {
+    const url = try std.fmt.allocPrint(arena, "{s}/packages/{s}/{s}", .{ api_v2_url, name, version });
     const answer = net.vtable.request(net.ptr, arena, .GET, url, .{}) catch |e| {
         return bad(Verdict, arena, "cannot ask the registry about {s} {s}: {s}", .{ name, version, @errorName(e) });
     };
@@ -511,8 +515,8 @@ pub const Run = struct {
     arena: Allocator,
     net: Net,
     console: *Console,
-    /// The registry's API root.
-    api_url: []const u8,
+    /// The registry's version 2 API root (`api_v2_url`): the member's full name is in the path.
+    api_v2_url: []const u8,
     flags: Flags,
 };
 
@@ -565,7 +569,7 @@ pub fn run(r: Run) !u8 {
 
     var verdicts = std.ArrayList(Verdict).init(arena);
     for (staged.items) |s| {
-        switch (try check(arena, r.net, r.api_url, s.member.name, s.member.version, s.packs)) {
+        switch (try check(arena, r.net, r.api_v2_url, s.member.name, s.member.version, s.packs)) {
             .ok => |v| try verdicts.append(v),
             .bad => |why| {
                 c.fail("{s}\n", .{why});
@@ -586,7 +590,7 @@ pub fn run(r: Run) !u8 {
     switch (try plan_mod.commitOf(arena, entries.items)) {
         .body => {},
         .bad => |why| {
-            const objects = readmes.takesObjects(arena, r.net, r.api_url) catch |e| {
+            const objects = readmes.takesObjects(arena, r.net, r.api_v2_url) catch |e| {
                 c.fail("GET /health: {s}; nothing was written\n", .{@errorName(e)});
                 return 1;
             };
@@ -651,7 +655,7 @@ pub fn run(r: Run) !u8 {
         }
     }
     var text = std.ArrayList(u8).init(arena);
-    try std.json.stringify(.{ .version = @as(u32, 1), .members = members_out.items }, .{ .whitespace = .indent_2, .emit_null_optional_fields = false }, text.writer());
+    try std.json.stringify(.{ .version = @as(u32, 2), .members = members_out.items }, .{ .whitespace = .indent_2, .emit_null_optional_fields = false }, text.writer());
     try text.append('\n');
     try writes.append(.{ .path = plan_mod.plan_name, .bytes = text.items });
     for (writes.items) |w| writeFileIn(out, w.path, w.bytes) catch |e| {
@@ -693,7 +697,7 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
             return 1;
         },
     };
-    return run(.{ .arena = arena, .net = gp.realNet(), .console = &console, .api_url = config.api_url, .flags = flags }) catch |e| {
+    return run(.{ .arena = arena, .net = gp.realNet(), .console = &console, .api_v2_url = config.api_v2_url, .flags = flags }) catch |e| {
         console.fail("{s}\n", .{@errorName(e)});
         return 1;
     };

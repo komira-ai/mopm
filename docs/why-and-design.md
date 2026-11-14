@@ -59,11 +59,11 @@ catalogue is empty today, and several things in section 10 are not built.
 ## 3. The registry design
 
 **Packages are conda packages.** A published version is a `.conda` archive named
-`mojo-<name>-<version>-<build>.conda`, holding `lib/mojo/<name>.mojoc`, an embedded metadata file
-`lib/mojo/<name>.mopm.json`, and any native libraries the package declares under `lib/`. The conda
+`mojo-<namespace>.<name>-<version>-<build>.conda` (`komira-ai/json` is `mojo-komira-ai.json`), holding `lib/mojo/<name>.mojoc`, an embedded metadata file
+`lib/mojo/<name>.mopm.json` (the import name; its `schema` is 2 and it names packages by full name), and any native libraries the package declares under `lib/`. The conda
 format was chosen for three reasons: the Mojo toolchain itself is distributed as conda packages, so
 an environment with `mojo` in it already has an installer for them; pixi installs them with no mopm
-involved (`pixi add mojo-<name>`); and the format has hashes, sizes and subdirs for the four
+involved (`pixi add mojo-<namespace>.<name>`); and the format has hashes, sizes and subdirs for the four
 platforms (`noarch`, `linux-64`, `linux-aarch64`, `osx-arm64`) built in. The registry accepts only the
 allowed paths: no `bin/`, no link or activate scripts, no symlinks or hardlinks, no executable code
 outside declared native libraries. A client that unpacks a package applies the same rules.
@@ -78,15 +78,16 @@ existing lock keeps working. *Takedown* (an administrator action, for malware, l
 removes the bytes, answers 410, and leaves a public log entry; the sha256 stays in the index so a lock
 can explain what it was asking for. A tombstoned version never changes again.
 
-**The sparse index.** `/index/<aa>/<bb>/<name>` is one newline-delimited JSON file per package, one line
+**The sparse index.** `/index/v2/<aa>/<bb>/<namespace>/<name>` (`aa` and `bb` come from the namespace) is one newline-delimited JSON file per package, one line
 per version, with state, the compiler requirement (`requires_mojo`), dependencies with their cargo-style
 ranges, native library facts, file urls, sizes and sha256 values. It exists because conda repodata is
 shaped for conda solvers and carries no yank reasons, tombstones or provenance. mopm resolves from the
 index and never reads the conda `depends` strings, so there is no second dependency syntax to keep in
-agreement. Records are versioned (`v`, `index_version`); a reader that meets a version it does not know
+agreement. Records are versioned (`v`, now 2, with full names; `index_version`); a reader that meets a version it does not know
 refuses with "update mopm" instead of skipping a line.
 
-**Names and versions.** Names match `^[a-z][a-z0-9_]{1,63}$`. A name in an API path must be
+**Names and versions.** A package's name is a full name, `<namespace>/<name>`: a namespace (a GitHub login in lower case)
+and a name that matches `^[a-z][a-z0-9_]{1,63}$`. A name in an API path (`/packages/<namespace>/<name>/...` on `api_v2_url`) must be
 normalised (lowercase, each run of `-`, `.` and `_` folded to one `_`); the API answers any other
 spelling with `invalid_name` and does not redirect (the website's edge router does). Versions are exactly `MAJOR.MINOR.PATCH`, no
 pre-release suffixes, no short forms, so a version has one spelling and equality is string equality.
@@ -105,11 +106,11 @@ gated by end-to-end suites against each stage. The access model for that pipelin
 ## 4. The lock and the resolution
 
 `mopm.lock` is JSON written by mopm and committed, never edited by hand. It records, for every package in
-the closure and every platform: the name, version, build, url, sha256, size, the compiler it was built
+the closure and every platform: the full name, version, build, url, sha256, size, the compiler it was built
 with, its direct dependencies, and the native libraries it carries. The rules a reader enforces
-include: entries sorted and unique; every entry's channel is one the root project listed (a dependency
-cannot add a channel); the url is exactly `<channel><subdir>/mojo-<name>-<version>-<build>.conda`;
-every dependency named is itself locked; a package name comes from at most one channel (the shape of a
+include: entries sorted and unique; every entry's channel is one the root project listed followed by the package's namespace (a dependency
+cannot add a channel; each namespace is its own conda channel); the url is exactly `<channel><subdir>/mojo-<namespace>.<name>-<version>-<build>.conda`;
+every dependency named is itself locked; a full name comes from at most one root; no two packages share an import name (the shape of a
 dependency-confusion attack is a hard error); and no two packages declare the same native `soname`.
 
 **Resolution** (`src/core/resolve.zig`) picks one version of every package in the closure of the root
@@ -134,13 +135,13 @@ down fails: its file is gone, and sync says the package has been taken down or i
 The lock's system libraries for the platform are installed with the toolchain. Only one `mopm sync` runs in a
 project at a time (a second waits on `.mopm/sync.lock`). The stamp includes the project's absolute path, so a
 moved project is installed again, and an environment that no longer matches its stamp (a missing file, a
-changed package) is installed again too. A version 2 lock that records the toolchain closure refuses a
+changed package) is installed again too. A lock records the toolchain closure refuses a
 different closure before any download. The toolchain's files and the libraries' are kept in the shared cache as
 `<cache>/<sha256>/<file>`, and `--cache` inside `.mopm/env` is refused. The design is in
 [docs/design/native-sync.md](design/native-sync.md).
 
 **One lock for several Mojo versions.** A package may list `[package] mojo = ["1.0.0", "1.1.0"]`. Its
-lock is then `lock_version` 2: one entry per package version per platform with an `artifacts` map from
+lock is `lock_version` 3 (as every lock is): one entry per package version per platform with an `artifacts` map from
 each Mojo version to that build's url, sha256 and size. `mopm lock` resolves once per listed Mojo
 version and picks for each dependency the newest version in range that has a build for that Mojo; if none
 does, it stops with a message that names the version, the Mojo versions it was published for, and the
@@ -220,7 +221,7 @@ mopm owns what "build Mojo" means; a build system should only schedule and cache
 --unit-graph --locked [--mojo <version>]` prints, offline and deterministically, every unit of the
 project: libraries, test files, binaries, and registry dependencies as `prebuilt` units (a `.conda` fetched
 by url and checked by sha256, never compiled). Each unit has an id that includes its Mojo version
-(`http_client@0.4.0#mojo1.0.0/lib`), the sha256 of each source, its dependencies in order, its native
+(`komira-ai/http_client@0.4.0#mojo1.0.0/lib`), the sha256 of each source, its dependencies in order, its native
 libraries, its profile, its outputs, and a **key**: a hash that changes exactly when the unit's result
 can change (including through its dependencies' keys and the toolchain closure hash). Editing one
 package re-runs it and its dependents; unchanged `.mojoc` bytes stop the cascade.

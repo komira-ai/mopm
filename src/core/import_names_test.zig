@@ -37,11 +37,6 @@ fn expectNone(c: im.Closure) !void {
     }
 }
 
-test "the import name is the part after the slash; a bare name is its own import name" {
-    try std.testing.expectEqualStrings("json", im.importName("komira-ai/json"));
-    try std.testing.expectEqualStrings("json", im.importName("json"));
-}
-
 test "two registry packages of one import name: the design's example, each with its path from the root" {
     try expectClash(json_2 ++
         "  alice/json 1.4.2         alice/app -> alice/http 0.3.0 -> alice/json 1.4.2\n" ++
@@ -187,19 +182,6 @@ test "two clashing import names at once: both are reported, sorted by import nam
     });
 }
 
-test "a bare name (a registry package no manifest names) clashes with a full name of the same import name" {
-    try expectClash(json_2 ++
-        "  ex/json 0.1.0     ex/json\n" ++
-        "  json 1.2.0        ex/json -> ex/http 0.3.0 -> json 1.2.0\n" ++
-        tail, .{
-        .root = .{ .full = "ex/json", .label = "0.1.0", .deps = &.{"ex/http"} },
-        .packages = &.{
-            .{ .full = "ex/http", .label = "0.3.0", .deps = &.{"json"} },
-            .{ .full = "json", .label = "1.2.0" },
-        },
-    });
-}
-
 test "no clash: distinct import names, one package reached twice, a package named twice, a cycle, an unknown name" {
     try expectNone(.{ .root = .{ .full = "ex/app", .label = "1.0.0" } });
     try expectNone(.{
@@ -240,7 +222,7 @@ const util_toml = "[package]\nname = \"ex/util\"\nversion = \"0.3.0\"\n\n[depend
 /// ex/util, a path package whose own [dependencies] name alice/json as `dep` (a path or a requirement).
 fn util(a: Allocator, dep: []const u8) !install_plan.PathDep {
     const m = try parse(a, try std.fmt.allocPrint(a, util_toml, .{dep}));
-    return .{ .name = "util", .full_name = "ex/util", .version = "0.3.0", .path = "util", .deps = &.{"json"}, .manifest_deps = m.dependencies };
+    return .{ .name = "util", .full_name = "ex/util", .version = "0.3.0", .path = "util", .deps = &.{"alice/json"}, .manifest_deps = m.dependencies };
 }
 
 const app_toml = "[package]\nname = \"ex/app\"\nversion = \"1.0.0\"\n\n[dependencies]\n\"ex/util\" = { path = \"util\" }\n\"komira-ai/json\" = \"0.1\"\n";
@@ -260,37 +242,37 @@ test "ofProject before resolution: a path package against a registry package, wh
         tail, (try im.check(a, c)).?);
 }
 
-test "ofProject with a lock: one locked registry package two manifests name in two namespaces is two packages" {
+test "ofProject with a lock: each locked registry package is its own full name, whatever the manifests name" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const members = [_]install_plan.PathDep{try util(a, "\"1\"")};
     const l = lock.Lock{ .mojo = "1.0.0", .channels = &.{}, .packages = &.{
-        .{ .name = "json", .version = "1.4.2" },
-        .{ .name = "util", .version = "0.3.0", .source = .path, .path = "util", .deps = &.{"json"} },
+        .{ .name = "alice/json", .version = "1.4.2" },
+        .{ .name = "komira-ai/json", .version = "0.1.5" },
+        .{ .name = "ex/util", .version = "0.3.0", .source = .path, .path = "util", .deps = &.{"alice/json"} },
     } };
     const c = try im.ofProject(a, try parse(a, app_toml), &members, l);
-    // The member's own dependency is named in its manifest; the root's is the one it names.
     try std.testing.expectEqualStrings(json_2 ++
         "  alice/json 1.4.2         ex/app -> ex/util 0.3.0 -> alice/json 1.4.2\n" ++
-        "  komira-ai/json 1.4.2     ex/app -> komira-ai/json 1.4.2\n" ++
+        "  komira-ai/json 0.1.5     ex/app -> komira-ai/json 0.1.5\n" ++
         tail, (try im.check(a, c)).?);
 }
 
-test "ofProject with a lock: the root against a registry package only the lock names, through every entry of it" {
+test "ofProject with a lock: the root against a registry package only the lock names, through every entry of its dependent" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const m = try parse(a, "[package]\nname = \"ex/json\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"ex/http\" = \"0.3\"\n");
-    // A version 2 lock lists http once per subdir; only the second entry needs json.
+    // A lock lists http once per subdir; only the second entry needs other/json.
     const l = lock.Lock{ .mojo = "1.0.0", .channels = &.{}, .packages = &.{
-        .{ .name = "http", .version = "0.3.0", .subdir = "linux-64" },
-        .{ .name = "http", .version = "0.3.0", .subdir = "osx-arm64", .deps = &.{"json"} },
-        .{ .name = "json", .version = "1.2.0" },
+        .{ .name = "ex/http", .version = "0.3.0", .subdir = "linux-64" },
+        .{ .name = "ex/http", .version = "0.3.0", .subdir = "osx-arm64", .deps = &.{"other/json"} },
+        .{ .name = "other/json", .version = "1.2.0" },
     } };
     try std.testing.expectEqualStrings(json_2 ++
-        "  ex/json 0.1.0     ex/json\n" ++
-        "  json 1.2.0        ex/json -> ex/http 0.3.0 -> json 1.2.0\n" ++
+        "  ex/json 0.1.0        ex/json\n" ++
+        "  other/json 1.2.0     ex/json -> ex/http 0.3.0 -> other/json 1.2.0\n" ++
         tail, (try im.check(a, try im.ofProject(a, m, &.{}, l))).?);
 }
 
@@ -301,12 +283,12 @@ test "ofProject: a project whose path packages and lock agree has no clash, and 
     const members = [_]install_plan.PathDep{
         try util(a, "\"1\""),
         // A member the caller knows only by its import name (a unit graph's test fixture, say).
-        .{ .name = "extra", .version = "0.1.0", .path = "extra", .deps = &.{"util"} },
+        .{ .name = "extra", .version = "0.1.0", .path = "extra", .deps = &.{"ex/util"} },
     };
     const m = try parse(a, "[package]\nname = \"ex/app\"\nversion = \"1.0.0\"\n\n[dependencies]\n\"ex/util\" = { path = \"util\" }\n");
     const l = lock.Lock{ .mojo = "1.0.0", .channels = &.{}, .packages = &.{
-        .{ .name = "json", .version = "1.4.2" },
-        .{ .name = "util", .version = "0.3.0", .source = .path, .path = "util", .deps = &.{"json"} },
+        .{ .name = "alice/json", .version = "1.4.2" },
+        .{ .name = "ex/util", .version = "0.3.0", .source = .path, .path = "util", .deps = &.{"alice/json"} },
     } };
     try std.testing.expect((try im.check(a, try im.ofProject(a, m, &members, l))) == null);
     try std.testing.expect((try im.check(a, try im.ofProject(a, m, &members, null))) == null);

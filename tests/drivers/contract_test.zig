@@ -202,3 +202,89 @@ test "the registry contract: spec, API cases and examples" {
     try t.finish();
     std.debug.print("contract OK\n", .{});
 }
+
+const LockVariant = struct {
+    lock_version: []const u8 = "3",
+    mojo: []const u8 = "[\"1.0.0\"]",
+    toolchain_key: []const u8 = "1.0.0",
+    channels: []const u8 = "[\"https://conda.mopm.dev/\"]",
+    name: []const u8 = "komira-ai/http_core",
+    conda: []const u8 = "mojo-komira-ai.http_core",
+    channel: []const u8 = "https://conda.mopm.dev/komira-ai/",
+    artifact_key: []const u8 = "1.0.0",
+    extra: []const u8 = "",
+};
+
+/// A lock with one registry package and the changes `v` makes, run through the rules of `lockProblems`.
+fn lockVariantProblems(a: Allocator, v: LockVariant) !c.Problems {
+    const text = try std.fmt.allocPrint(a,
+        \\{{"lock_version":{s},"mojo":{s},"toolchain":{{"{s}":{{"linux-64":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}}},
+        \\ "channels":{s},"packages":[{{"name":"{s}","version":"1.2.5","subdir":"linux-64","channel":"{s}",
+        \\ "artifacts":{{"{s}":{{"build":"mojo1.0.0_0","url":"{s}linux-64/{s}-1.2.5-mojo1.0.0_0.conda",
+        \\ "sha256":"fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9","size":1000}}}}}}{s}]}}
+    , .{ v.lock_version, v.mojo, v.toolchain_key, v.channels, v.name, v.channel, v.artifact_key, v.channel, v.conda, v.extra });
+    return c.lockProblems(a, try c.parseJson(a, text));
+}
+
+fn expectLockProblems(a: Allocator, v: LockVariant, want: []const []const u8) !void {
+    const got = try lockVariantProblems(a, v);
+    try std.testing.expectEqual(want.len, got.items.len);
+    for (want, got.items) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "lockProblems: the lock 3 rules, each refused with its own message" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try expectLockProblems(a, .{}, &.{});
+    try expectLockProblems(a, .{ .lock_version = "2" }, &.{"mopm.lock predates namespaces (lock_version 2); run 'mopm lock'"});
+    try expectLockProblems(a, .{ .lock_version = "1" }, &.{"mopm.lock predates namespaces (lock_version 1); run 'mopm lock'"});
+    try expectLockProblems(a, .{ .mojo = "[\"1.1.0\",\"1.0.0\"]", .artifact_key = "1.0.0", .toolchain_key = "1.0.0" }, &.{"mojo is not sorted with no repeats"});
+    try expectLockProblems(a, .{ .toolchain_key = "1.1.0" }, &.{"toolchain names mojo 1.1.0, which mojo does not list"});
+    try expectLockProblems(a, .{ .artifact_key = "1.1.0" }, &.{"komira-ai/http_core: artifact for mojo 1.1.0, which mojo does not list"});
+    try expectLockProblems(a, .{ .channel = "https://conda.mopm.dev/" }, &.{
+        "komira-ai/http_core: channel https://conda.mopm.dev/ is not a listed channel followed by komira-ai/",
+    });
+    try expectLockProblems(a, .{ .channel = "https://conda.mopm.dev/other-org/" }, &.{
+        "komira-ai/http_core: channel https://conda.mopm.dev/other-org/ is not a listed channel followed by komira-ai/",
+    });
+    try expectLockProblems(a, .{ .channel = "https://elsewhere.example/komira-ai/" }, &.{
+        "komira-ai/http_core: channel https://elsewhere.example/komira-ai/ is not a listed channel followed by komira-ai/",
+    });
+    try expectLockProblems(a, .{ .conda = "mojo-http_core" }, &.{
+        "komira-ai/http_core: url is not https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.http_core-1.2.5-mojo1.0.0_0.conda",
+    });
+    try expectLockProblems(a, .{ .name = "komira-ai-komira-ai-komira-ai-komira-ai-komira/http_core", .conda = "mojo-komira-ai-komira-ai-komira-ai-komira-ai-komira.http_core", .channel = "https://conda.mopm.dev/komira-ai-komira-ai-komira-ai-komira-ai-komira/" }, &.{
+        "komira-ai-komira-ai-komira-ai-komira-ai-komira/http_core: name is not a full name <namespace>/<name>",
+    });
+}
+
+test "lockProblems: import names, dependencies, path entries and channels across entries" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const other =
+        \\,{"name":"other-org/http_core","version":"1.2.5","subdir":"linux-64","channel":"https://conda.mopm.dev/other-org/",
+        \\ "artifacts":{"1.0.0":{"build":"mojo1.0.0_0","url":"https://conda.mopm.dev/other-org/linux-64/mojo-other-org.http_core-1.2.5-mojo1.0.0_0.conda",
+        \\ "sha256":"fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9","size":1000}}}
+    ;
+    try expectLockProblems(a, .{ .extra = other }, &.{"komira-ai/http_core and other-org/http_core have the same import name http_core"});
+    const path_ok =
+        \\,{"name":"zzz/local","version":"0.1.0","source":"path","path":"../l","deps":["komira-ai/http_core"]}
+    ;
+    try expectLockProblems(a, .{ .extra = path_ok }, &.{});
+    const path_dep_missing =
+        \\,{"name":"zzz/local","version":"0.1.0","source":"path","path":"../l","deps":["x/y"]}
+    ;
+    try expectLockProblems(a, .{ .extra = path_dep_missing }, &.{"zzz/local: dep x/y is not in packages"});
+    const path_clash =
+        \\,{"name":"zzz/http_core","version":"0.1.0","source":"path","path":"../l"}
+    ;
+    try expectLockProblems(a, .{ .extra = path_clash }, &.{"komira-ai/http_core and zzz/http_core have the same import name http_core"});
+    const second_root =
+        \\,{"name":"komira-ai/http_core","version":"1.2.5","subdir":"osx-arm64","channel":"https://b.example/komira-ai/",
+        \\ "artifacts":{"1.0.0":{"build":"mojo1.0.0_0","url":"https://b.example/komira-ai/osx-arm64/mojo-komira-ai.http_core-1.2.5-mojo1.0.0_0.conda",
+        \\ "sha256":"fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9","size":1000}}}
+    ;
+    try expectLockProblems(a, .{ .channels = "[\"https://conda.mopm.dev/\",\"https://b.example/\"]", .extra = second_root }, &.{"komira-ai/http_core comes from more than one channel"});
+}

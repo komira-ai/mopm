@@ -23,6 +23,10 @@ const g = @import("group_e2e.zig");
 const Allocator = std.mem.Allocator;
 
 const test_token = "mopm_e2etokene2etokene2etokene2etoke";
+/// The full names of the three packages of the chain, in the namespace the check uses when it is given none.
+const full_core = g.default_namespace ++ "/" ++ g.pkg_core;
+const full_mid = g.default_namespace ++ "/" ++ g.pkg_mid;
+const full_app = g.default_namespace ++ "/" ++ g.pkg_app;
 const upload_header = "x-amz-meta-e2e";
 /// The release of the first member that another run is made to have published (Mode.newer_release): a newer 1.x than any run's.
 const rival_version = "1.99999999.1";
@@ -189,6 +193,8 @@ const Stub = struct {
     /// What the registry saw, read after `stop`.
     requests: usize = 0,
     group_creates: usize = 0,
+    /// The `PUT /packages/<namespace>/<name>` the registry answered with 200 or 201.
+    packages_made: usize = 0,
     storage_puts: usize = 0,
     storage_auth_seen: bool = false,
     storage_header_missing: bool = false,
@@ -276,17 +282,19 @@ const Stub = struct {
 
     fn route(s: *Stub, a: Allocator, method: std.http.Method, target: []const u8, body: []const u8, authorization: ?[]const u8, has_upload_header: bool) !Reply {
         const path = if (std.mem.indexOfScalar(u8, target, '?')) |q| target[0..q] else target;
-        const api = "/api/v1";
+        const api = "/api/v2";
         if (std.mem.startsWith(u8, path, "/upload/")) return s.upload(a, method, path["/upload/".len..], body, authorization, has_upload_header);
         if (std.mem.eql(u8, path, "/index/config.json")) return s.config(a);
-        if (std.mem.startsWith(u8, path, "/index/")) return s.indexFile(a, path["/index/".len..]);
+        if (std.mem.startsWith(u8, path, "/index/v2/")) return s.indexFile(a, path["/index/v2/".len..]);
+        if (std.mem.startsWith(u8, path, "/index/")) return fail(a, .not_found, "route_not_found", "this registry serves index version 2 only");
         if (std.mem.startsWith(u8, path, "/channel/")) return s.channel(a, path["/channel/".len..]);
         if (!std.mem.startsWith(u8, path, api)) return fail(a, .not_found, "route_not_found", "no such route");
         const rest = path[api.len..];
         if (std.mem.eql(u8, rest, "/health") and method == .GET) {
-            return json(a, .ok, .{ .status = "ok", .stage = s.mode.stage, .api_version = "v1", .read_only = false });
+            return json(a, .ok, .{ .status = "ok", .stage = s.mode.stage, .api_version = "v2", .read_only = false });
         }
         if (std.mem.startsWith(u8, rest, "/packages/") and method == .GET) return s.version(a, rest["/packages/".len..]);
+        if (std.mem.startsWith(u8, rest, "/packages/") and method == .PUT) return s.createPackage(a, rest["/packages/".len..], authorization);
         if (std.mem.eql(u8, rest, "/groups") and method == .POST) return s.create(a, body, authorization);
         if (std.mem.startsWith(u8, rest, "/groups/")) {
             if (!s.authorized(authorization)) return fail(a, .unauthorized, "token_invalid", "the token is not valid");
@@ -313,6 +321,16 @@ const Stub = struct {
             if (std.mem.eql(u8, gr.id, id)) return i;
         }
         return null;
+    }
+
+    // ---- packages ----
+
+    /// `PUT /packages/<namespace>/<name>`: 201; the token must be the right one.
+    fn createPackage(s: *Stub, a: Allocator, full: []const u8, authorization: ?[]const u8) !Reply {
+        if (!s.authorized(authorization)) return fail(a, .unauthorized, "token_invalid", "the token is not valid");
+        if (!core.names.isFullName(full)) return fail(a, .bad_request, "invalid_name", "not a full name");
+        s.packages_made += 1;
+        return json(a, .created, .{ .name = full });
     }
 
     // ---- groups ----
@@ -401,9 +419,9 @@ const Stub = struct {
         const found = try sa.alloc(Member, 1);
         const rival = if (s.mode.rival_major) rival_major_version else rival_version;
         found[0] = .{
-            .name = g.pkg_core,
+            .name = full_core,
             .version = rival,
-            .filename = try std.fmt.allocPrint(sa, "mojo-{s}-{s}-mojo1.0.0_0.conda", .{ g.pkg_core, rival }),
+            .filename = try std.fmt.allocPrint(sa, "mojo-{s}.{s}-{s}-mojo1.0.0_0.conda", .{ g.default_namespace, g.pkg_core, rival }),
             .sha256 = try sa.dupe(u8, &g.sha256Hex(bytes)),
             .size = bytes.len,
             .bytes = bytes,
@@ -457,7 +475,7 @@ const Stub = struct {
         gr.status = .validating;
         gr.polls = 0;
         gr.committed_ms = s.clock.ms.load(.acquire);
-        return json(a, .accepted, .{ .group_id = gr.id, .status = "validating", .attempt = gr.attempt, .status_url = try std.fmt.allocPrint(a, "/api/v1/groups/{s}", .{gr.id}) });
+        return json(a, .accepted, .{ .group_id = gr.id, .status = "validating", .attempt = gr.attempt, .status_url = try std.fmt.allocPrint(a, "/api/v2/groups/{s}", .{gr.id}) });
     }
 
     fn isPackage(m: Member) bool {
@@ -593,18 +611,19 @@ const Stub = struct {
     // ---- what a reader sees ----
 
     fn version(s: *Stub, a: Allocator, rest: []const u8) !Reply {
-        var parts = std.mem.splitScalar(u8, rest, '/');
-        const name = parts.next() orelse "";
-        const ver = parts.next() orelse "";
+        // `<namespace>/<name>/<version>`: the package is named by its full name.
+        const cut = std.mem.lastIndexOfScalar(u8, rest, '/') orelse return fail(a, .not_found, "route_not_found", "no such route");
+        const name = rest[0..cut];
+        const ver = rest[cut + 1 ..];
         // `commit_in_sweep`: this read finds the group still validating, and the commit lands right after it.
         var committing: ?*Grp = null;
         defer if (committing) |gr| s.activate(gr);
-        if (s.mode.commit_in_sweep and std.mem.eql(u8, name, g.pkg_core)) {
+        if (s.mode.commit_in_sweep and std.mem.eql(u8, name, full_core)) {
             for (s.groups.items) |*gr| {
                 if (gr.status == .validating and gr.polls >= 5 and validationDone(s, gr) and std.mem.eql(u8, gr.members[0].version, ver)) committing = gr;
             }
         }
-        if (s.squatting.load(.acquire) and std.mem.eql(u8, name, g.pkg_mid)) {
+        if (s.squatting.load(.acquire) and std.mem.eql(u8, name, full_mid)) {
             return json(a, .ok, .{ .name = name, .version = ver, .state = "published" });
         }
         for (s.groups.items) |gr| {
@@ -634,14 +653,16 @@ const Stub = struct {
     }
 
     fn fileUrl(s: *Stub, a: Allocator, m: Member) ![]u8 {
-        return std.fmt.allocPrint(a, "{s}/channel/{s}/{s}", .{ s.base, g.subdir, m.filename });
+        return std.fmt.allocPrint(a, "{s}/channel/{s}/{s}/{s}", .{ s.base, core.names.namespaceOf(m.name), g.subdir, m.filename });
     }
 
     fn config(s: *Stub, a: Allocator) !Reply {
         return json(a, .ok, .{
             .api_url = try std.fmt.allocPrint(a, "{s}/api/v1", .{s.base}),
+            .api_v2_url = try std.fmt.allocPrint(a, "{s}/api/v2", .{s.base}),
             .channel_url = try std.fmt.allocPrint(a, "{s}/channel/", .{s.base}),
-            .index_version = 1,
+            .index_version = 2,
+            .index_versions = [_]u32{ 1, 2 },
             .min_cli_version = "0.0.1",
             .read_only = false,
             .stage = s.mode.stage,
@@ -649,11 +670,12 @@ const Stub = struct {
     }
 
     fn indexFile(s: *Stub, a: Allocator, rest: []const u8) !Reply {
-        if (std.mem.eql(u8, rest, "takedowns.json")) return json(a, .ok, .{ .index_version = 1, .takedowns = no_strings });
+        if (std.mem.eql(u8, rest, "takedowns.json")) return json(a, .ok, .{ .index_version = 2, .takedowns = no_strings });
+        // `<aa>/<bb>/<namespace>/<name>`: what follows the two shard directories is the full name.
         var parts = std.mem.splitScalar(u8, rest, '/');
         _ = parts.next();
         _ = parts.next();
-        const name = parts.next() orelse "";
+        const name = parts.rest();
         var out = std.ArrayList(u8).init(a);
         for (s.groups.items) |gr| {
             for (gr.members, 0..) |m, i| {
@@ -676,7 +698,7 @@ const Stub = struct {
                     .published_at = try rfc3339(a, gr.created),
                     .requires_mojo = "==1.0.0",
                     .state = if (m.yanked) "yanked" else "published",
-                    .v = 1,
+                    .v = 2,
                     .version = m.version,
                     .yank_reason = if (m.yanked) @as(?[]const u8, "e2e") else null,
                 }, .{ .emit_null_optional_fields = false }, out.writer());
@@ -687,10 +709,13 @@ const Stub = struct {
         return .{ .status = .ok, .body = out.items, .content_type = "application/x-ndjson" };
     }
 
+    /// `<namespace>/<subdir>/<file>`: the channel of one namespace.
     fn channel(s: *Stub, a: Allocator, rest: []const u8) !Reply {
+        const slash = std.mem.indexOfScalar(u8, rest, '/') orelse return fail(a, .not_found, "route_not_found", "no such channel");
+        const namespace = rest[0..slash];
         const sub = g.subdir ++ "/";
-        if (!std.mem.startsWith(u8, rest, sub)) return fail(a, .not_found, "route_not_found", "no such subdir");
-        const file = rest[sub.len..];
+        if (!std.mem.startsWith(u8, rest[slash + 1 ..], sub)) return fail(a, .not_found, "route_not_found", "no such subdir");
+        const file = rest[slash + 1 + sub.len ..];
         if (std.mem.eql(u8, file, "repodata.json")) {
             var out = std.ArrayList(u8).init(a);
             const w = out.writer();
@@ -698,11 +723,11 @@ const Stub = struct {
             var first = true;
             for (s.groups.items) |gr| {
                 for (gr.members, 0..) |m, i| {
-                    if (!s.shows(gr, i) or m.yanked) continue;
+                    if (!s.shows(gr, i) or m.yanked or !std.mem.eql(u8, core.names.namespaceOf(m.name), namespace)) continue;
                     if (!first) try w.writeByte(',');
                     first = false;
                     try w.print("\"{s}\":", .{m.filename});
-                    try std.json.stringify(.{ .build = "mojo1.0.0_0", .build_number = 0, .depends = no_strings, .name = try std.fmt.allocPrint(a, "mojo-{s}", .{m.name}), .sha256 = m.sha256, .size = s.shownSize(m, i), .subdir = g.subdir, .version = m.version }, .{}, w);
+                    try std.json.stringify(.{ .build = "mojo1.0.0_0", .build_number = 0, .depends = no_strings, .name = try core.names.condaName(a, m.name), .sha256 = m.sha256, .size = s.shownSize(m, i), .subdir = g.subdir, .version = m.version }, .{}, w);
                 }
             }
             try w.writeAll("},\"removed\":[]}\n");
@@ -710,7 +735,7 @@ const Stub = struct {
         }
         for (s.groups.items) |gr| {
             for (gr.members, 0..) |m, i| {
-                if (s.shows(gr, i) and std.mem.eql(u8, m.filename, file)) return .{ .status = .ok, .body = m.bytes orelse "", .content_type = "application/octet-stream" };
+                if (s.shows(gr, i) and std.mem.eql(u8, core.names.namespaceOf(m.name), namespace) and std.mem.eql(u8, m.filename, file)) return .{ .status = .ok, .body = m.bytes orelse "", .content_type = "application/octet-stream" };
             }
         }
         return fail(a, .not_found, "route_not_found", "no such file");
@@ -793,7 +818,7 @@ fn tools() !*const Tools {
     }
     const ws = try h.join(a, &.{ work, "prebuilt_ws" });
     const art = try h.join(a, &.{ work, "prebuilt_art" });
-    try g.writeWorkspace(a, ws, "0.0.1", &g.members);
+    try g.writeWorkspace(a, g.default_namespace, ws, "0.0.1", &g.members);
     if (try g.precompileAll(a, t.prefix, t.env, ws, art)) |why| {
         std.debug.print("precompiling the packages failed: {s}\n", .{why});
         return error.PrecompileFailed;
@@ -965,7 +990,7 @@ test "a registry that does it all right passes every check, and the token goes o
     // and prints what the README says, and one `publish --staged` makes the group.
     try std.testing.expect(passed(ran.result, "packages: mojo precompile builds the three packages"));
     try std.testing.expect(passed(ran.result, "chain: mopm stage packs the workspace, with no token, and every member is an upload"));
-    try std.testing.expect(passed(ran.result, "overlay: zz_e2e_app is locked at the uploaded file"));
+    try std.testing.expect(passed(ran.result, "overlay: " ++ full_app ++ " is locked at the uploaded file"));
     try std.testing.expect(passed(ran.result, "chain: mopm sync --overlay installs the whole set from the staged set"));
     try std.testing.expect(passed(ran.result, "chain: the README's program builds against the installed set"));
     try std.testing.expect(passed(ran.result, "chain: the README's program runs and prints what the README says"));
@@ -978,10 +1003,10 @@ test "a registry that does it all right passes every check, and the token goes o
     try std.testing.expect(passed(ran.result, "lock: the lock the staged set made is, byte for byte, the lock the registry gives once the set is published"));
     try std.testing.expect(passed(ran.result, "chain: the group becomes visible"));
     try std.testing.expect(passed(ran.result, "chain: once committed, all three members are readable at once"));
-    try std.testing.expect(passed(ran.result, "lock: zz_e2e_core is locked at the uploaded file"));
+    try std.testing.expect(passed(ran.result, "lock: " ++ full_core ++ " is locked at the uploaded file"));
     try std.testing.expect(passed(ran.result, "lock: the top package's entry names the middle one as its dependency"));
     try std.testing.expect(passed(ran.result, "rejected: the group ends rejected"));
-    try std.testing.expect(passed(ran.result, "rejected: zz_e2e_core is not readable in the API"));
+    try std.testing.expect(passed(ran.result, "rejected: " ++ full_core ++ " is not readable in the API"));
     try std.testing.expect(passed(ran.result, "yank: the group reaches yanked"));
     try std.testing.expect(passed(ran.result, "unyank: the group reaches restored"));
     // Three files of the chain and the two of the rejected group were uploaded, and the storage was given the
@@ -991,6 +1016,10 @@ test "a registry that does it all right passes every check, and the token goes o
     try std.testing.expect(!ran.stub.storage_header_missing);
     // The groups of the run: the expiry probe, the chain and the rejected group.
     try std.testing.expectEqual(@as(usize, 3), ran.stub.group_creates);
+    // The three packages of the chain were made before anything was published, each by its full name.
+    try std.testing.expectEqual(@as(usize, 3), ran.stub.packages_made);
+    try std.testing.expect(passed(ran.result, "packages: " ++ full_core ++ " is a package of the namespace"));
+    try std.testing.expect(passed(ran.result, "packages: " ++ full_app ++ " is a package of the namespace"));
 }
 
 test "no token: the run skips, says which secret is missing, and sends nothing" {
@@ -1038,8 +1067,9 @@ test "the stage's groups switch is off: the run skips after one create and publi
     try std.testing.expect(std.mem.startsWith(u8, ran.result.line, "group-e2e: SKIP beta: group publishing is not enabled for the e2e actor on this stage"));
     try std.testing.expectEqual(@as(usize, 0), ran.stub.group_creates);
     try std.testing.expectEqual(@as(usize, 0), ran.stub.storage_puts);
-    // The health read and the one create that was refused.
-    try std.testing.expectEqual(@as(usize, 2), ran.stub.requests);
+    // The health read, the creation of the probe's package and the one create that was refused.
+    try std.testing.expectEqual(@as(usize, 3), ran.stub.requests);
+    try std.testing.expectEqual(@as(usize, 1), ran.stub.packages_made);
 }
 
 test "a 404 whose error code is not route_not_found is a failure, not a skip" {
@@ -1298,17 +1328,17 @@ test "a file that is not a package, accepted, is a failure" {
 }
 
 test "a rejected group that still shows its good member is a failure in the API, the index and the channel" {
-    try expectRedOn(.{ .reject_leaks_sibling = true }, "rejected: zz_e2e_core is not readable in the API");
-    try expectRedOn(.{ .reject_leaks_sibling = true }, "rejected: zz_e2e_core is not in the sparse index");
+    try expectRedOn(.{ .reject_leaks_sibling = true }, "rejected: " ++ full_core ++ " is not readable in the API");
+    try expectRedOn(.{ .reject_leaks_sibling = true }, "rejected: " ++ full_core ++ " is not in the sparse index");
     try expectRedOn(.{ .reject_leaks_sibling = true }, "rejected: the good sibling is not in the channel's repodata");
 }
 
 test "an index that lists another sha256 than the one uploaded is a failure" {
-    try expectRedOn(.{ .index_lies = true }, "chain: the sparse index lists zz_e2e_core");
+    try expectRedOn(.{ .index_lies = true }, "chain: the sparse index lists " ++ full_core);
 }
 
 test "a group yank that leaves a member published is a failure" {
-    try expectRedOn(.{ .yank_partial = true }, "yank: the sparse index lists zz_e2e_mid");
+    try expectRedOn(.{ .yank_partial = true }, "yank: the sparse index lists " ++ full_mid);
 }
 
 const lock_same = "lock: the lock the staged set made is, byte for byte, the lock the registry gives once the set is published";
@@ -1332,8 +1362,8 @@ test "a newer release of a set package that another run published meanwhile is t
     // The registry's lock names the other run's file for the first member, so the two locks are not equal byte for byte; the
     // comparison says which entry differs and still holds the rest to the overlay's lock.
     try std.testing.expect(passed(ran.result, lock_same));
-    try std.testing.expect(passed(ran.result, "lock: the locks differ only in a newer release of zz_e2e_core, which another run published meanwhile"));
-    try std.testing.expect(passed(ran.result, "lock: zz_e2e_core is locked at the uploaded file"));
+    try std.testing.expect(passed(ran.result, "lock: the locks differ only in a newer release of " ++ full_core ++ ", which another run published meanwhile"));
+    try std.testing.expect(passed(ran.result, "lock: " ++ full_core ++ " is locked at the uploaded file"));
     // The tolerance covers that entry and nothing else: with the newer release there and another size told for the middle package's
     // own file, the lock still names a size no set file has, and the comparison is red.
     const both = try runCheck(a, .{ .newer_release = true, .size_differs = 1 }, test_token, "beta");
@@ -1349,10 +1379,10 @@ test "a release of a set package at another major that another run published mea
     // run's file the comparison lets by; this one is neither the uploaded file nor that, so the entry fails and the locks differ.
     const ran = try runCheck(a, .{ .rival_major = true }, test_token, "beta");
     try std.testing.expect(!ran.result.skipped);
-    try std.testing.expect(failed(ran.result, "lock: zz_e2e_core is locked at the uploaded file"));
+    try std.testing.expect(failed(ran.result, "lock: " ++ full_core ++ " is locked at the uploaded file"));
     try std.testing.expect(failed(ran.result, lock_same));
     try std.testing.expect(!passed(ran.result, "lock: the locks differ only in a newer release"));
-    try std.testing.expect(passed(ran.result, "lock: zz_e2e_mid is locked at the uploaded file"));
+    try std.testing.expect(passed(ran.result, "lock: " ++ full_mid ++ " is locked at the uploaded file"));
 }
 
 test "a README program that exits 0 and prints another line is a failure" {
@@ -1436,7 +1466,8 @@ test "the job summary: one line for a skip, the line and every check for a run" 
 }
 
 test "the command line: every flag, and the ways it is wrong" {
-    const ok = g.parseArgs(&.{ "--stage", "gamma", "--mopm", "/m", "--work", "/w", "--run-id", "123", "--attempt", "2", "--summary", "/s", "--wait-seconds", "30", "--registry", "http://127.0.0.1:9", "--toolchain", "/tc.json", "--cache", "/cache", "--mojo-env", "/env" }).?;
+    const ok = g.parseArgs(&.{ "--stage", "gamma", "--mopm", "/m", "--work", "/w", "--run-id", "123", "--attempt", "2", "--summary", "/s", "--wait-seconds", "30", "--registry", "http://127.0.0.1:9", "--toolchain", "/tc.json", "--cache", "/cache", "--mojo-env", "/env", "--namespace", "acme-ci" }).?;
+    try std.testing.expectEqualStrings("acme-ci", ok.namespace);
     try std.testing.expectEqualStrings("/tc.json", ok.toolchain.?);
     try std.testing.expectEqualStrings("/cache", ok.cache.?);
     try std.testing.expectEqualStrings("/env", ok.mojo_env.?);
@@ -1453,6 +1484,11 @@ test "the command line: every flag, and the ways it is wrong" {
     try std.testing.expectEqual(@as(?[]const u8, null), least.toolchain);
     try std.testing.expectEqual(@as(?[]const u8, null), least.cache);
     try std.testing.expectEqual(@as(u64, 600), least.wait_seconds);
+    try std.testing.expectEqualStrings("zz-e2e", least.namespace);
+    // A namespace that cannot be one is refused: upper case, a slash, a leading hyphen, nothing, more than 39 characters.
+    for ([_][]const u8{ "Acme", "a/b", "-ab", "", "a" ** 40 }) |bad| {
+        try std.testing.expect(g.parseArgs(&.{ "--stage", "beta", "--work", "/w", "--run-id", "1", "--attempt", "1", "--namespace", bad }) == null);
+    }
     // pixi is gone: its flags are unknown now.
     try std.testing.expect(g.parseArgs(&.{ "--stage", "beta", "--work", "/w", "--run-id", "1", "--attempt", "1", "--pixi", "/p" }) == null);
     try std.testing.expect(g.parseArgs(&.{ "--stage", "beta", "--work", "/w", "--run-id", "1", "--attempt", "1", "--pixi-manifest", "/p.toml" }) == null);
@@ -1521,9 +1557,10 @@ test "the index path of a package is derived from its name" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try std.testing.expectEqualStrings("index/zz/_e/zz_e2e_core", try g.indexPath(a, g.pkg_core));
-    try std.testing.expectEqualStrings("index/tl/s_/tls", try g.indexPath(a, "tls"));
-    try std.testing.expectEqualStrings("index/ab/__/ab", try g.indexPath(a, "ab"));
+    try std.testing.expectEqualStrings("index/v2/zz/-e/zz-e2e/zz_e2e_core", try g.indexPath(a, full_core));
+    try std.testing.expectEqualStrings("index/v2/tl/s_/tls/json", try g.indexPath(a, "tls/json"));
+    try std.testing.expectEqualStrings("index/v2/ab/__/ab/cd", try g.indexPath(a, "ab/cd"));
+    try std.testing.expectEqualStrings("zz-e2e/zz_e2e_mid", try g.fullName(a, g.default_namespace, g.pkg_mid));
 }
 
 test "the range the check expects of a dependency is the one mopm writes for the requirement of the manifest" {
@@ -1542,8 +1579,10 @@ test "the workspace: each member depends on the one below it, by path and by ver
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try std.testing.expectEqualStrings("[package]\nname = \"example/zz_e2e_core\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n", try g.memberToml(a, g.pkg_core, "1.5.1"));
-    try std.testing.expectEqualStrings("[package]\nname = \"example/zz_e2e_mid\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\"example/zz_e2e_core\" = { path = \"../zz_e2e_core\", version = \"^1.5.1\" }\n", try g.memberToml(a, g.pkg_mid, "1.5.1"));
+    try std.testing.expectEqualStrings("[package]\nname = \"zz-e2e/zz_e2e_core\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n", try g.memberToml(a, g.default_namespace, g.pkg_core, "1.5.1"));
+    try std.testing.expectEqualStrings("[package]\nname = \"zz-e2e/zz_e2e_mid\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\"zz-e2e/zz_e2e_core\" = { path = \"../zz_e2e_core\", version = \"^1.5.1\" }\n", try g.memberToml(a, g.default_namespace, g.pkg_mid, "1.5.1"));
+    // Another namespace changes the member's own name and the name of its dependency, and nothing else.
+    try std.testing.expectEqualStrings("[package]\nname = \"acme/zz_e2e_mid\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\"acme/zz_e2e_core\" = { path = \"../zz_e2e_core\", version = \"^1.5.1\" }\n", try g.memberToml(a, "acme", g.pkg_mid, "1.5.1"));
     try std.testing.expectEqualStrings(g.pkg_mid, g.depOf(g.pkg_app).?);
     try std.testing.expect(g.depOf(g.pkg_core) == null);
     // The sources chain: the app imports the middle package, which imports the core.
@@ -1560,9 +1599,9 @@ test "the workspace: each member depends on the one below it, by path and by ver
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const ws = try h.tmpPath(a, &tmp);
-    try g.writeWorkspace(a, ws, "1.5.1", g.members[0..2]);
+    try g.writeWorkspace(a, g.default_namespace, ws, "1.5.1", g.members[0..2]);
     try std.testing.expectEqualStrings(g.sourceOf(g.pkg_mid), try h.readFile(a, try h.join(a, &.{ ws, g.pkg_mid, "src", g.pkg_mid, "__init__.mojo" })));
-    try std.testing.expectEqualStrings(try g.memberToml(a, g.pkg_core, "1.5.1"), try h.readFile(a, try h.join(a, &.{ ws, g.pkg_core, "mopm.toml" })));
+    try std.testing.expectEqualStrings(try g.memberToml(a, g.default_namespace, g.pkg_core, "1.5.1"), try h.readFile(a, try h.join(a, &.{ ws, g.pkg_core, "mopm.toml" })));
     try std.testing.expectError(error.FileNotFound, h.readFile(a, try h.join(a, &.{ ws, g.pkg_app, "mopm.toml" })));
 }
 
@@ -1606,4 +1645,3 @@ test "the summary of a skip says it was a skip, why, and when it stops being one
     defer a.free(s);
     try std.testing.expectEqualStrings("### group end-to-end, gamma: SKIPPED\n\ngroup-e2e: SKIP gamma: why\n\nNothing was published and nothing was checked on this stage. The job is green because it did nothing; it will fail, not skip, once the secret holds a token for gamma and the stage has groups on.\n\n", s);
 }
-

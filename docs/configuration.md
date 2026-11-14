@@ -57,13 +57,13 @@ Any key other than these is refused, including `workspace`, `tool` and `profile`
 | `mojo` | string or array of strings | none | exact compiler versions, such as `"1.0.0"`: at least one, none empty, none repeated; not together with `[toolchain]` | `mojo = ["1.0.0", "1.1.0"]` |
 | `metadata` | table | none | any keys and values the TOML subset reads | `[package.metadata.some_tool]` |
 
-The part of the name after `/` is the import name (`import http_client`). It is also the name of the package's directory under `src/` that `mopm new` makes, and of the directory `[targets] lib` names; the lock and, in the registry, `mojo-<name>` still use it alone. `homepage` and `keywords`, which [the mopm.toml draft](../spec/mopm-toml.md) lists, are not keys of the parser today: `unknown key 'homepage' in [package]`.
+The part of the name after `/` is the import name (`import http_client`). It is also the name of the package's directory under `src/` that `mopm new` makes, and of the directory `[targets] lib` names; the lock keys a package by its full name, and the registry names its conda package `mojo-<namespace>.<name>` (`komira-ai/json` is `mojo-komira-ai.json`). Two packages of one dependency closure may not have the same import name. `homepage` and `keywords`, which [the mopm.toml draft](../spec/mopm-toml.md) lists, are not keys of the parser today: `unknown key 'homepage' in [package]`.
 
-`mojo` in `[package]` makes a version 2 lock (below) for every version listed, and a unit graph for one of them. `[package.metadata]` is the one place for the settings of other tools: mopm neither reads nor checks it, and `mopm metadata` prints it under `package.metadata`, in file order, only when the file has it.
+`mojo` in `[package]` makes a lock (below) for every version listed, and a unit graph for one of them. `[package.metadata]` is the one place for the settings of other tools: mopm neither reads nor checks it, and `mopm metadata` prints it under `package.metadata`, in file order, only when the file has it.
 
 ### `[toolchain]`
 
-The older spelling of the compiler pin, and what `mopm new` writes. It is a version-1 lock for the first version in the list that resolves.
+The older spelling of the compiler pin, and what `mopm new` writes. The lock is the same as for `[package] mojo`, with one Mojo version: the first in the list that resolves.
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
@@ -135,7 +135,7 @@ A native library that the package builds and ships. The id is a lowercase identi
 | `link` | array of strings | empty | system libraries the final link of any consumer of this static archive adds, each as `-l<name>`, once, after every archive, in the order `c++`, `dl`, `m`, `pthread`; for an archive that leaves symbols to the platform (a C++ archive names `"c++"`). Only `"c++"`, `"dl"`, `"m"` and `"pthread"`, none twice; needs `kind = "static"` and `mode = "link"`; works with `provided = true` and without | `link = ["c++"]` |
 | `provided` | boolean | `false` | the static archive is built by something else (a build system's rule) and packed as `lib<id>.a`; mopm compiles nothing for it. Needs `kind = "static"` and `mode = "link"`, and refuses `srcs`, `hdrs`, `cflags`, `cflags_by_os`, `includes`, `build` and `outputs` | `provided = true` |
 
-`mopm plan --unit-graph` makes each native of a workspace member (the root package or a path dependency) with `srcs` a `native` unit that the build system compiles into the archive (spec/unit-graph.md, "Member natives"); it refuses one with `kind` other than `"static"`, `mode = "load"`, or no `srcs` unless it is `provided` (then the graph has a `native` unit with no sources, and the build system supplies the archive; the graph is format 4). A unit that links archives naming `link` libraries lists them in its own `link` (each once, in link order of the archives) and the graph is format 5 (spec/unit-graph.md, "System libraries of a native"). A manifest has no CPU level: the build system compiles at the platform baseline.
+`mopm plan --unit-graph` makes each native of a workspace member (the root package or a path dependency) with `srcs` a `native` unit that the build system compiles into the archive (spec/unit-graph.md, "Member natives"); it refuses one with `kind` other than `"static"`, `mode = "load"`, or no `srcs` unless it is `provided` (then the graph has a `native` unit with no sources, and the build system supplies the archive). A unit that links archives naming `link` libraries lists them in its own `link` (each once, in link order of the archives) (spec/unit-graph.md, "System libraries of a native"). A manifest has no CPU level: the build system compiles at the platform baseline.
 
 `mopm pack` and `mopm publish` pack a library with `kind = "static"` and `mode = "link"`: the archive is not built by mopm (`build` and `outputs` are descriptive), it is the file named for each subdir with `--native <id>=<subdir>:<file>`, and its file name, `lib<name>.a`, is the library's soname. A package that declares a native library has no `noarch` file, and every subdir it packs needs an archive for every library it declares. The `.mopm.json` that `pack` writes is the same bytes in every subdir's file; what differs between platforms (the archive's sha256 and size) is in `info/about.json` of each file, under `mopm_native`, which nothing reads back.
 
@@ -186,49 +186,44 @@ Accepted does not mean used. This table says, for every table and key, which com
 
 ## mopm.lock
 
-`mopm.lock` is JSON that mopm writes beside `mopm.toml`: commit it, and do not edit it. It is written in one fixed layout (two-space indent, the key order below, `deps` and `native` left out when empty, a final newline), so the same lock is always the same bytes. mopm reads a lock of at most 64 MiB and checks it on every read; a lock that breaks a rule is an error, not a warning. Keys that mopm does not know are ignored, except that a path entry may not carry the keys of a registry entry. `lock_version` 1 is written for a project with `[toolchain] mojo`, and 2 for `[package] mojo`; a lock with a higher number is refused with "Update mopm.".
+`mopm.lock` is JSON that mopm writes beside `mopm.toml`: commit it, and do not edit it. It is written in one fixed layout (two-space indent, the key order below, `deps` and `native` left out when empty, a final newline), so the same lock is always the same bytes. mopm reads a lock of at most 64 MiB and checks it on every read; a lock that breaks a rule is an error, not a warning. Keys that mopm does not know are ignored, except that a path entry may not carry the keys of a registry entry. mopm writes `lock_version` 3, for every project. A lock of version 1 or 2 (written before packages had namespaces) is not read: `mopm lock`, `update`, `add`, `remove` and `sync` without `--locked` write a new one, and `sync --locked`, `tree`, `plan`, `build` and `test` stop with `mopm.lock predates namespaces (lock_version <n>); run 'mopm lock'`. A lock with a number above 3 is refused with "Update mopm.".
 
 ### The top level
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
-| `lock_version` | integer | none, required | `1` or `2` | `"lock_version": 2` |
-| `mojo` | array of strings | none, required in version 2 only | the locked Mojo versions, sorted as byte strings, none repeated, at least one; it equals the set of `mopm.toml` | `"mojo": ["1.0.0"]` |
-| `toolchain` | object | none, required | version 1: `{"mojo": "<version>"}`. Version 2: for each locked Mojo version, an object from a subdir to the 64 lowercase hex digits of mopm's toolchain closure hash; every locked version has one | `"toolchain": {"1.0.0": {"linux-64": "<sha256>"}}` |
+| `lock_version` | integer | none, required | `3` | `"lock_version": 3` |
+| `mojo` | array of strings | none, required | the locked Mojo versions, sorted as byte strings, none repeated, at least one; it equals the set of `mopm.toml` | `"mojo": ["1.0.0"]` |
+| `toolchain` | object | none, required | for each locked Mojo version that mopm pins a toolchain for, an object from a subdir to the 64 lowercase hex digits of mopm's toolchain closure hash; a locked version mopm pins nothing for has no entry, and a version that is not in `mojo` is refused | `"toolchain": {"1.0.0": {"linux-64": "<sha256>"}}` |
 | `channels` | array of strings | none, required | at least one URL, ending in `/`: `https://`, or `http://` only to `127.0.0.1`, `[::1]` or `localhost` with a port | `"channels": ["https://conda.mopm.dev/"]` |
-| `packages` | array of objects | none, required | sorted by name, then version, then subdir (plain byte order), no two equal in all three | `"packages": []` |
+| `packages` | array of objects | none, required | sorted by full name, then version, then subdir (plain byte order), no two equal in all three | `"packages": []` |
 
 ### A package entry
 
-A registry entry has no `source` key. In version 1 it carries its one file; in version 2 the files are under `artifacts`, one per Mojo version. A path entry (a path dependency, at any depth) has `"source": "path"` and nothing that names a file.
+A registry entry has no `source` key; its files are under `artifacts`, one per Mojo version. A path entry (a path dependency, at any depth) has `"source": "path"` and nothing that names a file.
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
-| `name` | string | none, required | the mopm name; the conda name is `mojo-<name>` | `"name": "http_core"` |
+| `name` | string | none, required | the full name, `<namespace>/<name>`; the conda name is `mojo-<namespace>.<name>` | `"name": "komira-ai/http_core"` |
 | `version` | string | none, required | the locked version | `"version": "1.2.5"` |
 | `source` | string | absent: a registry entry | `"path"` | `"source": "path"` |
 | `path` | string | none, required with `source` | the directory, relative to the project; a name locked as a path has no other entry | `"path": "../util"` |
 | `subdir` | string | none, required for a registry entry | any string; mopm writes the platform of the file: `noarch`, `linux-64`, `linux-aarch64` or `osx-arm64` | `"subdir": "linux-64"` |
-| `channel` | string | none, required for a registry entry | one of `channels`; one package name comes from one channel only | `"channel": "https://conda.mopm.dev/"` |
-| `build` | string | none, required in version 1 | the build string | `"build": "mojo1.0.0_0"` |
-| `url` | string | none, required in version 1 | exactly `<channel><subdir>/mojo-<name>-<version>-<build>.conda` | `"url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda"` |
-| `sha256` | string | none, required in version 1 | 64 lowercase hex digits | `"sha256": "<sha256>"` |
-| `size` | integer | none, required in version 1 | at least 1 | `"size": 1000` |
-| `mojo` | string | none, required in version 1 | the Mojo version the file was built with; it equals `toolchain.mojo` | `"mojo": "1.0.0"` |
-| `artifacts` | object | none, required in version 2 | from each Mojo version to the object below; the versions are in the lock's `mojo` | `"artifacts": {"1.0.0": {}}` |
-| `deps` | array of strings | empty | names of direct dependencies, each present in `packages` | `"deps": ["http_core"]` |
+| `channel` | string | none, required for a registry entry | a root listed in `channels` followed by the package's namespace and `/`; one full name comes from one root only | `"channel": "https://conda.mopm.dev/komira-ai/"` |
+| `artifacts` | object | none, required for a registry entry | from each Mojo version to the object below; the versions are in the lock's `mojo` | `"artifacts": {"1.0.0": {}}` |
+| `deps` | array of strings | empty | full names of direct dependencies, each present in `packages` | `"deps": ["komira-ai/http_core"]` |
 | `native` | array of objects | empty | the native libraries the package ships, below | `"native": [{"id": "z", "soname": "libz.so.1", "sha256": "<sha256>"}]` |
 
-Each entry of `artifacts` has these keys, which are the file keys of version 1:
+Each entry of `artifacts` has these keys:
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
 | `build` | string | none, required | the build string | `"build": "mojo1.0.0_0"` |
-| `url` | string | none, required | as in version 1 | `"url": "https://conda.mopm.dev/..."` |
+| `url` | string | none, required | exactly `<channel><subdir>/mojo-<namespace>.<name>-<version>-<build>.conda` | `"url": "https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.http_core-1.2.5-mojo1.0.0_0.conda"` |
 | `sha256` | string | none, required | 64 lowercase hex digits | `"sha256": "<sha256>"` |
 | `size` | integer | none, required | at least 1 | `"size": 1100` |
 
-Each entry of `native` describes a library the package ships. No two packages may ship the same soname, and `mopm plan` refuses a library that has no `sha256`. `mopm lock` writes the `sha256`: for a version that ships natives it downloads the package file once (checking its size and sha256 against the channel's repodata first), reads `<name>.mopm.json` and the library file out of it, and hashes the library; a version whose file the old lock already pins (same name, version, subdir and file sha256, every native hashed) is not downloaded again, and `mopm sync --locked` downloads nothing for this. The file read is the one the package's metadata names, which must be `lib/<soname>`. The package file is held in memory, up to 100 MB (the most `mopm publish` sends); a longer one is refused as too large, and a package whose files decompress to more than 512 MiB (or one file of more than 128 MiB) is refused, as the registry would.
+Each entry of `native` describes a library the package ships. No two packages may ship the same soname, and `mopm plan` refuses a library that has no `sha256`. `mopm lock` writes the `sha256`: for a version that ships natives it downloads the package file once (checking its size and sha256 against the channel's repodata first), reads `<import name>.mopm.json` and the library file out of it, and hashes the library; a version whose file the old lock already pins (same name, version, subdir and file sha256, every native hashed) is not downloaded again, and `mopm sync --locked` downloads nothing for this. The file read is the one the package's metadata names, which must be `lib/<soname>`. The package file is held in memory, up to 100 MB (the most `mopm publish` sends); a longer one is refused as too large, and a package whose files decompress to more than 512 MiB (or one file of more than 128 MiB) is refused, as the registry would.
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
@@ -265,6 +260,8 @@ mopm keeps one file for the user, the login, and takes the rest from flags and f
 ### Registries
 
 `--registry` takes `prod` (the default, `https://api.mopm.dev`), `gamma` (`https://api.gamma.mopm.dev`), `beta` (`https://api.beta.mopm.dev`) or a URL. A URL is `https://`, or `http://` only to `127.0.0.1`, `[::1]` or `localhost` with a port, for a local registry. It is accepted by `login`, `logout`, `whoami`, `publish`, `lock`, `update`, `sync`, `add` and `remove`. A project with no registry dependency is locked without contacting the registry at all, and the channel its lock lists is `https://conda.mopm.dev/`.
+
+The registry's `config.json` must list index version 2 in `index_versions` and give an `api_v2_url`; otherwise mopm stops with `the registry at <url> serves no namespaced packages (index version 2); it is older than this mopm`. mopm reads the index at `/index/v2/<aa>/<bb>/<namespace>/<name>` and sends every request that names a package (publish, groups, yank, the CI identity exchange) to `api_v2_url`, with `/packages/<namespace>/<name>/...`. `login`, `logout`, `whoami` and tokens use the registry's `api_url`.
 
 ### Environment variables
 

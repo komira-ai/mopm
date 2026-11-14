@@ -83,8 +83,11 @@ pub const Opts = struct {
     fixture: []const u8,
     /// The fake registry's base URL.
     registry: []const u8,
-    /// A session token of an account on that registry (it claims the name and makes the publishing token).
+    /// A session token of an account on that registry (it creates the package and makes the publishing token).
     session: []const u8,
+    /// The namespace that account can write: its user namespace, its handle in lower case. The member is published as
+    /// `<namespace>/shimlib`.
+    namespace: []const u8,
     /// The zig executable (`zig cc`, `zig ar`).
     zig: []const u8,
     /// A Mojo environment prefix (bin/mojo, share/max): precompiles the member.
@@ -164,11 +167,12 @@ fn cSources(a: Allocator, dir: []const u8) ![][]const u8 {
     return list.items;
 }
 
-/// Claims `package` for the account of `session` and makes an API token that may publish it.
-fn publishToken(a: Allocator, rep: *h.Report, base: []const u8, session: []const u8, package: []const u8) ![]const u8 {
-    var resp = try h.request(a, "POST", base, try h.fmt(a, "/api/v1/packages/{s}/claim", .{package}), "{}", session);
-    rep.check("native: the account claims the package name", resp.status == 201, resp.body);
-    resp = try h.request(a, "POST", base, "/api/v1/me/tokens", try h.fmt(a, "{{\"name\":\"user-beta-native\",\"scopes\":[\"publish\"],\"packages\":[\"{s}\"],\"expires_in_days\":1}}", .{package}), session);
+/// Creates the package `full` (`<namespace>/<name>`) in the namespace of the account of `session`, and makes an API token
+/// that may publish it.
+fn publishToken(a: Allocator, rep: *h.Report, base: []const u8, session: []const u8, full: []const u8) ![]const u8 {
+    var resp = try h.request(a, "PUT", base, try h.fmt(a, "/api/v2/packages/{s}", .{full}), null, session);
+    rep.check("native: the account creates the package in its namespace", resp.status == 201, resp.body);
+    resp = try h.request(a, "POST", base, "/api/v2/me/tokens", try h.fmt(a, "{{\"name\":\"user-beta-native\",\"scopes\":[\"publish\"],\"packages\":[\"{s}\"],\"expires_in_days\":1}}", .{full}), session);
     const token = if (resp.status == 201) (h.jsonString(try h.parseJson(a, resp.body), "token") orelse "") else "";
     rep.check("native: the account makes an API token that may publish it", token.len != 0, resp.body);
     return token;
@@ -193,6 +197,15 @@ fn walk(w: *Walk) !void {
     const root = try h.join(a, &.{ o.work, "native" });
     const member = try h.join(a, &.{ root, "ws", "shimlib" });
     try h.copyTree(a, o.fixture, member);
+    const full = try h.fmt(a, "{s}/shimlib", .{o.namespace});
+    // The fixture is the package `example/shimlib`; the account can write only its own namespace.
+    {
+        const path = try h.join(a, &.{ member, "mopm.toml" });
+        const text = try h.readFile(a, path);
+        const old = "name = \"example/shimlib\"";
+        const at = std.mem.indexOf(u8, text, old) orelse return error.BadFixture;
+        try h.writeFile(path, try h.fmt(a, "{s}name = \"{s}\"{s}", .{ text[0..at], full, text[at + old.len ..] }));
+    }
 
     const manifest = try h.readFile(a, try h.join(a, &.{ member, "mopm.toml" }));
     rep.check("native: the member's manifest declares the static native this step builds, with the flags it compiles with", h.contains(manifest, "[native.shim]") and
@@ -232,20 +245,20 @@ fn walk(w: *Walk) !void {
     // 2. Staged, then published through one group.
     const staged = try h.join(a, &.{ root, "staged" });
     _ = try w.mopm("native: mopm stage packs the member with its archive", root, &.{
-        "stage", "--workspace-root", try h.join(a, &.{ root, "ws" }), "--artifacts", art, "--compiler", "1.0.0", "--out", staged, "--registry", o.registry, "shimlib",
+        "stage", "--workspace-root", try h.join(a, &.{ root, "ws" }), "--artifacts", art, "--compiler", "1.0.0", "--out", staged, "--registry", o.registry, full,
     }, o.env);
     const plan = try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ staged, "plan.json" })));
     const members = if (plan == .object) (plan.object.get("members") orelse std.json.Value{ .null = {} }) else std.json.Value{ .null = {} };
     const first = if (members == .array and members.array.items.len == 1) members.array.items[0] else std.json.Value{ .null = {} };
-    rep.check("native: the staged plan uploads exactly shimlib", std.mem.eql(u8, h.jsonString(first, "name") orelse "", "shimlib") and std.mem.eql(u8, h.jsonString(first, "action") orelse "", "upload"), "plan.json does not list shimlib as an upload");
+    rep.check("native: the staged plan uploads exactly shimlib", std.mem.eql(u8, h.jsonString(first, "name") orelse "", full) and std.mem.eql(u8, h.jsonString(first, "action") orelse "", "upload"), "plan.json does not list shimlib as an upload");
 
-    const token = try publishToken(a, rep, o.registry, o.session, "shimlib");
+    const token = try publishToken(a, rep, o.registry, o.session, full);
     var pub_env = try h.cloneEnv(a, o.env);
     try pub_env.put("MOPM_TOKEN", token);
     _ = try w.mopm("native: mopm publish --staged publishes the set through one group", root, &.{
         "publish", "--staged", staged, "--registry", o.registry, "--config-dir", try h.join(a, &.{ root, "conf" }), "--wait", "60",
     }, &pub_env);
-    const served = try h.request(a, "GET", o.registry, "/api/v1/packages/shimlib/1.0.0", null, null);
+    const served = try h.request(a, "GET", o.registry, try h.fmt(a, "/api/v2/packages/{s}/1.0.0", .{full}), null, null);
     rep.check("native: the registry serves shimlib 1.0.0", served.status == 200, served.body);
 
     // 3. As a user: a new package that adds it, syncs, builds with no file, and runs.
@@ -253,7 +266,7 @@ fn walk(w: *Walk) !void {
     try cwd.makePath(user);
     const app = try h.join(a, &.{ user, "nat_app" });
     _ = try w.mopm("native: mopm new --bin", user, &.{ "new", "example/nat_app", "--bin" }, o.env);
-    _ = try w.mopm("native: mopm add shimlib from the registry", app, &.{ "add", "example/shimlib", "--registry", o.registry }, o.env);
+    _ = try w.mopm("native: mopm add shimlib from the registry", app, &.{ "add", full, "--registry", o.registry }, o.env);
     const lock = try h.readFile(a, try h.join(a, &.{ app, "mopm.lock" }));
     rep.check("native: the lock names shimlib", h.contains(lock, "shimlib"), lock);
     var sync_argv = std.ArrayList([]const u8).init(a);

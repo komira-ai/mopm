@@ -15,11 +15,11 @@ fn goodLib(a: Allocator, name: []const u8, deps: []const u8) ![]const u8 {
     return lib(a, name, deps, "b" ** 64, url, "10");
 }
 
-/// A version 1 lock of one package, tls, with `loads` text and `libs` text (the entries of system_libs' linux-64).
+/// A lock of one package, komira-ai/tls, with `loads` text and `libs` text (the entries of system_libs' linux-64).
 fn lockText(a: Allocator, loads: []const u8, libs: []const u8) ![]const u8 {
     return std.fmt.allocPrint(a,
-        \\{{"lock_version": 1, "toolchain": {{"mojo": "1.0.0"}}, "channels": ["https://conda.mopm.dev/"], "packages": [
-        \\  {{"name": "tls", "version": "1.1.0", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/", "url": "https://conda.mopm.dev/linux-64/mojo-tls-1.1.0-mojo1.0.0_0.conda", "sha256": "{s}", "size": 10, "mojo": "1.0.0"{s}}}
+        \\{{"lock_version": 3, "mojo": ["1.0.0"], "toolchain": {{}}, "channels": ["https://conda.mopm.dev/"], "packages": [
+        \\  {{"name": "komira-ai/tls", "version": "1.1.0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/komira-ai/", "artifacts": {{"1.0.0": {{"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.tls-1.1.0-mojo1.0.0_0.conda", "sha256": "{s}", "size": 10}}}}{s}}}
         \\], "system_libs": {{"linux-64": [{s}]}}}}
         \\
     , .{ "a" ** 64, loads, libs });
@@ -80,7 +80,7 @@ test "a lock with neither key is written as it always was" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const text = "{\"lock_version\": 1, \"toolchain\": {\"mojo\": \"1.0.0\"}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": []}\n";
+    const text = "{\"lock_version\": 3, \"mojo\": [\"1.0.0\"], \"toolchain\": {}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": []}\n";
     var why: []const u8 = "";
     const l = try lock.parse(a, text, &why);
     try std.testing.expectEqual(@as(usize, 0), l.system_libs.len);
@@ -99,9 +99,9 @@ test "each rule of system_libs and loads is refused, with the reason" {
     // What is accepted, so that each refusal below is the one change.
     try std.testing.expect((try refusal(a, ", \"loads\": [\"libsqlite\", \"libzlib\"]", both)) == null);
 
-    try expectRefused(a, ", \"loads\": [\"libbz2\"]", both, "tls: loads libbz2, which system_libs does not pin for linux-64");
-    try expectRefused(a, ", \"loads\": [\"libzlib\", \"libsqlite\"]", both, "tls: loads is not sorted with no repeats");
-    try expectRefused(a, ", \"loads\": [\"libsqlite\", \"libsqlite\"]", both, "tls: loads is not sorted with no repeats");
+    try expectRefused(a, ", \"loads\": [\"libbz2\"]", both, "komira-ai/tls: loads libbz2, which system_libs does not pin for linux-64");
+    try expectRefused(a, ", \"loads\": [\"libzlib\", \"libsqlite\"]", both, "komira-ai/tls: loads is not sorted with no repeats");
+    try expectRefused(a, ", \"loads\": [\"libsqlite\", \"libsqlite\"]", both, "komira-ai/tls: loads is not sorted with no repeats");
     try expectRefused(a, "", try std.mem.join(a, ", ", &.{ zlib, sqlite }), "system_libs of linux-64 is not sorted by name with no repeats (at libsqlite)");
     try expectRefused(a, "", try goodLib(a, "libsqlite", "\"libnothere\""), "libsqlite needs libnothere, which is not another entry of the list");
     try expectRefused(a, "", try goodLib(a, "libsqlite", "\"libsqlite\""), "libsqlite needs libsqlite");
@@ -121,8 +121,8 @@ test "a path dependency has no loads, and system_libs must be an object of lists
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var why: []const u8 = "";
-    const head = "{\"lock_version\": 1, \"toolchain\": {\"mojo\": \"1.0.0\"}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": [";
-    const path_loads = head ++ "{\"name\": \"util\", \"version\": \"0.3.0\", \"source\": \"path\", \"path\": \"util\", \"loads\": [\"libsqlite\"]}]}";
+    const head = "{\"lock_version\": 3, \"mojo\": [\"1.0.0\"], \"toolchain\": {}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": [";
+    const path_loads = head ++ "{\"name\": \"komira-ai/util\", \"version\": \"0.3.0\", \"source\": \"path\", \"path\": \"util\", \"loads\": [\"libsqlite\"]}]}";
     try std.testing.expectError(error.Invalid, lock.parse(a, path_loads, &why));
     try std.testing.expectEqualStrings("packages[0] is a path dependency, which has no loads", why);
     try std.testing.expectError(error.Invalid, lock.parse(a, head ++ "], \"system_libs\": []}", &why));
@@ -160,4 +160,15 @@ test "closureNames: the names and what they need, sorted; a missing name or need
     libs[2].deps = &.{"gone"};
     try std.testing.expectError(error.MissingLib, lock_libs.closureNames(a, &libs, &.{"a"}, &missing));
     try std.testing.expectEqualStrings("gone", missing);
+}
+
+test "loadsOfDepends skips every mojo- package, namespaced ones included, and sorts and dedups the rest" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, a, "[\"mojo-komira-ai.json >=0.1\", \"libzlib >=1.3\", \"mojo-compiler 1.0.0\", \"libsqlite\", \"libzlib\"]", .{});
+    const loads = try lock_libs.loadsOfDepends(a, parsed);
+    try std.testing.expectEqual(@as(usize, 2), loads.len);
+    try std.testing.expectEqualStrings("libsqlite", loads[0]);
+    try std.testing.expectEqualStrings("libzlib", loads[1]);
 }

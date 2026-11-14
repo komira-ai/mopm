@@ -28,27 +28,14 @@ const native_files = @import("native_files.zig");
 const lock_libs = @import("lock_libs.zig");
 const conda = @import("conda.zig");
 const native_link = @import("native_link.zig");
+const pkg_names = @import("names.zig");
 
-/// 2: a `native` unit, and a `built` entry (no `sha256`) in `natives`, for a workspace member's own native libraries.
-pub const format_version: u32 = 2;
-
-/// 3: a graph in which a `test` or `bin` unit has `loads`, and the graph's `system_libs` (spec/unit-graph.md). A
-/// graph with no `loads` is format 2, byte for byte what mopm printed before they existed: a reader that did not
-/// know `loads` would run such a test against the machine's libraries, so a graph that has them says 3.
-pub const format_loads: u32 = 3;
-
-/// 4: a `native` unit with `provided` (its archive is built by another rule, not compiled from `srcs`). A reader that
-/// did not know `provided` would make an empty archive of a unit with no sources, so a graph that has one says 4. A
-/// format 4 graph also has `system_libs` and `loads` exactly when a format 3 graph would.
-pub const format_provided: u32 = 4;
-
-/// 5: a unit with `link` (system libraries its final link adds, `-l<name>` after every archive). A reader that did not
-/// know `link` would link without them and fail on the undefined symbols of a C++ archive, so a graph that has one says 5.
-/// A format 5 graph also has `provided`, `system_libs` and `loads` exactly when a format 4 graph would.
-pub const format_link: u32 = 5;
+/// The format `render` writes and the one `mopm unit` reads (spec/unit-graph.md): unit ids and `package` carry the full
+/// name (`<namespace>/<name>`), `import` the import name, and a native unit is `native:<full name>/<id>`.
+pub const format_version: u32 = 6;
 
 pub const Src = struct { path: []const u8, sha256: []const u8 };
-/// A native library in a unit's dependency closure: pinned by `sha256`, from `package`. `kind`, `needs` and `exclusive`
+/// A native library in a unit's dependency closure: pinned by `sha256`, from `package` (a full name). `kind`, `needs` and `exclusive`
 /// are the package's declarations (the lock copies them); the unit's natives are in link order (see `orderNatives`).
 pub const NativeRef = struct {
     id: []const u8,
@@ -61,7 +48,7 @@ pub const NativeRef = struct {
     exclusive: []const u8 = "",
     /// System libraries the package's metadata (or the manifest, for a built native) names for the final link.
     link: []const []const u8 = &.{},
-    /// The id of the `native` unit (`native:<package>/<id>`) that builds this library, for a workspace member's own
+    /// The id of the `native` unit (`native:<full name>/<id>`) that builds this library, for a workspace member's own
     /// native; empty for a prebuilt one, which `sha256` pins.
     built: []const u8 = "",
 };
@@ -71,7 +58,11 @@ pub const Profile = struct { opt: u32, assert: []const u8, debug: bool };
 
 pub const Unit = struct {
     id: []const u8,
+    /// The package's full name, `<namespace>/<name>`.
     package: []const u8,
+    /// The package's import name: the part of `package` after the `/`. A library's `.mojoc` is `<import>.mojoc`, and
+    /// its sources are staged in a directory of that name. Empty only in a graph written before format 6.
+    import: []const u8 = "",
     version: []const u8,
     /// `lib`, `test`, `bin`, `prebuilt` or `native`.
     kind: []const u8,
@@ -122,12 +113,12 @@ pub const SystemLib = struct { name: []const u8, version: []const u8, build: []c
 
 pub const Graph = struct {
     unit_graph: u32 = format_version,
-    /// `<name>@<version>` of the root package.
+    /// `<full name>@<version>` of the root package.
     package: []const u8,
     /// The consumer's Mojo version: the one every unit id names.
     mojo: []const u8,
     toolchain: Toolchain,
-    /// Format 3 only: the lock's system libraries for this subdir, sorted by name.
+    /// The lock's system libraries for this subdir, sorted by name; empty when no unit loads one.
     system_libs: []const SystemLib = &.{},
     units: []const Unit,
 
@@ -201,7 +192,7 @@ fn refuse(arena: Allocator, why: *[]const u8, comptime fmt: []const u8, args: an
     return error.Refused;
 }
 
-/// The subdirs whose toolchain closure a version 2 lock records, for each Mojo version.
+/// The subdirs whose toolchain closure a lock records, for each Mojo version.
 pub const lock_subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64" };
 
 /// The Mojo versions and subdirs a unit graph can be made for.
@@ -220,7 +211,7 @@ pub fn pinnedClosure(arena: Allocator, mojo: []const u8, subdir: []const u8, why
     return refuse(arena, why, "mopm has no pinned toolchain for mojo {s} on {s} (it pins {s})", .{ mojo, subdir, supported });
 }
 
-/// The hash of the toolchain `c` (what a version 2 lock records and `Toolchain.closure_sha256` is): its
+/// The hash of the toolchain `c` (what a lock records and `Toolchain.closure_sha256` is): its
 /// Mojo version, subdir and every package's name, version, build and sha256, then the Zig pin and C target
 /// mopm pins for the subdir. Only pins enter it, so a mirror of the same files has the same hash.
 pub fn closureSha256(arena: Allocator, c: closure.Closure) ![]const u8 {
@@ -316,9 +307,9 @@ const Builder = struct {
     in: Input,
     why: *[]const u8,
     units: std.ArrayList(Unit),
-    /// The natives a workspace member builds, by package name: what its units link (see `addNatives`).
+    /// The natives a workspace member builds, by full name: what its units link (see `addNatives`).
     member_natives: std.StringHashMap([]const NativeRef),
-    /// The conda names of the system libraries each package loads, by package name: a member's and the root's from
+    /// The conda names of the system libraries each package loads, by full name: a member's and the root's from
     /// their manifests, a registry package's from the lock's `loads`.
     own_loads: std.StringHashMap([]const []const u8),
     /// The lock's system libraries for this subdir, once `loadsPass` has run.
@@ -329,7 +320,7 @@ const Builder = struct {
         return refuse(b.arena, b.why, fmt, args);
     }
 
-    /// The entry for `name` in this subdir: a path dependency; else the
+    /// The entry for the package `name` (a full name) in this subdir: a path dependency; else the
     /// registry version that has a build for the consumer's Mojo; else, when
     /// none has one, the newest version (the caller refuses it).
     fn lockEntry(b: *Builder, name: []const u8) ?lock.Package {
@@ -467,8 +458,9 @@ const Builder = struct {
 
     fn addLib(b: *Builder, m: manifest.Manifest, member_rel: []const u8, deps: []const []const u8, lib_rel: []const u8) !void {
         try b.units.append(.{
-            .id = try std.fmt.allocPrint(b.arena, "{s}/lib", .{try b.base(m.package.name, m.package.version)}),
-            .package = m.package.name,
+            .id = try std.fmt.allocPrint(b.arena, "{s}/lib", .{try b.base(m.package.full_name, m.package.version)}),
+            .package = m.package.full_name,
+            .import = m.package.name,
             .version = m.package.version,
             .kind = "lib",
             .root = lib_rel,
@@ -524,10 +516,11 @@ const Builder = struct {
                 for (hdrs) |h| try rels.append(if (member_rel.len == 0) h.path else h.path[member_rel.len + 1 ..]);
                 break :blk try native_files.dirsOf(b.arena, rels.items);
             };
-            const id = try std.fmt.allocPrint(b.arena, "native:{s}/{s}", .{ m.package.name, n.id });
+            const id = try std.fmt.allocPrint(b.arena, "native:{s}/{s}", .{ m.package.full_name, n.id });
             try b.units.append(.{
                 .id = id,
-                .package = m.package.name,
+                .package = m.package.full_name,
+                .import = m.package.name,
                 .version = m.package.version,
                 .kind = "native",
                 .soname = soname,
@@ -540,9 +533,9 @@ const Builder = struct {
                 .needs = n.needs,
                 .outputs = try b.arena.dupe([]const u8, &.{soname}),
             });
-            try refs.append(.{ .id = n.id, .soname = soname, .package = m.package.name, .kind = .static, .needs = n.needs, .exclusive = n.exclusive, .link = n.link, .built = id });
+            try refs.append(.{ .id = n.id, .soname = soname, .package = m.package.full_name, .kind = .static, .needs = n.needs, .exclusive = n.exclusive, .link = n.link, .built = id });
         }
-        try b.member_natives.put(m.package.name, refs.items);
+        try b.member_natives.put(m.package.full_name, refs.items);
     }
 
     /// The unit ids of dependencies named in `names`, in order.
@@ -572,7 +565,7 @@ const Builder = struct {
                 return b.fail("{s}:{d}:{d}: {s}", .{ file, diag.pos.line, diag.pos.col, if (e == error.Invalid) diag.message else @errorName(e) });
             };
             try b.listsMojo(file, pm);
-            try b.noteLoads(pm.package.name, pm.native_dependencies);
+            try b.noteLoads(pm.package.full_name, pm.native_dependencies);
             const lib_rel = (try b.defaultLib(pm, mp)) orelse return b.fail("{s} has no library directory (src/{s} or [targets] lib)", .{ file, pm.package.name });
             try b.checkBelow("the library of a path dependency", lib_rel);
             try b.checkInside("the library of a path dependency", mp, lib_rel);
@@ -589,16 +582,17 @@ const Builder = struct {
         try b.units.append(.{
             .id = try std.fmt.allocPrint(b.arena, "{s}/lib", .{try b.base(p.name, p.version)}),
             .package = p.name,
+            .import = pkg_names.importName(p.name),
             .version = p.version,
             .kind = "prebuilt",
             .deps = ids,
             .artifact = .{ .url = art.url, .sha256 = art.sha256, .size = art.size },
-            .mojoc = try std.fmt.allocPrint(b.arena, "lib/mojo/{s}.mojoc", .{p.name}),
+            .mojoc = try std.fmt.allocPrint(b.arena, "lib/mojo/{s}.mojoc", .{pkg_names.importName(p.name)}),
         });
         if (p.loads.len > 0) try b.own_loads.put(p.name, p.loads);
     }
 
-    /// Records the libraries the package `package` loads, from the `[native-dependencies]` `deps` of its manifest:
+    /// Records the libraries the package `package` (a full name) loads, from the `[native-dependencies]` `deps` of its manifest:
     /// `mode = "load"` ones, as the conda packages that provide them.
     fn noteLoads(b: *Builder, package: []const u8, deps: []const manifest.NativeDep) !void {
         var out = std.ArrayList([]const u8).init(b.arena);
@@ -853,13 +847,13 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
     // Mojo imports a package by its import name: two packages of one import name in the closure are refused, each
     // with its shortest dependency path (import_names.zig).
     if (try import_names.check(arena, try import_names.ofProject(arena, m, in.members, in.l))) |clash| return refuse(arena, why, "{s}", .{clash});
-    const root_id = try b.base(m.package.name, m.package.version);
+    const root_id = try b.base(m.package.full_name, m.package.version);
 
     // The root package's dependency names, in manifest order.
     var dep_names = std.ArrayList([]const u8).init(arena);
-    for (m.dependencies) |d| try dep_names.append(d.name);
+    for (m.dependencies) |d| try dep_names.append(d.full_name);
     var dev_names = std.ArrayList([]const u8).init(arena);
-    for (m.dev_dependencies) |d| try dev_names.append(d.name);
+    for (m.dev_dependencies) |d| try dev_names.append(d.full_name);
 
     var seen = std.StringHashMap(void).init(arena);
     var todo = std.ArrayList([]const u8).init(arena);
@@ -867,7 +861,7 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
     for (dev_names.items) |n| try todo.append(n);
     while (todo.popOrNull()) |n| try b.visit(n, &seen, &todo);
 
-    try b.noteLoads(m.package.name, m.native_dependencies);
+    try b.noteLoads(m.package.full_name, m.native_dependencies);
     const dep_ids = try b.depIds(root_id, dep_names.items);
     const dev_ids = try b.depIds(root_id, dev_names.items);
 
@@ -889,7 +883,8 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
         try b.checkInside("a binary's source", in.pkg, bin_at);
         try b.units.append(.{
             .id = try std.fmt.allocPrint(arena, "{s}/bin:{s}", .{ root_id, bin.name }),
-            .package = m.package.name,
+            .package = m.package.full_name,
+            .import = m.package.name,
             .version = m.package.version,
             .kind = "bin",
             .srcs = try arena.dupe(Src, &.{try b.src(bin_at)}),
@@ -913,7 +908,8 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
         const test_at = try b.join(in.pkg, f);
         try b.units.append(.{
             .id = try std.fmt.allocPrint(arena, "{s}/test:{s}", .{ root_id, test_at }),
-            .package = m.package.name,
+            .package = m.package.full_name,
+            .import = m.package.name,
             .version = m.package.version,
             .kind = "test",
             .srcs = try arena.dupe(Src, &.{try b.src(test_at)}),
@@ -923,7 +919,7 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
         });
     }
 
-    // Two library units may not share a package name: the import path is by name.
+    // Two library units may not share a full name: a package is imported by name, so one version is allowed.
     for (b.units.items, 0..) |u, i| {
         if (!(std.mem.eql(u8, u.kind, "lib") or std.mem.eql(u8, u.kind, "prebuilt"))) continue;
         for (b.units.items[0..i]) |v| {
@@ -937,13 +933,7 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
     try b.loadsPass();
     try b.keys();
     var with_loads = false;
-    var with_provided = false;
-    var with_link = false;
-    for (b.units.items) |u| {
-        with_loads = with_loads or u.loads.len > 0;
-        with_provided = with_provided or u.provided;
-        with_link = with_link or u.link.len > 0;
-    }
+    for (b.units.items) |u| with_loads = with_loads or u.loads.len > 0;
     var libs: []const SystemLib = &.{};
     if (with_loads) {
         const out = try arena.alloc(SystemLib, b.libs.len);
@@ -951,8 +941,8 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
         libs = out;
     }
     return .{
-        .unit_graph = if (with_link) format_link else if (with_provided) format_provided else if (with_loads) format_loads else format_version,
-        .package = try std.fmt.allocPrint(arena, "{s}@{s}", .{ m.package.name, m.package.version }),
+        .unit_graph = format_version,
+        .package = try std.fmt.allocPrint(arena, "{s}@{s}", .{ m.package.full_name, m.package.version }),
         .mojo = in.mojo,
         .toolchain = tc,
         .system_libs = libs,
@@ -996,6 +986,8 @@ pub fn writeUnit(w: anytype, u: Unit, ind: []const u8) !void {
     try str(w, u.id);
     try w.print(",\n{s}  \"package\": ", .{ind});
     try str(w, u.package);
+    try w.print(",\n{s}  \"import\": ", .{ind});
+    try str(w, u.import);
     try w.print(",\n{s}  \"version\": ", .{ind});
     try str(w, u.version);
     try w.print(",\n{s}  \"kind\": ", .{ind});
@@ -1189,49 +1181,51 @@ const toml_util = "[package]\nname = \"example/util\"\nversion = \"0.3.0\"\nmojo
 /// The lock of the fixture: http_core 1.2.5 built for both Mojo versions, util a member.
 const lock_two =
     \\{
-    \\  "lock_version": 2,
+    \\  "lock_version": 3,
     \\  "mojo": ["1.0.0", "1.1.0"],
     \\  "toolchain": {"1.0.0": {"linux-64": "@C@"}, "1.1.0": {"linux-64": "@D@"}},
     \\  "channels": ["https://conda.mopm.dev/"],
     \\  "packages": [
-    \\    {"name": "http_core", "version": "1.2.5", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
+    \\    {"name": "example/http_core", "version": "1.2.5", "subdir": "linux-64", "channel": "https://conda.mopm.dev/example/",
     \\     "artifacts": {
-    \\       "1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000},
-    \\       "1.1.0": {"build": "mojo1.1.0_0", "url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.1.0_0.conda", "sha256": "@B@", "size": 1100}},
+    \\       "1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/example/linux-64/mojo-example.http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000},
+    \\       "1.1.0": {"build": "mojo1.1.0_0", "url": "https://conda.mopm.dev/example/linux-64/mojo-example.http_core-1.2.5-mojo1.1.0_0.conda", "sha256": "@B@", "size": 1100}},
     \\     "native": [{"id": "z", "soname": "libz_native.so.1", "sha256": "@N@"}]},
-    \\    {"name": "util", "version": "0.3.0", "source": "path", "path": "util"}
+    \\    {"name": "example/util", "version": "0.3.0", "source": "path", "path": "util"}
     \\  ]
     \\}
     \\
 ;
 
-/// The same, with http_core built for Mojo 1.0.0 only (the version 2 lock still lists both).
+/// The same, with http_core built for Mojo 1.0.0 only (the lock still lists both).
 const lock_one_build =
     \\{
-    \\  "lock_version": 2,
+    \\  "lock_version": 3,
     \\  "mojo": ["1.0.0", "1.1.0"],
     \\  "toolchain": {"1.0.0": {"linux-64": "@C@"}, "1.1.0": {"linux-64": "@D@"}},
     \\  "channels": ["https://conda.mopm.dev/"],
     \\  "packages": [
-    \\    {"name": "http_core", "version": "1.2.5", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
+    \\    {"name": "example/http_core", "version": "1.2.5", "subdir": "linux-64", "channel": "https://conda.mopm.dev/example/",
     \\     "artifacts": {
-    \\       "1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000}}},
-    \\    {"name": "util", "version": "0.3.0", "source": "path", "path": "util"}
+    \\       "1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/example/linux-64/mojo-example.http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000}}},
+    \\    {"name": "example/util", "version": "0.3.0", "source": "path", "path": "util"}
     \\  ]
     \\}
     \\
 ;
 
-/// A version 1 lock: one Mojo version, http_core's flat entry.
-const lock_v1 =
+/// A lock for one Mojo version: http_core's one build.
+const lock_single =
     \\{
-    \\  "lock_version": 1,
-    \\  "toolchain": {"mojo": "1.0.0"},
+    \\  "lock_version": 3,
+    \\  "mojo": ["1.0.0"],
+    \\  "toolchain": {"1.0.0": {"linux-64": "@C@"}},
     \\  "channels": ["https://conda.mopm.dev/"],
     \\  "packages": [
-    \\    {"name": "http_core", "version": "1.2.5", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
-    \\     "url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000, "mojo": "1.0.0"},
-    \\    {"name": "util", "version": "0.3.0", "source": "path", "path": "util"}
+    \\    {"name": "example/http_core", "version": "1.2.5", "subdir": "linux-64", "channel": "https://conda.mopm.dev/example/",
+    \\     "artifacts": {
+    \\       "1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/example/linux-64/mojo-example.http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000}}},
+    \\    {"name": "example/util", "version": "0.3.0", "source": "path", "path": "util"}
     \\  ]
     \\}
     \\
@@ -1270,7 +1264,7 @@ fn fakeToolchain(mojo: []const u8) Toolchain {
     };
 }
 
-const members = [_]install_plan.PathDep{.{ .name = "util", .version = "0.3.0", .path = "util" }};
+const members = [_]install_plan.PathDep{.{ .name = "util", .full_name = "example/util", .version = "0.3.0", .path = "util" }};
 
 fn graphOf(a: Allocator, dir: []const u8, deps_toml: []const u8, lock_template: []const u8, mojo: []const u8, why: *[]const u8) !Graph {
     return graphOfIn(a, dir, deps_toml, lock_template, mojo, "linux-64", why);
@@ -1296,15 +1290,15 @@ fn keyOfId(g: Graph, id: []const u8) ![]const u8 {
     return g.units[g.find(id) orelse return error.NoSuchUnit].key;
 }
 
-const id_app = "app@1.0.0#mojo1.0.0/lib";
-const id_test = "app@1.0.0#mojo1.0.0/test:tests/test_app.mojo";
-const id_core = "http_core@1.2.5#mojo1.0.0/lib";
-const id_util = "util@0.3.0#mojo1.0.0/lib";
+const id_app = "example/app@1.0.0#mojo1.0.0/lib";
+const id_test = "example/app@1.0.0#mojo1.0.0/test:tests/test_app.mojo";
+const id_core = "example/http_core@1.2.5#mojo1.0.0/lib";
+const id_util = "example/util@0.3.0#mojo1.0.0/lib";
 
 const golden_1_0_0 =
     \\{
-    \\  "unit_graph": 2,
-    \\  "package": "app@1.0.0",
+    \\  "unit_graph": 6,
+    \\  "package": "example/app@1.0.0",
     \\  "mojo": "1.0.0",
     \\  "toolchain": {
     \\    "mojo": "1.0.0",
@@ -1317,54 +1311,58 @@ const golden_1_0_0 =
     \\  },
     \\  "units": [
     \\    {
-    \\      "id": "app@1.0.0#mojo1.0.0/lib",
-    \\      "package": "app",
+    \\      "id": "example/app@1.0.0#mojo1.0.0/lib",
+    \\      "package": "example/app",
+    \\      "import": "app",
     \\      "version": "1.0.0",
     \\      "kind": "lib",
     \\      "root": "src/app",
     \\      "srcs": [
     \\        {"path": "src/app/__init__.mojo", "sha256": "3e506d235e62bd8c64c14afbc28e1b4bdb66724f64110066d425f438d6f0486e"}
     \\      ],
-    \\      "deps": ["http_core@1.2.5#mojo1.0.0/lib", "util@0.3.0#mojo1.0.0/lib"],
+    \\      "deps": ["example/http_core@1.2.5#mojo1.0.0/lib", "example/util@0.3.0#mojo1.0.0/lib"],
     \\      "natives": [
-    \\        {"id": "z", "soname": "libz_native.so.1", "sha256": "348e8aa89787ad18546c8d63acb1b223332611eb25829fb6a451253f7aa8649a", "package": "http_core"}
+    \\        {"id": "z", "soname": "libz_native.so.1", "sha256": "348e8aa89787ad18546c8d63acb1b223332611eb25829fb6a451253f7aa8649a", "package": "example/http_core"}
     \\      ],
     \\      "profile": {"opt": 1, "assert": "all", "debug": false},
     \\      "outputs": ["app.mojoc"],
-    \\      "key": "62329562a983dd9960e3c5ac59b372b1ed193242319678aff26b160d476b8db3"
+    \\      "key": "4dcb5250e33542c4410ac975e6dd1f2c938dd4e45a2a289f6c7b3075b760343f"
     \\    },
     \\    {
-    \\      "id": "app@1.0.0#mojo1.0.0/test:tests/test_app.mojo",
-    \\      "package": "app",
+    \\      "id": "example/app@1.0.0#mojo1.0.0/test:tests/test_app.mojo",
+    \\      "package": "example/app",
+    \\      "import": "app",
     \\      "version": "1.0.0",
     \\      "kind": "test",
     \\      "srcs": [
     \\        {"path": "tests/test_app.mojo", "sha256": "2abc11daffb9e8bcb9eb8bbd62b0fd4d9754b3fed5647f63ef18f49dfd669b1b"}
     \\      ],
-    \\      "deps": ["app@1.0.0#mojo1.0.0/lib"],
+    \\      "deps": ["example/app@1.0.0#mojo1.0.0/lib"],
     \\      "natives": [
-    \\        {"id": "z", "soname": "libz_native.so.1", "sha256": "348e8aa89787ad18546c8d63acb1b223332611eb25829fb6a451253f7aa8649a", "package": "http_core"}
+    \\        {"id": "z", "soname": "libz_native.so.1", "sha256": "348e8aa89787ad18546c8d63acb1b223332611eb25829fb6a451253f7aa8649a", "package": "example/http_core"}
     \\      ],
     \\      "profile": {"opt": 1, "assert": "all", "debug": false},
     \\      "outputs": ["test_app.pass"],
-    \\      "key": "452690ec97a3810da2c94ef0a8d1e3ffe9e32f84fecc9c64c9836be12798b99a"
+    \\      "key": "1ff176354465c42bd0f50cfed0e0b2203c68d84779b02f603f8d6a36cae7dd05"
     \\    },
     \\    {
-    \\      "id": "http_core@1.2.5#mojo1.0.0/lib",
-    \\      "package": "http_core",
+    \\      "id": "example/http_core@1.2.5#mojo1.0.0/lib",
+    \\      "package": "example/http_core",
+    \\      "import": "http_core",
     \\      "version": "1.2.5",
     \\      "kind": "prebuilt",
-    \\      "artifact": {"url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 1000},
+    \\      "artifact": {"url": "https://conda.mopm.dev/example/linux-64/mojo-example.http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 1000},
     \\      "mojoc": "lib/mojo/http_core.mojoc",
     \\      "deps": [],
     \\      "natives": [
-    \\        {"id": "z", "soname": "libz_native.so.1", "sha256": "348e8aa89787ad18546c8d63acb1b223332611eb25829fb6a451253f7aa8649a", "package": "http_core"}
+    \\        {"id": "z", "soname": "libz_native.so.1", "sha256": "348e8aa89787ad18546c8d63acb1b223332611eb25829fb6a451253f7aa8649a", "package": "example/http_core"}
     \\      ],
-    \\      "key": "b6bc7cf04b02d7f207a8b1fdf5177f960352ea5bd00ced5c39c89eed5fc3db01"
+    \\      "key": "1b45d9c6400e2eb783b5b2705a4c5025de977258880b0a43e526f26f95de6568"
     \\    },
     \\    {
-    \\      "id": "util@0.3.0#mojo1.0.0/lib",
-    \\      "package": "util",
+    \\      "id": "example/util@0.3.0#mojo1.0.0/lib",
+    \\      "package": "example/util",
+    \\      "import": "util",
     \\      "version": "0.3.0",
     \\      "kind": "lib",
     \\      "root": "util/src/util",
@@ -1375,7 +1373,7 @@ const golden_1_0_0 =
     \\      "natives": [],
     \\      "profile": {"opt": 1, "assert": "all", "debug": false},
     \\      "outputs": ["util.mojoc"],
-    \\      "key": "1872d9824509bfd4943fffe927349417aef361fc70a880fa5c281e4ce9535c9e"
+    \\      "key": "540005bc3fbe5c24fd26c2f24c1963c74fa2a26369c446d935731dc1bf28ef61"
     \\    }
     \\  ]
     \\}
@@ -1409,13 +1407,13 @@ test "golden: the unit graph of a two-Mojo workspace for Mojo 1.0.0, and the sam
     try std.testing.expectEqual(g0.units.len, g1.units.len);
     try std.testing.expectEqualStrings("1.1.0", g1.mojo);
     for (g1.units) |u| try std.testing.expect(std.mem.indexOf(u8, u.id, "#mojo1.1.0/") != null);
-    const core1 = g1.units[g1.find("http_core@1.2.5#mojo1.1.0/lib") orelse return error.NoSuchUnit];
+    const core1 = g1.units[g1.find("example/http_core@1.2.5#mojo1.1.0/lib") orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings(test_hex_b, core1.artifact.?.sha256);
     try std.testing.expectEqual(@as(u64, 1100), core1.artifact.?.size);
     const core0 = g0.units[g0.find(id_core) orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings(test_hex_a, core0.artifact.?.sha256);
-    try std.testing.expect(!std.mem.eql(u8, try keyOfId(g1, "app@1.0.0#mojo1.1.0/lib"), try keyOfId(g0, id_app)));
-    try std.testing.expect(!std.mem.eql(u8, try keyOfId(g1, "util@0.3.0#mojo1.1.0/lib"), try keyOfId(g0, id_util)));
+    try std.testing.expect(!std.mem.eql(u8, try keyOfId(g1, "example/app@1.0.0#mojo1.1.0/lib"), try keyOfId(g0, id_app)));
+    try std.testing.expect(!std.mem.eql(u8, try keyOfId(g1, "example/util@0.3.0#mojo1.1.0/lib"), try keyOfId(g0, id_util)));
 }
 
 test "a dependency with no .mojoc for the consumer's Mojo is refused with the specified error" {
@@ -1426,19 +1424,19 @@ test "a dependency with no .mojoc for the consumer's Mojo is refused with the sp
     defer tmp.cleanup();
     try writeWorkspace(tmp.dir, app_init);
     const dir = try tmp.dir.realpathAlloc(a, ".");
-    const want = "http_core 1.2.5 has no .mojoc for Mojo 1.1.0 (published for: 1.0.0). Build with mojo 1.0.0, ask the publisher for a 1.1.0 build, or pin a version that has one.";
+    const want = "example/http_core 1.2.5 has no .mojoc for Mojo 1.1.0 (published for: 1.0.0). Build with mojo 1.0.0, ask the publisher for a 1.1.0 build, or pin a version that has one.";
 
-    // A version 2 lock that has the build for 1.0.0 only.
+    // A lock that has the build for 1.0.0 only.
     var why: []const u8 = "";
     try std.testing.expectError(error.Refused, graphOf(a, dir, toml_core_dep ++ toml_util_dep, lock_one_build, "1.1.0", &why));
     try std.testing.expectEqualStrings(want, why);
     // The build it has still plans.
     _ = try graphOf(a, dir, toml_core_dep ++ toml_util_dep, lock_one_build, "1.0.0", &why);
 
-    // A version 1 lock (one Mojo version) says the same for another.
+    // A lock for one Mojo version is not locked for another.
     why = "";
-    try std.testing.expectError(error.Refused, graphOf(a, dir, toml_core_dep ++ toml_util_dep, lock_v1, "1.1.0", &why));
-    try std.testing.expectEqualStrings(want, why);
+    try std.testing.expectError(error.Refused, graphOf(a, dir, toml_core_dep ++ toml_util_dep, lock_single, "1.1.0", &why));
+    try std.testing.expectEqualStrings("mopm.lock is not locked for mojo 1.1.0 (it locks 1.0.0); run 'mopm lock'", why);
 }
 
 test "a package builds only for the Mojo versions it lists" {
@@ -1476,20 +1474,20 @@ test "a stale lock is refused" {
     var why: []const u8 = "";
     var diag: manifest.Diagnostic = .{};
     const l = try lock.parse(a, try fill(a, lock_two), &why);
-    const roots = [_]resolve.Root{.{ .name = "http_core", .requirement = "1.2" }};
+    const roots = [_]resolve.Root{.{ .name = "example/http_core", .requirement = "1.2" }};
 
     // `mopm plan` asks this before it plans: the lock fits mopm.toml.
     const m = try manifest.parse(a, toml_app ++ toml_core_dep ++ toml_util_dep, &diag);
     try std.testing.expectEqual(@as(?[]const u8, null), try install.staleness(a, m.mojo, &roots, &members, l));
 
     // mopm.toml moved on: http_core "2" is not what the lock holds.
-    const newer = [_]resolve.Root{.{ .name = "http_core", .requirement = "2" }};
-    try std.testing.expectEqualStrings("mopm.toml needs http_core \"2\", but mopm.lock has http_core 1.2.5", try expectStale(try install.staleness(a, m.mojo, &newer, &members, l)));
+    const newer = [_]resolve.Root{.{ .name = "example/http_core", .requirement = "2" }};
+    try std.testing.expectEqualStrings("mopm.toml needs example/http_core \"2\", but mopm.lock has example/http_core 1.2.5", try expectStale(try install.staleness(a, m.mojo, &newer, &members, l)));
     // mopm.toml lists one Mojo version fewer than the lock.
     try std.testing.expectEqualStrings("mopm.lock is for mojo 1.0.0, 1.1.0; mopm.toml's mojo is 1.0.0", try expectStale(try install.staleness(a, &.{"1.0.0"}, &roots, &members, l)));
     // mopm.toml gained a dependency the lock does not hold.
-    const more = [_]resolve.Root{ .{ .name = "http_core", .requirement = "1.2" }, .{ .name = "tls", .requirement = "1" } };
-    try std.testing.expectEqualStrings("mopm.toml needs tls, which mopm.lock does not lock", try expectStale(try install.staleness(a, m.mojo, &more, &members, l)));
+    const more = [_]resolve.Root{ .{ .name = "example/http_core", .requirement = "1.2" }, .{ .name = "example/tls", .requirement = "1" } };
+    try std.testing.expectEqualStrings("mopm.toml needs example/tls, which mopm.lock does not lock", try expectStale(try install.staleness(a, m.mojo, &more, &members, l)));
 
     // The graph itself refuses a lock made for another toolchain of the same Mojo.
     var stale = l;
@@ -1558,7 +1556,9 @@ test "known defects: a reordered dependency, a changed source or another artifac
     // 4. Another toolchain closure: every key.
     var diag: manifest.Diagnostic = .{};
     const m = try manifest.parse(a, toml_app ++ toml_core_dep ++ toml_util_dep, &diag);
-    const l = try lock.parse(a, try fill(a, lock_v1), &why);
+    var l = try lock.parse(a, try fill(a, lock_single), &why);
+    // A lock that records no closure takes any toolchain.
+    l.closures = &.{};
     var tc = fakeToolchain("1.0.0");
     const with_c = try build(a, .{ .dir = dir, .m = m, .members = &members, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = tc }, &why);
     tc.closure_sha256 = test_hex_b;
@@ -1641,16 +1641,17 @@ test "closureSha256: the hash toolchainFor reports; pins change it, URLs do not"
 /// that links an archive that needs an archive. By soname crypto_sys is first; by `needs` tls_sys must be.
 const lock_static_chain =
     \\{
-    \\  "lock_version": 1,
-    \\  "toolchain": {"mojo": "1.0.0"},
+    \\  "lock_version": 3,
+    \\  "mojo": ["1.0.0"],
+    \\  "toolchain": {"1.0.0": {"linux-64": "@C@"}},
     \\  "channels": ["https://conda.mopm.dev/"],
     \\  "packages": [
-    \\    {"name": "crypto_sys", "version": "1.39.0", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
-    \\     "url": "https://conda.mopm.dev/linux-64/mojo-crypto_sys-1.39.0-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000, "mojo": "1.0.0",
+    \\    {"name": "example/crypto_sys", "version": "1.39.0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/example/",
+    \\     "artifacts": {"1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/example/linux-64/mojo-example.crypto_sys-1.39.0-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000}},
     \\     "native": [{"id": "crypto_sys", "soname": "libcrypto_sys.a", "sha256": "@N@", "kind": "static", "exclusive": "libcrypto"}]},
-    \\    {"name": "tls_sys", "version": "2.4.0", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
-    \\     "url": "https://conda.mopm.dev/linux-64/mojo-tls_sys-2.4.0-mojo1.0.0_0.conda", "sha256": "@B@", "size": 1000, "mojo": "1.0.0",
-    \\     "deps": ["crypto_sys"],
+    \\    {"name": "example/tls_sys", "version": "2.4.0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/example/",
+    \\     "artifacts": {"1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/example/linux-64/mojo-example.tls_sys-2.4.0-mojo1.0.0_0.conda", "sha256": "@B@", "size": 1000}},
+    \\     "deps": ["example/crypto_sys"],
     \\     "native": [{"id": "tls_sys", "soname": "libtls_sys.a", "sha256": "@D@", "kind": "static", "needs": ["libcrypto_sys.a"]}]}
     \\  ]
     \\}
@@ -1695,7 +1696,7 @@ test "the natives of a unit are in link order: an archive before the archives it
         try std.testing.expectEqual(@as(usize, 0), u.natives[1].needs.len);
     }
     // The unit of crypto_sys alone sees only its own.
-    const crypto = g.units[g.find("crypto_sys@1.39.0#mojo1.0.0/lib").?];
+    const crypto = g.units[g.find("example/crypto_sys@1.39.0#mojo1.0.0/lib").?];
     try std.testing.expectEqualStrings("libcrypto_sys.a", try nativeSonames(a, crypto));
 
     // What is printed reads back as the same graph (kind, needs and exclusive survive the text).
@@ -1746,7 +1747,7 @@ test "a static library that needs an archive nobody ships, and archives that nee
 
     const lonely = try std.mem.replaceOwned(u8, a, lock_static_chain, "\"needs\": [\"libcrypto_sys.a\"]", "\"needs\": [\"libnothing.a\"]");
     try std.testing.expectError(error.Refused, graphOf(a, dir, toml_tls_dep, lonely, "1.0.0", &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "native library libtls_sys.a of tls_sys needs libnothing.a, which no package in its dependency closure ships") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "native library libtls_sys.a of example/tls_sys needs libnothing.a, which no package in its dependency closure ships") != null);
 
     const cycle = try std.mem.replaceOwned(u8, a, lock_static_chain, "\"kind\": \"static\", \"exclusive\": \"libcrypto\"", "\"kind\": \"static\", \"needs\": [\"libtls_sys.a\"]");
     try std.testing.expectError(error.Refused, graphOf(a, dir, toml_tls_dep, cycle, "1.0.0", &why));
@@ -1759,9 +1760,8 @@ test "a static library that needs an archive nobody ships, and archives that nee
 }
 
 // Defect it catches: the system libraries of a published archive dropped from the graph, so a Buck2 consumer of a C++
-// archive links without libc++; a name listed twice (once per archive that names it); the format staying 2, which a reader
-// that does not know `link` would take and link without them.
-test "prebuilt natives that name system libraries give their units one link list, in link order, and the format 5" {
+// archive links without libc++; a name listed twice (once per archive that names it).
+test "prebuilt natives that name system libraries give their units one link list, in link order" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -1782,7 +1782,7 @@ test "prebuilt natives that name system libraries give their units one link list
         std.debug.print("refused: {s}\n", .{why});
         return e;
     };
-    try std.testing.expectEqual(format_link, g.unit_graph);
+    try std.testing.expectEqual(format_version, g.unit_graph);
     for ([_][]const u8{ id_app, id_test }) |id| {
         const u = g.units[g.find(id).?];
         try std.testing.expectEqualStrings("libtls_sys.a libcrypto_sys.a", try nativeSonames(a, u));
@@ -1791,15 +1791,15 @@ test "prebuilt natives that name system libraries give their units one link list
         try std.testing.expectEqualStrings("m", u.link[1]);
     }
     // The unit of crypto_sys alone links its own archive and so only what that names.
-    const crypto = g.units[g.find("crypto_sys@1.39.0#mojo1.0.0/lib").?];
+    const crypto = g.units[g.find("example/crypto_sys@1.39.0#mojo1.0.0/lib").?];
     try std.testing.expectEqual(@as(usize, 1), crypto.link.len);
     try std.testing.expectEqualStrings("c++", crypto.link[0]);
 
     const text = try render(a, g);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"unit_graph\": 5,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"unit_graph\": 6,") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"link\": [\"c++\", \"m\"]") != null);
     const back = try parse(a, text);
-    try std.testing.expectEqual(format_link, back.unit_graph);
+    try std.testing.expectEqual(format_version, back.unit_graph);
     try std.testing.expectEqualStrings("m", back.units[back.find(id_app).?].link[1]);
     try std.testing.expectEqualStrings(text, try render(a, back));
 
@@ -1821,7 +1821,7 @@ test "a graph for a lock whose natives carry no kind, needs or group prints exac
     try std.testing.expect(std.mem.indexOf(u8, text, "\"kind\": \"static\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"needs\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"exclusive\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "{\"id\": \"z\", \"soname\": \"libz_native.so.1\", \"sha256\": \"" ++ native_sha ++ "\", \"package\": \"http_core\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "{\"id\": \"z\", \"soname\": \"libz_native.so.1\", \"sha256\": \"" ++ native_sha ++ "\", \"package\": \"example/http_core\"}") != null);
 }
 
 // Spike (natives design, PR 1a): does a native-bearing candidate resolve by subdir? The resolver is blind to subdirs
@@ -1838,12 +1838,12 @@ test "spike: a package that ships natives is taken by exact subdir, with that su
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
     const osx_entry =
-        \\    {"name": "crypto_sys", "version": "1.39.0", "build": "mojo1.0.0_0", "subdir": "osx-arm64", "channel": "https://conda.mopm.dev/",
-        \\     "url": "https://conda.mopm.dev/osx-arm64/mojo-crypto_sys-1.39.0-mojo1.0.0_0.conda", "sha256": "@C@", "size": 1000, "mojo": "1.0.0",
+        \\    {"name": "example/crypto_sys", "version": "1.39.0", "subdir": "osx-arm64", "channel": "https://conda.mopm.dev/example/",
+        \\     "artifacts": {"1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/example/osx-arm64/mojo-example.crypto_sys-1.39.0-mojo1.0.0_0.conda", "sha256": "@C@", "size": 1000}},
         \\     "native": [{"id": "crypto_sys", "soname": "libcrypto_sys.a", "sha256": "@B@", "kind": "static", "exclusive": "libcrypto"}]},
         \\
     ;
-    const both = try std.mem.replaceOwned(u8, a, lock_static_chain, "    {\"name\": \"tls_sys\"", osx_entry ++ "    {\"name\": \"tls_sys\"");
+    const both = try std.mem.replaceOwned(u8, a, lock_static_chain, "    {\"name\": \"example/tls_sys\"", osx_entry ++ "    {\"name\": \"example/tls_sys\"");
 
     const linux = try graphOfIn(a, dir, "\"example/crypto_sys\" = \"1\"\n", both, "1.0.0", "linux-64", &why);
     const mac = try graphOfIn(a, dir, "\"example/crypto_sys\" = \"1\"\n", both, "1.0.0", "osx-arm64", &why);
@@ -1854,17 +1854,17 @@ test "spike: a package that ships natives is taken by exact subdir, with that su
     try std.testing.expectEqualStrings(native_sha, lin_native[0].sha256);
     try std.testing.expectEqualStrings(test_hex_b, mac_native[0].sha256);
     // The prebuilt unit's archive is the subdir's own file too.
-    try std.testing.expectEqualStrings(test_hex_a, linux.units[linux.find("crypto_sys@1.39.0#mojo1.0.0/lib").?].artifact.?.sha256);
-    try std.testing.expectEqualStrings(test_hex_c, mac.units[mac.find("crypto_sys@1.39.0#mojo1.0.0/lib").?].artifact.?.sha256);
+    try std.testing.expectEqualStrings(test_hex_a, linux.units[linux.find("example/crypto_sys@1.39.0#mojo1.0.0/lib").?].artifact.?.sha256);
+    try std.testing.expectEqualStrings(test_hex_c, mac.units[mac.find("example/crypto_sys@1.39.0#mojo1.0.0/lib").?].artifact.?.sha256);
     // The graph of a subdir the package is not published for is refused: tls_sys has linux-64 only.
     try std.testing.expectError(error.Refused, graphOfIn(a, dir, toml_tls_dep, both, "1.0.0", "osx-arm64", &why));
-    try std.testing.expectEqualStrings("tls_sys is not in mopm.lock for osx-arm64", why);
+    try std.testing.expectEqualStrings("example/tls_sys is not in mopm.lock for osx-arm64", why);
 
     // No noarch fallback: a package published as noarch alone (what `mopm pack` makes without a subdir) is not in the
     // graph of linux-64.
-    const noarch = try std.mem.replaceOwned(u8, a, lock_static_chain, "linux-64", "noarch");
+    const noarch = try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, lock_static_chain, "\"subdir\": \"linux-64\"", "\"subdir\": \"noarch\""), "/linux-64/mojo-", "/noarch/mojo-");
     try std.testing.expectError(error.Refused, graphOfIn(a, dir, toml_tls_dep, noarch, "1.0.0", "linux-64", &why));
-    try std.testing.expectEqualStrings("tls_sys is not in mopm.lock for linux-64", why);
+    try std.testing.expectEqualStrings("example/tls_sys is not in mopm.lock for linux-64", why);
 }
 
 // Spike (natives design, PR 1a): does a package whose Mojo module is empty -- the `-sys` package of a C library, which
@@ -1880,7 +1880,7 @@ test "spike: a package with an empty Mojo module is a library unit with that emp
     try writeWorkspace(tmp.dir, "");
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
-    const g = graphOf(a, dir, "", lock_v1, "1.0.0", &why) catch |e| {
+    const g = graphOf(a, dir, "", lock_single, "1.0.0", &why) catch |e| {
         std.debug.print("refused: {s}\n", .{why});
         return e;
     };
@@ -1891,7 +1891,7 @@ test "spike: a package with an empty Mojo module is a library unit with that emp
     try std.testing.expectEqualStrings("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", lib.srcs[0].sha256);
     // Only the directory with no .mojo file at all is refused.
     try tmp.dir.deleteFile("src/app/__init__.mojo");
-    try std.testing.expectError(error.Refused, graphOf(a, dir, "", lock_v1, "1.0.0", &why));
+    try std.testing.expectError(error.Refused, graphOf(a, dir, "", lock_single, "1.0.0", &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "holds no .mojo file") != null);
 }
 
@@ -1908,13 +1908,13 @@ test "a native library that needs its own soname is refused, shared or static, w
     var l = try lock.parse(a, try fill(a, lock_static_chain), &why);
     const pk = try a.dupe(lock.Package, l.packages);
     for (pk) |*p| {
-        if (std.mem.eql(u8, p.name, "crypto_sys")) p.native = try a.dupe(lock.Native, &.{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .sha256 = native_sha, .kind = .static, .needs = &.{"libcrypto_sys.a"} }});
+        if (std.mem.eql(u8, p.name, "example/crypto_sys")) p.native = try a.dupe(lock.Native, &.{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .sha256 = native_sha, .kind = .static, .needs = &.{"libcrypto_sys.a"} }});
     }
     l.packages = pk;
     var diag: manifest.Diagnostic = .{};
     const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ toml_app, toml_tls_dep }), &diag);
     try std.testing.expectError(error.Refused, build(a, .{ .dir = dir, .m = m, .members = &members, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "native library libcrypto_sys.a of crypto_sys needs itself") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "native library libcrypto_sys.a of example/crypto_sys needs itself") != null);
 }
 
 /// The graph of lock_static_chain with the exclusive group of each of its two natives set by hand into the parsed
@@ -1924,7 +1924,7 @@ fn graphWithGroups(a: Allocator, dir: []const u8, crypto_group: []const u8, tls_
     var l = try lock.parse(a, try fill(a, lock_static_chain), why);
     const pk = try a.dupe(lock.Package, l.packages);
     for (pk) |*p| {
-        const group = if (std.mem.eql(u8, p.name, "crypto_sys")) crypto_group else tls_group;
+        const group = if (std.mem.eql(u8, p.name, "example/crypto_sys")) crypto_group else tls_group;
         const native = try a.dupe(lock.Native, p.native);
         for (native) |*n| n.exclusive = group;
         p.native = native;
@@ -1941,7 +1941,7 @@ fn graphWithThree(a: Allocator, dir: []const u8, z_group: []const u8, why: *[]co
     var l = try lock.parse(a, try fill(a, lock_static_chain), why);
     const pk = try a.dupe(lock.Package, l.packages);
     for (pk) |*p| {
-        if (!std.mem.eql(u8, p.name, "tls_sys")) continue;
+        if (!std.mem.eql(u8, p.name, "example/tls_sys")) continue;
         p.native = try a.dupe(lock.Native, &.{
             .{ .id = "tls_mid", .soname = "libtls_mid.a", .sha256 = native_sha, .kind = .static },
             .{ .id = "tls_z", .soname = "libtls_z.a", .sha256 = native_sha, .kind = .static, .exclusive = z_group },
@@ -1970,7 +1970,7 @@ test "an exclusive clash is found between natives that are not next to each othe
     // By soname: libcrypto_sys.a (libcrypto), libtls_mid.a (none), libtls_z.a (libcrypto).
     try std.testing.expectError(error.Refused, graphWithThree(a, dir, "libcrypto", &why));
     try std.testing.expectEqualStrings(
-        id_app ++ ": native libraries libcrypto_sys.a of crypto_sys and libtls_z.a of tls_sys are both in exclusive group libcrypto; a unit links one library of a group",
+        id_app ++ ": native libraries libcrypto_sys.a of example/crypto_sys and libtls_z.a of example/tls_sys are both in exclusive group libcrypto; a unit links one library of a group",
         why,
     );
     // The same names in another case are another group; so is a group that merely contains the other's name.
@@ -1995,7 +1995,7 @@ test "two natives of one exclusive group in a unit's closure are refused, naming
 
     try std.testing.expectError(error.Refused, graphWithGroups(a, dir, "libcrypto", "libcrypto", &why));
     try std.testing.expectEqualStrings(
-        id_app ++ ": native libraries libcrypto_sys.a of crypto_sys and libtls_sys.a of tls_sys are both in exclusive group libcrypto; a unit links one library of a group",
+        id_app ++ ": native libraries libcrypto_sys.a of example/crypto_sys and libtls_sys.a of example/tls_sys are both in exclusive group libcrypto; a unit links one library of a group",
         why,
     );
 
@@ -2017,10 +2017,10 @@ const c_util = "int util_shim(void) { return 7; }\n";
 const h_util = "int util_shim(void);\n";
 const main_src = "def main():\n    pass\n";
 
-const id_bin = "app@1.0.0#mojo1.0.0/bin:appbin";
-const id_crypto = "crypto_sys@1.39.0#mojo1.0.0/lib";
-const id_native_app = "native:app/app_shim";
-const id_native_util = "native:util/util_shim";
+const id_bin = "example/app@1.0.0#mojo1.0.0/bin:appbin";
+const id_crypto = "example/crypto_sys@1.39.0#mojo1.0.0/lib";
+const id_native_app = "native:example/app/app_shim";
+const id_native_util = "native:example/util/util_shim";
 
 const toml_bin = "\n[targets]\nbins = [{ name = \"appbin\", path = \"src/main.mojo\" }]\n";
 const toml_crypto_dep = "\"example/crypto_sys\" = \"1\"\n";
@@ -2034,14 +2034,15 @@ const toml_util_native = toml_util ++ "\n[native.util_shim]\nkind = \"static\"\n
 /// crypto_sys (a prebuilt archive in the group libcrypto) and util, which is a member that depends on it.
 const lock_member_chain =
     \\{
-    \\  "lock_version": 1,
-    \\  "toolchain": {"mojo": "1.0.0"},
+    \\  "lock_version": 3,
+    \\  "mojo": ["1.0.0"],
+    \\  "toolchain": {"1.0.0": {"linux-64": "@C@"}},
     \\  "channels": ["https://conda.mopm.dev/"],
     \\  "packages": [
-    \\    {"name": "crypto_sys", "version": "1.39.0", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
-    \\     "url": "https://conda.mopm.dev/linux-64/mojo-crypto_sys-1.39.0-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000, "mojo": "1.0.0",
+    \\    {"name": "example/crypto_sys", "version": "1.39.0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/example/",
+    \\     "artifacts": {"1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/example/linux-64/mojo-example.crypto_sys-1.39.0-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000}},
     \\     "native": [{"id": "crypto_sys", "soname": "libcrypto_sys.a", "sha256": "@N@", "kind": "static", "exclusive": "libcrypto"}]},
-    \\    {"name": "util", "version": "0.3.0", "source": "path", "path": "util", "deps": ["crypto_sys"]}
+    \\    {"name": "example/util", "version": "0.3.0", "source": "path", "path": "util", "deps": ["example/crypto_sys"]}
     \\  ]
     \\}
     \\
@@ -2081,7 +2082,8 @@ test "a member's static native is a native unit, and its lib, test and bin units
     // The native unit: what the build system compiles, and the name of the archive it makes.
     const nu = g.units[g.find(id_native_app) orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("native", nu.kind);
-    try std.testing.expectEqualStrings("app", nu.package);
+    try std.testing.expectEqualStrings("example/app", nu.package);
+    try std.testing.expectEqualStrings("app", nu.import);
     try std.testing.expectEqualStrings("libapp_shim.a", nu.soname);
     try std.testing.expectEqual(@as(usize, 1), nu.srcs.len);
     try std.testing.expectEqualStrings("native/app.c", nu.srcs[0].path);
@@ -2104,7 +2106,7 @@ test "a member's static native is a native unit, and its lib, test and bin units
         const n = u.natives[0];
         try std.testing.expectEqualStrings("app_shim", n.id);
         try std.testing.expectEqualStrings("libapp_shim.a", n.soname);
-        try std.testing.expectEqualStrings("app", n.package);
+        try std.testing.expectEqualStrings("example/app", n.package);
         try std.testing.expectEqual(metadata.Kind.static, n.kind);
         try std.testing.expectEqualStrings(id_native_app, n.built);
         try std.testing.expectEqualStrings("", n.sha256);
@@ -2113,7 +2115,7 @@ test "a member's static native is a native unit, and its lib, test and bin units
 
     // What is printed has no sha256 for the built entry, and reads back as the same graph.
     const text = try render(a, g);
-    try std.testing.expect(std.mem.indexOf(u8, text, "{\"id\": \"app_shim\", \"soname\": \"libapp_shim.a\", \"package\": \"app\", \"kind\": \"static\", \"built\": \"native:app/app_shim\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "{\"id\": \"app_shim\", \"soname\": \"libapp_shim.a\", \"package\": \"example/app\", \"kind\": \"static\", \"built\": \"native:example/app/app_shim\"}") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"sha256\": \"\"") == null);
     const back = try parse(a, text);
     try std.testing.expectEqualStrings(text, try render(a, back));
@@ -2182,7 +2184,7 @@ test "a member's native that the graph cannot build is refused, naming the manif
         .{ .native = "kind = \"static\"\nsrcs = [\"native/*.cc\"]\n", .want = "util/mopm.toml: srcs \"native/*.cc\" of [native.s] matches no file" },
         .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/*.hpp\"]\n", .want = "util/mopm.toml: hdrs \"native/*.hpp\" of [native.s] matches no file" },
         .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/shim.c\"]\n", .want = "util/mopm.toml: util/native/shim.c is named by both srcs and hdrs of [native.s]" },
-        .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nneeds = [\"libnothing.a\"]\n", .want = "native library libs.a of util needs libnothing.a, which no package in its dependency closure ships" },
+        .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nneeds = [\"libnothing.a\"]\n", .want = "native library libs.a of example/util needs libnothing.a, which no package in its dependency closure ships" },
     };
     for (cases) |c| {
         try writeNativeWorkspace(tmp.dir, try std.mem.concat(a, u8, &.{ toml_util, "\n[native.s]\n", c.native }));
@@ -2234,7 +2236,7 @@ test "a literal srcs or hdrs path that is a symbolic link or passes through one 
     // A glob over the same directory skips the link: only the member's own file is a source.
     try put(tmp.dir, "util/mopm.toml", try std.mem.concat(a, u8, &.{ toml_util, "\n[native.s]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\n" }));
     const g = try graphOf(a, dir, toml_util_dep, lock_two, "1.0.0", &why);
-    const nu = g.units[g.find("native:util/s") orelse return error.NoSuchUnit];
+    const nu = g.units[g.find("native:example/util/s") orelse return error.NoSuchUnit];
     try std.testing.expectEqual(@as(usize, 1), nu.srcs.len);
     try std.testing.expectEqualStrings("util/native/shim.c", nu.srcs[0].path);
 }
@@ -2313,7 +2315,7 @@ test "a built native and a prebuilt one in one exclusive group, or with one sona
     try writeNativeWorkspace(tmp.dir, try std.mem.replaceOwned(u8, a, toml_util_native, "needs = [\"libcrypto_sys.a\"]", "needs = [\"libcrypto_sys.a\"]\nexclusive = \"libcrypto\""));
     const dir = try tmp.dir.realpathAlloc(a, ".");
     try std.testing.expectError(error.Refused, graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "native libraries libcrypto_sys.a of crypto_sys and libutil_shim.a of util are both in exclusive group libcrypto; a unit links one library of a group") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "native libraries libcrypto_sys.a of example/crypto_sys and libutil_shim.a of example/util are both in exclusive group libcrypto; a unit links one library of a group") != null);
 
     // Another group, or none, is no clash.
     try put(tmp.dir, "util/mopm.toml", try std.mem.replaceOwned(u8, a, toml_util_native, "needs = [\"libcrypto_sys.a\"]", "needs = [\"libcrypto_sys.a\"]\nexclusive = \"libutil\""));
@@ -2323,7 +2325,7 @@ test "a built native and a prebuilt one in one exclusive group, or with one sona
     // Two built natives of one group are a clash too.
     try put(tmp.dir, "util/mopm.toml", try std.mem.replaceOwned(u8, a, toml_util_native, "needs = [\"libcrypto_sys.a\"]", "needs = [\"libcrypto_sys.a\"]\nexclusive = \"libutil\""));
     try std.testing.expectError(error.Refused, graphOf(a, dir, deps ++ "\n[native.app_shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nexclusive = \"libutil\"\n", lock_member_chain, "1.0.0", &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "libapp_shim.a of app and libutil_shim.a of util are both in exclusive group libutil") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "libapp_shim.a of example/app and libutil_shim.a of example/util are both in exclusive group libutil") != null);
 
     // A built archive named like a prebuilt one.
     try put(tmp.dir, "util/mopm.toml", try std.mem.replaceOwned(u8, a, toml_util_native, "needs = [\"libcrypto_sys.a\"]", "soname = \"libcrypto_sys.a\""));
@@ -2334,8 +2336,8 @@ test "a built native and a prebuilt one in one exclusive group, or with one sona
 
 const golden_member_natives =
     \\{
-    \\  "unit_graph": 2,
-    \\  "package": "app@1.0.0",
+    \\  "unit_graph": 6,
+    \\  "package": "example/app@1.0.0",
     \\  "mojo": "1.0.0",
     \\  "toolchain": {
     \\    "mojo": "1.0.0",
@@ -2348,57 +2350,61 @@ const golden_member_natives =
     \\  },
     \\  "units": [
     \\    {
-    \\      "id": "app@1.0.0#mojo1.0.0/bin:appbin",
-    \\      "package": "app",
+    \\      "id": "example/app@1.0.0#mojo1.0.0/bin:appbin",
+    \\      "package": "example/app",
+    \\      "import": "app",
     \\      "version": "1.0.0",
     \\      "kind": "bin",
     \\      "srcs": [
     \\        {"path": "src/main.mojo", "sha256": "cde0429ba5478089419b8a36797f74089554914623c732054e04dd6eb2e49afd"}
     \\      ],
-    \\      "deps": ["app@1.0.0#mojo1.0.0/lib"],
+    \\      "deps": ["example/app@1.0.0#mojo1.0.0/lib"],
     \\      "natives": [
-    \\        {"id": "app_shim", "soname": "libapp_shim.a", "package": "app", "kind": "static", "built": "native:app/app_shim"}
+    \\        {"id": "app_shim", "soname": "libapp_shim.a", "package": "example/app", "kind": "static", "built": "native:example/app/app_shim"}
     \\      ],
     \\      "profile": {"opt": 3, "assert": "none", "debug": false},
     \\      "outputs": ["appbin"],
-    \\      "key": "20b78a507eab7d5f20a459fbbe9c768b7fded9ed2d8f104d6da8c05430b16d4c"
+    \\      "key": "51c3eaa78e70a53637ae73d89b0bb68e5a5305d51aa1e954d9c142d497e9867f"
     \\    },
     \\    {
-    \\      "id": "app@1.0.0#mojo1.0.0/lib",
-    \\      "package": "app",
+    \\      "id": "example/app@1.0.0#mojo1.0.0/lib",
+    \\      "package": "example/app",
+    \\      "import": "app",
     \\      "version": "1.0.0",
     \\      "kind": "lib",
     \\      "root": "src/app",
     \\      "srcs": [
     \\        {"path": "src/app/__init__.mojo", "sha256": "3e506d235e62bd8c64c14afbc28e1b4bdb66724f64110066d425f438d6f0486e"}
     \\      ],
-    \\      "deps": ["util@0.3.0#mojo1.0.0/lib"],
+    \\      "deps": ["example/util@0.3.0#mojo1.0.0/lib"],
     \\      "natives": [
-    \\        {"id": "app_shim", "soname": "libapp_shim.a", "package": "app", "kind": "static", "built": "native:app/app_shim"}
+    \\        {"id": "app_shim", "soname": "libapp_shim.a", "package": "example/app", "kind": "static", "built": "native:example/app/app_shim"}
     \\      ],
     \\      "profile": {"opt": 1, "assert": "all", "debug": false},
     \\      "outputs": ["app.mojoc"],
-    \\      "key": "eab3b60d4e62aa9d64846d3d8e1e773cfa222e07af0bb9e4ef128381d710bcf9"
+    \\      "key": "d522ad85adeaad9c19ce2217cde75be80f9cdd38299713830b0eee28a0410df3"
     \\    },
     \\    {
-    \\      "id": "app@1.0.0#mojo1.0.0/test:tests/test_app.mojo",
-    \\      "package": "app",
+    \\      "id": "example/app@1.0.0#mojo1.0.0/test:tests/test_app.mojo",
+    \\      "package": "example/app",
+    \\      "import": "app",
     \\      "version": "1.0.0",
     \\      "kind": "test",
     \\      "srcs": [
     \\        {"path": "tests/test_app.mojo", "sha256": "2abc11daffb9e8bcb9eb8bbd62b0fd4d9754b3fed5647f63ef18f49dfd669b1b"}
     \\      ],
-    \\      "deps": ["app@1.0.0#mojo1.0.0/lib"],
+    \\      "deps": ["example/app@1.0.0#mojo1.0.0/lib"],
     \\      "natives": [
-    \\        {"id": "app_shim", "soname": "libapp_shim.a", "package": "app", "kind": "static", "built": "native:app/app_shim"}
+    \\        {"id": "app_shim", "soname": "libapp_shim.a", "package": "example/app", "kind": "static", "built": "native:example/app/app_shim"}
     \\      ],
     \\      "profile": {"opt": 1, "assert": "all", "debug": false},
     \\      "outputs": ["test_app.pass"],
-    \\      "key": "73c89c1ac5716316d081d9cfc2542bc0da7b964e7cc1047552ee69fa9e057683"
+    \\      "key": "90c4698f09339ab439ab77271072f2a0acb930dccedecb678d0d3988c3be6759"
     \\    },
     \\    {
-    \\      "id": "native:app/app_shim",
-    \\      "package": "app",
+    \\      "id": "native:example/app/app_shim",
+    \\      "package": "example/app",
+    \\      "import": "app",
     \\      "version": "1.0.0",
     \\      "kind": "native",
     \\      "soname": "libapp_shim.a",
@@ -2414,11 +2420,12 @@ const golden_member_natives =
     \\      "deps": [],
     \\      "natives": [],
     \\      "outputs": ["libapp_shim.a"],
-    \\      "key": "0b9b4f0ae92bd2c62207a527dcbe979123d1547c9e289e8f65627d586aa016ce"
+    \\      "key": "951c44211d3a8c5b081558b5e4183101513ad9d0ee31ce7e941899d847dfffa5"
     \\    },
     \\    {
-    \\      "id": "util@0.3.0#mojo1.0.0/lib",
-    \\      "package": "util",
+    \\      "id": "example/util@0.3.0#mojo1.0.0/lib",
+    \\      "package": "example/util",
+    \\      "import": "util",
     \\      "version": "0.3.0",
     \\      "kind": "lib",
     \\      "root": "util/src/util",
@@ -2429,7 +2436,7 @@ const golden_member_natives =
     \\      "natives": [],
     \\      "profile": {"opt": 1, "assert": "all", "debug": false},
     \\      "outputs": ["util.mojoc"],
-    \\      "key": "1872d9824509bfd4943fffe927349417aef361fc70a880fa5c281e4ce9535c9e"
+    \\      "key": "540005bc3fbe5c24fd26c2f24c1963c74fa2a26369c446d935731dc1bf28ef61"
     \\    }
     \\  ]
     \\}
@@ -2460,19 +2467,19 @@ const sib_root_toml = "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nm
 /// A lock of path packages only; `packages` is the JSON of the entries.
 fn sibLock(a: Allocator, packages: []const u8) ![]const u8 {
     const head =
-        \\{"lock_version": 2, "mojo": ["1.0.0"], "toolchain": {"1.0.0": {"linux-64": "@C@"}}, "channels": ["https://conda.mopm.dev/"], "packages": [
+        \\{"lock_version": 3, "mojo": ["1.0.0"], "toolchain": {"1.0.0": {"linux-64": "@C@"}}, "channels": ["https://conda.mopm.dev/"], "packages": [
     ;
     return fill(a, try std.mem.concat(a, u8, &.{ head, packages, "]}\n" }));
 }
 
 const sib_b_to_c =
-    \\{"name": "bb", "version": "0.1.0", "source": "path", "path": "../bb", "deps": ["cc"]},
-    \\{"name": "cc", "version": "0.1.0", "source": "path", "path": "../cc"}
+    \\{"name": "example/bb", "version": "0.1.0", "source": "path", "path": "../bb", "deps": ["example/cc"]},
+    \\{"name": "example/cc", "version": "0.1.0", "source": "path", "path": "../cc"}
 ;
 const sib_diamond =
-    \\{"name": "bb", "version": "0.1.0", "source": "path", "path": "../bb", "deps": ["cc"]},
-    \\{"name": "cc", "version": "0.1.0", "source": "path", "path": "../cc"},
-    \\{"name": "dd", "version": "0.1.0", "source": "path", "path": "../dd", "deps": ["cc"]}
+    \\{"name": "example/bb", "version": "0.1.0", "source": "path", "path": "../bb", "deps": ["example/cc"]},
+    \\{"name": "example/cc", "version": "0.1.0", "source": "path", "path": "../cc"},
+    \\{"name": "example/dd", "version": "0.1.0", "source": "path", "path": "../dd", "deps": ["example/cc"]}
 ;
 
 /// A package `name` at `at` (relative to `dir`) with a library, a test and a manifest listing `deps` (TOML lines).
@@ -2531,11 +2538,11 @@ test "sibling members under a workspace root have workspace-relative roots and s
     const app = g.units[g.find(id_app) orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("app/src/app", app.root);
     try std.testing.expectEqualStrings("app/src/app/__init__.mojo", app.srcs[0].path);
-    const bb = g.units[g.find("bb@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    const bb = g.units[g.find("example/bb@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("bb/src/bb", bb.root);
     try std.testing.expectEqual(@as(usize, 1), bb.srcs.len);
     try std.testing.expectEqualStrings("bb/src/bb/__init__.mojo", bb.srcs[0].path);
-    try std.testing.expectEqualStrings("bb@0.1.0#mojo1.0.0/lib", app.deps[0]);
+    try std.testing.expectEqualStrings("example/bb@0.1.0#mojo1.0.0/lib", app.deps[0]);
     try noDotDot(g);
 }
 
@@ -2551,14 +2558,14 @@ test "a nested sibling (app, bb, cc) gives cc one unit, the dependency of bb" {
     const g = try siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n", try sibLock(a, sib_b_to_c), &why);
     var c_units: usize = 0;
     for (g.units) |u| {
-        if (std.mem.eql(u8, u.package, "cc")) c_units += 1;
+        if (std.mem.eql(u8, u.package, "example/cc")) c_units += 1;
     }
     try std.testing.expectEqual(@as(usize, 1), c_units);
-    const cc = g.units[g.find("cc@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    const cc = g.units[g.find("example/cc@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("cc/src/cc", cc.root);
-    const bb = g.units[g.find("bb@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    const bb = g.units[g.find("example/bb@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
     try std.testing.expectEqual(@as(usize, 1), bb.deps.len);
-    try std.testing.expectEqualStrings("cc@0.1.0#mojo1.0.0/lib", bb.deps[0]);
+    try std.testing.expectEqualStrings("example/cc@0.1.0#mojo1.0.0/lib", bb.deps[0]);
     try noDotDot(g);
 }
 
@@ -2574,13 +2581,13 @@ test "a diamond (bb and dd both use cc) gives cc exactly one unit, and both depe
     const g = try siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n\"example/dd\" = { path = \"../dd\" }\n", try sibLock(a, sib_diamond), &why);
     var c_units: usize = 0;
     for (g.units) |u| {
-        if (std.mem.eql(u8, u.package, "cc")) c_units += 1;
+        if (std.mem.eql(u8, u.package, "example/cc")) c_units += 1;
     }
     try std.testing.expectEqual(@as(usize, 1), c_units);
     try std.testing.expectEqual(@as(usize, 4), countKind(g, "lib"));
-    for ([_][]const u8{ "bb@0.1.0#mojo1.0.0/lib", "dd@0.1.0#mojo1.0.0/lib" }) |id| {
+    for ([_][]const u8{ "example/bb@0.1.0#mojo1.0.0/lib", "example/dd@0.1.0#mojo1.0.0/lib" }) |id| {
         const u = g.units[g.find(id) orelse return error.NoSuchUnit];
-        try std.testing.expectEqualStrings("cc@0.1.0#mojo1.0.0/lib", u.deps[0]);
+        try std.testing.expectEqualStrings("example/cc@0.1.0#mojo1.0.0/lib", u.deps[0]);
     }
     try noDotDot(g);
 }
@@ -2598,13 +2605,13 @@ test "the root package's tests are planned from its own directory, named from th
     // bb, cc and dd each have tests/test_<name>.mojo; none of them is a unit, and no unit lists one as a source.
     try std.testing.expectEqual(@as(usize, 1), countKind(g, "test"));
     for (g.units) |u| {
-        if (std.mem.eql(u8, u.kind, "test")) try std.testing.expectEqualStrings("app", u.package);
+        if (std.mem.eql(u8, u.kind, "test")) try std.testing.expectEqualStrings("example/app", u.package);
         for (u.srcs) |s| {
             try std.testing.expect(std.mem.indexOf(u8, s.path, "test_bb.mojo") == null);
             try std.testing.expect(std.mem.indexOf(u8, s.path, "test_cc.mojo") == null);
         }
     }
-    const t = g.units[g.find("app@1.0.0#mojo1.0.0/test:app/tests/test_app.mojo") orelse return error.NoSuchUnit];
+    const t = g.units[g.find("example/app@1.0.0#mojo1.0.0/test:app/tests/test_app.mojo") orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("app/tests/test_app.mojo", t.srcs[0].path);
     try std.testing.expectEqualStrings("test_app.pass", t.outputs[0]);
 }
@@ -2638,10 +2645,10 @@ test "a member outside the workspace root is refused, naming the member and the 
     const dir = try tmp.dir.realpathAlloc(a, "repo");
     var why: []const u8 = "";
     const lock_text = try sibLock(a,
-        \\{"name": "outside", "version": "0.1.0", "source": "path", "path": "../../outside"}
+        \\{"name": "example/outside", "version": "0.1.0", "source": "path", "path": "../../outside"}
     );
     try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/outside\" = { path = \"../../outside\" }\n", lock_text, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency outside is ../../outside (resolves to ../outside), which is not below the workspace ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency example/outside is ../../outside (resolves to ../outside), which is not below the workspace ") != null);
     try std.testing.expect(std.mem.indexOf(u8, why, "not below the workspace ") != null);
     try std.testing.expect(std.mem.indexOf(u8, why, dir) != null);
 }
@@ -2659,11 +2666,11 @@ test "a member reached through another member is checked against the workspace r
     var why: []const u8 = "";
     // The lock holds every member's path relative to the package, whatever member names it.
     const lock_text = try sibLock(a,
-        \\{"name": "bb", "version": "0.1.0", "source": "path", "path": "../bb", "deps": ["far"]},
-        \\{"name": "far", "version": "0.1.0", "source": "path", "path": "../../far"}
+        \\{"name": "example/bb", "version": "0.1.0", "source": "path", "path": "../bb", "deps": ["example/far"]},
+        \\{"name": "example/far", "version": "0.1.0", "source": "path", "path": "../../far"}
     );
     try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n", lock_text, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency far is ../../far (resolves to ../far), which is not below the workspace ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency example/far is ../../far (resolves to ../far), which is not below the workspace ") != null);
 }
 
 test "a path that goes up and back down shows as written and as resolved" {
@@ -2677,10 +2684,10 @@ test "a path that goes up and back down shows as written and as resolved" {
     const dir = try tmp.dir.realpathAlloc(a, "repo");
     var why: []const u8 = "";
     const lock_text = try sibLock(a,
-        \\{"name": "xx", "version": "0.1.0", "source": "path", "path": "../xx/../../xx"}
+        \\{"name": "example/xx", "version": "0.1.0", "source": "path", "path": "../xx/../../xx"}
     );
     try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/xx\" = { path = \"../xx/../../xx\" }\n", lock_text, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency xx is ../xx/../../xx (resolves to ../xx), which is not below the workspace ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency example/xx is ../xx/../../xx (resolves to ../xx), which is not below the workspace ") != null);
 }
 
 test "a member that is the workspace itself is refused with a path shown, not an empty one" {
@@ -2694,10 +2701,10 @@ test "a member that is the workspace itself is refused with a path shown, not an
     const dir = try tmp.dir.realpathAlloc(a, "repo");
     var why: []const u8 = "";
     const lock_text = try sibLock(a,
-        \\{"name": "top", "version": "0.1.0", "source": "path", "path": ".."}
+        \\{"name": "example/top", "version": "0.1.0", "source": "path", "path": ".."}
     );
     try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/top\" = { path = \"..\" }\n", lock_text, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency top is .. (resolves to .), which is not below the workspace ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency example/top is .. (resolves to .), which is not below the workspace ") != null);
     try std.testing.expect(std.mem.indexOf(u8, why, " is , ") == null);
 }
 
@@ -2711,16 +2718,16 @@ test "a path written with ./ segments or a trailing slash is the same member as 
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
     const lock_text = try sibLock(a,
-        \\{"name": "bb", "version": "0.1.0", "source": "path", "path": "./../bb/./", "deps": ["cc"]},
-        \\{"name": "cc", "version": "0.1.0", "source": "path", "path": "../cc/"}
+        \\{"name": "example/bb", "version": "0.1.0", "source": "path", "path": "./../bb/./", "deps": ["example/cc"]},
+        \\{"name": "example/cc", "version": "0.1.0", "source": "path", "path": "../cc/"}
     );
     const g = try siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"./../bb/./\" }\n", lock_text, &why);
     const plain = try siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n", try sibLock(a, sib_b_to_c), &why);
     try std.testing.expectEqual(@as(usize, 3), countKind(g, "lib"));
-    const bb = g.units[g.find("bb@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    const bb = g.units[g.find("example/bb@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("bb/src/bb", bb.root);
     try std.testing.expectEqualStrings("bb/src/bb/__init__.mojo", bb.srcs[0].path);
-    const cc = g.units[g.find("cc@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    const cc = g.units[g.find("example/cc@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("cc/src/cc", cc.root);
     try std.testing.expectEqualStrings(try render(a, plain), try render(a, g));
 }
@@ -2749,7 +2756,7 @@ test "a library that points into a sibling whose name starts with its package's 
     try std.testing.expect(std.mem.indexOf(u8, why, "the library of the root package is app2/src/app, which is not inside its package app") != null);
 
     const lock_text = try sibLock(a,
-        \\{"name": "mem", "version": "0.1.0", "source": "path", "path": "../mem"}
+        \\{"name": "example/mem", "version": "0.1.0", "source": "path", "path": "../mem"}
     );
     try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/mem\" = { path = \"../mem\" }\n", lock_text, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "the library of a path dependency is mem2/src/mem, which is not inside its package mem") != null);
@@ -2765,7 +2772,7 @@ test "without a workspace root a sibling is refused as it always was: the worksp
     const dir = try tmp.dir.realpathAlloc(a, "app");
     var why: []const u8 = "";
     try std.testing.expectError(error.Refused, siblingGraph(a, dir, "", "\"example/bb\" = { path = \"../bb\" }\n", try sibLock(a, sib_b_to_c), &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency bb is ../bb, which is not below the workspace ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency example/bb is ../bb, which is not below the workspace ") != null);
 }
 
 test "a library or binary that leaves its package for a sibling's directory is refused" {
@@ -2820,8 +2827,9 @@ test "with a workspace root, the root package's and a sibling's own natives are 
     };
 
     // The root package's native: named by the package, its files by their path from the workspace.
-    const na = g.units[g.find("native:app/app_shim") orelse return error.NoSuchUnit];
-    try std.testing.expectEqualStrings("app", na.package);
+    const na = g.units[g.find("native:example/app/app_shim") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("example/app", na.package);
+    try std.testing.expectEqualStrings("app", na.import);
     try std.testing.expectEqualStrings("libapp_shim.a", na.soname);
     try std.testing.expectEqual(@as(usize, 1), na.srcs.len);
     try std.testing.expectEqualStrings("app/native/app.c", na.srcs[0].path);
@@ -2831,8 +2839,9 @@ test "with a workspace root, the root package's and a sibling's own natives are 
     try std.testing.expectEqualStrings("native", na.includes[0]);
 
     // The sibling's native, reached through a path dependency.
-    const nb = g.units[g.find("native:bb/b_shim") orelse return error.NoSuchUnit];
-    try std.testing.expectEqualStrings("bb", nb.package);
+    const nb = g.units[g.find("native:example/bb/b_shim") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("example/bb", nb.package);
+    try std.testing.expectEqualStrings("bb", nb.import);
     try std.testing.expectEqualStrings("bb/native/shim.c", nb.srcs[0].path);
     try std.testing.expectEqualStrings("bb/native/shim.h", nb.hdrs[0].path);
     try std.testing.expectEqualStrings("native", nb.includes[0]);
@@ -2844,14 +2853,14 @@ test "with a workspace root, the root package's and a sibling's own natives are 
     var saw_a = false;
     var saw_b = false;
     for (app.natives) |n| {
-        if (std.mem.eql(u8, n.built, "native:app/app_shim")) saw_a = true;
-        if (std.mem.eql(u8, n.built, "native:bb/b_shim")) saw_b = true;
+        if (std.mem.eql(u8, n.built, "native:example/app/app_shim")) saw_a = true;
+        if (std.mem.eql(u8, n.built, "native:example/bb/b_shim")) saw_b = true;
     }
     try std.testing.expect(saw_a and saw_b);
     // bb's library lists only its own.
-    const bl = g.units[g.find("bb@0.1.0#mojo1.0.0/lib").?];
+    const bl = g.units[g.find("example/bb@0.1.0#mojo1.0.0/lib").?];
     try std.testing.expectEqual(@as(usize, 1), bl.natives.len);
-    try std.testing.expectEqualStrings("native:bb/b_shim", bl.natives[0].built);
+    try std.testing.expectEqualStrings("native:example/bb/b_shim", bl.natives[0].built);
     try noDotDot(g);
 }
 
@@ -2873,7 +2882,7 @@ test "a member with publish = false is in the graph exactly as the same member w
             std.debug.print("refused: {s}\n", .{why});
             return e;
         };
-        try std.testing.expect(g.find("util@0.3.0#mojo1.0.0/lib") != null);
+        try std.testing.expect(g.find("example/util@0.3.0#mojo1.0.0/lib") != null);
         texts[i] = try std.mem.replaceOwned(u8, a, try render(a, g), dir, "<dir>");
     }
     try std.testing.expectEqualStrings(texts[0], texts[1]);

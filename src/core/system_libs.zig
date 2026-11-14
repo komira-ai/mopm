@@ -142,10 +142,11 @@ fn lockOf(a: Allocator, text: []const u8) !lock.Lock {
 
 const empty_lock =
     \\{
-    \\  "lock_version": 1,
-    \\  "toolchain": {
-    \\    "mojo": "1.0.0"
-    \\  },
+    \\  "lock_version": 3,
+    \\  "mojo": [
+    \\    "1.0.0"
+    \\  ],
+    \\  "toolchain": {},
     \\  "channels": [
     \\    "https://conda.mopm.dev/"
     \\  ],
@@ -254,7 +255,7 @@ test "a registry package's loads are pinned for the subdir of its entry; one mop
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    var pkg = lock.Package{ .name = "tls", .version = "1.1.0", .build = "mojo1.0.0_0", .subdir = "linux-64", .channel = "https://conda.mopm.dev/", .url = "https://conda.mopm.dev/linux-64/mojo-tls-1.1.0-mojo1.0.0_0.conda", .sha256 = "a" ** 64, .size = 10, .mojo = "1.0.0", .loads = &.{"zstd"} };
+    var pkg = lock.Package{ .name = "komira-ai/tls", .version = "1.1.0", .build = "mojo1.0.0_0", .subdir = "linux-64", .channel = "https://conda.mopm.dev/komira-ai/", .url = "https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.tls-1.1.0-mojo1.0.0_0.conda", .sha256 = "a" ** 64, .size = 10, .mojo = "1.0.0", .loads = &.{"zstd"} };
     var l = try lockOf(a, empty_lock);
     l.packages = &.{pkg};
     var why: []const u8 = "";
@@ -268,5 +269,5 @@ test "a registry package's loads are pinned for the subdir of its entry; one mop
     pkg.loads = &.{"notalib"};
     l.packages = &.{pkg};
     try std.testing.expectError(error.Refused, attach(a, l, &.{}, &why));
-    try std.testing.expect(std.mem.startsWith(u8, why, "tls 1.1.0 loads the system library notalib, which mopm pins no copy of for linux-64"));
+    try std.testing.expect(std.mem.startsWith(u8, why, "komira-ai/tls 1.1.0 loads the system library notalib, which mopm pins no copy of for linux-64"));
 }
