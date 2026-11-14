@@ -1,6 +1,8 @@
-import { NamespaceAccess, MemoryNamespaceStore, MemoryAuthStore } from '../../src/auth';
+import { GitHubUnavailable, MemoryAuthStore, MemoryMembershipPassStore, MemoryNamespaceStore, NamespaceAccess, OrgMembership, type GitHubAppApi } from '../../src/auth';
 import { TokenServiceV2 } from '../../src/auth/tokens-v2';
-import { configureV2, packagesInFrom } from '../../src/http/lambda';
+import { SecretGitHubAppApi } from '../../src/http/app-secret';
+import { configureV2, membershipFor, packagesInFrom } from '../../src/http/lambda';
+import type { SecretReader } from '../../src/http/oauth-secret';
 import { MemoryStore } from '../../src/memory-store';
 import { CreateService } from '../../src/publish/create';
 import { publishApiFor } from '../../src/publish/wiring';
@@ -72,12 +74,145 @@ describe('configureV2', () => {
     expect(v2.namespaces).toBeDefined();
     expect(v2.tokens).toBeInstanceOf(TokenServiceV2);
     expect(v2.creates).toBe(creates);
-    // No GitHub App is configured on any stage yet: createNamespace answers unavailable.
+    // Without a membership check, createNamespace answers unavailable.
     expect(v2.membership).toBeUndefined();
   });
 
   test('without login, no tokens service; without the publish side, no createPackage', () => {
     const v2 = configureV2('prod', doc, {}, new MemoryStore(), access, undefined);
     expect(Object.keys(v2).sort()).toEqual(['access', 'namespaces']);
+  });
+});
+
+// The GitHub App wiring: the secret is named by MOPM_APP_SECRET_NAME and read on the first organization question.
+describe('membershipFor and the GitHub App secret', () => {
+  const doc = new FakeAuthDoc({});
+  const { generateKeyPairSync } = require('node:crypto') as typeof import('node:crypto');
+  const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) as string;
+  const good = JSON.stringify({ app_id: '12345', private_key: pem });
+  const quiet = () => jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  afterEach(() => jest.restoreAllMocks());
+
+  function reader(values: Array<string | undefined | Error>) {
+    const calls: string[] = [];
+    const read: SecretReader = async (id) => {
+      calls.push(id);
+      const v = values.length > 1 ? values.shift()! : values[0]!;
+      if (v instanceof Error) throw v;
+      return v;
+    };
+    return { read, calls };
+  }
+  const fakeApi = (): GitHubAppApi => ({
+    getInstallation: async (id) => ({ id, account: { id: 7, login: 'komira-ai' }, suspended: false }),
+    getOrgInstallation: async () => undefined,
+    getUserById: async () => undefined,
+    getOrgMembership: async () => undefined,
+  });
+
+  test('without MOPM_APP_SECRET_NAME there is no membership check and the secret is never read', () => {
+    expect(membershipFor('beta', doc, {}, async () => { throw new Error('read'); })).toBeUndefined();
+  });
+
+  test('configureV2 carries the membership check it is given', () => {
+    const access = new NamespaceAccess({ namespaces: new MemoryNamespaceStore(), users: new MemoryAuthStore() });
+    const m = membershipFor('beta', doc, { MOPM_APP_SECRET_NAME: 'mopm/beta/github-app' }, reader([good]).read);
+    expect(m).toBeInstanceOf(OrgMembership);
+    expect(configureV2('beta', doc, {}, new MemoryStore(), access, undefined, m).membership).toBe(m);
+  });
+
+  test('the secret is read once on first use, by its name, and the client is reused', async () => {
+    const r = reader([good]);
+    const built: Array<{ appId: string }> = [];
+    const api = new SecretGitHubAppApi({ secretId: 'mopm/beta/github-app', read: r.read }, (c) => (built.push(c), fakeApi()));
+    expect(r.calls).toEqual([]);
+    expect((await api.getInstallation(5))?.id).toBe(5);
+    await api.getOrgInstallation('x');
+    await api.getUserById(1, 2);
+    await api.getOrgMembership(1, 'o', 'u');
+    expect(r.calls).toEqual(['mopm/beta/github-app']);
+    expect(built).toEqual([{ appId: '12345', privateKey: pem }]);
+  });
+
+  test('a number app_id is accepted and read again after the good-answer lifetime, keeping the client when unchanged', async () => {
+    let t = 0;
+    const r = reader([JSON.stringify({ app_id: 12345, private_key: pem })]);
+    const built: unknown[] = [];
+    const api = new SecretGitHubAppApi({ secretId: 's', read: r.read, now: () => t, okTtlMs: 1000 }, (c) => (built.push(c), fakeApi()));
+    await api.getInstallation(1);
+    t = 1001;
+    await api.getInstallation(1);
+    expect(r.calls).toHaveLength(2);
+    expect(built).toHaveLength(1);
+  });
+
+  test('rotated credentials build a new client', async () => {
+    let t = 0;
+    const r = reader([good, JSON.stringify({ app_id: '999', private_key: pem })]);
+    const built: Array<{ appId: string }> = [];
+    const api = new SecretGitHubAppApi({ secretId: 's', read: r.read, now: () => t, okTtlMs: 1000 }, (c) => (built.push(c), fakeApi()));
+    await api.getInstallation(1);
+    t = 1001;
+    await api.getInstallation(1);
+    expect(built.map((b) => b.appId)).toEqual(['12345', '999']);
+  });
+
+  test.each([
+    ['absent', undefined],
+    ['not JSON', 'nope'],
+    ['no app_id', JSON.stringify({ private_key: pem })],
+    ['bad app_id', JSON.stringify({ app_id: 'abc', private_key: pem })],
+    ['no private_key', JSON.stringify({ app_id: '1' })],
+    ['private_key not a key', JSON.stringify({ app_id: '1', private_key: 'not a key' })],
+    ['JSON null', 'null'],
+  ])('a secret that is %s answers GitHubUnavailable, logs no value, and is asked again only after the failure lifetime', async (_n, value) => {
+    const err = quiet();
+    let t = 0;
+    const r = reader([value]);
+    const api = new SecretGitHubAppApi({ secretId: 's', read: r.read, now: () => t, failTtlMs: 100 }, fakeApi);
+    await expect(api.getInstallation(1)).rejects.toBeInstanceOf(GitHubUnavailable);
+    await expect(api.getOrgMembership(1, 'o', 'u')).rejects.toBeInstanceOf(GitHubUnavailable);
+    expect(r.calls).toHaveLength(1);
+    t = 101;
+    await expect(api.getInstallation(1)).rejects.toBeInstanceOf(GitHubUnavailable);
+    expect(r.calls).toHaveLength(2);
+    expect(err.mock.calls.flat().join('\n')).not.toContain('BEGIN');
+  });
+
+  test('a read that rejects is GitHubUnavailable and the error is not echoed', async () => {
+    const err = quiet();
+    const api = new SecretGitHubAppApi({ secretId: 's', read: reader([Object.assign(new Error('secret-detail'), { name: 'AccessDenied' })]).read }, fakeApi);
+    await expect(api.getInstallation(1)).rejects.toBeInstanceOf(GitHubUnavailable);
+    const logged = err.mock.calls.flat().join('\n');
+    expect(logged).toContain('AccessDenied');
+    expect(logged).not.toContain('secret-detail');
+  });
+
+  test('with real credentials the default client is built, and its first call goes to GitHub through the injected fetch path only (no secret, no network here)', async () => {
+    const api = new SecretGitHubAppApi({ secretId: 's', read: reader([good]).read });
+    // The real client signs a JWT with the stored key, then calls GitHub; with fetch replaced it answers from the fake.
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ id: 9, account: { id: 7, login: 'komira-ai' }, suspended_at: null }), { status: 200 })) as typeof fetch;
+    try {
+      expect((await api.getInstallation(9))?.id).toBe(9);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  test('a read that rejects with something nameless is still GitHubUnavailable', async () => {
+    quiet();
+    const read: SecretReader = async () => { throw undefined; };
+    await expect(new SecretGitHubAppApi({ secretId: 's', read }, fakeApi).getInstallation(1)).rejects.toBeInstanceOf(GitHubUnavailable);
+  });
+
+  test('an organization write with no usable secret answers unavailable, not a crash', async () => {
+    quiet();
+    const namespaces = new MemoryNamespaceStore();
+    const users = new MemoryAuthStore();
+    await namespaces.createNamespace({ namespace: 'komira-ai', kind: 'org', github_id: 7, installation_id: 3, created_at: at, created_by: 1 } as never);
+    const m = new OrgMembership({ app: new SecretGitHubAppApi({ secretId: 's', read: reader([undefined]).read }), passes: new MemoryMembershipPassStore(), now: () => new Date(at) });
+    const access = new NamespaceAccess({ namespaces, users, membership: m });
+    await expect(access.require('komira-ai', 1)).rejects.toMatchObject({ code: 'unavailable' });
   });
 });

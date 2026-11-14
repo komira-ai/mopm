@@ -183,6 +183,26 @@ the six characters being the suffix Secrets Manager adds to every ARN) and use t
 by CloudFormation, so no stack holds its value. It uses the account's default Secrets Manager key, which the Lambda
 role can use without a separate grant.
 
+## GitHub App (once per stage)
+
+Writes in an organization namespace and the creation of a namespace need the registry's GitHub App, "mopm registry"
+(`docs/design/namespaces.md` 2.2: one organization permission, Members read-only, no repository permission). The API reads
+its id and private key from Secrets Manager at runtime (`mopm/<stage>/github-app`, JSON `{"app_id", "private_key"}`), never
+from a file, a flag or an environment variable, and never writes them to a log. Until the secret exists those routes answer
+`503 unavailable` and everything else, user namespaces included, is unaffected, so automatic deployments stay green.
+
+1. In GitHub: create the App (one per stage, as for the OAuth apps), generate a private key (a `.pem` file) and note the App id.
+2. Store both with the held script, run with that stage's admin credentials. Preview first; nothing is read or called
+   without `--apply`. The key is read from the file named by `--key-file`, only with `--apply`, never from a flag value:
+   ```sh
+   npm --prefix service/infra/access run -s app-secret -- --stage beta --profile <your profile> --app-id <app id> --key-file <key.pem>
+   npm --prefix service/infra/access run -s app-secret -- --stage beta --profile <your profile> --app-id <app id> --key-file <key.pem> --apply
+   ```
+   It creates the secret, or stores a new version when it exists (rotation: generate a new key, run it again; the API picks
+   it up within five minutes, with no redeploy). Delete the `.pem` file afterwards.
+3. The Lambda role may read exactly this secret (`secretsmanager:GetSecretValue` on `mopm/<stage>/github-app-??????`) beside
+   the OAuth one; the stacks tests pin both. The API function gets the secret's name in `MOPM_APP_SECRET_NAME`.
+
 ## Verification
 
 Run `deploy.yml` on `main` for `beta`: `aws sts get-caller-identity` must show the deploy role. The same

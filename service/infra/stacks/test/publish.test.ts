@@ -84,6 +84,8 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(res(by('ReadAndDeleteQuarantine'))).toContain(`${bucket}/quarantine/*`);
     expect(acts(by('WritePackageFiles'))).toEqual(['s3:PutObject']);
     for (const sub of ['noarch', 'linux-64', 'linux-aarch64', 'osx-arm64']) expect(res(by('WritePackageFiles'))).toContain(`${bucket}/${sub}/mojo-*.conda`);
+    // A namespace channel's files: `<namespace>/<subdir>/mojo-*.conda`, same files, same action.
+    for (const sub of ['noarch', 'linux-64', 'linux-aarch64', 'osx-arm64']) expect(res(by('WritePackageFiles'))).toContain(`${bucket}/*/${sub}/mojo-*.conda`);
     expect(res(by('WritePackageFiles'))).not.toContain('repodata');
     expect(acts(by('WriteVersionsAndPublishes'))).toEqual(['dynamodb:PutItem']);
     expect(res(by('WriteVersionsAndPublishes'))).toContain(`mopm-${stage}-versions`);
@@ -108,6 +110,12 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(acts(by('WriteRepodata'))).toEqual(['s3:PutObject']);
     const writes = res(by('WriteRepodata'));
     expect(writes).toContain(`${bucket}/noarch/repodata.json.zst`);
+    // A namespace channel's repodata: `<namespace>/<subdir>/repodata.json(.zst)`, every subdir, and no other file name.
+    for (const sub of ['noarch', 'linux-64', 'linux-aarch64', 'osx-arm64']) {
+      expect(writes).toContain(`${bucket}/*/${sub}/repodata.json`);
+      expect(writes).toContain(`${bucket}/*/${sub}/repodata.json.zst`);
+    }
+    expect(res(by('WriteRepodata')).match(/\/\*\/[a-z0-9-]+\/[^"]*/g)!.every((r) => /\/repodata\.json(\.zst)?$/.test(r))).toBe(true);
     expect(writes).not.toContain('mojo-');
     expect(writes).not.toContain('quarantine');
     expect(writes).not.toContain('index/');
@@ -264,6 +272,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     // A create-only copy that finds the key taken reads the object to compare it; only the package files, never repodata or index/.
     expect(acts(by('ReadAndWritePackageFiles')).sort()).toEqual(['s3:GetObject', 's3:PutObject']);
     for (const sub of ['noarch', 'linux-64', 'linux-aarch64', 'osx-arm64']) expect(res(by('ReadAndWritePackageFiles'))).toContain(`${bucket}/${sub}/mojo-*.conda`);
+    for (const sub of ['noarch', 'linux-64', 'linux-aarch64', 'osx-arm64']) expect(res(by('ReadAndWritePackageFiles'))).toContain(`${bucket}/*/${sub}/mojo-*.conda`);
     expect(res(by('ReadAndWritePackageFiles'))).not.toContain('repodata');
     expect(res(by('ReadAndWritePackageFiles'))).not.toContain('index/');
     // It reads the upload records (their age) as well as the versions and the group items.
