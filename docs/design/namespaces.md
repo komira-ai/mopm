@@ -6,13 +6,16 @@ marked proposed; nothing reads that file, and the live specs are unchanged until
 
 A package's name becomes `<namespace>/<name>`, for example `komira-ai/json`. The namespace is a GitHub login: a user's
 own login, or a GitHub organization's. Mojo code imports the last part only (`import json`). Two packages with the same
-last part in one dependency closure are a build failure. Each namespace is its own conda channel
-(`https://conda.mopm.dev/komira-ai/`). The global names on prod today are deleted, and the komira packages are
-published again as `komira-ai/<name>` without the `komira_` prefix.
+last part in one dependency closure are a build failure. No import name is a top-level module of the Mojo standard
+library. Each namespace is its own conda channel (`https://conda.mopm.dev/komira-ai/`). The global names on prod today
+are deleted, except the `kci_*` packages, which stay as they are. All 260 `komira_*` packages of komira are renamed
+from the checked-in mapping `docs/design/namespaces-komira-map.tsv` (section 12), mostly by dropping the prefix, and
+the published ones are published again as `komira-ai/<new name>`.
 
 These are settled and not reopened here: the full-name form and the import name; user and organization namespaces from
-GitHub; the import-name clash as a failure with no alias; one conda channel per namespace; deleting the global names
-and publishing komira's packages again under `komira-ai/`.
+GitHub; the import-name clash as a failure with no alias; one conda channel per namespace, with the conda name
+`mojo-<namespace>.<name>`; no import name equal to a top-level module of the Mojo standard library; deleting the global
+names except `kci_*`; renaming all 260 `komira_*` packages and publishing komira's packages again under `komira-ai/`.
 
 ## What exists today
 
@@ -56,6 +59,41 @@ and publishing komira's packages again under `komira-ai/`.
 - An import name is never a Mojo keyword or builtin (the lists in `src/core/manifest.zig`) and never one of today's
   reserved names (`mopm`, `mojo`, `max`, `modular`, `std`, `stdlib`). The registry now refuses these too, not only the
   client, so every published package can be imported.
+- An import name is never a top-level module of the Mojo standard library (section 1.1). Code writes both
+  `import std.collections` and the bare `import collections`, so a package with a standard module's name would shadow
+  it or be shadowed by it.
+
+### 1.1 The standard library's module names
+
+The list is read from the toolchain mopm pins, not written from memory: `toolchain/versions.txt` lists `1.0.0`, and
+`toolchain/mojo-1.0.0.pixi.lock` pins `mojo-compiler-1.0.0-release.conda` (linux-64, sha256
+`4394c6146d47ec7794a9a3ed5775ae158f59f83f8e1aed59408b17c4909821b3`). Its standard library is one file,
+`lib/mojo/std.mojoc`: a 96-byte header (`MPKG`, then a 64-character hash) followed by one zstd frame, whose content
+records the source path of each of its 251 files, `mojo/stdlib/std/<module>/...mojo`. The top-level modules are the
+`<module>` components of those paths. The 251 paths are byte for byte the `.mojo` files under `mojo/stdlib/std/` at the
+tag `mojo/v1.0.0` of modular/modular, which confirms the reading.
+
+Mojo 1.0.0, 37 top-level modules (`_plugin`, the 38th directory, starts with `_` and is outside the name grammar
+anyway):
+
+`algorithm`, `atomic`, `base64`, `benchmark`, `bit`, `builtin`, `collections`, `compile`, `complex`, `documentation`,
+`ffi`, `format`, `gpu`, `hashlib`, `io`, `iter`, `itertools`, `logger`, `math`, `memory`, `origin`, `os`, `pathlib`,
+`prelude`, `pwd`, `python`, `random`, `reflection`, `runtime`, `stat`, `subprocess`, `sys`, `tempfile`, `testing`,
+`time`, `traits`, `utils`.
+
+- The rule, client and registry alike: a name in that list, or `std` itself (already reserved), is refused as an
+  import name. The registry answers `PUT /packages/{namespace}/{name}` with `name_reserved` (403), message
+  `'collections' is a module of the Mojo standard library (std.collections).`, hint `Choose another name.`. The client's
+  `nameProblem` refuses it for `[package] name`, `mopm new` and `mopm init` with `package name 'collections' is a
+  module of the Mojo standard library (std.collections); choose another name`.
+- Where the list lives: one checked-in file per Mojo version, `toolchain/mojo-<version>.std-modules.txt`, one module per
+  line, written by the job that adds the version's lock (it already downloads `mojo-compiler`), from the paths above.
+  The client and the registry refuse the union over every version in `toolchain/versions.txt`; a unit test on each
+  side checks that its list equals that union, so the two cannot drift. Tests never download the toolchain.
+- A later Mojo version that adds a module: the module joins the union when that version joins `versions.txt`. The
+  registry then refuses new packages with that name; a package published earlier under it keeps resolving and
+  installing. The client refuses it as `[package] name` and only warns for a dependency key (naming the module and
+  the dependency), so a project that depends on such a package keeps building.
 - The library directory is the import name: `[targets] lib` defaults to `src/<import name>`, and a `path` whose last
   component differs is refused (new). Mojo finds a package by its directory or `.mojoc` name, so this is what makes
   the import name of section 4 the name Mojo uses.
@@ -269,8 +307,9 @@ pixi add mojo-komira-ai.json
   it (section 4).
 - The registry writes each namespace's repodata on its own, so publishing in one namespace never rewrites another's
   files.
-- The flat root (`https://conda.mopm.dev/<subdir>/`) keeps a valid empty `repodata.json` per subdir after the deletion
-  (section 12), so a conda client still listing it sees "no such package", not a broken channel.
+- The flat root (`https://conda.mopm.dev/<subdir>/`) keeps a valid `repodata.json` per subdir after the deletion
+  (section 12), holding only the kept `kci_*` packages (section 12.4), so a conda client still listing it sees "no such
+  package" for a deleted name, not a broken channel.
 
 ## 6. The sparse index, version 2
 
@@ -281,10 +320,10 @@ pixi add mojo-komira-ai.json
   URL of section 5. Everything else is version 1's.
 - `/index/v2/takedowns.json` holds full names.
 - `/index/config.json` gains two optional keys: `index_versions` (the served versions, `[1, 2]`) and `api_v2_url`
-  (`https://api.mopm.dev/api/v2`). A namespace's channel is `channel_url` + `<namespace>/`. A released mopm ignores
-  both keys and reads version 1, which is empty once the global names are deleted. A mopm with namespaces refuses a
-  registry whose `index_versions` lacks 2: "the registry at <url> serves no namespaced packages (index version 2); it
-  is older than this mopm".
+  (`https://api.mopm.dev/api/v2`). A namespace's channel is `channel_url` + `<namespace>/`. A released mopm ignores both
+  keys and reads version 1, which holds only the kept `kci_*` packages once the global names are deleted. A mopm with
+  namespaces refuses a registry whose `index_versions` lacks 2: "the registry at <url> serves no namespaced packages
+  (index version 2); it is older than this mopm".
 
 ## 7. The lock, version 3
 
@@ -333,7 +372,8 @@ starts with a digit, so `/versions` and `/{version}` stay apart.
 - `/api/v1` after v2 ships: reads answer as before; creating a flat package (`claimPackage`, and the OIDC `packages`
   form for a name nobody has) is refused with the existing `name_reserved` (403), hint "package names are in namespaces
   now; update mopm". Publishing new versions of existing flat names keeps working until the deletion, so the komira
-  release does not break before it moves.
+  release does not break before it moves. After the deletion the only flat names left are the kept `kci_*` packages;
+  `/api/v1` keeps serving them as it does today, and this design adds no way to move them into a namespace.
 
 ## 9. Command line
 
@@ -367,20 +407,23 @@ starts with a digit, so `/versions` and `/{version}` stay apart.
 Every format that changes gets a new version served or read beside the old one: API v2 beside v1, index v2 beside v1
 (two optional `config.json` keys), lock 3 (1 and 2 still read), metadata schema 2, unit graph 6, plan.json 2. None of
 these can be an optional field of the old version: each re-means `name` (a flat name becomes a full name), and an old
-reader that ignored the new field would misread the name instead of refusing. Three departures from additive change
+reader that ignored the new field would misread the name instead of refusing. Four departures from additive change
 follow from the settled decisions:
 
 - mopm.toml: an un-namespaced name, accepted today, is refused, with the full form in the message.
 - `/api/v1` stops creating packages, with an existing code and status.
-- The global names are deleted, so a released mopm finds nothing: "<name> (required by mopm.toml) is not in the
-  registry's index", and a lock pinning them fails at the download with its taken-down message.
+- The global names are deleted, except `kci_*`, so a released mopm finds nothing else: "<name> (required by mopm.toml)
+  is not in the registry's index", and a lock pinning them fails at the download with its taken-down message. A
+  released mopm still resolves and installs the kept `kci_*` packages.
+- A name that a released mopm accepts may now be refused: a top-level module of the Mojo standard library (section 1.1).
+  None of the 139 names on prod is one (12.1), and the mapping gives none of komira's packages one (12.2).
 
 What each side sees; task C6 holds each row, modelled on `tests/drivers/compat_v0_0_104_test.zig` (the previous release's
 command line and fake registry, byte for byte, against the current ones):
 
 | reader | data | result |
 |---|---|---|
-| previous release | the namespaced registry | flat reads work until the deletion, then "not in the registry's index"; flat creation refused `name_reserved` with the update hint |
+| previous release | the namespaced registry | flat reads work until the deletion, then "not in the registry's index", except the kept `kci_*` packages, which keep resolving; flat creation refused `name_reserved` with the update hint |
 | previous release | a namespaced `mopm.toml` | refused by its `nameProblem`, naming the key |
 | previous release | lock 3, metadata schema 2, plan.json 2, unit graph 6 | each refused with its existing "unknown version" message; nothing is misread |
 | this release | the previous release's fake registry | refused: no index version 2, the message of section 6 |
@@ -389,129 +432,257 @@ command line and fake registry, byte for byte, against the current ones):
 
 ## 12. Migration of prod
 
-### 12.1 The global names
+### 12.1 The global names and komira's packages
 
 Measured on 2026-11-13 from prod, read-only: `GET https://api.mopm.dev/api/v1/packages?limit=100` followed through
 `next_cursor` to the end (139 packages), and `GET /api/v1/packages/{name}/owners` for each (all 139 have one owner, the
-same user account, which the prod CI publisher acts for). The komira column is `src/*/mopm.toml` in komira-ai/komira
-`main` cloned the same day: 66 komira packages have a `mopm.toml` and are the 66 published ones; 57 `komira_*` names
-are claims with no version and no `mopm.toml`; the 16 `kci_*` packages have no source in komira `main`, and no package
-outside them depends on one (`depends` of every entry of `https://conda.mopm.dev/linux-64/repodata.json`, the same day).
+same user account, which the prod CI publisher acts for). The `kci_*` packages have no source in komira `main`, and no
+package outside them depends on one (`depends` of every entry of `https://conda.mopm.dev/linux-64/repodata.json`, the
+same day).
 
-New name: `komira-ai/<x>` is published again; `(komira-ai/<x>)` is not published again, and is the name it would get
-when komira gives it a `mopm.toml`; none: deleted only. "claim" is a claim with no version. Every listed name is
-deleted. The `hash` and `async` rows carry the proposed renames of 12.2.
+The komira side is komira-ai/komira `main`, measured again on 2026-11-14 (its last commit predates both days, so both
+measurements read the same tree): `git ls-tree -d --name-only main src/` gives 261 directories, the 260 `komira_*` and
+`tests`; `git ls-tree -r --name-only main src/` finds a `mopm.toml` directly under 66 of them, and they are the 66
+published on prod; the other 57 `komira_*` names on prod are claims with no version and no `mopm.toml`; 137 `komira_*`
+directories have no `mopm.toml` and no name on prod.
 
-| claimed name | on prod | new name | note |
+Every `komira_*` directory is renamed (12.3), published or not. The mapping is checked in as
+`docs/design/namespaces-komira-map.tsv`: 260 lines `<old directory name><TAB><new import name>`, no header, sorted by
+the old name as bytes; the full name is `komira-ai/<new import name>`. It is the input of komira's rename tool (task
+ns-M2) and the source of the table below, which adds the prod state and the 16 `kci_*` packages.
+
+Columns: "on prod" is the latest version, "claim" for a claim with no version, `—` for no name on prod. "new name"
+is `komira-ai/<x>` for a package that is published again (it has a `mopm.toml`), `(komira-ai/<x>)` for a directory
+renamed in komira but not published, the name it gets when komira gives it a `mopm.toml`; "kept" for a `kci_*`
+package, which is neither renamed nor deleted (12.4). Every other name on prod is deleted. A note says why a name is
+not the old name without its `komira_` prefix.
+
+| old name | on prod | new name | note |
 |---|---|---|---|
-| `kci_api` | 0.1.337 | none |  |
-| `kci_artifact` | 0.1.337 | none |  |
-| `kci_artifact_manifest` | 0.1.337 | none |  |
-| `kci_artifact_proto` | 0.1.337 | none |  |
-| `kci_cell` | 0.1.337 | none |  |
-| `kci_deploy_model_proto` | 0.1.337 | none |  |
-| `kci_logs` | 0.1.337 | none |  |
-| `kci_manifest_proto` | 0.1.337 | none |  |
-| `kci_params` | 0.1.337 | none |  |
-| `kci_reconciler` | 0.1.337 | none |  |
-| `kci_release_channel` | 0.1.337 | none |  |
-| `kci_release_machine` | 0.1.337 | none |  |
-| `kci_resource_proto` | 0.1.337 | none |  |
-| `kci_validator_report` | 0.1.337 | none |  |
-| `kci_validator_rows` | 0.1.337 | none |  |
-| `kci_workflow_check` | 0.1.337 | none |  |
+| `kci_api` | 0.1.337 | kept: `kci_api` |  |
+| `kci_artifact` | 0.1.337 | kept: `kci_artifact` |  |
+| `kci_artifact_manifest` | 0.1.337 | kept: `kci_artifact_manifest` |  |
+| `kci_artifact_proto` | 0.1.337 | kept: `kci_artifact_proto` |  |
+| `kci_cell` | 0.1.337 | kept: `kci_cell` |  |
+| `kci_deploy_model_proto` | 0.1.337 | kept: `kci_deploy_model_proto` |  |
+| `kci_logs` | 0.1.337 | kept: `kci_logs` |  |
+| `kci_manifest_proto` | 0.1.337 | kept: `kci_manifest_proto` |  |
+| `kci_params` | 0.1.337 | kept: `kci_params` |  |
+| `kci_reconciler` | 0.1.337 | kept: `kci_reconciler` |  |
+| `kci_release_channel` | 0.1.337 | kept: `kci_release_channel` |  |
+| `kci_release_machine` | 0.1.337 | kept: `kci_release_machine` |  |
+| `kci_resource_proto` | 0.1.337 | kept: `kci_resource_proto` |  |
+| `kci_validator_report` | 0.1.337 | kept: `kci_validator_report` |  |
+| `kci_validator_rows` | 0.1.337 | kept: `kci_validator_rows` |  |
+| `kci_workflow_check` | 0.1.337 | kept: `kci_workflow_check` |  |
 | `komira_agg` | claim | (`komira-ai/agg`) |  |
 | `komira_agg_api` | claim | (`komira-ai/agg_api`) |  |
 | `komira_anomaly` | 0.1.344 | `komira-ai/anomaly` |  |
 | `komira_arrow` | claim | (`komira-ai/arrow`) |  |
 | `komira_arrow_ipc` | claim | (`komira-ai/arrow_ipc`) |  |
-| `komira_async` | claim | (`komira-ai/async_rt`) | `async` is a keyword (12.2) |
+| `komira_async` | claim | (`komira-ai/async_rt`) | `async` is a Mojo keyword (12.2) |
 | `komira_async_api` | 0.1.344 | `komira-ai/async_api` |  |
 | `komira_atomic_alias` | 0.1.344 | `komira-ai/atomic_alias` |  |
+| `komira_authz_api` | — | (`komira-ai/authz_api`) |  |
 | `komira_avro` | claim | (`komira-ai/avro`) |  |
+| `komira_aws_apigatewayv2` | — | (`komira-ai/aws_apigatewayv2`) |  |
+| `komira_aws_core` | — | (`komira-ai/aws_core`) |  |
+| `komira_aws_dynamodb` | — | (`komira-ai/aws_dynamodb`) |  |
+| `komira_aws_dynamodbstreams` | — | (`komira-ai/aws_dynamodbstreams`) |  |
+| `komira_aws_ec2` | — | (`komira-ai/aws_ec2`) |  |
+| `komira_aws_ecr` | — | (`komira-ai/aws_ecr`) |  |
+| `komira_aws_ecs` | — | (`komira-ai/aws_ecs`) |  |
+| `komira_aws_iam` | — | (`komira-ai/aws_iam`) |  |
+| `komira_aws_lambda` | — | (`komira-ai/aws_lambda`) |  |
+| `komira_aws_lambda_http` | — | (`komira-ai/aws_lambda_http`) |  |
+| `komira_aws_logs` | — | (`komira-ai/aws_logs`) |  |
+| `komira_aws_metrics` | — | (`komira-ai/aws_metrics`) |  |
+| `komira_aws_route53` | — | (`komira-ai/aws_route53`) |  |
+| `komira_aws_s3` | — | (`komira-ai/aws_s3`) |  |
+| `komira_aws_scheduler` | — | (`komira-ai/aws_scheduler`) |  |
+| `komira_aws_secret_store` | — | (`komira-ai/aws_secret_store`) |  |
+| `komira_aws_secretsmanager` | — | (`komira-ai/aws_secretsmanager`) |  |
+| `komira_aws_ses` | — | (`komira-ai/aws_ses`) |  |
+| `komira_aws_sesv2` | — | (`komira-ai/aws_sesv2`) |  |
+| `komira_aws_sns` | — | (`komira-ai/aws_sns`) |  |
+| `komira_aws_sqs` | — | (`komira-ai/aws_sqs`) |  |
 | `komira_awslc` | 0.1.344 | `komira-ai/awslc` |  |
+| `komira_azure_blob` | — | (`komira-ai/azure_blob`) |  |
+| `komira_azure_core` | — | (`komira-ai/azure_core`) |  |
 | `komira_batch_eval` | claim | (`komira-ai/batch_eval`) |  |
 | `komira_bench` | 0.1.344 | `komira-ai/bench` |  |
+| `komira_bench_corpus` | — | (`komira-ai/bench_corpus`) |  |
 | `komira_bench_data` | claim | (`komira-ai/bench_data`) |  |
 | `komira_bench_duckdb` | claim | (`komira-ai/bench_duckdb`) |  |
+| `komira_bench_q6_phases` | — | (`komira-ai/bench_q6_phases`) |  |
 | `komira_bench_report` | 0.1.344 | `komira-ai/bench_report` |  |
+| `komira_bench_runner` | — | (`komira-ai/bench_runner`) |  |
+| `komira_broker` | — | (`komira-ai/broker`) |  |
+| `komira_broker_compaction` | — | (`komira-ai/broker_compaction`) |  |
+| `komira_broker_coordinator` | — | (`komira-ai/broker_coordinator`) |  |
 | `komira_broker_proto` | 0.1.344 | `komira-ai/broker_proto` |  |
-| `komira_buffer` | 0.1.344 | `komira-ai/buffer` | a std module in older Mojo (12.2) |
+| `komira_buffer` | 0.1.344 | `komira-ai/byte_buffer` | renamed by decision; not a module of Mojo 1.0's std (12.2) |
 | `komira_bump_arena` | 0.1.344 | `komira-ai/bump_arena` |  |
-| `komira_calendar` | 0.1.344 | `komira-ai/calendar` | Python stdlib name |
+| `komira_calendar` | 0.1.344 | `komira-ai/calendar` |  |
 | `komira_calendar_ics` | 0.1.344 | `komira-ai/calendar_ics` |  |
 | `komira_calendar_proto` | 0.1.344 | `komira-ai/calendar_proto` |  |
+| `komira_calendar_store` | — | (`komira-ai/calendar_store`) |  |
+| `komira_cdc_ingest` | — | (`komira-ai/cdc_ingest`) |  |
 | `komira_chat_proto` | 0.1.344 | `komira-ai/chat_proto` |  |
+| `komira_chat_store` | — | (`komira-ai/chat_store`) |  |
+| `komira_chunk` | — | (`komira-ai/chunk`) |  |
 | `komira_clock` | 0.1.344 | `komira-ai/clock` |  |
 | `komira_codeworks_api` | 0.1.344 | `komira-ai/codeworks_api` |  |
-| `komira_collections` | 0.1.344 | `komira-ai/collections` | also `std.collections`; Python stdlib name (12.2) |
+| `komira_collections` | 0.1.344 | `komira-ai/containers` | `std.collections` (12.2) |
 | `komira_column_format` | claim | (`komira-ai/column_format`) |  |
 | `komira_column_kernels` | claim | (`komira-ai/column_kernels`) |  |
-| `komira_compression` | 0.1.344 | `komira-ai/compression` | Python stdlib name |
+| `komira_comms_index` | — | (`komira-ai/comms_index`) |  |
+| `komira_compression` | 0.1.344 | `komira-ai/compression` |  |
+| `komira_connect` | — | (`komira-ai/connect`) |  |
+| `komira_contacts` | — | (`komira-ai/contacts`) |  |
 | `komira_contacts_proto` | 0.1.344 | `komira-ai/contacts_proto` |  |
 | `komira_content_line` | 0.1.344 | `komira-ai/content_line` |  |
 | `komira_counters` | 0.1.344 | `komira-ai/counters` |  |
+| `komira_crm` | — | (`komira-ai/crm`) |  |
 | `komira_crm_proto` | 0.1.344 | `komira-ai/crm_proto` |  |
 | `komira_crypto` | 0.1.344 | `komira-ai/crypto` |  |
-| `komira_csv` | claim | (`komira-ai/csv`) | Python stdlib name |
-| `komira_datetime` | 0.1.344 | `komira-ai/datetime` | Python stdlib name |
+| `komira_csv` | claim | (`komira-ai/csv`) |  |
+| `komira_datetime` | 0.1.344 | `komira-ai/datetime` |  |
+| `komira_db` | — | (`komira-ai/db`) |  |
+| `komira_db_postgres` | — | (`komira-ai/db_postgres`) |  |
+| `komira_db_sqlite` | — | (`komira-ai/db_sqlite`) |  |
+| `komira_decimal_literal` | — | (`komira-ai/decimal_literal`) |  |
+| `komira_dispatch_agg_exec` | — | (`komira-ai/dispatch_agg_exec`) |  |
+| `komira_dispatch_agg_folds` | — | (`komira-ai/dispatch_agg_folds`) |  |
+| `komira_dispatch_join_kernels` | — | (`komira-ai/dispatch_join_kernels`) |  |
+| `komira_dispatch_project` | — | (`komira-ai/dispatch_project`) |  |
+| `komira_dispatch_scan` | — | (`komira-ai/dispatch_scan`) |  |
+| `komira_dispatch_sources` | — | (`komira-ai/dispatch_sources`) |  |
 | `komira_dynamic_filter` | 0.1.344 | `komira-ai/dynamic_filter` |  |
 | `komira_encoding` | 0.1.344 | `komira-ai/encoding` |  |
 | `komira_engine_runtime` | claim | (`komira-ai/engine_runtime`) |  |
+| `komira_eval` | — | (`komira-ai/eval`) |  |
 | `komira_exec_types` | claim | (`komira-ai/exec_types`) |  |
 | `komira_expr` | claim | (`komira-ai/expr`) |  |
+| `komira_flight` | — | (`komira-ai/flight`) |  |
+| `komira_flight_server` | — | (`komira-ai/flight_server`) |  |
 | `komira_fork_join` | 0.1.344 | `komira-ai/fork_join` |  |
 | `komira_fs` | claim | (`komira-ai/fs`) |  |
-| `komira_hash` | 0.1.344 | `komira-ai/hashing` | `hash` is a builtin (12.2) |
-| `komira_host` | 0.1.344 | `komira-ai/host` |  |
+| `komira_gcp_apigateway` | — | (`komira-ai/gcp_apigateway`) |  |
+| `komira_gcp_artifactregistry` | — | (`komira-ai/gcp_artifactregistry`) |  |
+| `komira_gcp_cloudresourcemanager` | — | (`komira-ai/gcp_cloudresourcemanager`) |  |
+| `komira_gcp_cloudscheduler` | — | (`komira-ai/gcp_cloudscheduler`) |  |
+| `komira_gcp_compute` | — | (`komira-ai/gcp_compute`) |  |
+| `komira_gcp_core` | — | (`komira-ai/gcp_core`) |  |
+| `komira_gcp_fcm` | — | (`komira-ai/gcp_fcm`) |  |
+| `komira_gcp_firestore` | — | (`komira-ai/gcp_firestore`) |  |
+| `komira_gcp_firestore_db` | — | (`komira-ai/gcp_firestore_db`) |  |
+| `komira_gcp_iam` | — | (`komira-ai/gcp_iam`) |  |
+| `komira_gcp_logging` | — | (`komira-ai/gcp_logging`) |  |
+| `komira_gcp_monitoring` | — | (`komira-ai/gcp_monitoring`) |  |
+| `komira_gcp_monitoring_client` | — | (`komira-ai/gcp_monitoring_client`) |  |
+| `komira_gcp_run` | — | (`komira-ai/gcp_run`) |  |
+| `komira_gcp_secret_store` | — | (`komira-ai/gcp_secret_store`) |  |
+| `komira_gcp_secretmanager` | — | (`komira-ai/gcp_secretmanager`) |  |
+| `komira_gcp_serviceusage` | — | (`komira-ai/gcp_serviceusage`) |  |
+| `komira_gcp_storage` | — | (`komira-ai/gcp_storage`) |  |
+| `komira_gcp_wif` | — | (`komira-ai/gcp_wif`) |  |
+| `komira_git` | — | (`komira-ai/git`) |  |
+| `komira_group_ratchet` | — | (`komira-ai/group_ratchet`) |  |
+| `komira_grpc` | — | (`komira-ai/grpc`) |  |
+| `komira_hash` | 0.1.344 | `komira-ai/hashing` | `hash` is a Mojo builtin; `std.hashlib.hash` (12.2) |
+| `komira_host` | 0.1.344 | `komira-ai/host_probe` | `std.gpu.host` (12.2) |
 | `komira_host_profile` | claim | (`komira-ai/host_profile`) |  |
+| `komira_http_auth` | — | (`komira-ai/http_auth`) |  |
+| `komira_http_client` | — | (`komira-ai/http_client`) |  |
+| `komira_http_core` | — | (`komira-ai/http_core`) |  |
+| `komira_http_server` | — | (`komira-ai/http_server`) |  |
+| `komira_iceberg` | — | (`komira-ai/iceberg`) |  |
+| `komira_iceberg_catalog` | — | (`komira-ai/iceberg_catalog`) |  |
+| `komira_imap_server` | — | (`komira-ai/imap_server`) |  |
 | `komira_job_report_proto` | 0.1.344 | `komira-ai/job_report_proto` |  |
+| `komira_job_supervisor` | — | (`komira-ai/job_supervisor`) |  |
 | `komira_join_assembly` | claim | (`komira-ai/join_assembly`) |  |
-| `komira_json` | 0.1.344 | `komira-ai/json` | Python stdlib name |
+| `komira_jose` | — | (`komira-ai/jose`) |  |
+| `komira_json` | 0.1.344 | `komira-ai/json` |  |
 | `komira_json_index` | claim | (`komira-ai/json_index`) |  |
 | `komira_jsonl` | claim | (`komira-ai/jsonl`) |  |
+| `komira_jwks` | — | (`komira-ai/jwks`) |  |
+| `komira_kafka_broker` | — | (`komira-ai/kafka_broker`) |  |
 | `komira_kafka_server` | 0.1.344 | `komira-ai/kafka_server` |  |
 | `komira_kernels` | claim | (`komira-ai/kernels`) |  |
+| `komira_kg` | — | (`komira-ai/kg`) |  |
+| `komira_kg_capture` | — | (`komira-ai/kg_capture`) |  |
+| `komira_kg_code` | — | (`komira-ai/kg_code`) |  |
+| `komira_kg_enrich` | — | (`komira-ai/kg_enrich`) |  |
+| `komira_kg_format` | — | (`komira-ai/kg_format`) |  |
+| `komira_kg_llm` | — | (`komira-ai/kg_llm`) |  |
 | `komira_kg_mode` | 0.1.344 | `komira-ai/kg_mode` |  |
+| `komira_kg_sources` | — | (`komira-ai/kg_sources`) |  |
 | `komira_kg_spec` | 0.1.344 | `komira-ai/kg_spec` |  |
 | `komira_libc` | 0.1.344 | `komira-ai/libc` |  |
 | `komira_log` | 0.1.344 | `komira-ai/log` |  |
+| `komira_log_index` | — | (`komira-ai/log_index`) |  |
+| `komira_log_query` | — | (`komira-ai/log_query`) |  |
 | `komira_lowering` | claim | (`komira-ai/lowering`) |  |
+| `komira_lowering_rules` | — | (`komira-ai/lowering_rules`) |  |
 | `komira_lz4` | 0.1.344 | `komira-ai/lz4` |  |
 | `komira_mail_address` | 0.1.344 | `komira-ai/mail_address` |  |
+| `komira_mail_auth` | — | (`komira-ai/mail_auth`) |  |
 | `komira_mail_message` | 0.1.344 | `komira-ai/mail_message` |  |
+| `komira_mail_store` | — | (`komira-ai/mail_store`) |  |
+| `komira_mail_tls` | — | (`komira-ai/mail_tls`) |  |
 | `komira_managed_mail_proto` | 0.1.344 | `komira-ai/managed_mail_proto` |  |
 | `komira_mcp_server` | 0.1.344 | `komira-ai/mcp_server` |  |
 | `komira_metrics` | 0.1.344 | `komira-ai/metrics` |  |
+| `komira_metrics_reader` | — | (`komira-ai/metrics_reader`) |  |
 | `komira_morsel` | claim | (`komira-ai/morsel`) |  |
 | `komira_name_registry` | 0.1.344 | `komira-ai/name_registry` |  |
+| `komira_net` | — | (`komira-ai/net`) |  |
+| `komira_oauth` | — | (`komira-ai/oauth`) |  |
 | `komira_objectstore` | claim | (`komira-ai/objectstore`) |  |
+| `komira_objectstore_gcs` | — | (`komira-ai/objectstore_gcs`) |  |
+| `komira_objectstore_s3` | — | (`komira-ai/objectstore_s3`) |  |
+| `komira_oci` | — | (`komira-ai/oci`) |  |
 | `komira_op_agg_distinct` | claim | (`komira-ai/op_agg_distinct`) |  |
 | `komira_op_agg_hash` | claim | (`komira-ai/op_agg_hash`) |  |
 | `komira_op_agg_row_api` | claim | (`komira-ai/op_agg_row_api`) |  |
 | `komira_op_agg_slab` | claim | (`komira-ai/op_agg_slab`) |  |
+| `komira_op_agg_stage` | — | (`komira-ai/op_agg_stage`) |  |
 | `komira_op_agg_state` | claim | (`komira-ai/op_agg_state`) |  |
 | `komira_op_asof` | claim | (`komira-ai/op_asof`) |  |
+| `komira_op_fused_kernels` | — | (`komira-ai/op_fused_kernels`) |  |
 | `komira_op_join_build` | claim | (`komira-ai/op_join_build`) |  |
 | `komira_op_join_probe` | claim | (`komira-ai/op_join_probe`) |  |
+| `komira_op_join_sinks` | — | (`komira-ai/op_join_sinks`) |  |
 | `komira_op_join_stage` | claim | (`komira-ai/op_join_stage`) |  |
 | `komira_op_sort` | claim | (`komira-ai/op_sort`) |  |
 | `komira_op_sources` | claim | (`komira-ai/op_sources`) |  |
+| `komira_op_spill_rows` | — | (`komira-ai/op_spill_rows`) |  |
 | `komira_op_typed_source_api` | claim | (`komira-ai/op_typed_source_api`) |  |
 | `komira_op_window` | claim | (`komira-ai/op_window`) |  |
 | `komira_operator_api` | claim | (`komira-ai/operator_api`) |  |
+| `komira_optimized_plan_header` | — | (`komira-ai/optimized_plan_header`) |  |
+| `komira_optimizer` | — | (`komira-ai/optimizer`) |  |
+| `komira_orc` | — | (`komira-ai/orc`) |  |
 | `komira_parquet` | claim | (`komira-ai/parquet`) |  |
 | `komira_parquet_api` | 0.1.344 | `komira-ai/parquet_api` |  |
 | `komira_parquet_codec` | claim | (`komira-ai/parquet_codec`) |  |
+| `komira_parquet_footers` | — | (`komira-ai/parquet_footers`) |  |
 | `komira_parquet_scan` | claim | (`komira-ai/parquet_scan`) |  |
+| `komira_parquet_writer` | — | (`komira-ai/parquet_writer`) |  |
+| `komira_phase_timers` | — | (`komira-ai/phase_timers`) |  |
 | `komira_physical_plan` | claim | (`komira-ai/physical_plan`) |  |
+| `komira_pipeline_exec` | — | (`komira-ai/pipeline_exec`) |  |
 | `komira_plan_expr` | claim | (`komira-ai/plan_expr`) |  |
 | `komira_plan_ir` | claim | (`komira-ai/plan_ir`) |  |
 | `komira_plan_proto` | 0.1.344 | `komira-ai/plan_proto` |  |
 | `komira_plan_stats` | claim | (`komira-ai/plan_stats`) |  |
 | `komira_plan_wire` | claim | (`komira-ai/plan_wire`) |  |
+| `komira_pplan_wire` | — | (`komira-ai/pplan_wire`) |  |
 | `komira_proto_codec` | 0.1.344 | `komira-ai/proto_codec` |  |
 | `komira_protobuf` | 0.1.344 | `komira-ai/protobuf` |  |
+| `komira_resource_gate` | — | (`komira-ai/resource_gate`) |  |
 | `komira_resources` | 0.1.344 | `komira-ai/resources` |  |
 | `komira_retry` | 0.1.344 | `komira-ai/retry` |  |
 | `komira_row_format` | claim | (`komira-ai/row_format`) |  |
@@ -519,74 +690,115 @@ deleted. The `hash` and `async` rows carry the proposed renames of 12.2.
 | `komira_runtime_paths` | 0.1.344 | `komira-ai/runtime_paths` |  |
 | `komira_scalar_arithmetic` | 0.1.344 | `komira-ai/scalar_arithmetic` |  |
 | `komira_scan_planning` | claim | (`komira-ai/scan_planning`) |  |
+| `komira_scan_resolver` | — | (`komira-ai/scan_resolver`) |  |
 | `komira_scan_source` | claim | (`komira-ai/scan_source`) |  |
 | `komira_sdk` | claim | (`komira-ai/sdk`) |  |
 | `komira_sdk_exec` | claim | (`komira-ai/sdk_exec`) |  |
+| `komira_search` | — | (`komira-ai/search`) |  |
+| `komira_search_catalog` | — | (`komira-ai/search_catalog`) |  |
+| `komira_search_compaction` | — | (`komira-ai/search_compaction`) |  |
+| `komira_search_http` | — | (`komira-ai/search_http`) |  |
+| `komira_search_scan` | — | (`komira-ai/search_scan`) |  |
+| `komira_secret_env` | — | (`komira-ai/secret_env`) |  |
 | `komira_secret_registry` | claim | (`komira-ai/secret_registry`) |  |
 | `komira_secret_store` | claim | (`komira-ai/secret_store`) |  |
+| `komira_secrets` | — | (`komira-ai/secrets`) |  |
+| `komira_secrets_azure` | — | (`komira-ai/secrets_azure`) |  |
+| `komira_secrets_conjur` | — | (`komira-ai/secrets_conjur`) |  |
+| `komira_secrets_keychain` | — | (`komira-ai/secrets_keychain`) |  |
 | `komira_shuffle` | claim | (`komira-ai/shuffle`) |  |
-| `komira_simd` | 0.1.344 | `komira-ai/simd` |  |
+| `komira_shuffle_streaming` | — | (`komira-ai/shuffle_streaming`) |  |
+| `komira_simd` | 0.1.344 | `komira-ai/simd_ops` | `std.builtin.simd` (12.2) |
+| `komira_smtp_client` | — | (`komira-ai/smtp_client`) |  |
+| `komira_smtp_server` | — | (`komira-ai/smtp_server`) |  |
 | `komira_snapshotter` | 0.1.344 | `komira-ai/snapshotter` |  |
+| `komira_so` | — | (`komira-ai/so`) |  |
+| `komira_source_url` | — | (`komira-ai/source_url`) |  |
 | `komira_spsc_ring` | 0.1.344 | `komira-ai/spsc_ring` |  |
 | `komira_sql` | claim | (`komira-ai/sql`) |  |
 | `komira_supervisor` | claim | (`komira-ai/supervisor`) |  |
 | `komira_supervisor_proto` | 0.1.344 | `komira-ai/supervisor_proto` |  |
 | `komira_sync` | 0.1.344 | `komira-ai/sync` |  |
+| `komira_table_store` | — | (`komira-ai/table_store`) |  |
+| `komira_telemetry_read` | — | (`komira-ai/telemetry_read`) |  |
+| `komira_telemetry_store` | — | (`komira-ai/telemetry_store`) |  |
 | `komira_test_run_id` | 0.1.344 | `komira-ai/test_run_id` |  |
 | `komira_test_verdict` | 0.1.344 | `komira-ai/test_verdict` |  |
 | `komira_textproto` | 0.1.344 | `komira-ai/textproto` |  |
-| `komira_trace` | 0.1.344 | `komira-ai/trace` | Python stdlib name |
+| `komira_trace` | 0.1.344 | `komira-ai/trace` |  |
 | `komira_udf` | claim | (`komira-ai/udf`) |  |
-| `komira_uuid` | 0.1.344 | `komira-ai/uuid` | Python stdlib name |
+| `komira_uuid` | 0.1.344 | `komira-ai/uuid` |  |
 | `komira_validation_run` | 0.1.344 | `komira-ai/validation_run` |  |
 | `komira_vcard` | 0.1.344 | `komira-ai/vcard` |  |
+| `komira_viewport` | — | (`komira-ai/viewport`) |  |
+| `komira_webpush` | — | (`komira-ai/webpush`) |  |
 | `komira_wkt` | 0.1.344 | `komira-ai/wkt` |  |
-| `komira_xml` | 0.1.344 | `komira-ai/xml` | Python stdlib name |
-| `komira_zlib` | 0.1.344 | `komira-ai/zlib` | Python stdlib name |
+| `komira_xml` | 0.1.344 | `komira-ai/xml` |  |
+| `komira_zlib` | 0.1.344 | `komira-ai/zlib` |  |
 
 ### 12.2 Clashes
 
-Checked for every new name against: the other new names and komira's top-level `src/` directories (no duplicate: the
-only top-level directory without the prefix is `tests`); mopm's keyword, builtin and reserved lists
-(`src/core/manifest.zig`, `service/api/src/publish/claim.ts`); the Mojo standard library modules komira imports
-(`git grep -h -oE '\b(from|import)\s+std\.[a-z_]+' -- '*.mojo'` in komira: 18 modules, among them `collections`); and the
-Python standard library module names.
+Each new name was checked against everything below; the checks are reproducible from the mapping file.
 
-- `komira_hash`: `hash` is a Mojo builtin, which mopm refuses as a name. Proposed: `komira-ai/hashing`.
-- `komira_async`: `async` is a Mojo keyword (`import async` does not parse). Not published today; when it is,
-  proposed `komira-ai/async_rt`.
-- `komira-ai/collections` and `komira-ai/buffer`: the standard library has `std.collections` (komira imports it) and
-  has had a `buffer` module (not checked for Mojo 1.0). Since Mojo 1.0 imports the standard library as
-  `std.<module>`, `import collections` is legal and shadows nothing, but a reader may take it for the standard one.
-  Proposed: keep them.
-- `json`, `csv`, `uuid`, `datetime`, `calendar`, `compression`, `collections`, `xml`, `zlib`, `trace`: also Python
-  standard module names. Mojo's `import json` and `Python.import_module("json")` never meet; `zlib` also names a conda
-  library, a separate table (section 3). Proposed: keep them.
+- The Mojo standard library at any depth, not only its top-level modules: every directory and file name under
+  `mojo/stdlib/std/` of Mojo 1.0.0 (section 1.1), 173 names once those starting with `_` are left out.
+- mopm's keyword, builtin and reserved lists (`src/core/manifest.zig` `keywords` and `builtins`,
+  `service/api/src/publish/claim.ts` `RESERVED_NAMES`), and the name grammar `^[a-z][a-z0-9_]{1,63}$`.
+- The other 259 new names (no duplicate), and komira's top-level `src/` directory not in the mapping (`tests`).
+- Every bare top-level import in komira's `.mojo` files that is not `std` or `komira_*`
+  (`git grep -h -oE '^\s*(from|import)\s+[a-z_][a-z0-9_]*' main -- '*.mojo'`): the one match, `chunk`, is a line of a
+  docstring in `komira_json_index`, not an import.
+
+Dropping the prefix fails these checks for five directories; a sixth is renamed by decision:
+
+| old name | prefix dropped | clashes with | new name |
+|---|---|---|---|
+| `komira_async` | `async` | a Mojo keyword (`import async` does not parse) | `async_rt` |
+| `komira_collections` | `collections` | `std.collections`, a top-level module | `containers` |
+| `komira_hash` | `hash` | a Mojo builtin, and `std.hashlib.hash` | `hashing` |
+| `komira_host` | `host` | `std.gpu.host` | `host_probe` |
+| `komira_simd` | `simd` | `std.builtin.simd` | `simd_ops` |
+| `komira_buffer` | `buffer` | nothing in Mojo 1.0.0's standard library; older Mojo had a `buffer` module | `byte_buffer` |
+
+`komira_buffer` is renamed because the CEO's amendment names it, and keeping `buffer` would read as the standard
+library's former module. The new names describe the packages: `containers` (a slab, an inline value, a variadic pack,
+a HyperLogLog sketch), `hashing` (FNV-1a), `host_probe` (CPU, memory and hugepage probes), `simd_ops` (SIMD byte and
+bit primitives), `async_rt` (the async runtime), `byte_buffer` (aligned, shared and mapped byte buffers).
+
+Python standard module names (`json`, `csv`, `uuid`, `datetime`, `calendar`, `compression`, `xml`, `zlib`, `trace`)
+are kept: Mojo's `import json` and `Python.import_module("json")` never meet. `zlib` also names a conda library, a
+separate table (section 3).
 
 ### 12.3 The change to komira's imports
 
-The import name is the directory name, so dropping the prefix renames each package's `src/komira_<x>` directory and
-every import of it. Measured on the same clone (7436 `.mojo` files: `git ls-files '*.mojo' | wc -l`); `names.txt` is
-the first column of the 66 rows of 12.1 whose new name has no parentheses, and `P` is
-`$(paste -sd'|' names.txt)`:
+The import name is the directory name, so the rename moves each `src/komira_<x>` directory to `src/<new name>` and
+rewrites every import of it. Measured on komira `main` the same day (7436 `.mojo` files:
+`git ls-tree -r --name-only main | grep -c '\.mojo$'`); `P` is `$(cut -f1 docs/design/namespaces-komira-map.tsv |
+paste -sd'|')`, all 260 old names, and `P66` the same for the 66 published ones:
 
 | query (measured) | lines | files |
 |---|---|---|
-| `git grep -E "^\s*(from\|import)\s+($P)\b" -- '*.mojo'` | 5958 | 3153 |
-| `git grep -E '^\s*(from\|import)\s+komira_' -- '*.mojo'` (every `komira_*` package) | 30830 | 5839 |
-| `git grep -w -E "($P)"` (every file: BUCK, `.bzl`, docs, manifests, sources) | 25844 | 4389 |
-| the same, `-- '*BUCK' '*.bzl'` only | 14684 | |
-| `ls src \| grep -c '^komira_'` (top-level directories) | 260 | |
+| `git grep -E "^\s*(from\|import)\s+($P)\b" main -- '*.mojo'` | 30308 | 5707 |
+| `git grep -E '^\s*(from\|import)\s+komira_' main -- '*.mojo'` (every `komira_` module) | 30830 | |
+| `git grep -w -E "($P)" main` (every file: BUCK, `.bzl`, docs, manifests, sources) | 63361 | 7638 |
+| the same, `-- '*BUCK' '*.bzl'` only | 17620 | |
+| `git grep -E "^\s*(from\|import)\s+($P66)\b" main -- '*.mojo'` (the 66 published only, for comparison) | 5958 | |
+| `git grep -w -E "($P66)" main` (the 66 published only, for comparison) | 25844 | 4389 |
+
+The 522 import lines in the second row and not the first (30830 - 30308) import 60 other `komira_*` modules that are
+not top-level directories: packages nested under `src/tests/` (conformance and end-to-end suites), generated fixtures
+under `tools/`, and modules inside a package (`komira_gcp_firestore_v1` in `src/komira_gcp_firestore`). They are not in
+the mapping and keep their names; the rename tool matches whole words (`_` is a word character, so
+`komira_gcp_firestore` never matches inside `komira_gcp_firestore_v1`), and none of their names without the prefix is a
+new name.
 
 Proposed landing, in komira, not here: one mechanical pull request made by a rename tool (a Rust binary with its own
-tests, per komira's rules) that renames directories and rewrites imports, BUCK targets and `mopm.toml` from a checked-in
-mapping, the 66 rows of 12.1 with `hash` renamed. Only the 66 published packages are renamed: the other 194
-`komira_*` directories are not mopm packages and keep their names until a later decision. That first change touches
-25844 lines in 4389 files (measured, third row), of which 5958 import lines (first row), against 30830 import lines for
-all 260 (inferred share: about a fifth). Reviewers check it by running the tool again. Each package's `mopm.toml` gets
-`name = "komira-ai/<x>"` and quoted dependency keys in the same pull request, and the release workflow publishes
-through the `komira-ai` trusted publisher. It lands after a mopm with task C4 is released, because a mopm without
-namespaces cannot read the new manifests.
+tests, per komira's rules) that reads `docs/design/namespaces-komira-map.tsv` from mopm and renames directories and
+rewrites imports, BUCK targets and `mopm.toml` from it. It renames all 260 directories in one pull request: 63361 lines
+in 7638 files (measured, third row), of which 30308 import lines (first row). Reviewers check it by running the tool
+again. Each of the 66 published packages' `mopm.toml` gets `name = "komira-ai/<new name>"` and quoted dependency keys
+in the same pull request, and the release workflow publishes through the `komira-ai` trusted publisher. It lands after
+a mopm with task ns-C4 is released, because a mopm without namespaces cannot read the new manifests.
 
 ### 12.4 The deletion: a held tool
 
@@ -599,6 +811,12 @@ group tool `ops/group-ops-bin.ts`):
   owners and trusted publishers, the channel objects under each subdir at the root (`<subdir>/mojo-<name>-*.conda`) and
   the version 1 index files. The dry run prints them per name, the totals, and a digest of the whole listing. Each stage
   has its own list.
+- Kept: a name that starts with `kci_` is never on the work list. The tool skips it at listing time, before the digest,
+  so no later step can reach it: its package, version, owner and publisher rows, its version 1 index file, its root
+  repodata entries and its channel objects stay as they are. The dry run prints the kept names in their own section,
+  with their count, and the digest covers that section too, so a `kci_*` package created or published after the dry run
+  also stops `--apply`. The rule is the prefix, fixed in the tool, not a list; on prod today it keeps the 16 `kci_*`
+  names of 12.1.
 - `--apply <digest>` lists again and refuses unless the digest is the dry run's, so a version published or a package
   created after the dry run stops it. It also refuses unless `config.json` serves index version 2 and `/api/v1`
   refuses flat creation.
@@ -606,6 +824,7 @@ group tool `ops/group-ops-bin.ts`):
   take it out of the version 1 index and the root repodata; delete its channel objects; delete its version, owner and
   publisher rows; delete its package row last. A run that stops part way leaves the package row as the work list, and a
   second run also lists by bucket prefix, so it finishes what the first left; a run with nothing left does nothing.
+  Rewriting the root repodata keeps the `kci_*` entries.
 - It runs as the takedown role (on beta and gamma, the takedown or the cleanup role), the only roles the tables and the
   channel bucket let delete. The bucket is versioned and has no expiry rule for package files, so the deleted `.conda`
   files stay restorable by operators as non-current versions; purging them is a separate decision. The tables have
@@ -629,15 +848,21 @@ Registry:
   down (`unavailable`, never a stale pass).
 - ns-R3 (L) `/api/v2`: routes, `PUT` create, `/me`, tokens, namespace publishers (a namespace key on the publisher
   store; `ci-publishers.ts` accepts a namespace publisher without `acts_for` on prod), new errors; `/api/v1` stops
-  creating. Contract examples for every v2 operation in `tests/contract/`.
+  creating; the standard-library refusal of 1.1 at `PUT` (`name_reserved`), from the checked-in lists, with a test
+  that the service's list equals the union of `toolchain/mojo-<version>.std-modules.txt`. Contract examples for every
+  v2 operation in `tests/contract/`, among them a refused `collections`.
 - ns-R4 (M) Index v2 and the per-namespace channel writer: index paths, records, per-namespace repodata, conda names,
-  `config.json` keys, empty root repodata. Infra: the App's secret beside the OAuth secret.
+  `config.json` keys, the root repodata with only the kept `kci_*` entries. Infra: the App's secret beside the OAuth
+  secret.
 
 Client:
 
 - ns-C5 (S) The fake registry (`registry/fake`) serves v2 and namespaces. First, since ns-C2 to ns-C4 test against it.
 - ns-C1 (M) Names: full-name grammar in the manifest, `nameProblem`, refusal messages, the library directory rule;
-  path and workspace matching by full name. Manifest goldens in `tests/manifest/`; no registry needed.
+  path and workspace matching by full name; the standard-library rule of 1.1 (refused as `[package] name`, a warning
+  as a dependency key) and `toolchain/mojo-1.0.0.std-modules.txt`, with a test that each version in
+  `toolchain/versions.txt` has its file and that the client's list is their union. Manifest goldens in
+  `tests/manifest/`: `collections` refused, `containers` accepted, a dependency named `os` warned; no registry needed.
 - ns-C2 (M) The import-name rule at lock, lock read and unit graph, with dependency paths. Tests: two registry
   packages; a path package against a registry package; the root against a dependency; a dev-dependency path; three
   packages; two clashing import names at once.
@@ -660,8 +885,11 @@ Migration:
 - ns-M0 (operator) Register the GitHub App; install it on `komira-ai`; an admin creates the `komira-ai` namespace;
   the `PROD_CI_PUBLISHERS` entry moves to `komira-ai`. These need the organization owner's and the operator's hands.
 - ns-M1 (M) The held deletion tool (12.4) and its tests against fake stores: the order, the digest refusal, a run
-  stopped part way and finished by the next.
-- ns-M2 (komira) The rename tool and the rename pull request (12.3).
+  stopped part way and finished by the next; `kci_*` names listed as kept and left untouched in every store (rows,
+  version 1 index, root repodata, channel objects); a `kci_*` package published after the dry run changes the digest.
+- ns-M2 (komira) The rename tool and the rename pull request (12.3), for all 260 `komira_*` directories, reading
+  `docs/design/namespaces-komira-map.tsv`. The tool refuses a mapping that is not 260 sorted, unique lines of two
+  fields, or whose new names fail the checks of 12.2.
 - ns-M3 Run ns-M1: beta, gamma, then prod, each after its dry run is read.
 
 Order: ns-R1, ns-C5 and ns-C1 start at once. ns-R2 after ns-R1; ns-R3 after ns-R2; ns-R4 after ns-R3. ns-C2 after
@@ -684,29 +912,52 @@ Choices this design makes that the settled points leave open, one line of reason
 6. No per-package owners in v2: the namespace is the owner; one way to share a package (an organization).
 7. Creation is `PUT` alone, which `mopm publish` sends itself; the OIDC exchange only mints a token.
 8. Claim expiry and the similarity check dropped: both guarded a shared flat namespace.
-9. The registry refuses keywords, builtins and today's reserved names as import names: a published package must be
-   importable, and `mojo`, `max`, `modular` stay unshadowed.
+9. The registry refuses keywords, builtins, today's reserved names and the standard library's top-level modules as
+   import names: a published package must be importable, and `mojo`, `max`, `modular` and `std.*` stay unshadowed.
 10. The library directory must be the import name: otherwise the import-name rule would not be the name Mojo uses.
 11. Conda name `mojo-<namespace>.<name>`: a `depends` names one package across channels (question 1).
 12. Index sharded by namespace: top directories stay small as accounts grow.
 13. Lock 3 has version 2's shape for every project: one new shape, not two.
 14. The import-name check covers dev-dependencies and the root: one lock and one test build hold them all.
 15. Every format gets a new version instead of an optional field: old readers fail loudly, never misread a name.
-16. The flat root keeps empty repodata: a conda client that lists it gets "no package", not a broken channel.
+16. The flat root keeps its repodata, with only the kept `kci_*` packages: a conda client that lists it gets "no
+    package" for a deleted name, not a broken channel.
 17. The proposed spec is a separate file, `spec/proposed/namespaces.md`: `spec/mopm-toml.md` and `spec/channel.md` are
     pages of the public site, which must not show a proposal as the contract.
 18. The deletion tool lists its work from the stage and applies only the digest of its dry run: per-stage data, and no
     surprise between reading and deleting.
-19. komira renames only its 66 published packages first: each renamed package is one a user can see.
-20. The 139 names are listed in full, as asked, although they include the `kci_*` packages: they are public on the
-    registry's package list today.
+19. komira renames all 260 `komira_*` directories in one pull request, from one checked-in mapping: the CEO's
+    amendment; one rename leaves no package half under the old scheme, and a directory published later already has its
+    final name.
+20. The `kci_*` packages are kept: not deleted, not renamed, skipped by the deletion tool by their `kci_` prefix, on the
+    CEO's amendment (their ideas may come back in ucdk). They stay flat names on `/api/v1`, the version 1 index and the
+    root channel, and the 139 names of 12.1 are listed in full because they are public on the registry today.
+21. The standard-library list is read from the pinned `mojo-compiler` package, checked in per Mojo version, and the
+    rule refuses the union over `toolchain/versions.txt`: what mopm installs is what the rule protects, and tests stay
+    offline.
+22. Only top-level modules are refused by the registry and the client (the amendment's rule), but komira's new names
+    avoid every standard-library name at any depth (`host`, `simd`): komira chooses its names once, and a stricter
+    check costs nothing there.
+23. A module added by a later Mojo version is refused for new packages and only warned about in dependency keys: a
+    package published before that version keeps building for its users.
+24. `komira_buffer` is renamed to `byte_buffer` although Mojo 1.0.0's standard library has no `buffer`: the amendment
+    names it, and the name read as the former standard module.
+25. The mapping file holds import names, not full names, and no header: the rename tool rewrites directory names and
+    imports, which are import names; the namespace is `komira-ai` for every line.
 
 ## Questions for the CEO
 
-1. The conda name: `mojo-<namespace>.<name>` (proposed: `depends` is unambiguous across channels), or the shorter
-   `mojo-<name>`, with which pixi's channel priority chooses between two namespaces' `mojo-json`?
-2. `komira_hash` becomes `komira-ai/hashing`, and the future `async` package `komira-ai/async_rt`?
-3. Keep `komira-ai/collections` and `komira-ai/buffer`, which shadow nothing since the standard library is `std.`?
-4. komira renames its 66 published packages first and leaves the other 194 `komira_*` directories for later?
-5. The 16 `kci_*` packages are deleted with no replacement (no source in komira `main`, no dependent outside them):
-   confirmed?
+The five questions of the first version are answered by the CEO's amendment:
+
+1. The conda name stays `mojo-<namespace>.<name>`, one channel per namespace (settled, section 5).
+2. `komira_hash` becomes `komira-ai/hashing`; `async` becomes `komira-ai/async_rt` (12.2).
+3. `komira-ai/collections` and `komira-ai/buffer` are renamed too, and no import name may be a top-level module of
+   the standard library (1.1, 12.2).
+4. All 260 `komira_*` directories are renamed, not only the 66 published (12.1, 12.3).
+5. The 16 `kci_*` packages are not deleted: they are kept as they are, and the deletion tool skips them (12.4).
+
+Open:
+
+1. The new names this design chose where dropping the prefix is not allowed (12.2): `containers` for
+   `komira_collections`, `host_probe` for `komira_host`, `simd_ops` for `komira_simd` and `byte_buffer` for
+   `komira_buffer`. Confirmed, or other names?
