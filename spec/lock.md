@@ -98,6 +98,13 @@ check them on every read. A violation is an error, not a warning.
    a 64 digit lowercase `sha256`, a positive `size` and an https `.conda` `url`.
 9. Each name in a package's `loads` is sorted, appears once, and is an entry of
    `system_libs` for that package's subdir. A path dependency has no `loads`.
+10. The closure the lock pins, with the root project, holds one package per
+    import name (spec/mopm-toml.md, "Rules"). The CLI checks it on every read
+    by `tree`, `sync` and `plan`, and before `lock` writes; the error names each
+    package and its shortest dependency path from the root. While entries are
+    named by import name alone, an entry takes the full name the manifests give
+    it, so two entries never clash with each other; the root, path packages and
+    the names manifests give do.
 
 ## Install and update behaviour (what the lock promises)
 

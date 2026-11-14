@@ -116,8 +116,10 @@ member; `mojo precompile` takes a whole package, so nothing is finer. A
 registry dependency is a `prebuilt` unit: a `.conda` holding a `.mojoc`, fetched
 by url and checked by sha256, never compiled. Workspace members (path
 dependencies at any depth) compile from the tree; each must list `M` in its own
-`mojo`, and each must be below the workspace directory (see "The workspace"). Two libraries of one
-name are refused: a package is imported by name.
+`mojo`, and each must be below the workspace directory (see "The workspace"). Two packages of one
+import name in the closure are refused before anything is read, each named with
+its shortest dependency path from the root (spec/mopm-toml.md, "Rules"): a
+package is imported by its import name.
 
 The prebuilt `natives` of a package are declared inputs. A lock
 entry whose native library has no `sha256` is refused. A static library

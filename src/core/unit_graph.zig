@@ -19,6 +19,7 @@ const manifest = @import("manifest.zig");
 const lock = @import("lock.zig");
 const closure = @import("closure.zig");
 const install_plan = @import("install_plan.zig");
+const import_names = @import("import_names.zig");
 const test_harness = @import("test_harness.zig");
 const resolve = @import("resolve.zig");
 const semver = @import("semver.zig");
@@ -849,6 +850,9 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
     }
     const m = in.m;
     try b.listsMojo("mopm.toml", m);
+    // Mojo imports a package by its import name: two packages of one import name in the closure are refused, each
+    // with its shortest dependency path (import_names.zig).
+    if (try import_names.check(arena, try import_names.ofProject(arena, m, in.members, in.l))) |clash| return refuse(arena, why, "{s}", .{clash});
     const root_id = try b.base(m.package.name, m.package.version);
 
     // The root package's dependency names, in manifest order.

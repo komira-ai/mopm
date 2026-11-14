@@ -530,6 +530,14 @@ zig_test(  # buck-only: tests/contract/replay.py: the fake registry answers the 
     **_TOOLS
 )
 
+zig_test(  # buck-only: mopm lock, tree and sync refuse two packages of one import name (needs the built mopm)
+    name = "import_clash_cli",
+    src = "tests/drivers/import_clash_cli_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {"MOPM": ":mopm"},
+    **_TOOLS
+)
+
 zig_test(  # buck-only: tests/resolve_e2e/run.py: mopm lock, update and tree against the fake registry
     name = "resolve_e2e",
     src = "tests/drivers/resolve_e2e_test.zig",

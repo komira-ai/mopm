@@ -95,6 +95,19 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(fake_tests).step);
 
+    // The import-name refusal of `mopm lock`, `tree` and `sync`, run as a command on temporary projects (no network);
+    // the farm runs the same file as //:import_clash_cli.
+    const import_clash_cli = b.addTest(.{ // native-only
+        .root_source_file = b.path("tests/drivers/import_clash_cli_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_import_clash_cli = b.addRunArtifact(import_clash_cli);
+    run_import_clash_cli.step.dependOn(b.getInstallStep());
+    run_import_clash_cli.has_side_effects = true;
+    run_import_clash_cli.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
+    test_step.dependOn(&run_import_clash_cli.step);
+
     // `zig build test-e2e -Dmojo-env=<environment>` runs the Mojo end-to-end
     // drivers (tests/drivers/test_*_test.zig, the same files Buck2 runs on the
     // farm as //:autolink, //:discovery, //:supervisor and //:flaky) natively,
