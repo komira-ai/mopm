@@ -58,6 +58,28 @@ describe('the user namespace at login', () => {
     expect((await store.getUser(4242))?.handle).toBe('Octo-Cat');
   });
 
+  test('the approved answer names the user namespace the login made, then the one it holds', async () => {
+    const { as, clock } = setup();
+    expect((await as({ id: 4242, login: 'Octo-Cat' })).namespace).toBe('octo-cat');
+    clock.advance(86_400_000);
+    expect((await as({ id: 4242, login: 'Octo-Cat' })).namespace).toBe('octo-cat');
+  });
+
+  test.each([
+    ['linux-64', 'reserved'],
+    ['alice_corp', 'outside the grammar'],
+  ])('the approved answer has no namespace key for a login that is %s (%s)', async (login) => {
+    const { as } = setup();
+    expect(Object.keys(await as({ id: 4242, login }))).toEqual(['status', 'token', 'token_kind', 'expires_at', 'fresh_until', 'handle']);
+  });
+
+  test('the approved answer has no namespace key for a login another account holds', async () => {
+    const { as } = setup();
+    await as({ id: 4242, login: 'octo' });
+    const r = await as({ id: 9999, login: 'octo' });
+    expect(r).not.toHaveProperty('namespace');
+  });
+
   test('a renamed account keeps the old namespace and gains the new one', async () => {
     const { as, namespaces, clock } = setup();
     const first = clock.now().toISOString();
