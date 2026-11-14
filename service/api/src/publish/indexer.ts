@@ -260,7 +260,7 @@ export async function allRecords(registry: Store, view: View, channel?: string |
   return [...(await registry.versionsOf(names, view)).values()].flat().filter((r) => inChannel(r.name, namespace));
 }
 
-/** The empty index of a subdir, as the writer produces it (also what a fresh channel serves before any publish). */
+/** The empty index of a subdir, as the writer produces it in any channel (also what a fresh channel serves before any publish). */
 export const emptyIndex = (subdir: string) => buildRepodata(subdir, []);
 
 /** Create, if absent, the empty repodata of the channel's other subdirs: a channel that has seen one publish has all four. */

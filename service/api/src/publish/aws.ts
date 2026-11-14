@@ -186,7 +186,11 @@ export class S3Presigner implements Presigner {
 
 // --- SQS ------------------------------------------------------------------------------------------------------
 
-/** SendMessage over the SQS JSON protocol (`AmazonSQS.SendMessage`). */
+/** SQS refuses a MessageDeduplicationId over 128 characters. Longer ones (full names run to 104) are sent as a fixed-length digest. */
+export const SQS_ID_MAX = 128;
+export const sqsId = (id: string): string => (id.length <= SQS_ID_MAX ? id : `sha256:${createHash('sha256').update(id).digest('hex')}`);
+
+/** SendMessage over the SQS JSON protocol (`AmazonSQS.SendMessage`). A group id is at most 108 characters (`pkg:<full name>`), inside SQS's 128. */
 export class SqsFifoQueue implements Queue {
   private readonly host: string;
   private readonly http: HttpFn;
@@ -203,7 +207,7 @@ export class SqsFifoQueue implements Queue {
   }
 
   async send(m: QueueMessage): Promise<void> {
-    const body = JSON.stringify({ QueueUrl: this.queueUrl, MessageBody: m.body, MessageGroupId: m.groupId, MessageDeduplicationId: m.dedupId });
+    const body = JSON.stringify({ QueueUrl: this.queueUrl, MessageBody: m.body, MessageGroupId: m.groupId, MessageDeduplicationId: sqsId(m.dedupId) });
     const headers = signRequest({
       method: 'POST',
       host: this.host,

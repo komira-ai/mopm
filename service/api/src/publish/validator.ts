@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { channelFileKey, channelFileUrl } from '../channel-paths';
+import { channelFileKey, channelFileUrl, repodataDirsOf } from '../channel-paths';
 import type { PublishFill } from '../state';
 import type { Store } from '../store';
 import type { AuditEntry, Dep, FileRef, NativeRef } from '../types';
@@ -48,7 +48,7 @@ export class Rejected extends Error {
  *  2. the files are copied into the channel from a second read, checked against the declared sha256 again, with
  *     create-only writes (what is validated is what is published, even if a quarantine object were replaced);
  *  3. the version goes pending -> published (conditional on its revision) carrying what the archives said;
- *  4. the publish moves to `indexing` with the subdirs to rewrite, and one index message per subdir is sent;
+ *  4. the publish moves to `indexing` with the repodata directories to rewrite, and one index message per directory is sent;
  *  5. the quarantine objects are deleted (also done on rejection). A failure here is only logged: the bucket's
  *     lifecycle rule expires quarantine/ after a day.
  *
@@ -236,9 +236,9 @@ export function fillFrom(
   };
 }
 
-/** The version is published: record which subdirs still have to list it, and ask for each to be rewritten. */
+/** The version is published: record which repodata directories still have to list it, and ask for each to be rewritten. */
 async function moveToIndexing(d: ValidatorDeps, rec: PublishRecord): Promise<void> {
-  const subdirs = [...new Set(rec.files.map((f) => f.subdir))].sort();
+  const subdirs = repodataDirsOf(rec.name, rec.files.map((f) => f.subdir));
   const cur = await d.publishes.updatePublish(rec.publish_id, (c) =>
     c.status === 'validating' ? touch(d, { ...c, status: 'indexing', remaining_subdirs: subdirs }) : undefined,
   );
@@ -254,7 +254,7 @@ async function sendIndex(d: ValidatorDeps, rec: PublishRecord): Promise<void> {
   }
   for (const subdir of rec.remaining_subdirs) {
     const msg: IndexMessage = { type: 'index', subdir, publish_id: rec.publish_id };
-    // One group per subdir: its repodata is rewritten by one job at a time.
+    // One group per repodata directory: its repodata is rewritten by one job at a time.
     await d.indexQueue.send({ body: JSON.stringify(msg), groupId: subdir, dedupId: `${rec.publish_id}:${subdir}` });
   }
 }

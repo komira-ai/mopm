@@ -3,7 +3,7 @@ import { buildTakedowns, indexKey, packageRev, TAKEDOWNS_KEY } from '../../src/i
 import { bitmapIndexes } from '../../src/group-store';
 import { Metrics } from '../../src/metrics';
 import { runOps } from '../../src/ops/group-ops';
-import { madeVisible, nextStep, sendStep, stepDedupId, touchedSubdirs } from '../../src/publish/group-chain';
+import { madeVisible, nextStep, sendStep, stepDedupId, touchedDirs } from '../../src/publish/group-chain';
 import { CHAIN_STALL_MS, MAX_RESENDS, sweepGroups } from '../../src/publish/group-sweeper';
 import { parseIndexMessage } from '../../src/publish/indexer';
 import { MemoryQueue } from '../../src/publish/memory';
@@ -217,7 +217,7 @@ describe.each(RIGS)('the chain after a commit: %s', (_label, make) => {
       expect(ran.map(label)).toEqual(STEPS);
       const h = await header(s);
       const members = (await rig.store.getGroupMembers(s.gid))!;
-      expect(touchedSubdirs(members)).toEqual(['linux-64', 'noarch']);
+      expect(touchedDirs(members)).toEqual(['linux-64', 'noarch']);
       expect(nextStep(h, members)).toBeUndefined(); // visible: nothing is next
     });
   });

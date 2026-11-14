@@ -7,7 +7,8 @@ import { checkCollisions, classify } from './layout';
 import type { Role } from './layout';
 import { DEFAULT_LIMITS } from './limits';
 import type { Limits } from './limits';
-import { checkDepends, checkIndex, checkMopm, checkNativeNames, nativeDependsOf, parseJsonObject, sameVersion } from './metadata';
+import { condaNameOf, splitFullName } from '../names';
+import { checkDepends, checkIndex, checkMopm, checkNativeNames, FULL_NAME_SCHEMA_VERSION, METADATA_SCHEMA_VERSION, nativeDependsOf, parseJsonObject, sameVersion } from './metadata';
 import type { Mopm } from './metadata';
 import { readTar } from './tar';
 import type { Budget, TarEntry } from './tar';
@@ -153,19 +154,26 @@ function run(buf: Buffer, expected: PublishExpectation, options: ValidatorOption
     entries.push(...tarOf(buf, 'the archive', bunzip2));
   }
 
+  // A full name `<namespace>/<name>` is packed under its import name (the part after `/`), is `mojo-<namespace>.<name>` in conda, and its
+  // metadata is schema 2; a flat name is all of that unchanged.
+  const full = splitFullName(expected.name);
+  const importName = full === undefined ? expected.name : full.name;
+  const condaName = condaNameOf(expected.name);
+  const schema = full === undefined ? METADATA_SCHEMA_VERSION : FULL_NAME_SCHEMA_VERSION;
+
   // 4. Names: collisions, then the layout allow-list.
   checkCollisions(entries);
   const roles = new Map<string, Role>();
   const byPath = new Map<string, TarEntry>();
   for (const e of entries) {
-    roles.set(e.path, classify(e, expected.name));
+    roles.set(e.path, classify(e, importName));
     byPath.set(e.path, e);
   }
-  const mojoc = byPath.get(`lib/mojo/${expected.name}.mojoc`);
-  const mopmEntry = byPath.get(`lib/mojo/${expected.name}.mopm.json`);
+  const mojoc = byPath.get(`lib/mojo/${importName}.mojoc`);
+  const mopmEntry = byPath.get(`lib/mojo/${importName}.mopm.json`);
   const indexEntry = byPath.get('info/index.json');
-  if (!mojoc) fail('mojoc_missing', `lib/mojo/${expected.name}.mojoc is missing`);
-  if (!mopmEntry) fail('manifest_missing', `lib/mojo/${expected.name}.mopm.json is missing`);
+  if (!mojoc) fail('mojoc_missing', `lib/mojo/${importName}.mojoc is missing`);
+  if (!mopmEntry) fail('manifest_missing', `lib/mojo/${importName}.mopm.json is missing`);
   if (!indexEntry) fail('index_missing', 'info/index.json is missing');
   const mopmFile = mopmEntry as TarEntry;
   const indexFile = indexEntry as TarEntry;
@@ -178,19 +186,19 @@ function run(buf: Buffer, expected: PublishExpectation, options: ValidatorOption
   if (expected.manifestSha256 !== undefined && manifestSha256 !== expected.manifestSha256.toLowerCase()) {
     fail('manifest_sha256_mismatch', 'the embedded metadata does not hash to the manifest_sha256 declared at commit');
   }
-  const mopm = checkMopm(parseJsonObject(mopmFile.data, mopmFile.path, 'manifest_json'));
+  const mopm = checkMopm(parseJsonObject(mopmFile.data, mopmFile.path, 'manifest_json'), schema);
   if (mopm.name !== expected.name) fail('name_mismatch', `metadata name '${mopm.name}' is not the published name '${expected.name}'`);
   if (mopm.version !== undefined && !sameVersion(mopm.version, expected.version)) {
     fail('version_mismatch', `metadata version '${mopm.version}' is not the published version '${expected.version}'`);
   }
   const idx = checkIndex(parseJsonObject(indexFile.data, indexFile.path, 'index_invalid'));
-  if (idx.name !== `mojo-${expected.name}`) fail('name_mismatch', `info/index.json name '${idx.name}' is not 'mojo-${expected.name}'`);
+  if (idx.name !== condaName) fail('name_mismatch', `info/index.json name '${idx.name}' is not '${condaName}'`);
   if (!sameVersion(idx.version, expected.version)) {
     fail('version_mismatch', `info/index.json version '${idx.version}' is not the published version '${expected.version}'`);
   }
   if (idx.subdir !== expected.subdir) fail('subdir_mismatch', `info/index.json subdir '${idx.subdir}' is not '${expected.subdir}'`);
-  const { mojoDeps, warnings } = checkDepends(idx, mopm, { ...(options.nativeMirror ? { nativeMirror: options.nativeMirror } : {}), now: (options.now ?? (() => new Date()))() });
-  const wantFile = `mojo-${expected.name}-${expected.version}-${idx.build}.${format}`;
+  const { mojoDeps, warnings } = checkDepends(idx, mopm, { ...(options.nativeMirror ? { nativeMirror: options.nativeMirror } : {}), now: (options.now ?? (() => new Date()))(), schema });
+  const wantFile = `${condaName}-${expected.version}-${idx.build}.${format}`;
   if (expected.filename !== wantFile) {
     fail('filename_mismatch', `the file is named '${expected.filename}' but its metadata says '${wantFile}'`);
   }

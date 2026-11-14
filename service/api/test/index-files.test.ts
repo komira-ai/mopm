@@ -1,11 +1,12 @@
 import fc from 'fast-check';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { buildIndexConfig, buildPackageIndex, buildTakedowns, indexKey, type IndexStage } from '../src/index-files';
+import { INDEX_VERSIONS, TAKEDOWNS_KEY, TAKEDOWNS_V2_KEY, buildIndexConfig, buildPackageIndex, buildTakedowns, indexKey, indexVersionOf, type IndexStage } from '../src/index-files';
 import { buildRepodataJson } from '../src/repodata';
 import { applyEvent } from '../src/state';
 import { SUBDIRS_V1, type VersionRecord } from '../src/types';
 import { ALL_FIXTURE_ROWS, CHANNEL, FIXTURE_PACKAGES, rows } from './fixtures/index-registry';
+import { ALL_FIXTURE_ROWS_V2, FIXTURE_PACKAGES_V2, NS } from './fixtures/index-registry-v2';
 import { hex, rec } from './helpers';
 import { validate } from './json-schema';
 
@@ -16,12 +17,15 @@ const TAKEDOWNS = spec('takedowns.schema.json');
 
 const lines = (text: string | undefined): any[] => (text ?? '').split('\n').slice(0, -1).map((l) => JSON.parse(l));
 const build = (name: string, rs: readonly VersionRecord[] = FIXTURE_PACKAGES[name]!) => buildPackageIndex(name, rs)!;
+const build2 = (name: string) => buildPackageIndex(name, FIXTURE_PACKAGES_V2[name]!)!;
+const V2_NAMES = Object.keys(FIXTURE_PACKAGES_V2);
+const HTTP_CLIENT = `${NS}/http_client`;
 const only = (name: string, version: string) => FIXTURE_PACKAGES[name]!.find((r) => r.version === version)!;
 const replaced = (name: string, next: VersionRecord) => FIXTURE_PACKAGES[name]!.map((r) => (r.version === next.version ? next : r));
 
 describe('the schema checker used below', () => {
   // These show that a failing schema check is possible, so the passing checks mean something.
-  const good = lines(build('http_client'))[1];
+  const good = lines(build2(HTTP_CLIENT))[1];
   test('accepts a good record', () => expect(validate(RECORD, good)).toEqual([]));
   test.each([
     ['a yank without a reason', { ...good, state: 'yanked' }],
@@ -31,32 +35,36 @@ describe('the schema checker used below', () => {
     ['a zero size', { ...good, files: [{ ...good.files[0], size: 0 }] }],
     ['no files', { ...good, files: [] }],
     ['an unknown subdir', { ...good, files: [{ ...good.files[0], subdir: 'win-64' }] }],
-    ['v 2', { ...good, v: 2 }],
+    ['v 1', { ...good, v: 1 }],
+    ['a flat name', { ...good, name: 'http_client' }],
+    ['a dependency by a flat name', { ...good, deps: [{ name: 'http_core' }] }],
+    ['a flat file name', { ...good, files: [{ ...good.files[0], filename: 'mojo-http_client-0.4.0-mojo1.0.0_0.conda' }] }],
     ['a pre-release version', { ...good, version: '1.0.0-rc1' }],
   ])('refuses %s', (_, bad) => expect(validate(RECORD, JSON.parse(JSON.stringify(bad))).length).toBeGreaterThan(0));
 });
 
 describe('package file against spec/index-record.schema.json', () => {
-  test.each(Object.keys(FIXTURE_PACKAGES))('every line of %s is a valid record', (name) => {
-    const recs = lines(build(name));
+  test.each(V2_NAMES)('every line of %s is a valid record', (name) => {
+    const recs = lines(build2(name));
     expect(recs.length).toBeGreaterThan(0);
     for (const r of recs) expect(validate(RECORD, r)).toEqual([]);
   });
 
   test('a record with every optional part (yank reason, oidc provenance, native, dep without range) is valid', () => {
     const r = rec({
-      name: 'full',
+      name: `${NS}/full`,
       version: '1.0.0',
+      files: [{ subdir: 'noarch', filename: 'mojo-komira-ai.full-1.0.0-mojo1.0.0_0.conda', sha256: hex('a'), size: 7, url: `${CHANNEL}/${NS}/noarch/mojo-komira-ai.full-1.0.0-mojo1.0.0_0.conda` }],
       state: 'yanked',
       yank_reason: 'no',
       native: [{ id: 'openssl', soname: 'libssl.so.3' }],
-      deps: [{ name: 'a_dep' }, { name: 'b_dep', range: '>=1' }],
+      deps: [{ name: `${NS}/a_dep` }, { name: `${NS}/b_dep`, range: '>=1' }],
       provenance: { kind: 'oidc', repository: 'owner/repo', workflow_ref: 'owner/repo/.github/workflows/r.yml@refs/heads/main' },
     });
-    const [line] = lines(buildPackageIndex('full', [r]));
+    const [line] = lines(buildPackageIndex(`${NS}/full`, [r]));
     expect(validate(RECORD, line)).toEqual([]);
     expect(line.provenance).toEqual(r.provenance);
-    expect(line.deps).toEqual([{ name: 'a_dep' }, { name: 'b_dep', range: '>=1' }]);
+    expect(line.deps).toEqual([{ name: `${NS}/a_dep` }, { name: `${NS}/b_dep`, range: '>=1' }]);
   });
 
   test('the record fields come from the row: requires_mojo, build, deps ranges, manifest digest, filename', () => {
@@ -77,14 +85,48 @@ describe('package file against spec/index-record.schema.json', () => {
   });
 });
 
-describe('takedowns against spec/takedowns.schema.json', () => {
-  test('the fixture registry log is valid and lists both tombstoned tls versions', () => {
-    const doc = JSON.parse(buildTakedowns(ALL_FIXTURE_ROWS));
+describe('takedowns against spec/takedowns.schema.json (version 2)', () => {
+  test('the namespace registry log is valid and lists both tombstoned tls versions', () => {
+    const doc = JSON.parse(buildTakedowns(ALL_FIXTURE_ROWS_V2, 2));
+    expect(doc.index_version).toBe(2);
     expect(validate(TAKEDOWNS, doc)).toEqual([]);
-    expect(doc.takedowns.map((t: any) => `${t.name} ${t.version}`)).toEqual(['tls 1.0.0', 'tls 1.2.0']);
-    expect(doc.takedowns[0].sha256).toEqual([only('tls', '1.0.0').files[0]!.sha256]);
+    expect(doc.takedowns.map((t: any) => `${t.name} ${t.version}`)).toEqual([`${NS}/tls 1.0.0`, `${NS}/tls 1.2.0`]);
+    expect(doc.takedowns[0].sha256).toEqual([FIXTURE_PACKAGES_V2[`${NS}/tls`]!.find((r) => r.version === '1.0.0')!.files[0]!.sha256]);
   });
-  test('the empty log is valid', () => expect(validate(TAKEDOWNS, JSON.parse(buildTakedowns([])))).toEqual([]));
+  test('the empty version 2 log is valid', () => expect(validate(TAKEDOWNS, JSON.parse(buildTakedowns([], 2)))).toEqual([]));
+  test.each([
+    ['the version 1 log', JSON.parse(buildTakedowns(ALL_FIXTURE_ROWS))],
+    ['an entry with a flat name', { index_version: 2, takedowns: [{ name: 'tls', version: '1.0.0', reason_code: 'x', sha256: [hex('1')], date: '2026-10-01' }] }],
+    ['an entry with no hash', { index_version: 2, takedowns: [{ name: `${NS}/tls`, version: '1.0.0', reason_code: 'x', sha256: [], date: '2026-10-01' }] }],
+  ])('the checker refuses %s', (_, doc) => expect(validate(TAKEDOWNS, doc).length).toBeGreaterThan(0));
+});
+
+describe('takedown logs by index version', () => {
+  const both = [...ALL_FIXTURE_ROWS, ...ALL_FIXTURE_ROWS_V2];
+  const names = (text: string) => JSON.parse(text).takedowns.map((t: any) => `${t.name} ${t.version}`);
+
+  test('the version 1 log lists only the flat names, and says index_version 1', () => {
+    const doc = JSON.parse(buildTakedowns(both));
+    expect(doc.index_version).toBe(1);
+    expect(names(buildTakedowns(both, 1))).toEqual(['tls 1.0.0', 'tls 1.2.0']);
+    expect(buildTakedowns(both, 1)).toBe(buildTakedowns(ALL_FIXTURE_ROWS, 1));
+  });
+  test('the version 2 log lists only the full names, and says index_version 2', () => {
+    expect(JSON.parse(buildTakedowns(both, 2)).index_version).toBe(2);
+    expect(names(buildTakedowns(both, 2))).toEqual([`${NS}/tls 1.0.0`, `${NS}/tls 1.2.0`]);
+    expect(buildTakedowns(both, 2)).toBe(buildTakedowns(ALL_FIXTURE_ROWS_V2, 2));
+  });
+  test('a registry with only flat names has an empty version 2 log, and the reverse', () => {
+    expect(buildTakedowns(ALL_FIXTURE_ROWS, 2)).toBe('{"index_version":2,"takedowns":[]}\n');
+    expect(buildTakedowns(ALL_FIXTURE_ROWS_V2, 1)).toBe('{"index_version":1,"takedowns":[]}\n');
+  });
+  test.each([0, 3, -1, 1.5, NaN])('refuses the version %p: no such log', (v) => {
+    expect(() => buildTakedowns(both, v)).toThrow(/no takedown log of version/);
+  });
+  test('the keys of the two logs', () => {
+    expect(TAKEDOWNS_KEY).toBe('index/takedowns.json');
+    expect(TAKEDOWNS_V2_KEY).toBe('index/v2/takedowns.json');
+  });
 });
 
 describe('config against spec/index-config.schema.json', () => {
@@ -104,6 +146,10 @@ describe('config against spec/index-config.schema.json', () => {
     ['plain http on a real host', { api_url: 'http://api.mopm.dev/api/v1' }],
     ['an unknown stage', { stage: 'dev' }],
     ['a non-boolean read_only', { read_only: 'no' }],
+    ['an api_v2_url that is the v1 root', { api_v2_url: 'https://api.mopm.dev/api/v1' }],
+    ['an empty index_versions', { index_versions: [] }],
+    ['a repeated index_versions entry', { index_versions: [1, 1] }],
+    ['an index_versions entry of 0', { index_versions: [0, 1] }],
   ])('the checker refuses %s', (_, patch) => {
     const good = JSON.parse(buildIndexConfig({ stage: 'prod', apiDomain: 'api.mopm.dev', channelDomain: 'conda.mopm.dev', readOnly: false }));
     expect(validate(CONFIG, { ...good, ...patch }).length).toBeGreaterThan(0);
@@ -113,8 +159,15 @@ describe('config against spec/index-config.schema.json', () => {
 describe('config values', () => {
   test('exact bytes for a stage', () => {
     expect(buildIndexConfig({ stage: 'beta', apiDomain: 'api.beta.mopm.dev', channelDomain: 'conda.beta.mopm.dev', readOnly: false })).toBe(
-      '{"api_url":"https://api.beta.mopm.dev/api/v1","channel_url":"https://conda.beta.mopm.dev/","index_version":1,"min_cli_version":"0.0.1","read_only":false,"stage":"beta"}\n',
+      '{"api_url":"https://api.beta.mopm.dev/api/v1","api_v2_url":"https://api.beta.mopm.dev/api/v2","channel_url":"https://conda.beta.mopm.dev/","index_version":1,"index_versions":[1,2],"min_cli_version":"0.0.1","read_only":false,"stage":"beta"}\n',
     );
+  });
+  test('index_version stays 1 for released CLIs, and index_versions announces both served versions', () => {
+    const c = JSON.parse(buildIndexConfig({ stage: 'prod', apiDomain: 'api.mopm.dev', channelDomain: 'conda.mopm.dev', readOnly: false }));
+    expect(c.index_version).toBe(1);
+    expect(c.index_versions).toEqual([1, 2]);
+    expect(INDEX_VERSIONS).toEqual([1, 2]);
+    expect(c.api_v2_url).toBe('https://api.mopm.dev/api/v2');
   });
   test('read_only follows the input', () => {
     const c = (readOnly: boolean) => JSON.parse(buildIndexConfig({ stage: 'prod', apiDomain: 'api.mopm.dev', channelDomain: 'conda.mopm.dev', readOnly }));
@@ -143,6 +196,23 @@ describe('path of a package', () => {
     ['abcd', 'index/ab/cd/abcd'],
     ['a1_', 'index/a1/__/a1_'],
   ])('%s is stored at %s', (name, key) => expect(indexKey(name)).toBe(key));
+  test.each([
+    ['komira-ai/json', 'index/v2/ko/mi/komira-ai/json'],
+    ['ab/x1', 'index/v2/ab/__/ab/x1'],
+    ['a/xy', 'index/v2/a_/__/a/xy'],
+    ['abc/xy', 'index/v2/ab/c_/abc/xy'],
+    ['abcd/xy', 'index/v2/ab/cd/abcd/xy'],
+    ['a-bc/xy', 'index/v2/a-/bc/a-bc/xy'],
+    ['x1/http_client', 'index/v2/x1/__/x1/http_client'],
+    [`${'n'.repeat(39)}/pk`, `index/v2/nn/nn/${'n'.repeat(39)}/pk`],
+  ])('the full name %s is stored at %s: sharded by the namespace, padded with _', (name, key) => expect(indexKey(name)).toBe(key));
+  test.each(['', '/x1', 'ab/', 'Ab/xy', 'ab/Xy', 'ab/x', 'ab/xy/z', '-ab/xy', 'ab-/xy', 'a--b/xy', `${'n'.repeat(40)}/pk`, 'ab/1xy', 'a_b/xy'])('refuses the full name %j', (n) => {
+    expect(() => indexKey(n)).toThrow(/not a package name/);
+  });
+  test('the version of a name: 2 for a full name, 1 for a flat one', () => {
+    expect(indexVersionOf('komira-ai/json')).toBe(2);
+    expect(indexVersionOf('json')).toBe(1);
+  });
   test.each(['', 'a', 'Tls', '../x', 'a/b', 'tls/', '1abc', 'a'.repeat(65), 'tl%2e'])('refuses the name %j', (n) => {
     expect(() => indexKey(n)).toThrow(/not a package name/);
   });
@@ -164,7 +234,6 @@ describe('versions and states on the right line', () => {
     expect(line.version).toBe('1.4.0');
     expect(line.state).toBe('yanked');
     expect(line.yank_reason).toBe('bad release');
-    expect(validate(RECORD, line)).toEqual([]);
   });
 
   test('an unyank restores the exact bytes, with no yank_reason left behind', () => {
@@ -186,7 +255,6 @@ describe('versions and states on the right line', () => {
     expect(l[3].tombstone).toEqual({ reason_code: 'malware', date: '2026-10-14' });
     expect(l[3].files[0].sha256).toBe(before.files[0]!.sha256);
     expect('url' in l[3].files[0]).toBe(false);
-    expect(validate(RECORD, l[3])).toEqual([]);
     expect(text.split('\n').filter((_, i) => i !== 3)).toEqual(build('http_core').split('\n').filter((_, i) => i !== 3));
   });
 
@@ -226,6 +294,50 @@ describe('versions and states on the right line', () => {
     expect(l).toHaveLength(1);
     expect(l[0].files.map((f: any) => f.subdir)).toEqual(['linux-64', 'osx-arm64']);
     expect(l[0].native).toEqual([{ id: 'crypto', soname: 'libcrypto_native.a' }]);
+  });
+});
+
+describe('version 2 records', () => {
+  test.each(V2_NAMES)('%s: every line is v 2, names the full name, and the dependencies by full name', (name) => {
+    for (const l of lines(build2(name))) {
+      expect(l.v).toBe(2);
+      expect(l.name).toBe(name);
+      for (const d of l.deps) expect(d.name.startsWith(`${NS}/`)).toBe(true);
+    }
+  });
+  test.each(Object.keys(FIXTURE_PACKAGES))('%s: every line of a flat name is v 1', (name) => {
+    for (const l of lines(build(name))) expect(l.v).toBe(1);
+  });
+  test('a file is conda-named and linked into the namespace channel', () => {
+    const l = lines(build2(HTTP_CLIENT)).find((x) => x.version === '0.4.0');
+    expect(l.files).toEqual([
+      expect.objectContaining({
+        filename: 'mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda',
+        url: `${CHANNEL}/${NS}/linux-64/mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda`,
+      }),
+    ]);
+  });
+  test('a yanked and a tombstoned line are valid records', () => {
+    const l = lines(build2(HTTP_CLIENT));
+    expect(l[0].state).toBe('yanked');
+    expect(validate(RECORD, l[0])).toEqual([]);
+    const t = lines(build2(`${NS}/tls`));
+    expect(t[0].state).toBe('tombstoned');
+    expect('url' in t[0].files[0]).toBe(false);
+    expect(validate(RECORD, t[0])).toEqual([]);
+  });
+  test('rows of a flat name refused in a full-name file, and the reverse', () => {
+    expect(() => buildPackageIndex(HTTP_CLIENT, FIXTURE_PACKAGES.http_client!)).toThrow(/does not belong/);
+    expect(() => buildPackageIndex('http_client', FIXTURE_PACKAGES_V2[HTTP_CLIENT]!)).toThrow(/does not belong/);
+  });
+  test('the input order of the rows does not change a byte', () => {
+    for (const name of V2_NAMES) expect(buildPackageIndex(name, [...FIXTURE_PACKAGES_V2[name]!].reverse())).toBe(build2(name));
+  });
+  test('the sha256, size and url of a published line equal the namespace repodata entry', () => {
+    const rd = JSON.parse(buildRepodataJson('linux-64', FIXTURE_PACKAGES_V2[HTTP_CLIENT]!));
+    const l = lines(build2(HTTP_CLIENT)).find((x) => x.version === '0.4.0');
+    const f = l.files[0];
+    expect(rd['packages.conda'][f.filename]).toEqual(expect.objectContaining({ sha256: f.sha256, size: f.size, name: 'mojo-komira-ai.http_client' }));
   });
 });
 
@@ -360,7 +472,7 @@ describe('takedown log content', () => {
   test('lists the sha256 of every file of the version', () => {
     const doc = JSON.parse(buildTakedowns([t('multi', '1.0.0', '2026-10-02', [hex('2'), hex('1')])]));
     expect(doc.takedowns[0].sha256).toEqual([hex('2'), hex('1')]);
-    expect(validate(TAKEDOWNS, doc)).toEqual([]);
+    expect(doc.index_version).toBe(1);
   });
 
   test('leaves out published, yanked, pending and rejected (no files) versions', () => {

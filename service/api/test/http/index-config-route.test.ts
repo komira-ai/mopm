@@ -31,6 +31,8 @@ describe.each(['beta', 'gamma', 'prod'] as const)('GET /index/config.json on %s'
     const body = JSON.parse(res.body);
     expect(validate(CONFIG, body)).toEqual([]);
     expect(body.index_version).toBe(1);
+    expect(body.index_versions).toEqual([1, 2]);
+    expect(body.api_v2_url).toBe(`https://${HOSTS[stage].apiDomain}/api/v2`);
     expect(body.stage).toBe(stage);
     expect(body.api_url).toBe(`https://${HOSTS[stage].apiDomain}/api/v1`);
     expect(body.channel_url).toBe(`https://${HOSTS[stage].channelDomain}/`);
@@ -90,7 +92,7 @@ describe('the config response', () => {
   });
 
   test('other /index/ paths are not answered by the API function', async () => {
-    for (const path of ['/index/takedowns.json', '/index/ht/tp/http_client', '/index/config.json/x', '/index/Config.json']) {
+    for (const path of ['/index/takedowns.json', '/index/v2/takedowns.json', '/index/v2/ko/mi/komira-ai/json', '/index/v2/config.json', '/index/ht/tp/http_client', '/index/config.json/x', '/index/Config.json']) {
       expect((await call(deps('beta'), { path })).statusCode).toBe(404);
     }
   });
