@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package mopm.registry.v2;
+
+import "mopm/registry/v2/types.proto";
+import "mopm/registry/v2/options.proto";
+
+message Health {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_OK = 1;
+  }
+  enum Stage {
+    STAGE_UNSPECIFIED = 0;
+    STAGE_BETA = 1;
+    STAGE_GAMMA = 2;
+    STAGE_PROD = 3;
+  }
+  enum ApiVersion {
+    API_VERSION_UNSPECIFIED = 0;
+    API_VERSION_V1 = 1;
+    API_VERSION_V2 = 2;
+  }
+  enum Impl {
+    IMPL_UNSPECIFIED = 0;
+    IMPL_TS = 1;
+    IMPL_RUST = 2;
+  }
+  Status status = 1 [(field) = {required: true}];
+  Stage stage = 2 [(field) = {required: true}];
+  // `v2` at `/api/v2`, `v1` at `/api/v1`.
+  ApiVersion api_version = 3 [(field) = {required: true}];
+  bool read_only = 4 [(field) = {required: true}];
+  // Which implementation of the registry answered: `ts` or `rust`. Additive: a
+  // client that does not know it ignores it, and a server may omit it.
+  Impl impl = 5;
+  // The optional features this registry serves, by name. Additive: a client treats a name it does not know as absent,
+  // and a missing list as empty, so a registry from before the list answers none. One name is defined:
+  // `group_readme_objects`, which says that `createGroup` takes `readme` on a member and answers where to PUT it,
+  // and that `commitGroup` takes a readme as `{sha256, size}` (see `ReadmeRef`).
+  repeated string features = 6;
+}
+
+message DeviceStartRequest {
+  // Shown on the approval page, e.g. `mopm 0.1.0`.
+  string client = 1 [(field) = {required: true, min_length: 1, max_length: 80}];
+}
+
+message DeviceStartResponse {
+  string device_code = 1 [(field) = {required: true, min_length: 16}];
+  string user_code = 2 [(field) = {required: true, min_length: 4}];
+  string verification_uri = 3 [(field) = {required: true, format: "uri"}];
+  // Seconds. Ten minutes.
+  int64 expires_in = 4 [(field) = {required: true, minimum: 1}];
+  // Minimum seconds between polls.
+  int64 interval = 5 [(field) = {required: true, minimum: 1}];
+}
+
+message DevicePollRequest {
+  string device_code = 1 [(field) = {required: true, min_length: 16}];
+}
+
+message DevicePollResponse {
+  option (schema) = {when: {field: "status", equals: "approved", required: ["token", "token_kind", "expires_at", "fresh_until", "handle"]}};
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_PENDING = 1;
+    STATUS_APPROVED = 2;
+    STATUS_DENIED = 3;
+    STATUS_EXPIRED = 4;
+  }
+  enum TokenKind {
+    TOKEN_KIND_UNSPECIFIED = 0;
+    TOKEN_KIND_SESSION = 1;
+  }
+  Status status = 1 [(field) = {required: true}];
+  int64 interval = 2 [(field) = {minimum: 1}];
+  Token token = 3;
+  TokenKind token_kind = 4;
+  Timestamp expires_at = 5;
+  Timestamp fresh_until = 6;
+  string handle = 7 [(field) = {min_length: 1}];
+  // The user namespace of the account that approved (its login in lower case), when the login made it or found it. Absent when the login cannot be a namespace (see `MeV2.unavailable_namespace`).
+  Namespace namespace = 8;
+}
+
+// Two forms. `name` and `version`: a token for that one package version. `packages`: one token for every
+// listed package version, all of one namespace. Every name is a full name, and the CI identity must match a trusted
+// publisher of its namespace; the call creates no package. Send one form, not both; a name is listed once. Either
+// form takes the optional `purpose`.
+message OidcExchangeRequest {
+  option (schema) = {one_of: [{required: ["name", "version"]}, {required: ["packages"]}]};
+  enum Purpose {
+    PURPOSE_UNSPECIFIED = 0;
+    PURPOSE_PUBLISH = 1;
+    PURPOSE_STAGE = 2;
+  }
+  message Entry {
+    FullName name = 1 [(field) = {required: true}];
+    Version version = 2 [(field) = {required: true}];
+  }
+  string jwt = 1 [(field) = {required: true, min_length: 1}];
+  // What the token is for. `publish` is the default; `stage` mints a token that cannot commit or yank.
+  Purpose purpose = 2;
+  FullName name = 3;
+  Version version = 4;
+  repeated Entry packages = 5 [(field) = {min_items: 1, max_items: 500}];
+}
+
+// `name` and `version` answer the single-package form, `packages` the list form. Exactly one
+// of the two, as the request is.
+message OidcExchangeResponse {
+  option (schema) = {one_of: [{required: ["name", "version"]}, {required: ["packages"]}]};
+  enum TokenKind {
+    TOKEN_KIND_UNSPECIFIED = 0;
+    TOKEN_KIND_PUBLISH = 1;
+    TOKEN_KIND_STAGE = 2;
+  }
+  message Entry {
+    FullName name = 1 [(field) = {required: true}];
+    Version version = 2 [(field) = {required: true}];
+  }
+  Token token = 1 [(field) = {required: true}];
+  TokenKind token_kind = 2 [(field) = {required: true}];
+  Timestamp expires_at = 3 [(field) = {required: true}];
+  FullName name = 4;
+  Version version = 5;
+  repeated Entry packages = 6;
+}

@@ -31,6 +31,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const http = @import("http.zig");
 const registry = @import("registry.zig");
+const v2 = @import("registry_v2.zig");
 
 /// The variables GitHub Actions sets for a job that may request an identity token.
 pub const url_var = "ACTIONS_ID_TOKEN_REQUEST_URL";
@@ -138,16 +139,8 @@ pub const Outcome = union(enum) { ok: Minted, bad: []const u8 };
 
 /// Trades the identity token `jwt` for a registry token that may publish `name` `version` (the single-package form).
 pub fn exchange(arena: Allocator, io: anytype, policy: http.Policy, api_v2_url: []const u8, jwt: []const u8, name: []const u8, version: []const u8) anyerror!Result {
-    var body = std.ArrayList(u8).init(arena);
-    const w = body.writer();
-    try w.writeAll("{\"jwt\":");
-    try std.json.encodeJsonString(jwt, .{}, w);
-    try w.writeAll(",\"name\":");
-    try std.json.encodeJsonString(name, .{}, w);
-    try w.writeAll(",\"version\":");
-    try std.json.encodeJsonString(version, .{}, w);
-    try w.writeByte('}');
-    return asResult(try post(arena, io, policy, api_v2_url, body.items, try std.fmt.allocPrint(arena, "{s} {s}", .{ name, version }), .publish));
+    const params = v2.ExchangeOidcTokenParams{ .body = .{ .jwt = jwt, .name = name, .version = version } };
+    return asResult(try post(arena, io, policy, api_v2_url, params, try std.fmt.allocPrint(arena, "{s} {s}", .{ name, version }), .publish));
 }
 
 /// The token of `o` as a plain `Result`, for the callers whose purpose is `publish` (`post` has refused a `stage` answer to them).
@@ -167,31 +160,23 @@ pub fn exchangePackages(arena: Allocator, io: anytype, policy: http.Policy, api_
 /// `exchangePackages` for a `purpose`: `publish` sends the body it always has, `stage` adds `"purpose":"stage"`. The answer
 /// carries the kind the registry says it minted.
 pub fn exchangePackagesFor(arena: Allocator, io: anytype, policy: http.Policy, api_v2_url: []const u8, jwt: []const u8, packages: []const Package, purpose: Purpose) anyerror!Outcome {
-    var body = std.ArrayList(u8).init(arena);
-    const w = body.writer();
-    try w.writeAll("{\"jwt\":");
-    try std.json.encodeJsonString(jwt, .{}, w);
-    try w.writeAll(",\"packages\":[");
-    for (packages, 0..) |p, i| {
-        if (i != 0) try w.writeByte(',');
-        try w.writeAll("{\"name\":");
-        try std.json.encodeJsonString(p.name, .{}, w);
-        try w.writeAll(",\"version\":");
-        try std.json.encodeJsonString(p.version, .{}, w);
-        try w.writeByte('}');
-    }
-    try w.writeAll("]");
-    if (purpose == .stage) try w.writeAll(",\"purpose\":\"stage\"");
-    try w.writeAll("}");
-    return post(arena, io, policy, api_v2_url, body.items, try std.fmt.allocPrint(arena, "the {d} packages of the set", .{packages.len}), purpose);
+    const entries = try arena.alloc(v2.OidcExchangeRequestEntry, packages.len);
+    for (packages, entries) |p, *e| e.* = .{ .name = p.name, .version = p.version };
+    const params = v2.ExchangeOidcTokenParams{ .body = .{
+        .jwt = jwt,
+        .packages = entries,
+        .purpose = if (purpose == .stage) .stage else null,
+    } };
+    return post(arena, io, policy, api_v2_url, params, try std.fmt.allocPrint(arena, "the {d} packages of the set", .{packages.len}), purpose);
 }
 
-/// Sends an exchange `body` and reads the token out of the answer. `subject` names what the token is for, in a refusal.
+/// Sends an exchange (`params`, as the registry contract writes its URL and body) and reads the token out of the answer. `subject` names what the token is for, in a refusal.
 /// `purpose` is what the body asked for: an answer of the other kind than a `publish` request's is refused, because a token the
 /// run cannot use is not one to go on with; a `stage` request that is answered `publish` (or with no kind) is a registry from
 /// before `purpose`, and the caller decides what to say about it.
-fn post(arena: Allocator, io: anytype, policy: http.Policy, api_v2_url: []const u8, body: []const u8, subject: []const u8, purpose: Purpose) anyerror!Outcome {
-    const url = try std.fmt.allocPrint(arena, "{s}/auth/oidc/exchange", .{api_v2_url});
+fn post(arena: Allocator, io: anytype, policy: http.Policy, api_v2_url: []const u8, params: v2.ExchangeOidcTokenParams, subject: []const u8, purpose: Purpose) anyerror!Outcome {
+    const url = try v2.url(v2.ExchangeOidcToken, arena, api_v2_url, params);
+    const body = (try v2.ExchangeOidcToken.body(arena, params)).?;
     // A POST is sent once: a rerun of the command is its retry.
     const answer = http.retrying(arena, io, .POST, url, .{ .body = body }, policy) catch |e| {
         return .{ .bad = try std.fmt.allocPrint(arena, "POST /auth/oidc/exchange: {s}", .{@errorName(e)}) };
@@ -564,7 +549,7 @@ test "a staging exchange asks for purpose stage and keeps the stage token the re
     try std.testing.expectEqualStrings("mopm_registry_secret", got.ok.token);
     try std.testing.expectEqual(Kind.stage, got.ok.kind);
     try std.testing.expectEqualStrings(
-        "{\"jwt\":\"" ++ secret_jwt ++ "\",\"packages\":[{\"name\":\"acme/a\",\"version\":\"1.0.0\"},{\"name\":\"acme/b\",\"version\":\"2.1.0\"},{\"name\":\"acme/c\",\"version\":\"0.0.3\"}],\"purpose\":\"stage\"}",
+        "{\"jwt\":\"" ++ secret_jwt ++ "\",\"purpose\":\"stage\",\"packages\":[{\"name\":\"acme/a\",\"version\":\"1.0.0\"},{\"name\":\"acme/b\",\"version\":\"2.1.0\"},{\"name\":\"acme/c\",\"version\":\"0.0.3\"}]}",
         io.exchange_body,
     );
     try std.testing.expectEqual(@as(usize, 1), io.identity_calls);

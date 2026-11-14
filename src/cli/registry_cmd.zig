@@ -24,6 +24,7 @@ const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
 const http = core.http;
 const registry = core.registry;
+const v2 = core.registry_v2;
 const credentials = core.credentials;
 const gp = @import("group_publish.zig");
 
@@ -64,11 +65,6 @@ pub const Session = struct {
 
     pub fn api(s: Session, path: []const u8) Allocator.Error![]const u8 {
         return std.fmt.allocPrint(s.arena, "{s}{s}", .{ s.config.api_url, path });
-    }
-
-    /// `path` under the API version 2 (`/me`).
-    pub fn apiV2(s: Session, path: []const u8) Allocator.Error![]const u8 {
-        return std.fmt.allocPrint(s.arena, "{s}{s}", .{ s.config.api_v2_url, path });
     }
 };
 
@@ -132,41 +128,28 @@ pub fn reportFailure(con: *gp.Console, a: http.Answer) void {
     con.fail("{s}", .{text});
 }
 
-/// `MeV2`: the caller and the namespaces they can write.
-const Me = struct {
-    github_id: u64,
-    handle: []const u8,
-    namespaces: []const struct {
-        namespace: []const u8,
-        kind: []const u8,
-        role: []const u8,
-        packages: []const []const u8 = &.{},
-    } = &.{},
-    unavailable_namespace: ?[]const u8 = null,
-};
-
 /// `GET /me` with `token`; the answer, or the failed answer for the caller to report.
 fn getMe(s: Session, net: gp.Net, token: []const u8) anyerror!http.Answer {
-    return net.request(s.arena, .GET, try s.apiV2("/me"), .{ .token = token });
+    return net.request(s.arena, v2.GetMe.method, try v2.url(v2.GetMe, s.arena, s.config.api_v2_url, .{}), .{ .token = token });
 }
 
 /// The account's user namespace: the one of kind "user" equal to `handle` in lower case, else the first of kind "user".
-fn userNamespace(me: Me, handle: []const u8) ?[]const u8 {
+fn userNamespace(me: v2.MeV2, handle: []const u8) ?[]const u8 {
     for (me.namespaces) |n| {
-        if (std.mem.eql(u8, n.kind, "user") and std.ascii.eqlIgnoreCase(n.namespace, handle)) return n.namespace;
+        if (n.kind == .user and std.ascii.eqlIgnoreCase(n.namespace, handle)) return n.namespace;
     }
     for (me.namespaces) |n| {
-        if (std.mem.eql(u8, n.kind, "user")) return n.namespace;
+        if (n.kind == .user) return n.namespace;
     }
     return null;
 }
 
 /// Reads /me for a login that was just approved; null when it cannot be read (the request failed, was refused, or
 /// its body is not a `MeV2`).
-fn readMe(s: Session, net: gp.Net, token: []const u8) ?Me {
+fn readMe(s: Session, net: gp.Net, token: []const u8) ?v2.MeV2 {
     const answer = getMe(s, net, token) catch return null;
     if (!answer.ok()) return null;
-    return std.json.parseFromSliceLeaky(Me, s.arena, answer.body, .{ .ignore_unknown_fields = true }) catch null;
+    return v2.decode(v2.GetMe, s.arena, answer.body) catch null;
 }
 
 /// The device flow. The clock, the pauses between polls and the requests are `net`'s, and everything it says goes through
@@ -263,12 +246,12 @@ fn whoami(s: Session, net: gp.Net, con: *gp.Console) anyerror!u8 {
         reportFailure(con, answer);
         return 1;
     }
-    const me = try std.json.parseFromSliceLeaky(Me, s.arena, answer.body, .{ .ignore_unknown_fields = true });
+    const me = try v2.decode(v2.GetMe, s.arena, answer.body);
     con.say("{s} (GitHub id {d}) on {s}\n", .{ me.handle, me.github_id, s.config.stage });
     if (me.namespaces.len > 0) {
         con.say("namespaces:\n", .{});
         for (me.namespaces) |n| {
-            con.say("  {s} ({s}, {s})", .{ n.namespace, n.kind, n.role });
+            con.say("  {s} ({s}, {s})", .{ n.namespace, @tagName(n.kind), @tagName(n.role) });
             if (n.packages.len > 0) {
                 con.say(":", .{});
                 for (n.packages) |p| con.say(" {s}", .{p});

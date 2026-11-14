@@ -97,7 +97,10 @@ schema 2: `name` and `deps[].name` are full names) are checked against
 
 ## Adding to the contract
 
-A change to `spec/api/openapi.yaml` (cases in `api/`) or `spec/api/openapi-v2.yaml`
+`spec/api/openapi-v2.yaml` is generated: its source is `spec/api/mopm/registry/v2/*.proto`, and
+`zig build gen-api` (`tools/api_gen.zig`) writes it, with the service's types and the CLI's client, after a proto
+changes; `//:api_gen_test` fails when a checked-in output is not what the protos make. Edit the protos, never the
+YAML. A change to `spec/api/openapi.yaml` (cases in `api/`) or to the v2 protos
 (cases in `api-v2/`) that adds an endpoint needs a success case for it; one that
 adds an error code needs the catalogue entry and a case. Removing or retyping
 anything already in the file breaks the additive-only rule in the OpenAPI

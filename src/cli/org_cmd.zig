@@ -20,6 +20,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
 const http = core.http;
+const v2 = core.registry_v2;
 const credentials = core.credentials;
 const gp = @import("group_publish.zig");
 const rc = @import("registry_cmd.zig");
@@ -150,67 +151,59 @@ fn execute(s: Session, net: gp.Net, con: *gp.Console, p: Parsed) anyerror!u8 {
 
 const Session = rc.Session;
 
-/// `.../namespaces/<org>/members` or, with a user, `.../members/<user>`.
-fn membersUrl(s: Session, org: []const u8, user: ?[]const u8) Allocator.Error![]const u8 {
-    if (user) |u| return s.apiV2(try std.fmt.allocPrint(s.arena, "/namespaces/{s}/members/{s}", .{ org, u }));
-    return s.apiV2(try std.fmt.allocPrint(s.arena, "/namespaces/{s}/members", .{org}));
-}
-
 /// The device flow of the registration, as `mopm login`'s.
 fn create(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, org: []const u8) anyerror!u8 {
-    const request = try std.fmt.allocPrint(s.arena, "{{\"namespace\":\"{s}\"}}", .{org});
-    const started = try net.once(s.arena, .POST, try s.apiV2("/namespaces"), .{ .token = token, .body = request });
+    const start_params: v2.CreateNamespace.Params = .{ .body = .{ .namespace = org } };
+    const request = (try v2.CreateNamespace.body(s.arena, start_params)).?;
+    const started = try net.once(s.arena, v2.CreateNamespace.method, try v2.url(v2.CreateNamespace, s.arena, s.config.api_v2_url, start_params), .{ .token = token, .body = request });
     if (!started.ok()) {
         rc.reportFailure(con, started);
         return 1;
     }
-    const start = try std.json.parseFromSliceLeaky(struct {
-        device_code: []const u8,
-        user_code: []const u8,
-        verification_uri: []const u8,
-        expires_in: i64,
-        interval: i64,
-    }, s.arena, started.body, .{ .ignore_unknown_fields = true });
+    const start = try v2.decode(v2.CreateNamespace, s.arena, started.body);
     con.say("To register the GitHub organization {s} on {s}, open {s} and enter the code {s}\n", .{ org, s.config.stage, start.verification_uri, start.user_code });
 
     var interval = @max(start.interval, 1);
-    const body = try std.fmt.allocPrint(s.arena, "{{\"device_code\":\"{s}\"}}", .{start.device_code});
+    const poll_params: v2.PollNamespace.Params = .{ .body = .{ .device_code = start.device_code } };
+    const body = (try v2.PollNamespace.body(s.arena, poll_params)).?;
+    const poll_url = try v2.url(v2.PollNamespace, s.arena, s.config.api_v2_url, poll_params);
     const deadline = net.now() + start.expires_in + 30;
     while (net.now() < deadline) {
         net.pause(@intCast(interval));
-        const polled = try net.once(s.arena, .POST, try s.apiV2("/namespaces/poll"), .{ .token = token, .body = body });
+        const polled = try net.once(s.arena, v2.PollNamespace.method, poll_url, .{ .token = token, .body = body });
         if (!polled.ok()) {
             rc.reportFailure(con, polled);
             return 1;
         }
-        const state = try std.json.parseFromSliceLeaky(struct {
-            status: []const u8,
-            interval: ?i64 = null,
-            namespace: ?struct { github_id: u64 } = null,
-        }, s.arena, polled.body, .{ .ignore_unknown_fields = true });
-        if (std.mem.eql(u8, state.status, "pending")) {
-            if (state.interval) |n| interval = @max(n, 1);
-            continue;
+        const state = try v2.decode(v2.PollNamespace, s.arena, polled.body);
+        switch (state.status) {
+            .pending => {
+                if (state.interval) |n| interval = @max(n, 1);
+                continue;
+            },
+            .created => {
+                const made = state.namespace orelse return error.CreatedWithoutNamespace;
+                con.say("Registered {s} on {s} (GitHub organization id {d}); you are its owner.\n", .{ org, s.config.stage, made.github_id });
+                return 0;
+            },
+            .denied => {
+                con.fail("the registration was denied\n", .{});
+                return 1;
+            },
+            .expired, .unknown => {
+                con.fail("the registration expired; run 'mopm org create {s}' again\n", .{org});
+                return 1;
+            },
         }
-        if (std.mem.eql(u8, state.status, "created")) {
-            const made = state.namespace orelse return error.CreatedWithoutNamespace;
-            con.say("Registered {s} on {s} (GitHub organization id {d}); you are its owner.\n", .{ org, s.config.stage, made.github_id });
-            return 0;
-        }
-        if (std.mem.eql(u8, state.status, "denied")) {
-            con.fail("the registration was denied\n", .{});
-            return 1;
-        }
-        con.fail("the registration expired; run 'mopm org create {s}' again\n", .{org});
-        return 1;
     }
     con.fail("the registration expired; run 'mopm org create {s}' again\n", .{org});
     return 1;
 }
 
 fn add(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, p: Parsed) anyerror!u8 {
-    const body = if (p.owner) "{\"role\":\"owner\"}" else "{\"role\":\"member\"}";
-    const answer = try net.once(s.arena, .PUT, try membersUrl(s, p.org, p.user), .{ .token = token, .body = body });
+    const params: v2.SetMember.Params = .{ .namespace = p.org, .user = p.user, .body = .{ .role = if (p.owner) .owner else .member } };
+    const body = (try v2.SetMember.body(s.arena, params)).?;
+    const answer = try net.once(s.arena, v2.SetMember.method, try v2.url(v2.SetMember, s.arena, s.config.api_v2_url, params), .{ .token = token, .body = body });
     if (!answer.ok()) {
         rc.reportFailure(con, answer);
         return 1;
@@ -220,7 +213,8 @@ fn add(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, p: Parsed) 
 }
 
 fn remove(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, p: Parsed) anyerror!u8 {
-    const answer = try net.once(s.arena, .DELETE, try membersUrl(s, p.org, p.user), .{ .token = token });
+    const params: v2.RemoveMember.Params = .{ .namespace = p.org, .user = p.user };
+    const answer = try net.once(s.arena, v2.RemoveMember.method, try v2.url(v2.RemoveMember, s.arena, s.config.api_v2_url, params), .{ .token = token });
     if (!answer.ok()) {
         rc.reportFailure(con, answer);
         return 1;
@@ -230,16 +224,15 @@ fn remove(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, p: Parse
 }
 
 fn list(s: Session, net: gp.Net, con: *gp.Console, token: []const u8, org: []const u8) anyerror!u8 {
-    const answer = try net.request(s.arena, .GET, try membersUrl(s, org, null), .{ .token = token });
+    const params: v2.ListMembers.Params = .{ .namespace = org };
+    const answer = try net.request(s.arena, v2.ListMembers.method, try v2.url(v2.ListMembers, s.arena, s.config.api_v2_url, params), .{ .token = token });
     if (!answer.ok()) {
         rc.reportFailure(con, answer);
         return 1;
     }
-    const members = try std.json.parseFromSliceLeaky(struct {
-        members: []const struct { user: []const u8, role: []const u8 } = &.{},
-    }, s.arena, answer.body, .{ .ignore_unknown_fields = true });
+    const members = try v2.decode(v2.ListMembers, s.arena, answer.body);
     con.say("{s} on {s}:\n", .{ org, s.config.stage });
-    for (members.members) |m| con.say("  {s} ({s})\n", .{ m.user, m.role });
+    for (members.members) |m| con.say("  {s} ({s})\n", .{ m.user, @tagName(m.role) });
     return 0;
 }
 
@@ -404,6 +397,19 @@ test "org create ends with exit 1 and its own message when the person denies, th
     try std.testing.expectEqual(@as(u64, 40), slow.script.slept);
     try std.testing.expectEqual(@as(usize, 9), slow.script.seen.items.len);
     try std.testing.expectEqualStrings("mopm: the registration expired; run 'mopm org create acme' again\n", slow.con.err.items);
+}
+
+test "org create treats a status it does not know as the end of the flow, like expired" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    const r = try run(a, dir, true, &.{ "create", "acme" }, &.{ beginStep("900", "3"), pollStep("{\"status\":\"suspended\"}") });
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expectEqual(@as(u64, 3), r.script.slept);
+    try std.testing.expectEqualStrings("mopm: the registration expired; run 'mopm org create acme' again\n", r.con.err.items);
 }
 
 test "org create prints the failure the registry gave, at the start and at a poll, and exits 1" {

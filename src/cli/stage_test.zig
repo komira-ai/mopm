@@ -466,10 +466,20 @@ test "a registry dependency is an edge only to the member with its full name" {
 
 // ---------------------------------------------------------------------- registry
 
-fn publishedBody(a: Allocator, name: []const u8, version: []const u8, sha: []const u8, state: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(a, "{{\"state\":\"{s}\",\"yank_reason\":{s},\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}-{s}-mojo1.0.0_0.conda\",\"sha256\":\"{s}\"}}]}}", .{
-        state, if (std.mem.eql(u8, state, "yanked")) "\"broken build\"" else "null", try core.names.condaName(a, name), version, sha,
+/// A `getVersion` answer with every field the contract requires: `state`, `yank_reason` (JSON text) and `files` (JSON text).
+fn versionBody(a: Allocator, state: []const u8, yank_reason: []const u8, files: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "{{\"name\":\"example/pkg_a\",\"version\":\"1.0.0\",\"state\":\"{s}\",\"yank_reason\":{s},\"published_at\":\"2026-10-01T00:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"deps\":[],\"native\":[],\"files\":[{s}],\"manifest_sha256\":\"{s}\",\"provenance\":{{\"kind\":\"none\"}}}}", .{
+        state, yank_reason, files, "0" ** 64,
     });
+}
+
+fn fileJson(a: Allocator, subdir: []const u8, filename: []const u8, sha: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":100}}", .{ subdir, filename, sha });
+}
+
+fn publishedBody(a: Allocator, name: []const u8, version: []const u8, sha: []const u8, state: []const u8) ![]const u8 {
+    const filename = try std.fmt.allocPrint(a, "{s}-{s}-mojo1.0.0_0.conda", .{ try core.names.condaName(a, name), version });
+    return versionBody(a, state, if (std.mem.eql(u8, state, "yanked")) "\"broken build\"" else "null", try fileJson(a, "noarch", filename, sha));
 }
 
 test "a version published with the same bytes is skipped, and a rerun gives the same set" {
@@ -538,7 +548,11 @@ test "a published version with a file the stage does not have is refused" {
     var first = try runStage(fx, &stub, "probe", &.{});
     try std.testing.expectEqual(@as(u8, 0), first.code);
     const sha = (try readPlan(fx, "probe")).members[0].files[0].sha256;
-    const body = try std.fmt.allocPrint(a, "{{\"state\":\"published\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"{s}\"}},{{\"subdir\":\"linux-64\",\"filename\":\"mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"{s}\"}}]}}", .{ sha, sha });
+    const files = try std.fmt.allocPrint(a, "{s},{s}", .{
+        try fileJson(a, "noarch", "mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda", sha),
+        try fileJson(a, "linux-64", "mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda", sha),
+    });
+    const body = try versionBody(a, "published", "null", files);
     stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, body);
     first = try runStage(fx, &stub, "extra", &.{});
     try std.testing.expectEqual(@as(u8, 1), first.code);
@@ -574,7 +588,7 @@ test "a burned version is refused, and the message says to bump" {
     defer fx.deinit();
     try fx.member("pkg_a", "1.0.0", "");
     var stub = newStub(a);
-    const body = "{\"state\":\"tombstoned\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"" ++ "1" ** 64 ++ "\"}]}";
+    const body = try versionBody(a, "tombstoned", "null", try fileJson(a, "noarch", "mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda", "1" ** 64));
     stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, body);
     const r = try runStage(fx, &stub, "burned", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
@@ -600,14 +614,18 @@ test "a registry that cannot be asked, or answers what is not a version, stops t
     stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, "[]");
     r = try runStage(fx, &stub, "junk", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "is not a version"));
-    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, "{\"state\":\"hidden\"}");
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, try versionBody(a, "hidden", "null", ""));
     r = try runStage(fx, &stub, "state", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "the state 'hidden'"));
     // A package the registry has never heard of is an upload, like a version it has not.
     stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 404, "{\"error\":{\"code\":\"package_not_found\",\"message\":\"x\",\"hint\":\"\"}}");
     r = try runStage(fx, &stub, "new", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
-    for ([_][]const u8{ "down", "five", "junk", "state" }) |o| try std.testing.expect(!fx.exists(o));
+    // A body that is not a complete version answer is not a version, whatever its state says.
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, "{\"state\":\"published\"}");
+    r = try runStage(fx, &stub, "partial", &.{});
+    try std.testing.expect(r.code == 1 and contains(r.err, "is not a version"));
+    for ([_][]const u8{ "down", "five", "junk", "state", "partial" }) |o| try std.testing.expect(!fx.exists(o));
 }
 
 // ---------------------------------------------------------------- the packages
@@ -1184,4 +1202,14 @@ test "a native archive at the old path without the namespace is not read" {
     const want = try std.fmt.allocPrint(a, "example/pkg_n: native library 'shim' has no archive for linux-64: expected {s}/linux-64/example/pkg_n.native/libshim.a", .{try fx.path("art")});
     try std.testing.expect(contains(r.err, want));
     try std.testing.expect(!fx.exists("old_native"));
+}
+
+test "the registry check refuses a member name that is not a full name, without asking" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var stub = Stub{ .asked = std.ArrayList([]const u8).init(a) };
+    const got = try stage.check(a, stub.net(), api, "x", "1.0.0", &.{});
+    try std.testing.expectEqualStrings("'x' is not a full name <namespace>/<name>", got.bad);
+    try std.testing.expectEqual(@as(usize, 0), stub.asked.items.len);
 }

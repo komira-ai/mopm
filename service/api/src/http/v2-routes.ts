@@ -1,6 +1,7 @@
 import { AuthError, type NamespaceAccess, type NamespaceStore, type OrgMembers } from '../auth';
 import type { TokenServiceV2 } from '../auth/tokens-v2';
 import { RegistryError } from '../errors';
+import { matchRoute, type CreateTokenRequest, type CreateTokenResponse, type OperationId, type TokenScope } from '../gen/registry-v2';
 import type { CreateService } from '../publish/create';
 import { jsonBody, MAX_EXCHANGE_BODY_BYTES, routeAuth, STORE_NOT_READY } from './auth-routes';
 import type { HttpRequest, HttpResponse, RouterDeps } from './router';
@@ -94,77 +95,82 @@ export async function routeV2(req: HttpRequest, deps: RouterDeps, requestId: str
       }
     };
 
-    // Operations that never name a package: v1's handlers (device login, listing and revoking tokens).
-    const shared =
-      (method === 'POST' && seg.length === 2 && seg[0] === 'auth' && seg[1] === 'device') ||
-      (method === 'POST' && seg.length === 3 && seg[0] === 'auth' && seg[1] === 'device' && seg[2] === 'poll') ||
-      (method === 'GET' && seg.length === 2 && seg[0] === 'me' && seg[1] === 'tokens') ||
-      (method === 'DELETE' && seg.length === 3 && seg[0] === 'me' && seg[1] === 'tokens');
-    if (shared) {
-      const r = await routeAuth({ method, seg, authorization, body: req.body }, auth);
-      return respond(r!.status, requestId, r!.body);
-    }
+    // The gateway routes only the operations of the generated route table; anything else (and the publish operations when
+    // there is no publish wiring) cannot come through it.
+    const matched = matchRoute(method, seg);
+    if (!matched) throw notFound();
+    const params = matched.params as Record<string, string>;
 
-    if (method === 'GET' && seg.length === 1 && seg[0] === 'health') return respond(200, requestId, getHealth(deps, 'v2'));
-
-    if (method === 'POST' && seg.length === 3 && seg[0] === 'auth' && seg[1] === 'oidc' && seg[2] === 'exchange') {
-      const a = needAuth();
-      return respond(200, requestId, await guarded(() => a.oidc.exchangeV2(jsonBody(req.body, MAX_EXCHANGE_BODY_BYTES))));
-    }
-    if (method === 'GET' && seg.length === 1 && seg[0] === 'me') {
-      const a = needAuth();
-      const tokens = needV2().tokens ?? (() => { throw unavailable(); })(); // prettier-ignore
-      return respond(200, requestId, await guarded(async () => tokens.me(a.authn.userToken(await a.authn.authenticate(authorization)))));
-    }
-    if (method === 'POST' && seg.length === 2 && seg[0] === 'me' && seg[1] === 'tokens') {
-      const a = needAuth();
-      const tokens = needV2().tokens ?? (() => { throw unavailable(); })(); // prettier-ignore
-      const t = await guarded(async () => tokens.create(a.authn.freshSession(await a.authn.authenticate(authorization)), jsonBody(req.body) as never));
-      // The one response that carries the secret.
-      return respond(201, requestId, { id: t.id, name: t.name, token: t.token, scopes: t.scopes, packages: t.packages, expires_at: t.expires_at });
-    }
-
-    if (seg[0] === 'namespaces') {
-      if (method === 'POST' && seg.length === 1) {
+    switch (matched.route.operationId as OperationId) {
+      // Operations that never name a package: v1's handlers (device login, listing and revoking tokens).
+      case 'startDeviceLogin':
+      case 'pollDeviceLogin':
+      case 'listTokens':
+      case 'revokeToken': {
+        const r = await routeAuth({ method, seg, authorization, body: req.body }, auth);
+        return respond(r!.status, requestId, r!.body);
+      }
+      case 'getHealth':
+        return respond(200, requestId, getHealth(deps, 'v2'));
+      case 'exchangeOidcToken': {
+        const a = needAuth();
+        return respond(200, requestId, await guarded(() => a.oidc.exchangeV2(jsonBody(req.body, MAX_EXCHANGE_BODY_BYTES))));
+      }
+      case 'getMe': {
+        const a = needAuth();
+        const tokens = needV2().tokens ?? (() => { throw unavailable(); })(); // prettier-ignore
+        return respond(200, requestId, await guarded(async () => tokens.me(a.authn.userToken(await a.authn.authenticate(authorization)))));
+      }
+      case 'createToken': {
+        const a = needAuth();
+        const tokens = needV2().tokens ?? (() => { throw unavailable(); })(); // prettier-ignore
+        const t = await guarded(async () => tokens.create(a.authn.freshSession(await a.authn.authenticate(authorization)), jsonBody(req.body) as Partial<CreateTokenRequest>));
+        // The one response that carries the secret.
+        const created: CreateTokenResponse = { id: t.id, name: t.name, token: t.token, scopes: t.scopes as TokenScope[], packages: t.packages, expires_at: t.expires_at };
+        return respond(201, requestId, created);
+      }
+      case 'createNamespace': {
         const r = await guarded(() => createNamespaceV2(needAuth(), authorization, req.body));
         return respond(r.status, requestId, r.body);
       }
       // `poll` is a reserved namespace: a POST to it is this operation, a GET is a read of the namespace of that name.
-      if (method === 'POST' && seg.length === 2 && seg[1] === 'poll') {
+      case 'pollNamespace': {
         const r = await guarded(() => pollNamespaceV2(needAuth(), needV2(), authorization, req.body));
         return respond(r.status, requestId, r.body);
       }
-      if (method === 'GET' && seg.length === 2) return respond(200, requestId, await guarded(() => getNamespaceV2(needV2(), seg[1]!)));
-      if (method === 'GET' && seg.length === 3 && seg[2] === 'members') {
-        const r = await guarded(() => listMembersV2(needAuth(), needV2(), authorization, seg[1]!));
+      case 'getNamespace':
+        return respond(200, requestId, await guarded(() => getNamespaceV2(needV2(), params.namespace!)));
+      case 'listMembers': {
+        const r = await guarded(() => listMembersV2(needAuth(), needV2(), authorization, params.namespace!));
         return respond(r.status, requestId, r.body);
       }
-      if (method === 'PUT' && seg.length === 4 && seg[2] === 'members') {
-        const r = await guarded(() => setMemberV2(needAuth(), needV2(), authorization, seg[1]!, seg[3]!, req.body));
+      case 'setMember': {
+        const r = await guarded(() => setMemberV2(needAuth(), needV2(), authorization, params.namespace!, params.user!, req.body));
         return respond(r.status, requestId, r.body);
       }
-      if (method === 'DELETE' && seg.length === 4 && seg[2] === 'members') {
-        const r = await guarded(() => removeMemberV2(needAuth(), needV2(), authorization, seg[1]!, seg[3]!));
+      case 'removeMember': {
+        const r = await guarded(() => removeMemberV2(needAuth(), needV2(), authorization, params.namespace!, params.user!));
         return respond(r.status, requestId, r.body);
       }
-      throw notFound();
-    }
-
-    if (seg[0] === 'packages') {
-      if (method === 'GET' && seg.length === 1) return respond(200, requestId, await searchPackagesV2(deps, req.query));
-      if (method === 'GET' && seg.length === 3) return respond(200, requestId, await guarded(() => getPackageV2(deps, needV2(), seg[1]!, seg[2]!)));
-      if (method === 'PUT' && seg.length === 3) {
+      case 'searchPackages':
+        return respond(200, requestId, await searchPackagesV2(deps, req.query));
+      case 'getPackage':
+        return respond(200, requestId, await guarded(() => getPackageV2(deps, needV2(), params.namespace!, params.name!)));
+      case 'createPackage': {
         const v = needV2();
         if (!v.creates) throw unavailable();
         const creates = v.creates;
-        const made = await guarded(() => creates.create(authorization, seg[1]!, seg[2]!));
-        return respond(made.created ? 201 : 200, requestId, await guarded(() => getPackageV2(deps, v, seg[1]!, seg[2]!)));
+        const made = await guarded(() => creates.create(authorization, params.namespace!, params.name!));
+        return respond(made.created ? 201 : 200, requestId, await guarded(() => getPackageV2(deps, v, params.namespace!, params.name!)));
       }
-      if (method === 'GET' && seg.length === 4 && seg[3] === 'versions') return respond(200, requestId, await listVersionsV2(deps, seg[1]!, seg[2]!, req.query));
-      if (method === 'GET' && seg.length === 4) return respond(200, requestId, await getVersionV2(deps, seg[1]!, seg[2]!, seg[3]!));
+      case 'listVersions':
+        return respond(200, requestId, await listVersionsV2(deps, params.namespace!, params.name!, req.query));
+      case 'getVersion':
+        return respond(200, requestId, await getVersionV2(deps, params.namespace!, params.name!, params.version!));
+      default:
+        // The publish operations: routePublish answered them above when there is publish wiring.
+        throw notFound();
     }
-    // The gateway routes only the operations above, so this is reached only by a request that cannot come through it.
-    throw notFound();
   } catch (err) {
     return failure(err, requestId);
   }

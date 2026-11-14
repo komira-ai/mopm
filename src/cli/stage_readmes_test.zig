@@ -12,7 +12,7 @@ const stage = @import("stage_cmd.zig");
 const Net = gp.Net;
 const Console = gp.Console;
 
-const health_objects = "{\"status\":\"ok\",\"features\":[\"group_readme_objects\"]}";
+const health_objects = "{\"status\":\"ok\",\"stage\":\"beta\",\"api_version\":\"v2\",\"read_only\":false,\"features\":[\"group_readme_objects\"]}";
 
 /// A registry that answers /health with `health` (or fails it) and finds no version of any package.
 const Registry = struct {

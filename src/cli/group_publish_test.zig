@@ -161,9 +161,12 @@ pub fn createAnswer(comptime status: []const u8, comptime uploaded: [3]bool) []c
 const create_new = createAnswer("open", .{ false, false, false });
 pub const group_status = struct {
     pub fn of(comptime status: []const u8) []const u8 {
-        return "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"" ++ status ++ "\",\"attempt\":1}";
+        return "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"" ++ status ++ "\",\"attempt\":1" ++ group_rest ++ "}";
     }
 };
+
+/// The fields every `Group` of the contract carries besides the id, status and attempt (and `failure`).
+const group_rest = ",\"created_at\":\"2026-10-22T00:00:00Z\",\"deadline_at\":\"2026-10-23T00:00:00Z\",\"member_count\":0,\"members\":[]";
 
 pub const err_404 = "{\"error\":{\"code\":\"route_not_found\",\"message\":\"There is no such operation.\",\"hint\":\"x\"}}";
 
@@ -804,7 +807,7 @@ test "a rejected member ends the group: it is named, and none is published" {
         .{ .method = .POST, .suffix = "/groups", .status = 201, .body = createAnswer("open", .{ true, true, true }) },
         .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
         .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("validating") },
-        .{ .method = .GET, .suffix = gid, .status = 200, .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"rejected\",\"failure\":{\"code\":\"path_not_allowed\",\"message\":\"bin/tool is not an allowed path\",\"member\":\"acme/pb\"}}" },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"rejected\",\"attempt\":1" ++ group_rest ++ ",\"failure\":{\"code\":\"path_not_allowed\",\"message\":\"bin/tool is not an allowed path\",\"member\":\"acme/pb\"}}" },
     });
     var console = Console.init(a, null);
     var p = publisher(a, &tmp, plan, &script, &console);
@@ -825,7 +828,7 @@ test "a rejected member ends the group: it is named, and none is published" {
     try std.testing.expectEqualStrings("skipped", members[3].object.get("outcome").?.string);
 
     // A group that ended with no member to blame, and one that ended with no reason at all.
-    inline for (.{ "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"expired\",\"failure\":{\"code\":\"deadline_passed\",\"message\":\"too late\"}}", group_status.of("aborted") }) |body| {
+    inline for (.{ "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"expired\",\"attempt\":1" ++ group_rest ++ ",\"failure\":{\"code\":\"deadline_passed\",\"message\":\"too late\"}}", group_status.of("aborted") }) |body| {
         var s2 = newScript(a, &.{
             .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("validating", .{ true, true, true }) },
             .{ .method = .GET, .suffix = gid, .status = 200, .body = body },
@@ -881,6 +884,34 @@ test "the run gives up waiting, and says how to go on" {
     const report = try std.json.parseFromSliceLeaky(std.json.Value, a, try tmp.dir.readFileAlloc(a, plan_mod.report_name, 1 << 16), .{});
     try std.testing.expectEqualStrings("timed_out", report.object.get("outcome").?.string);
     try std.testing.expectEqualStrings("pending", report.object.get("members").?.array.items[0].object.get("outcome").?.string);
+}
+
+test "a group status this mopm does not know is waited on, and an answer without a required field is refused" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("validating", .{ true, true, true }) },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("paused") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.wait_secs = 2;
+    try std.testing.expectEqual(Result.timed_out, p.run());
+    try expectContains(console.err.items, "group " ++ gid ++ " is unknown and still in progress, not failed");
+
+    // A group answer that leaves out `members`, which the contract requires, is not one this mopm reads.
+    var script2 = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("validating", .{ true, true, true }) },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"visible\",\"attempt\":1,\"created_at\":\"2026-10-22T00:00:00Z\",\"deadline_at\":\"2026-10-23T00:00:00Z\",\"member_count\":0}" },
+    });
+    var console2 = Console.init(a, null);
+    var q = publisher(a, &tmp, plan, &script2, &console2);
+    try std.testing.expectEqual(Result.failed, q.run());
+    try expectContains(console2.err.items, "the registry's answer to GET /groups/" ++ gid ++ " is not one this mopm reads");
 }
 
 test "the create is repeated while the registry reserves, and an answer that is wrong is refused" {

@@ -1,4 +1,5 @@
 import { AuthError } from '../auth/errors';
+import type { CreateNamespaceRequest, DevicePollRequest, SetMemberRequest } from '../gen/registry-v2';
 import { jsonBody, type AuthServices } from './auth-routes';
 import type { V2Deps } from './v2-routes';
 
@@ -11,7 +12,7 @@ const needMembers = (v2: V2Deps) => v2.members ?? (() => { throw unavailable(); 
  */
 export async function createNamespaceV2(auth: AuthServices, authorization: string | undefined, body: string | undefined): Promise<{ status: number; body: unknown }> {
   const account = auth.authn.freshSession(await auth.authn.authenticate(authorization));
-  const namespace = jsonBody(body).namespace;
+  const namespace = (jsonBody(body) as Partial<CreateNamespaceRequest>).namespace;
   const start = await (await auth.registration()).start(account, namespace);
   return { status: 202, body: start };
 }
@@ -22,7 +23,7 @@ export async function createNamespaceV2(auth: AuthServices, authorization: strin
  */
 export async function pollNamespaceV2(auth: AuthServices, v2: V2Deps, authorization: string | undefined, body: string | undefined): Promise<{ status: number; body: unknown }> {
   const account = auth.authn.userToken(await auth.authn.authenticate(authorization));
-  const r = await (await auth.registration()).poll(account, jsonBody(body).device_code);
+  const r = await (await auth.registration()).poll(account, (jsonBody(body) as Partial<DevicePollRequest>).device_code);
   if (r.status !== 'created') return { status: 200, body: r };
   return { status: 200, body: { status: 'created', namespace: await v2.access.info(r.record) } };
 }
@@ -43,7 +44,7 @@ export async function setMemberV2(
   body: string | undefined,
 ): Promise<{ status: number; body: unknown }> {
   const account = auth.authn.freshSession(await auth.authn.authenticate(authorization));
-  const role = jsonBody(body).role;
+  const role = (jsonBody(body) as Partial<SetMemberRequest>).role;
   const r = await needMembers(v2).set(account, namespace, user, role);
   return { status: r.created ? 201 : 200, body: r.member };
 }

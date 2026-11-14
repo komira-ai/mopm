@@ -44,6 +44,7 @@ const credentials = core.credentials;
 const ci_oidc = core.ci_oidc;
 const registry_cmd = @import("registry_cmd.zig");
 const group_publish = @import("group_publish.zig");
+const v2 = core.registry_v2;
 
 const usage =
     \\usage: mopm pack    --compiler <mojo version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
@@ -559,29 +560,22 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
     }
 
     // Commit.
-    var body = std.ArrayList(u8).init(arena);
-    const w = body.writer();
-    try w.writeAll("{\"upload_ids\":[");
-    for (ids.items, 0..) |id, i| {
-        if (i > 0) try w.writeByte(',');
-        try std.json.encodeJsonString(id, .{}, w);
-    }
-    try w.print("],\"manifest_sha256\":\"{s}\"", .{&prep.packs[0].manifest_sha256});
-    if (readme) |r| {
-        try w.writeAll(",\"readme\":");
-        try std.json.encodeJsonString(r, .{}, w);
-    }
-    try w.writeByte('}');
-    const path = try std.fmt.allocPrint(arena, "/packages/{s}/{s}/publish", .{ name, version });
-    const committed = try http.request(arena, .POST, try apiV2(s, path), .{ .token = token, .body = body.items });
+    const full = fullOf(name) orelse {
+        err(not_full, .{name});
+        return 1;
+    };
+    const commit = v2.CommitPublishParams{
+        .namespace = full.namespace,
+        .name = full.name,
+        .version = version,
+        .body = .{ .upload_ids = ids.items, .manifest_sha256 = &prep.packs[0].manifest_sha256, .readme = readme },
+    };
+    const committed = try http.request(arena, v2.CommitPublish.method, try v2.url(v2.CommitPublish, arena, s.config.api_v2_url, commit), .{ .token = token, .body = (try v2.CommitPublish.body(arena, commit)).? });
     if (!committed.ok()) {
         registry_cmd.printFailure(committed);
         return 1;
     }
-    const accepted = try std.json.parseFromSliceLeaky(struct {
-        publish_id: []const u8,
-        status_url: []const u8,
-    }, arena, committed.body, .{ .ignore_unknown_fields = true });
+    const accepted = try v2.decode(v2.CommitPublish, arena, committed.body);
     try out.print("committed, publish {s}\n", .{accepted.publish_id});
     const status_url = (try resolveStatusUrl(arena, s.config.api_v2_url, accepted.status_url)) orelse {
         err("the registry sent a status URL that is not a path under /api/v2/publishes/\n", .{});
@@ -596,7 +590,11 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
 /// is not said. Any other answer is printed as every failed request is and the result is false, so the caller stops before
 /// an upload. A request that fails before an answer is said the same way.
 pub fn ensurePackage(arena: Allocator, net: group_publish.Net, con: *group_publish.Console, api_v2_url: []const u8, token: []const u8, stage: []const u8, name: []const u8) Allocator.Error!bool {
-    const url = try std.fmt.allocPrint(arena, "{s}/packages/{s}", .{ api_v2_url, name });
+    const full = fullOf(name) orelse {
+        con.fail(not_full, .{name});
+        return false;
+    };
+    const url = try v2.url(v2.CreatePackage, arena, api_v2_url, .{ .namespace = full.namespace, .name = full.name });
     // An empty body, not none: the request then carries `Content-Length: 0`, which a PUT needs.
     const answer = net.request(arena, .PUT, url, .{ .token = token, .body = "", .content_type = null }) catch |e| {
         con.fail("PUT /packages/{s}: {s}\n", .{ name, @errorName(e) });
@@ -611,10 +609,15 @@ pub fn ensurePackage(arena: Allocator, net: group_publish.Net, con: *group_publi
     return false;
 }
 
-/// The URL of `path` on the version 2 API, which every operation naming a package uses (the package's full name is in `path`).
-fn apiV2(s: registry_cmd.Session, path: []const u8) Allocator.Error![]const u8 {
-    return std.fmt.allocPrint(s.arena, "{s}{s}", .{ s.config.api_v2_url, path });
+/// `name` (a full name) as the namespace and name the generated operations take in their path.
+/// `name` split into its namespace and name for a v2 path; null for a name that is not a full name `<namespace>/<name>`
+/// (the manifest checks guarantee one, so this only keeps a bare name from ever becoming a request).
+fn fullOf(name: []const u8) ?core.names.FullName {
+    return core.names.split(name);
 }
+
+/// What is said of a package name that is not a full name, before any request is sent.
+const not_full = "'{s}' is not a full name <namespace>/<name>\n";
 
 /// Every header the registry named for a PUT, as given (the client sets Content-Length itself from the body, to the same
 /// value); null after printing why not, when a header's value is not text.
@@ -640,32 +643,48 @@ pub fn putHeaders(arena: Allocator, put_headers: ?std.json.Value) Allocator.Erro
     return headers.items;
 }
 
+/// `putHeaders` of the headers `beginUpload` answered (a JSON object of strings).
+fn putHeadersOf(arena: Allocator, named: std.json.ArrayHashMap([]const u8)) Allocator.Error!?[]const std.http.Header {
+    var object = std.json.ObjectMap.init(arena);
+    var it = named.map.iterator();
+    while (it.next()) |h| try object.put(h.key_ptr.*, .{ .string = h.value_ptr.* });
+    return putHeaders(arena, .{ .object = object });
+}
+
 /// Begins the upload of `p` and PUTs its bytes; the upload id, or null after
 /// printing why not.
 fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, version: []const u8, p: conda.Packed) anyerror!?[]const u8 {
     const arena = s.arena;
-    const begin_body = try std.fmt.allocPrint(
-        arena,
-        "{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}",
-        .{ p.subdir, p.file_name, &p.sha256, p.bytes.len },
-    );
-    const path = try std.fmt.allocPrint(arena, "/packages/{s}/{s}/files", .{ name, version });
-    const begun = try http.request(arena, .POST, try apiV2(s, path), .{ .token = token, .body = begin_body });
+    const full = fullOf(name) orelse {
+        err(not_full, .{name});
+        return null;
+    };
+    const begin = v2.BeginUploadParams{
+        .namespace = full.namespace,
+        .name = full.name,
+        .version = version,
+        .body = .{ .subdir = std.meta.stringToEnum(v2.Subdir, p.subdir) orelse .unknown, .filename = p.file_name, .sha256 = &p.sha256, .size = @intCast(p.bytes.len) },
+    };
+    const begun = try http.request(arena, v2.BeginUpload.method, try v2.url(v2.BeginUpload, arena, s.config.api_v2_url, begin), .{ .token = token, .body = (try v2.BeginUpload.body(arena, begin)).? });
     if (!begun.ok()) {
         registry_cmd.printFailure(begun);
         return null;
     }
-    const up = try std.json.parseFromSliceLeaky(struct {
-        upload_id: []const u8,
-        put_url: []const u8,
-        put_headers: ?std.json.Value = null,
-    }, arena, begun.body, .{ .ignore_unknown_fields = true });
+    const up = v2.decode(v2.BeginUpload, arena, begun.body) catch |e| {
+        // An upload header whose value is not text is said as before the answer was decoded with the generated type.
+        if (std.json.parseFromSliceLeaky(std.json.Value, arena, begun.body, .{}) catch null) |value| {
+            if (value == .object) if (value.object.get("put_headers")) |named| {
+                if ((try putHeaders(arena, named)) == null) return null;
+            };
+        }
+        return e;
+    };
     if (!registry.allowedUrl(up.put_url)) {
         err("the registry named an upload URL that is neither https nor loopback http\n", .{});
         return null;
     }
 
-    const headers = (try putHeaders(arena, up.put_headers)) orelse return null;
+    const headers = (try putHeadersOf(arena, up.put_headers)) orelse return null;
     // No bearer token: the URL is presigned.
     const put = try http.request(arena, .PUT, up.put_url, .{
         .body = p.bytes,
@@ -695,24 +714,17 @@ fn waitForPublish(s: registry_cmd.Session, net: group_publish.Net, con: *group_p
             registry_cmd.reportFailure(con, polled);
             return 1;
         }
-        const state = try std.json.parseFromSliceLeaky(struct {
-            status: []const u8,
-            rejection_code: ?[]const u8 = null,
-            message: ?[]const u8 = null,
-            /// What did not stop the publish (a native dependency whose name conda-forge does not list). Registries that
-            /// predate the field do not send it; a CLI that predates it ignores it (`ignore_unknown_fields`).
-            warnings: ?[]const []const u8 = null,
-        }, arena, polled.body, .{ .ignore_unknown_fields = true });
-        const finished = std.mem.eql(u8, state.status, "published") or std.mem.eql(u8, state.status, "rejected");
+        const state = try v2.decode(v2.GetPublishStatus, arena, polled.body);
+        const finished = state.status == .published or state.status == .rejected;
         if (finished) {
             for (state.warnings orelse &.{}) |w| con.fail("warning: {s}\n", .{w});
         }
-        if (std.mem.eql(u8, state.status, "published")) {
+        if (state.status == .published) {
             con.say("published {s} {s}\n", .{ name, version });
             return 0;
         }
-        if (std.mem.eql(u8, state.status, "rejected")) {
-            con.fail("rejected: {s}: {s}\n", .{ state.rejection_code orelse "unknown", state.message orelse "" });
+        if (state.status == .rejected) {
+            con.fail("rejected: {s}: {s}\n", .{ if (state.rejection_code) |c| @tagName(c) else "unknown", state.message orelse "" });
             return 1;
         }
         net.pause(1);
@@ -1021,10 +1033,25 @@ test "a PUT carries the headers the registry named, as given, except the length 
     try std.testing.expect((try putHeaders(a, odd)) == null);
 }
 
+test "the headers of a beginUpload answer are the PUT's headers as the registry named them" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const up = try v2.decode(v2.BeginUpload, a, "{\"upload_id\":\"up_1\",\"put_url\":\"https://s3.test/x\",\"put_headers\":{\"x-amz-checksum-sha256\":\"abc=\",\"x-amz-meta-n\":\"v\"},\"expires_at\":\"2026-10-25T00:05:00Z\"}");
+    try std.testing.expectEqualStrings("up_1", up.upload_id);
+    const headers = (try putHeadersOf(a, up.put_headers)).?;
+    try std.testing.expectEqual(@as(usize, 2), headers.len);
+    try std.testing.expectEqualStrings("x-amz-checksum-sha256", headers[0].name);
+    try std.testing.expectEqualStrings("abc=", headers[0].value);
+    try std.testing.expectEqualStrings("x-amz-meta-n", headers[1].name);
+    try std.testing.expectEqualStrings("v", headers[1].value);
+}
+
 const gt = @import("group_publish_test.zig");
 const poll_url = "http://127.0.0.1:1/api/v2/publishes/pub_1";
-const pending = "{\"status\":\"validating\"}";
-const done = "{\"status\":\"published\"}";
+const status_head = "{\"publish_id\":\"pub_1\",\"name\":\"example/x\",\"version\":\"1.0.0\",";
+const pending = status_head ++ "\"status\":\"validating\"}";
+const done = status_head ++ "\"status\":\"published\"}";
 
 fn waitSession(a: Allocator) registry_cmd.Session {
     return .{ .arena = a, .config = .{ .stage = "beta", .api_url = "http://127.0.0.1:1/api/v1", .api_v2_url = "http://127.0.0.1:1/api/v2", .channel_url = "", .min_cli_version = "", .read_only = false }, .config_dir = "unused" };
@@ -1109,14 +1136,14 @@ test "the warnings of a finished publish are printed to standard error, and a st
     const a = st.allocator();
     var con = group_publish.Console.init(a, null);
     var warned = gt.Script{ .steps = &.{
-        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"validating\",\"warnings\":[\"not yet\"]}" },
-        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"published\",\"warnings\":[\"native dependency 'libpgn' is not a conda-forge package name\",\"second\"],\"future\":{\"a\":1}}" },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"validating\",\"warnings\":[\"not yet\"]}" },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"published\",\"warnings\":[\"native dependency 'libpgn' is not a conda-forge package name\",\"second\"],\"future\":{\"a\":1}}" },
     }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
     try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), warned.net(), &con, 600, "tok", poll_url, "example/x", "1.0.0"));
     try std.testing.expectEqualStrings("mopm: warning: native dependency 'libpgn' is not a conda-forge package name\nmopm: warning: second\n", con.err.items);
     try std.testing.expectEqualStrings("published example/x 1.0.0\n", con.out.items);
     var plain = group_publish.Console.init(a, null);
-    var quiet = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"published\",\"future\":[1]}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    var quiet = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"published\",\"future\":[1]}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
     try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), quiet.net(), &plain, 600, "tok", poll_url, "example/x", "1.0.0"));
     try std.testing.expectEqualStrings("", plain.err.items);
 }
@@ -1126,14 +1153,29 @@ test "a rejected publish and a failing poll end the wait at once, with no pause"
     defer st.deinit();
     const a = st.allocator();
     var con = group_publish.Console.init(a, null);
-    var rejected = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"rejected\",\"rejection_code\":\"bad\",\"message\":\"no\"}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    var rejected = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"rejected\",\"rejection_code\":\"manifest_invalid\",\"message\":\"no\"}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
     try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), rejected.net(), &con, 600, "tok", poll_url, "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(u64, 0), rejected.slept);
-    try std.testing.expectEqualStrings("mopm: rejected: bad: no\n", con.err.items);
+    try std.testing.expectEqualStrings("mopm: rejected: manifest_invalid: no\n", con.err.items);
     var broken = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 500 }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
     try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), broken.net(), &con, 600, "tok", poll_url, "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(u64, 0), broken.slept);
     try std.testing.expectEqual(@as(usize, 1), broken.seen.items.len);
+}
+
+test "a status this CLI does not know is polled again, and a rejection code it does not know is said as unknown" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"reviewing\"}" },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"rejected\",\"rejection_code\":\"bad\",\"message\":\"no\"}" },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), script.net(), &con, 600, "tok", poll_url, "example/x", "1.0.0"));
+    try std.testing.expectEqual(@as(usize, 2), script.seen.items.len);
+    try std.testing.expectEqual(@as(u64, 1), script.slept);
+    try std.testing.expectEqualStrings("mopm: rejected: unknown: no\n", con.err.items);
 }
 
 test "publish creates a package the registry does not have: PUT to its full name with the token and no body, and says created" {
@@ -1153,6 +1195,19 @@ test "publish creates a package the registry does not have: PUT to its full name
     try std.testing.expect(!sent.content_type_set);
     try std.testing.expectEqualStrings("created example/x on beta\n", con.out.items);
     try std.testing.expectEqualStrings("", con.err.items);
+}
+
+test "a package name that is not a full name is refused before any request" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.newScript(a, &.{});
+    try std.testing.expect(!(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "x")));
+    try std.testing.expectEqual(@as(usize, 0), script.seen.items.len);
+    try std.testing.expectEqualStrings("mopm: 'x' is not a full name <namespace>/<name>\n", con.err.items);
+    try std.testing.expect(fullOf("x") == null);
+    try std.testing.expectEqualStrings("example", fullOf("example/x").?.namespace);
 }
 
 test "publish of a package the registry already has says nothing about creating it and goes on" {

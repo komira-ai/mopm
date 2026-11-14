@@ -44,6 +44,7 @@ const bins_mod = core.bins;
 const registry = core.registry;
 const semver = core.semver;
 const publish_cmd = @import("publish_cmd.zig");
+const v2 = core.registry_v2;
 const gp = @import("group_publish.zig");
 const readmes = @import("group_readmes.zig");
 const plan_mod = @import("group_plan.zig");
@@ -443,13 +444,24 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
 
 pub const Verdict = union(enum) { upload, skip, refuse: []const u8 };
 
-const RegistryFile = struct { subdir: []const u8 = "", filename: []const u8 = "", sha256: []const u8 = "" };
-const RegistryVersion = struct { state: []const u8 = "", yank_reason: ?[]const u8 = null, files: []const RegistryFile = &.{} };
+/// The `state` of a version answer as the registry wrote it, for the one state this mopm does not know; "" when there is none.
+fn rawState(arena: Allocator, body: []const u8) []const u8 {
+    const value = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return "";
+    const object = switch (value) {
+        .object => |o| o,
+        else => return "",
+    };
+    return switch (object.get("state") orelse return "") {
+        .string => |text| text,
+        else => "",
+    };
+}
 
 /// What the registry says about the package `name` (a full name) at `version` against the files `packs`, or why it could not be asked.
 pub fn check(arena: Allocator, net: Net, api_v2_url: []const u8, name: []const u8, version: []const u8, packs: []const conda.Packed) !Result(Verdict) {
-    const url = try std.fmt.allocPrint(arena, "{s}/packages/{s}/{s}", .{ api_v2_url, name, version });
-    const answer = net.vtable.request(net.ptr, arena, .GET, url, .{}) catch |e| {
+    const full = core.names.split(name) orelse return bad(Verdict, arena, "'{s}' is not a full name <namespace>/<name>", .{name});
+    const url = try v2.url(v2.GetVersion, arena, api_v2_url, .{ .namespace = full.namespace, .name = full.name, .version = version });
+    const answer = net.vtable.request(net.ptr, arena, v2.GetVersion.method, url, .{}) catch |e| {
         return bad(Verdict, arena, "cannot ask the registry about {s} {s}: {s}", .{ name, version, @errorName(e) });
     };
     if (answer.status == 404) {
@@ -460,23 +472,23 @@ pub fn check(arena: Allocator, net: Net, api_v2_url: []const u8, name: []const u
         const e = try http.apiError(arena, answer);
         return bad(Verdict, arena, "the registry answered HTTP {d} about {s} {s}: {s}", .{ answer.status, name, version, e.message });
     }
-    const v = std.json.parseFromSliceLeaky(RegistryVersion, arena, answer.body, .{ .ignore_unknown_fields = true }) catch {
+    const v = v2.decode(v2.GetVersion, arena, answer.body) catch {
         return bad(Verdict, arena, "the registry's answer about {s} {s} is not a version", .{ name, version });
     };
-    if (std.mem.eql(u8, v.state, "tombstoned")) {
+    if (v.state == .tombstoned) {
         return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} was taken down by an administrator and its number is burned; bump the version", .{ name, version }) } };
     }
-    if (std.mem.eql(u8, v.state, "yanked")) {
+    if (v.state == .yanked) {
         return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is yanked{s}{s}; a yanked version cannot be published again, so bump the version", .{ name, version, if (v.yank_reason != null) ": " else "", v.yank_reason orelse "" }) } };
     }
-    if (!std.mem.eql(u8, v.state, "published")) {
-        return bad(Verdict, arena, "the registry reports the state '{s}' for {s} {s}, which this mopm does not know", .{ v.state, name, version });
+    if (v.state != .published) {
+        return bad(Verdict, arena, "the registry reports the state '{s}' for {s} {s}, which this mopm does not know", .{ rawState(arena, answer.body), name, version });
     }
     // Published: the same files, byte for byte, or another version's worth of bytes under this number.
     for (packs) |p| {
         var same = false;
         for (v.files) |f| {
-            if (std.mem.eql(u8, f.subdir, p.subdir) and std.mem.eql(u8, f.filename, p.file_name) and std.mem.eql(u8, f.sha256, &p.sha256)) same = true;
+            if (std.mem.eql(u8, @tagName(f.subdir), p.subdir) and std.mem.eql(u8, f.filename, p.file_name) and std.mem.eql(u8, f.sha256, &p.sha256)) same = true;
         }
         if (!same) {
             return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published with different bytes ({s}/{s} is not what the registry holds); versions are immutable, so bump the version", .{ name, version, p.subdir, p.file_name }) } };

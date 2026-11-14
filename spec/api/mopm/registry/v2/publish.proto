@@ -1,0 +1,338 @@
+syntax = "proto3";
+
+package mopm.registry.v2;
+
+import "mopm/registry/v2/types.proto";
+import "mopm/registry/v2/errors.proto";
+import "mopm/registry/v2/options.proto";
+
+message BeginUploadRequest {
+  Subdir subdir = 1 [(field) = {required: true}];
+  Filename filename = 2 [(field) = {required: true}];
+  Sha256 sha256 = 3 [(field) = {required: true}];
+  // Bytes. At most 100 MB (100,000,000 bytes).
+  int64 size = 4 [(field) = {required: true, minimum: 1, maximum: 100000000}];
+}
+
+message BeginUploadResponse {
+  string upload_id = 1 [(field) = {required: true, min_length: 1}];
+  string put_url = 2 [(field) = {required: true, format: "uri"}];
+  // Headers the client MUST send with the PUT, exactly as given.
+  map<string, string> put_headers = 3 [(field) = {required: true}];
+  Timestamp expires_at = 4 [(field) = {required: true}];
+}
+
+message CommitPublishRequest {
+  repeated string upload_ids = 1 [(field) = {required: true, min_items: 1, max_items: 20, unique_items: true, items: {min_length: 1}}];
+  // Optional. The SHA-256 of the bytes of `lib/mojo/<import name>.mopm.json` in the archives (what `mopm pack` prints). When given
+  // it is checked: a value that is not 64 lowercase hex digits is `invalid_request`, and an archive whose manifest hashes
+  // to something else is rejected `sha256_mismatch`. When absent, nothing is checked and the version holds the hash the
+  // registry computes from the archives; then every file of the version must carry the same manifest bytes, or the publish is
+  // rejected `manifest_invalid`. When given, a file whose manifest hashes to something else is `sha256_mismatch`, so at
+  // most the files that carry the given manifest bytes pass.
+  Sha256 manifest_sha256 = 2;
+  // Optional. The git commit the version was built from (see `SourceCommit`). Stored once with the version and served by
+  // `getVersion`; the registry does not verify it. Committing the same upload ids again must repeat it (or its absence): a
+  // repeat that states another value is refused `version_exists`, and the stored value does not change.
+  SourceCommit source_commit = 3;
+  // `[package] description` of this version's mopm.toml: one line, no line breaks. Stored on the version and served back by `getVersion`.
+  string description = 4 [(field) = {min_length: 1, max_length: 512}];
+  // `[package] license`, an SPDX expression.
+  string license = 5 [(field) = {min_length: 1, max_length: 128}];
+  // An https URL.
+  string repository = 6 [(field) = {max_length: 2048, format: "uri"}];
+  // An https URL.
+  string homepage = 7 [(field) = {max_length: 2048, format: "uri"}];
+  Keywords keywords = 8;
+  // Untrusted Markdown, stored verbatim: the registry does not sanitize it, so a consumer must sanitize it,
+  // disable raw HTML and treat links as untrusted. Same for `description` and `license` (plain text).
+  // At most 64 KiB: 65,536 bytes of UTF-8 (the registry counts
+  // bytes, not characters, so non-ASCII text uses more of it). This is
+  // the cap the read API serves, so a larger readme is refused with
+  // `invalid_request` rather than stored and never shown. `maxLength`
+  // below is in characters and can only bound the byte count from
+  // above.
+  string readme = 9 [(field) = {max_length: 65536}];
+}
+
+message CommitPublishResponse {
+  string publish_id = 1 [(field) = {required: true, min_length: 1}];
+  // Path on the same host. GET it with the same token.
+  string status_url = 2 [(field) = {required: true, pattern: "^/api/v2/publishes/"}];
+}
+
+message PublishStatus {
+  option (schema) = {when: {field: "status", equals: "rejected", required: ["rejection_code"]}};
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_PENDING = 1;
+    STATUS_VALIDATING = 2;
+    STATUS_INDEXING = 3;
+    STATUS_PUBLISHED = 4;
+    STATUS_REJECTED = 5;
+  }
+  string publish_id = 1 [(field) = {required: true, min_length: 1}];
+  FullName name = 2 [(field) = {required: true}];
+  Version version = 3 [(field) = {required: true}];
+  Status status = 4 [(field) = {required: true}];
+  RejectionCode rejection_code = 5;
+  string message = 6;
+  // What did not stop the publish and the publisher should read: a native dependency whose name the registry's copy of
+  // conda-forge's package names does not list (a typo, or a package newer than the copy), a copy more than a day old,
+  // or a copy that could not be read. Present only once the validator has found something to say, and so may first
+  // appear on a `validating` or later status. Absent means nothing to report. A client prints these and goes on;
+  // a client built before this field ignores it.
+  repeated string warnings = 7;
+}
+
+message GroupFile {
+  Subdir subdir = 1 [(field) = {required: true}];
+  Filename filename = 2 [(field) = {required: true}];
+  Sha256 sha256 = 3 [(field) = {required: true}];
+  // Bytes. At most 100 MB (100,000,000 bytes).
+  int64 size = 4 [(field) = {required: true, minimum: 1, maximum: 100000000}];
+}
+
+// A readme named by the SHA-256 of its bytes and their count, for a readme that travels as an uploaded object. At most
+// 64 KiB (65,536 bytes) of UTF-8.
+message ReadmeRef {
+  Sha256 sha256 = 1 [(field) = {required: true}];
+  // Bytes, 1 to 65536.
+  int64 size = 2 [(field) = {required: true, minimum: 1, maximum: 65536}];
+}
+
+message GroupMemberRequest {
+  FullName name = 1 [(field) = {required: true}];
+  Version version = 2 [(field) = {required: true}];
+  // Optional, and taken only by a registry that lists `group_readme_objects` in the `features` of `getHealth`; any
+  // other ignores it. The readme of the member as an object to upload (see `ReadmeRef`). It is not part of the group
+  // id, so the same set with or without it is the same group. When it is given the answer's member carries `readme`
+  // (`GroupUploadReadme`) unless the answer is `reserving`.
+  ReadmeRef readme = 3;
+  repeated GroupFile files = 4 [(field) = {required: true, min_items: 1, max_items: 20}];
+}
+
+message CreateGroupRequest {
+  enum OnOverlap {
+    ON_OVERLAP_UNSPECIFIED = 0;
+    ON_OVERLAP_SUPERSEDE = 1;
+    ON_OVERLAP_REFUSE = 2;
+  }
+  // One member per package. The registry's limit on members is 500 by default.
+  repeated GroupMemberRequest members = 1 [(field) = {required: true, min_items: 1, max_items: 500}];
+  // What to do when the caller's own open groups share a version with this set. `supersede` (the default) ends
+  // them, as described under `createGroup`. `refuse` ends nothing: the call is answered `group_conflict` with the
+  // reason `overlap_refused`, and the message names the caller's own overlapping group ids. It is not part of
+  // the group id, so the same set with either value is the same group. A registry that predates this option
+  // ignores it and supersedes, and does not name what it ended in `superseded` either, so a client that must
+  // never supersede cannot rely on `refuse` against a registry it has not seen name them.
+  OnOverlap on_overlap = 2;
+}
+
+// Where a group is. A client treats a value it does not know as "unknown".
+enum GroupStatusName {
+  GROUP_STATUS_NAME_UNSPECIFIED = 0;
+  GROUP_STATUS_NAME_OPEN = 1;
+  GROUP_STATUS_NAME_VALIDATING = 2;
+  GROUP_STATUS_NAME_COMMITTED = 3;
+  GROUP_STATUS_NAME_VISIBLE = 4;
+  GROUP_STATUS_NAME_REJECTED = 5;
+  GROUP_STATUS_NAME_FAILED = 6;
+  GROUP_STATUS_NAME_EXPIRED = 7;
+  GROUP_STATUS_NAME_ABORTED = 8;
+  GROUP_STATUS_NAME_SUPERSEDED = 9;
+}
+
+message GroupUploadFile {
+  Subdir subdir = 1 [(field) = {required: true}];
+  Filename filename = 2 [(field) = {required: true}];
+  string upload_id = 3 [(field) = {required: true, min_length: 1}];
+  // The bytes are already in storage; there is nothing to PUT.
+  bool uploaded = 4 [(field) = {required: true}];
+  // Present when `uploaded` is false.
+  string put_url = 5 [(field) = {format: "uri"}];
+  // Headers the client MUST send with the PUT, exactly as given. Present when `uploaded` is false.
+  map<string, string> put_headers = 6;
+  Timestamp expires_at = 7;
+}
+
+// Where to PUT the readme a member declared, with the same meaning as `GroupUploadFile`: `uploaded` is true when the
+// object is in storage at the declared size, and then there is nothing to PUT; otherwise `put_url`, `put_headers` and
+// `expires_at` are present, and the PUT is pinned to the declared SHA-256 and size.
+message GroupUploadReadme {
+  Sha256 sha256 = 1 [(field) = {required: true}];
+  int64 size = 2 [(field) = {required: true, minimum: 1, maximum: 65536}];
+  string upload_id = 3 [(field) = {required: true, min_length: 1}];
+  // The bytes are already in storage; there is nothing to PUT.
+  bool uploaded = 4 [(field) = {required: true}];
+  // Present when `uploaded` is false.
+  string put_url = 5 [(field) = {format: "uri"}];
+  // Headers the client MUST send with the PUT, exactly as given. Present when `uploaded` is false.
+  map<string, string> put_headers = 6;
+  Timestamp expires_at = 7;
+}
+
+message GroupMemberAnswer {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_NEW = 1;
+    ACTION_JOIN = 2;
+    ACTION_SKIP_IDENTICAL = 3;
+  }
+  FullName name = 1 [(field) = {required: true}];
+  Version version = 2 [(field) = {required: true}];
+  // `new`: this call reserved the number. `join`: it was already reserved for the group, or was taken over from a
+  // reservation nobody used. `skip_identical`: the group has nothing more to do for this member.
+  Action action = 3 [(field) = {required: true}];
+  repeated GroupUploadFile files = 4 [(field) = {required: true}];
+  // Present when the member declared a `readme`, the registry lists `group_readme_objects`, and the answer carries
+  // the members' files (not on a `reserving` answer). A client that finds a declared readme without it treats the
+  // registry as one that does not take readme objects.
+  GroupUploadReadme readme = 5;
+}
+
+message CreateGroupResponse {
+  message Reserving {
+    int64 done = 1 [(field) = {required: true, minimum: 0}];
+    int64 total = 2 [(field) = {required: true, minimum: 1}];
+  }
+  GroupId group_id = 1 [(field) = {required: true}];
+  GroupStatusName status = 2 [(field) = {required: true}];
+  // Starts at 1; a group that ended and was created again has the next one.
+  int64 attempt = 3 [(field) = {required: true, minimum: 1}];
+  // The ids of the caller's own groups this call ended as `superseded`, as the `group_supersede` audit rows record.
+  // Absent when it ended none, and on a later call that only continues the group.
+  repeated GroupId superseded = 4 [(field) = {min_items: 1}];
+  Timestamp deadline_at = 5 [(field) = {required: true}];
+  // Present when the call ran out of time before it reached every member; `members` holds the first `done`. Send the same request again.
+  Reserving reserving = 6;
+  repeated GroupMemberAnswer members = 7 [(field) = {required: true}];
+}
+
+message CommitGroupMember {
+  message Readme {
+    option (schema) = {union: true};
+    oneof readme {
+      string text = 1 [(field) = {max_length: 65536}];
+      ReadmeRef object = 2;
+    }
+  }
+  FullName name = 1 [(field) = {required: true}];
+  // Optional, member by member, with the meaning it has in `CommitPublishRequest`. A repeated commit must repeat which members gave it and what they gave, or it is another request (`group_commit_refused`).
+  Sha256 manifest_sha256 = 2;
+  // Optional, member by member, with the meaning it has in `CommitPublishRequest`. It is stored on that member's version only, and is part of the request a repeated commit must repeat.
+  SourceCommit source_commit = 3;
+  // As in `CommitPublishRequest`.
+  string description = 4 [(field) = {min_length: 1, max_length: 512}];
+  // As in `CommitPublishRequest`.
+  string license = 5 [(field) = {min_length: 1, max_length: 128}];
+  // An https URL.
+  string repository = 6 [(field) = {max_length: 2048, format: "uri"}];
+  // An https URL.
+  string homepage = 7 [(field) = {max_length: 2048, format: "uri"}];
+  Keywords keywords = 8;
+  // Either the text of the readme (a string: untrusted Markdown of at most 64 KiB, as in `CommitPublishRequest`) or,
+  // at a registry that lists `group_readme_objects` in the `features` of `getHealth`, a `ReadmeRef` of a readme the
+  // caller PUT to the URL `createGroup` gave for it.
+  //
+  // The registry reads the object once the group's files are checked and before it stores anything. An object
+  // that is not in storage, or whose bytes differ in length or SHA-256 from the reference, is `upload_invalid`
+  // and names the member; bytes that are not UTF-8 text, or a reference that is not well formed, are
+  // `invalid_request` and name the member. Either refusal leaves the group `open`. The text read is then handled as
+  // an inline readme is (the same limits, the same sanitising rules, a leading byte order mark kept), so the
+  // version that results is the same as one committed with the text.
+  //
+  // A repeated commit must repeat the form of each member's readme: the string and the object are different
+  // requests, and a repeat in the other form is `group_commit_refused`. The comparison of a repeat reads no object.
+  //
+  // A registry from before `group_readme_objects` refuses a readme that is not a string with `invalid_request`,
+  // and the group stays `open`, so a client can send the text instead.
+  Readme readme = 9;
+}
+
+message CommitGroupRequest {
+  // One entry for each member of the group, and no other.
+  repeated CommitGroupMember members = 1 [(field) = {required: true, min_items: 1, max_items: 500}];
+}
+
+message CommitGroupResponse {
+  GroupId group_id = 1 [(field) = {required: true}];
+  GroupStatusName status = 2 [(field) = {required: true}];
+  int64 attempt = 3 [(field) = {required: true, minimum: 1}];
+  // Path on the same host. GET it with the same token.
+  string status_url = 4 [(field) = {required: true, pattern: "^/api/v2/groups/"}];
+}
+
+message Group {
+  message Failure {
+    // A rejection code of the validator, or one of `deadline_passed`, `upload_too_old`, `upload_missing`, `sha256_mismatch`, `limit_exceeded`, `operator`.
+    string code = 1 [(field) = {required: true}];
+    string message = 2 [(field) = {required: true}];
+    // The package the verdict is about, when it is about one.
+    string member = 3;
+  }
+  message Yank {
+    enum State {
+      STATE_UNSPECIFIED = 0;
+      STATE_YANKING = 1;
+      STATE_YANKED = 2;
+      STATE_UNYANKING = 3;
+      STATE_RESTORED = 4;
+    }
+    // `yanking` and `unyanking` are running; `yanked` and `restored` are at rest.
+    State state = 1 [(field) = {required: true}];
+    string reason = 2 [(field) = {required: true, max_length: 280}];
+    Timestamp requested_at = 3 [(field) = {required: true}];
+    // The members the yank has changed so far; an unyank restores these and no others.
+    int64 yanked_members = 4 [(field) = {required: true, minimum: 0}];
+  }
+  message MemberState {
+    enum State {
+      STATE_UNSPECIFIED = 0;
+      STATE_PENDING = 1;
+      STATE_RESERVED = 2;
+      STATE_STAGED = 3;
+      STATE_PUBLISHED = 4;
+      STATE_YANKED = 5;
+    }
+    message File {
+      string subdir = 1 [(field) = {required: true}];
+      string filename = 2 [(field) = {required: true}];
+      Sha256 sha256 = 3 [(field) = {required: true}];
+      int64 size = 4 [(field) = {required: true, minimum: 1}];
+      // Present only while the group is `open`: true when the file is in storage at its declared size (the same test
+      // `createGroup` makes when it answers a repeated request). Absent for every other status, for which the
+      // registry makes no storage check.
+      bool uploaded = 5;
+    }
+    FullName name = 1 [(field) = {required: true}];
+    Version version = 2 [(field) = {required: true}];
+    State state = 3 [(field) = {required: true}];
+    // Present on the answer of `getGroup` only (not on the answers of `abortGroup` and `yankGroup`, which omit it). The
+    // files the caller declared for this member, sorted by `subdir` and `filename`, as the member's reserved version
+    // holds them. Empty for a member that is not reserved yet, and for a member whose version number the registry no
+    // longer holds for this group (the group ended and another group or publish took the number). A group is
+    // declared with at most 500 members of at most 20 files each; the answer lists no more than the registry's current
+    // member cap.
+    repeated File files = 4;
+  }
+  GroupId group_id = 1 [(field) = {required: true}];
+  GroupStatusName status = 2 [(field) = {required: true}];
+  int64 attempt = 3 [(field) = {required: true, minimum: 1}];
+  Timestamp created_at = 4 [(field) = {required: true}];
+  Timestamp deadline_at = 5 [(field) = {required: true}];
+  Timestamp committed_at = 6;
+  // Why a group that was `rejected` or `failed` ended.
+  Failure failure = 7;
+  int64 member_count = 8 [(field) = {required: true, minimum: 1}];
+  // Present once the group has been yanked (`yankGroup`): where the yank is.
+  Yank yank = 9;
+  repeated MemberState members = 10 [(field) = {required: true}];
+}
+
+message YankRequest {
+  option (schema) = {when: {field: "yanked", equals: "true", required: ["reason"]}};
+  bool yanked = 1 [(field) = {required: true}];
+  // Required when `yanked` is true. Shown to people who locked the version.
+  string reason = 2 [(field) = {max_length: 280}];
+}

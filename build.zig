@@ -46,6 +46,18 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| closure_cmd.addArgs(args);
     b.step("run-closure", "Make the toolchain closure files: -- <lock> <output directory>").dependOn(&closure_cmd.step);
 
+    // mopm-api-gen writes what the registry API's protos (spec/api/mopm/registry/v2/*.proto) make: the OpenAPI document of
+    // /api/v2, the TypeScript types and route table of service/api and the Zig client (tools/api_gen.zig). `zig build gen-api`.
+    const api_gen = b.addExecutable(.{
+        .name = "mopm-api-gen",
+        .root_source_file = b.path("tools/api_gen.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const api_gen_cmd = b.addRunArtifact(api_gen);
+    api_gen_cmd.addArg(b.pathFromRoot("."));
+    b.step("gen-api", "Write the outputs of the registry API's protos").dependOn(&api_gen_cmd.step);
+
     // The fake registry the CLI is tested against (registry/fake/README.md).
     const fake = b.addExecutable(.{
         .name = "mopm-fake-registry",
@@ -87,6 +99,14 @@ pub fn build(b: *std.Build) void {
     cli_tests.root_module.addImport("mopm_core", core);
     cli_tests.root_module.addOptions("build_options", build_options);
     test_step.dependOn(&b.addRunArtifact(cli_tests).step);
+
+    // The checked-in outputs of the API's protos are what mopm-api-gen makes of them, and the generator's own tests.
+    const api_gen_tests = b.addTest(.{
+        .root_source_file = b.path("tools/api_gen_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_step.dependOn(&b.addRunArtifact(api_gen_tests).step);
 
     const fake_tests = b.addTest(.{
         .root_source_file = b.path("registry/fake/main.zig"),

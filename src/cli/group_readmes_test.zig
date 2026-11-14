@@ -14,8 +14,10 @@ const Console = gp.Console;
 const Result = gp.Result;
 
 pub const api = "http://127.0.0.1:1/api/v2";
-pub const health_objects = "{\"status\":\"ok\",\"features\":[\"group_readme_objects\"]}";
-pub const health_plain = "{\"status\":\"ok\"}";
+/// The fields `Health` requires; the answers below add `features` to them.
+pub const health_head = "\"status\":\"ok\",\"stage\":\"beta\",\"api_version\":\"v2\",\"read_only\":false";
+pub const health_objects = "{" ++ health_head ++ ",\"features\":[\"group_readme_objects\"]}";
+pub const health_plain = "{" ++ health_head ++ "}";
 pub const text_a = "# a readme\n";
 
 /// Members acme/m0.. with the readmes `texts` (null: none), each with one file of 7 bytes.
@@ -229,10 +231,10 @@ test "without the capability the readme goes inline: no /health feature, a 404, 
     const a = st.allocator();
     const healths = [_]struct { status: u16, body: []const u8 }{
         .{ .status = 200, .body = health_plain },
-        .{ .status = 200, .body = "{\"features\":[\"another_feature\"]}" },
+        .{ .status = 200, .body = "{" ++ health_head ++ ",\"features\":[\"another_feature\"]}" },
         .{ .status = 404, .body = gt.err_404 },
         .{ .status = 200, .body = "<html>not json</html>" },
-        .{ .status = 200, .body = "{\"features\":\"group_readme_objects\"}" },
+        .{ .status = 200, .body = "{" ++ health_head ++ ",\"features\":\"group_readme_objects\"}" },
     };
     const texts = [_]?[]const u8{ text_a, null, null };
     for (healths) |h| {

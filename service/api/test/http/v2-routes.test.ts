@@ -141,6 +141,16 @@ describe('operations the gateway does not route', () => {
     ['GET', '/api/v2/packages/alice'],
     ['POST', '/api/v2/packages/alice/p/1.0.0/extra'],
     ['GET', '/api/v2/me/other'],
+    // The publish operations, when the service has no publish wiring (deps.publish absent).
+    ['POST', '/api/v2/packages/alice/p/1.0.0/files'],
+    ['POST', '/api/v2/packages/alice/p/1.0.0/publish'],
+    ['PUT', '/api/v2/packages/alice/p/1.0.0/yank'],
+    ['GET', '/api/v2/publishes/pub1'],
+    ['POST', '/api/v2/groups'],
+    ['GET', '/api/v2/groups/g1'],
+    ['DELETE', '/api/v2/groups/g1'],
+    ['POST', '/api/v2/groups/g1/commit'],
+    ['PUT', '/api/v2/groups/g1/yank'],
   ])('%s %s is route_not_found', async (method, path) => {
     const { res, body } = await call(withV2(), method, path);
     expect([res.statusCode, body]).toEqual([NOT_FOUND.status, NOT_FOUND.body]);
