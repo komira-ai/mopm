@@ -319,10 +319,10 @@ test "/health listing the capability among other names, with other fields around
     defer st.deinit();
     const a = st.allocator();
     const cases = [_]struct { body: []const u8, takes: bool }{
-        .{ .body = "{\"status\":\"ok\",\"features\":[\"future_one\",\"group_readme_objects\",\"future_two\"]}", .takes = true },
-        .{ .body = "{\"extra\":{\"a\":1},\"features\":[\"group_readme_objects\",\"x\"],\"more\":[1,2]}", .takes = true },
-        .{ .body = "{\"features\":[\"future_one\",\"future_two\"]}", .takes = false },
-        .{ .body = "{\"features\":[]}", .takes = false },
+        .{ .body = "{" ++ rt.health_head ++ ",\"features\":[\"future_one\",\"group_readme_objects\",\"future_two\"]}", .takes = true },
+        .{ .body = "{\"extra\":{\"a\":1}," ++ rt.health_head ++ ",\"features\":[\"group_readme_objects\",\"x\"],\"more\":[1,2]}", .takes = true },
+        .{ .body = "{" ++ rt.health_head ++ ",\"features\":[\"future_one\",\"future_two\"]}", .takes = false },
+        .{ .body = "{" ++ rt.health_head ++ ",\"features\":[]}", .takes = false },
     };
     for (cases) |c| {
         var script = gt.newScript(a, &.{step(.GET, "/health", 200, c.body)});

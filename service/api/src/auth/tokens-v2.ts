@@ -4,13 +4,9 @@ import type { NamespaceAccess } from './namespace-access';
 import { mintToken, type Clock, type CreateTokenInput, type TokenMeta } from './tokens';
 import type { AuthStore } from './types';
 
-/** `MeV2` of spec/api/openapi-v2.yaml. */
-export interface MeV2 {
-  github_id: number;
-  handle: string;
-  namespaces: Array<{ namespace: string; kind: 'user' | 'org'; role: 'owner' | 'admin' | 'member'; packages: string[] }>;
-  unavailable_namespace?: string;
-}
+import type { MeV2 } from '../gen/registry-v2';
+
+export type { MeV2 };
 
 export interface TokenServiceV2Deps {
   store: AuthStore;

@@ -8,6 +8,7 @@ const core = @import("mopm_core");
 const semver = core.semver;
 const resolve = core.resolve;
 const toml_edit = core.toml_edit;
+const v2 = core.registry_v2;
 const ic = @import("install_cmd.zig");
 const Net = @import("group_io.zig").Net;
 
@@ -76,17 +77,14 @@ fn queryEscape(arena: Allocator, s: []const u8) Allocator.Error![]const u8 {
     return out.toOwnedSlice();
 }
 
-const Hit = struct { name: []const u8 };
-const Hits = struct { packages: []const Hit = &.{} };
-
 /// The full names of the first page of `GET <api_v2_url>/packages?q=<bare>` (no token), in the registry's order; null
 /// when the request fails, is not answered 2xx or is not a package list.
 fn searchNames(arena: Allocator, net: Net, api_v2_url: []const u8, bare: []const u8) Allocator.Error!?[]const []const u8 {
     if (api_v2_url.len == 0) return null;
-    const url = try std.fmt.allocPrint(arena, "{s}/packages?q={s}&limit={d}", .{ api_v2_url, try queryEscape(arena, bare), search_limit });
-    const answer = net.once(arena, .GET, url, .{}) catch return null;
+    const url = try v2.url(v2.SearchPackages, arena, api_v2_url, .{ .q = bare, .limit = search_limit });
+    const answer = net.once(arena, v2.SearchPackages.method, url, .{}) catch return null;
     if (!answer.ok()) return null;
-    const hits = std.json.parseFromSliceLeaky(Hits, arena, answer.body, .{ .ignore_unknown_fields = true }) catch |e| switch (e) {
+    const hits = v2.decode(v2.SearchPackages, arena, answer.body) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return null,
     };
@@ -526,7 +524,7 @@ test "the search asks the v2 registry for the bare name with no token, and reads
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    var fake = FakeNet{ .body = "{\"packages\":[{\"name\":\"alice/json\",\"latest\":\"0.1.0\",\"description\":null,\"updated_at\":\"2026-10-01T00:00:00Z\"},{\"name\":\"bob/json_x\"}],\"next_cursor\":null}" };
+    var fake = FakeNet{ .body = "{\"packages\":[{\"name\":\"alice/json\",\"latest\":\"0.1.0\",\"description\":null,\"updated_at\":\"2026-10-01T00:00:00Z\"},{\"name\":\"bob/json_x\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T00:00:00Z\"}],\"next_cursor\":null}" };
     const got = (try searchNames(a, fake.net(), "http://127.0.0.1:1/api/v2", "json")).?;
     try std.testing.expectEqual(@as(usize, 2), got.len);
     try std.testing.expectEqualStrings("alice/json", got[0]);
@@ -548,7 +546,7 @@ test "a search that cannot be read finds nothing and never fails the refusal" {
     const a = arena_state.allocator();
     var refused = FakeNet{ .refuse = true };
     try std.testing.expect((try searchNames(a, refused.net(), "http://127.0.0.1:1/api/v2", "json")) == null);
-    var down = FakeNet{ .status = 503, .body = "{\"packages\":[{\"name\":\"alice/json\"}]}" };
+    var down = FakeNet{ .status = 503, .body = "{\"packages\":[{\"name\":\"alice/json\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T00:00:00Z\"}],\"next_cursor\":null}" };
     try std.testing.expect((try searchNames(a, down.net(), "http://127.0.0.1:1/api/v2", "json")) == null);
     var garbled = FakeNet{ .body = "not json" };
     try std.testing.expect((try searchNames(a, garbled.net(), "http://127.0.0.1:1/api/v2", "json")) == null);
@@ -569,7 +567,7 @@ test "the bare name is percent-encoded in the search, and an unresolvable regist
     const a = arena_state.allocator();
     try std.testing.expectEqualStrings("json-x_1.2~", try queryEscape(a, "json-x_1.2~"));
     try std.testing.expectEqualStrings("a%26b%3Dc%20d%2F", try queryEscape(a, "a&b=c d/"));
-    var fake = FakeNet{ .body = "{\"packages\":[]}" };
+    var fake = FakeNet{ .body = "{\"packages\":[],\"next_cursor\":null}" };
     _ = (try searchNames(a, fake.net(), "http://127.0.0.1:1/api/v2", "a&b")).?;
     try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/packages?q=a%26b&limit=100", fake.url);
     // Neither case reaches the network: the registry is not a registry, and there is no name to search for.

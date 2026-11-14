@@ -14,6 +14,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
+const v2 = core.registry_v2;
 const http = core.http;
 const io = @import("group_io.zig");
 const plan_mod = @import("group_plan.zig");
@@ -37,11 +38,11 @@ pub fn hasReadme(entries: []const plan_mod.CommitEntry) bool {
 /// Whether `GET <api_v2_url>/health` lists `feature`. An answer that is not a success, is not JSON or has no list of names is
 /// "no"; a request that fails is an error (the GET is repeated by the policy first).
 pub fn takesObjects(arena: Allocator, net: io.Net, api_url: []const u8) anyerror!bool {
-    const url = try std.fmt.allocPrint(arena, "{s}/health", .{api_url});
-    const answer = try net.request(arena, .GET, url, .{});
+    const url = try v2.url(v2.GetHealth, arena, api_url, .{});
+    const answer = try net.request(arena, v2.GetHealth.method, url, .{});
     if (!answer.ok()) return false;
-    const health = std.json.parseFromSliceLeaky(struct { features: []const []const u8 = &.{} }, arena, answer.body, .{ .ignore_unknown_fields = true }) catch return false;
-    for (health.features) |name| {
+    const health = v2.decode(v2.GetHealth, arena, answer.body) catch return false;
+    for (health.features orelse &.{}) |name| {
         if (std.mem.eql(u8, name, feature)) return true;
     }
     return false;

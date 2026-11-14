@@ -1,5 +1,6 @@
+import type { NamespaceInfo } from '../gen/registry-v2';
 import { NamespaceError } from './errors';
-import { namespaceProblem, type MemberRole, type NamespaceKind, type NamespaceRecord, type NamespaceStore } from './namespaces';
+import { namespaceProblem, type MemberRole, type NamespaceRecord, type NamespaceStore } from './namespaces';
 import type { AuthStore, UserRecord } from './types';
 
 /**
@@ -22,14 +23,8 @@ export interface WriteRight {
   role: NamespaceRole;
 }
 
-/** `NamespaceInfo` of spec/api/openapi-v2.yaml. */
-export interface NamespaceInfo {
-  namespace: string;
-  kind: NamespaceKind;
-  github_id: number;
-  /** The GitHub login the registry knows for the account: a user's handle from its last login; an organization's namespace string. */
-  login: string;
-}
+/** `NamespaceInfo` of spec/api/openapi-v2.yaml, generated. */
+export type { NamespaceInfo };
 
 export interface NamespaceAccessDeps {
   namespaces: NamespaceStore;

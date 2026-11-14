@@ -1,6 +1,7 @@
+import type { Member, MemberList } from '../gen/registry-v2';
 import { AuthError, NamespaceError } from './errors';
 import { notNamespaceMember, notNamespaceOwner, type NamespaceAccess } from './namespace-access';
-import type { MemberRole, NamespaceMember, NamespaceRecord, NamespaceStore } from './namespaces';
+import type { NamespaceMember, NamespaceRecord, NamespaceStore } from './namespaces';
 import type { Clock } from './tokens';
 import type { AuthStore } from './types';
 
@@ -10,14 +11,8 @@ import type { AuthStore } from './types';
  * for owners. The last owner is never demoted or removed.
  */
 
-/** `Member` of spec/api/openapi-v2.yaml. */
-export interface MemberView {
-  user: string;
-  handle: string;
-  github_id: number;
-  role: MemberRole;
-  added_at: string;
-}
+/** `Member` and `MemberList` of spec/api/openapi-v2.yaml, generated. */
+export type MemberView = Member;
 
 export interface OrgMembersDeps {
   namespaces: NamespaceStore;
@@ -73,7 +68,7 @@ export class OrgMembers {
   }
 
   /** Every member, sorted by `user`. Readable by an owner or a member. */
-  async list(account_id: number, namespace: string): Promise<{ namespace: string; members: MemberView[] }> {
+  async list(account_id: number, namespace: string): Promise<MemberList> {
     await this.org(namespace);
     await this.caller(namespace, account_id, false);
     const members = await Promise.all((await this.d.namespaces.listMembers(namespace)).map((m) => this.view(m)));

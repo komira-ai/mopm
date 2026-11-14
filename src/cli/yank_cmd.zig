@@ -18,6 +18,7 @@ const http = core.http;
 const gp = @import("group_publish.zig");
 const registry_cmd = @import("registry_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
+const v2 = core.registry_v2;
 
 const usage =
     \\usage: mopm yank --group <id> --registry <prod|gamma|beta|url> --reason <text> [--config-dir <dir>] [--wait <seconds>]
@@ -81,11 +82,6 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
     return .{ .ok = f };
 }
 
-const YankAnswer = struct {
-    status: []const u8 = "",
-    yank: ?struct { state: []const u8 = "", yanked_members: u32 = 0 } = null,
-};
-
 pub const Result = enum { done, failed, rate_limited, timed_out };
 
 pub const Yanker = struct {
@@ -124,57 +120,51 @@ pub const Yanker = struct {
         return std.fmt.allocPrint(y.arena, "; retry after {d} seconds", .{secs}) catch "";
     }
 
-    fn parse(y: *Yanker, a: http.Answer) ?YankAnswer {
-        return std.json.parseFromSliceLeaky(YankAnswer, y.arena, a.body, .{ .ignore_unknown_fields = true }) catch {
+    fn parse(y: *Yanker, comptime Op: type, a: http.Answer) ?v2.Group {
+        return v2.decode(Op, y.arena, a.body) catch {
             y.console.fail("the registry's answer is not one this mopm reads\n", .{});
             return null;
         };
     }
 
     pub fn run(y: *Yanker) Result {
-        const path = std.fmt.allocPrint(y.arena, "/groups/{s}/yank", .{y.group}) catch return .failed;
-        var body = std.ArrayList(u8).init(y.arena);
-        if (y.unyank) {
-            body.appendSlice("{\"yanked\":false}") catch return .failed;
-        } else {
-            body.appendSlice("{\"yanked\":true,\"reason\":") catch return .failed;
-            std.json.encodeJsonString(y.reason, .{}, body.writer()) catch return .failed;
-            body.append('}') catch return .failed;
-        }
-        const asked = y.call(.PUT, path, body.items) orelse return .failed;
+        const yank = v2.YankGroupParams{ .group_id = y.group, .body = .{ .yanked = !y.unyank, .reason = if (y.unyank) null else y.reason } };
+        const path = v2.YankGroup.target(y.arena, yank) catch return .failed;
+        const body = (v2.YankGroup.body(y.arena, yank) catch return .failed).?;
+        const asked = y.call(v2.YankGroup.method, path, body) orelse return .failed;
         if (!asked.ok()) return y.refuse(asked);
-        const first = y.parse(asked) orelse return .failed;
+        const first = y.parse(v2.YankGroup, asked) orelse return .failed;
         const want = if (y.unyank) "restored" else "yanked";
         if (done(first, y.unyank)) {
             y.report(first, if (asked.status == 200) "is already" else "is");
             return .done;
         }
         y.console.say("{s} group {s}: waiting for the registry to finish\n", .{ if (y.unyank) "unyanking" else "yanking", y.group });
-        const status_path = std.fmt.allocPrint(y.arena, "/groups/{s}", .{y.group}) catch return .failed;
+        const status_path = v2.GetGroup.target(y.arena, .{ .group_id = y.group }) catch return .failed;
         const deadline = y.net.vtable.now(y.net.ptr) + y.wait_secs;
         while (true) {
-            const a = y.call(.GET, status_path, null) orelse return .failed;
+            const a = y.call(v2.GetGroup.method, status_path, null) orelse return .failed;
             if (!a.ok()) return y.refuse(a);
-            const g = y.parse(a) orelse return .failed;
+            const g = y.parse(v2.GetGroup, a) orelse return .failed;
             if (done(g, y.unyank)) {
                 y.report(g, "is");
                 return .done;
             }
             if (y.net.vtable.now(y.net.ptr) >= deadline) {
-                y.console.fail("gave up waiting after {d} seconds: the yank of group {s} is {s}, not {s} yet; look again with GET /groups/{s}\n", .{ y.wait_secs, y.group, if (g.yank) |k| k.state else g.status, want, y.group });
+                y.console.fail("gave up waiting after {d} seconds: the yank of group {s} is {s}, not {s} yet; look again with GET /groups/{s}\n", .{ y.wait_secs, y.group, if (g.yank) |k| @tagName(k.state) else @tagName(g.status), want, y.group });
                 return .timed_out;
             }
             y.net.vtable.sleep(y.net.ptr, 1);
         }
     }
 
-    fn done(g: YankAnswer, unyank: bool) bool {
+    fn done(g: v2.Group, unyank: bool) bool {
         const k = g.yank orelse return unyank; // never yanked: nothing to restore
-        const want = if (unyank) "restored" else "yanked";
-        return std.mem.eql(u8, k.state, want);
+        const want: v2.GroupYankState = if (unyank) .restored else .yanked;
+        return k.state == want;
     }
 
-    fn report(y: *Yanker, g: YankAnswer, verb: []const u8) void {
+    fn report(y: *Yanker, g: v2.Group, verb: []const u8) void {
         const n = if (g.yank) |k| k.yanked_members else 0;
         if (y.unyank) {
             y.console.say("group {s} {s} restored ({d} versions it had yanked)\n", .{ y.group, verb, n });
@@ -223,8 +213,10 @@ const gt = @import("group_publish_test.zig");
 
 const gid = "grp_0123456789abcdef0123456789abcdef";
 
+const group_head = "{\"group_id\":\"" ++ gid ++ "\",\"attempt\":1,\"created_at\":\"2026-10-22T00:00:00Z\",\"deadline_at\":\"2026-10-23T00:00:00Z\",\"member_count\":0,\"members\":[],";
+
 fn yankState(comptime status: []const u8, comptime state: []const u8, comptime n: []const u8) []const u8 {
-    return "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"" ++ status ++ "\",\"yank\":{\"state\":\"" ++ state ++ "\",\"reason\":\"r\",\"requested_at\":\"2026-10-22T00:00:00Z\",\"yanked_members\":" ++ n ++ "}}";
+    return group_head ++ "\"status\":\"" ++ status ++ "\",\"yank\":{\"state\":\"" ++ state ++ "\",\"reason\":\"r\",\"requested_at\":\"2026-10-22T00:00:00Z\",\"yanked_members\":" ++ n ++ "}}";
 }
 
 fn yanker(a: Allocator, script: *gt.Script, console: *gp.Console, unyank: bool) Yanker {
@@ -285,7 +277,7 @@ test "an unyank sends no reason, and a group already as asked is not waited for"
     try std.testing.expect(std.mem.indexOf(u8, c2.out.items, "is already yanked") != null);
 
     // A group that was never yanked has nothing to restore.
-    var never = gt.Script{ .steps = &.{.{ .method = .PUT, .suffix = "/yank", .status = 200, .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"visible\"}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    var never = gt.Script{ .steps = &.{.{ .method = .PUT, .suffix = "/yank", .status = 200, .body = group_head ++ "\"status\":\"visible\"}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
     var c3 = gp.Console.init(a, null);
     var w = yanker(a, &never, &c3, true);
     try std.testing.expectEqual(Result.done, w.run());
