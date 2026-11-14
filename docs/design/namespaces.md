@@ -90,8 +90,8 @@ anyway):
   line, read from the paths above. The `toolchain` job of `.github/workflows/kpin-update.yml`, which solves each
   version's lock today and downloads no package, gains a step that downloads the pinned `mojo-compiler`, checks its
   sha256 against the lock, and writes the file (a Zig tool with Zig tests, task ns-C1), so the file is never written
-  by hand. The client and the registry refuse the union over every version in `toolchain/versions.txt`; a unit test on each
-  side checks that its list equals that union, so the two cannot drift. Tests never download the toolchain.
+  by hand. The client and the registry refuse the union over every version in `toolchain/versions.txt`; a unit test
+  on each side checks that its list equals that union, so the two cannot drift. Tests never download the toolchain.
 - A later Mojo version that adds a module: the module joins the union when that version joins `versions.txt`. The
   registry then refuses new packages with that name; a package published earlier under it keeps resolving and
   installing. The client refuses it as `[package] name` and only warns for a dependency key (naming the module and
