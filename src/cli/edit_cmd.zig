@@ -569,7 +569,7 @@ test "the bare name is percent-encoded in the search, and an unresolvable regist
     const a = arena_state.allocator();
     try std.testing.expectEqualStrings("json-x_1.2~", try queryEscape(a, "json-x_1.2~"));
     try std.testing.expectEqualStrings("a%26b%3Dc%20d%2F", try queryEscape(a, "a&b=c d/"));
-    var fake = FakeNet{};
+    var fake = FakeNet{ .body = "{\"packages\":[]}" };
     _ = (try searchNames(a, fake.net(), "http://127.0.0.1:1/api/v2", "a&b")).?;
     try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/packages?q=a%26b&limit=100", fake.url);
     // Neither case reaches the network: the registry is not a registry, and there is no name to search for.

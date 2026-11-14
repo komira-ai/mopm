@@ -31,7 +31,7 @@ describe('the create request of the current client, read by the previous registr
   test('the released client\'s request for the set is read, with its flat names', () => {
     const released = parseGroupRequest(DEFAULT_PUBLISH_CONFIG, fixture('released-client-v0.0.104', 'create.json'));
     expect(released.members.map((m) => m.name)).toEqual(['alpha', 'beta', 'gamma']);
-    expect(groupIdFor('octocat', released)).toMatch(/^[0-9a-f]{64}$/);
+    expect(groupIdFor('octocat', released)).toMatch(/^grp_[0-9a-f]{32}$/);
   });
 
   test('is refused as invalid_name, naming the first member\'s full name: a full name is never misread as a flat one', () => {

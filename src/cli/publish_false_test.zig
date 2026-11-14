@@ -51,7 +51,7 @@ const Fx = struct {
     fn member(fx: Fx, name: []const u8, publish: []const u8, deps: []const u8, dev: []const u8, built: bool) !void {
         const text = try std.fmt.allocPrint(fx.a, "[package]\nname = \"example/{s}\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n{s}\n[dependencies]\n{s}\n[dev-dependencies]\n{s}\n", .{ name, publish, deps, dev });
         try fx.put(try std.fmt.allocPrint(fx.a, "ws/{s}/mopm.toml", .{name}), text);
-        if (built) try fx.put(try std.fmt.allocPrint(fx.a, "art/noarch/{s}.mojoc", .{name}), "the mojoc");
+        if (built) try fx.put(try std.fmt.allocPrint(fx.a, "art/noarch/example/{s}.mojoc", .{name}), "the mojoc");
     }
 
     fn dep(fx: Fx, name: []const u8) ![]const u8 {
