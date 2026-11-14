@@ -52,7 +52,8 @@ const prefix_v2 = "/api/v2";
 
 const Route = struct {
     method: std.http.Method,
-    /// Segments after /api/v1; `{}` matches any one segment.
+    /// Segments after `/api/v1` or `/api/v2` (under v2 a package's namespace and name are one segment); `{}` matches any
+    /// one segment.
     pattern: []const []const u8,
     operation: []const u8,
     handler: *const fn (*Ctx, []const []const u8) anyerror!Response,
@@ -202,7 +203,8 @@ fn injectedFault(ctx: *Ctx, code: errors.Code) anyerror!Response {
 }
 
 /// The value of query parameter `key`, percent-decoding not needed for the
-/// values the API takes (names, cursors, numbers).
+/// values the API takes (names, cursors, numbers); the one exception, the
+/// `%2F` a v2 search `q` may hold, is read by `keys.decodeSlash`.
 pub fn queryParam(ctx: *Ctx, key: []const u8) ?[]const u8 {
     var it = std.mem.splitScalar(u8, ctx.query, '&');
     while (it.next()) |pair| {

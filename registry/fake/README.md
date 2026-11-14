@@ -103,7 +103,7 @@ Not part of the contract. Each is a POST with a JSON object body.
 | `/_fake/org` | `{"login", "installed"?, "members"?: [{"handle", "role", "state"?}]}` | a GitHub organization (made on first use): `installed` installs the mopm registry App (a new installation each time) or removes it; `members` replaces the members, role `admin`, `member` or `billing_manager`, state `active` (the default) or `pending` |
 | `/_fake/rename` | `{"login", "to"}` | the GitHub account or organization `login` is called `to` from now on; namespaces keep their names |
 | `/_fake/trusted` | `{"namespace", "repository"}` | a trusted publisher of a namespace, for v2's `exchangeOidcToken` |
-| `/_fake/v1_creation` | `{"enabled"}` | whether `/api/v1` creates packages (the default). Off, `claimPackage` and the `packages` form of `exchangeOidcToken` for a name nobody has answer `name_reserved` with the hint `package names are in namespaces now; update mopm`; names that exist keep publishing |
+| `/_fake/v1_creation` | `{"enabled"}` | whether `/api/v1` creates packages (the default). Off, `claimPackage` and `exchangeOidcToken` (either form) for a name nobody has answer `name_reserved` with the hint `package names are in namespaces now; update mopm`; names that exist keep publishing |
 | `/_fake/served` | `{}` | `{"conda"}`: how many `.conda` files `GET /channel/...` has served since the fake started, to count a client's downloads |
 
 ## Tested how

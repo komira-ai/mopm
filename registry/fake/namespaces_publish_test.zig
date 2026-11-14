@@ -113,6 +113,7 @@ test "a rights check at use: a token of an account that left the organization ca
     try nx.control("/_fake/org", "{\"login\":\"acme\",\"installed\":true,\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"},{\"handle\":\"bob\",\"role\":\"member\"}]}");
     try expectStatus(try nx.call(.POST, "/api/v2/namespaces", "{\"namespace\":\"acme\"}", alice), 201);
     const token = try nx.apiToken(bob, "[\"publish\",\"yank\"]", "[\"acme/lib\"]");
+    const admin_token = try nx.apiToken(alice, "[\"publish\",\"yank\"]", "[\"acme/lib\"]");
     try expectStatus(try nx.call(.PUT, "/api/v2/packages/acme/lib", "", token), 201);
     const done = try publishOne(&nx, token, "acme/lib", "1.0.0", "mojo-acme.lib-1.0.0-mojo1.0.0_0.conda", "lib");
     try std.testing.expectEqualStrings("published", str(done.value, "status"));
@@ -122,10 +123,13 @@ test "a rights check at use: a token of an account that left the organization ca
     try expectCode(try nx.call(.POST, "/api/v2/packages/acme/lib/1.0.1/files", body, token), 403, "not_namespace_member");
     try expectCode(try nx.call(.POST, "/api/v2/packages/acme/lib/1.0.1/publish", "{\"upload_ids\":[\"x\"]}", token), 403, "not_namespace_member");
     try expectCode(try nx.call(.PUT, "/api/v2/packages/acme/lib/1.0.0/yank", "{\"yanked\":true,\"reason\":\"x\"}", token), 403, "not_namespace_member");
-    // The frozen namespace refuses every write, by its own error.
+    // A session never publishes or yanks a single version.
+    try expectCode(try nx.call(.PUT, "/api/v2/packages/acme/lib/1.0.0/yank", "{\"yanked\":true,\"reason\":\"x\"}", alice), 403, "scope_missing");
+    // The frozen namespace refuses every write of an admin's token, by its own error.
     try nx.control("/_fake/org", "{\"login\":\"acme\",\"installed\":false}");
-    const session_yank = try nx.call(.PUT, "/api/v2/packages/acme/lib/1.0.0/yank", "{\"yanked\":true,\"reason\":\"x\"}", alice);
-    try expectCode(session_yank, 403, "scope_missing");
+    try expectCode(try nx.call(.POST, "/api/v2/packages/acme/lib/1.0.1/files", body, admin_token), 403, "namespace_unverified");
+    try expectCode(try nx.call(.POST, "/api/v2/packages/acme/lib/1.0.1/publish", "{\"upload_ids\":[\"x\"]}", admin_token), 403, "namespace_unverified");
+    try expectCode(try nx.call(.PUT, "/api/v2/packages/acme/lib/1.0.0/yank", "{\"yanked\":true,\"reason\":\"x\"}", admin_token), 403, "namespace_unverified");
     // v2 paths refuse a path whose namespace or version is malformed.
     try expectCode(try nx.call(.GET, "/api/v2/packages/Acme/lib/1.0.0", "", null), 400, "invalid_namespace");
     try expectCode(try nx.call(.GET, "/api/v2/packages/acme/lib/1.0", "", null), 400, "invalid_version");
@@ -157,8 +161,10 @@ test "a group through v2: members are full names in two namespaces, visible toge
     const members: []const []const u8 = &.{ "acme/core", "alice/app" };
     const token = try nx.apiToken(alice, "[\"publish\",\"yank\"]", "[\"acme/core\",\"alice/app\"]");
     for (members) |k| try expectStatus(try nx.call(.PUT, try nx.fmt("/api/v2/packages/{s}", .{k}), "", token), 201);
-    // A v1 name in a v2 group is not a full name; a package not created is not found.
+    // A session makes no group; a v1 name in a v2 group is not a full name; a package not created is not found.
     try expectCode(try nx.call(.POST, "/api/v2/groups", try groupRequest(&nx, &.{"alice/app"}, "1.0.0"), alice), 403, "scope_missing");
+    const ghost_token = try nx.apiToken(alice, "[\"publish\"]", "[\"alice/ghost\"]");
+    try expectCode(try nx.call(.POST, "/api/v2/groups", try groupRequest(&nx, &.{"alice/ghost"}, "1.0.0"), ghost_token), 404, "package_not_found");
     const flat = "{\"members\":[{\"name\":\"app\",\"version\":\"1.0.0\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-app-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"" ++ "0" ** 64 ++ "\",\"size\":1}]}]}";
     try expectCode(try nx.call(.POST, "/api/v2/groups", flat, token), 400, "invalid_name");
 
@@ -230,6 +236,19 @@ test "the v2 OIDC exchange is matched to a namespace's publishers and creates no
     try std.testing.expect(contains(try nx.file("index/v2/ac/me/acme/lib"), "\"repository\":\"acme/release\""));
 
     // The packages form: every name's namespace must have the publisher, else the name is refused.
+    // Malformed requests are the caller's mistake, found before the token is looked at.
+    const bad = [_][]const u8{
+        "{\"jwt\":\"x\",\"purpose\":\"other\",\"name\":\"acme/lib\",\"version\":\"1.0.0\"}",
+        "{\"jwt\":\"x\",\"packages\":{}}",
+        "{\"jwt\":\"x\",\"packages\":[]}",
+        "{\"jwt\":\"x\",\"packages\":[1]}",
+        "{\"jwt\":\"x\",\"packages\":[{\"name\":\"acme/lib\",\"version\":\"1.0.0\"}],\"name\":\"acme/lib\"}",
+        "{\"jwt\":\"x\",\"name\":\"acme/lib\"}",
+        "{\"name\":\"acme/lib\",\"version\":\"1.0.0\"}",
+    };
+    for (bad) |b| try expectCode(try nx.call(.POST, "/api/v2/auth/oidc/exchange", b, null), 400, "invalid_request");
+    try expectCode(try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt("{{\"jwt\":\"{s}\",\"name\":\"acme/lib\",\"version\":\"1.0\"}}", .{jwt}), null), 400, "invalid_version");
+
     const set = "{{\"jwt\":\"{s}\",\"purpose\":\"stage\",\"packages\":[{{\"name\":\"acme/lib\",\"version\":\"1.1.0\"}},{{\"name\":\"{s}\",\"version\":\"1.0.0\"}}]}}";
     const refused = try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt(set, .{ jwt, "alice/app" }), null);
     try expectCode(refused, 403, "oidc_not_trusted");

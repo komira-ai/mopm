@@ -11,6 +11,7 @@ const util = @import("util.zig");
 const keys = @import("keys.zig");
 const names = @import("names.zig");
 const ns_errors = @import("ns_errors.zig");
+const files = @import("files.zig");
 
 // ---------------------------------------------------------------------------
 // Bearer tokens
@@ -122,7 +123,7 @@ pub fn pollDeviceLogin(ctx: *Ctx, _: []const []const u8) anyerror!Response {
                 const fresh = try s.newSession(login.user.?, true);
                 login.token = fresh;
                 // A login makes the account's user namespace when its login is free (docs/design/namespaces.md 2.1).
-                _ = try s.loginNamespace(login.user.?);
+                if (try s.loginNamespace(login.user.?) != null) try files.rewrite(ctx.arena, s);
                 break :blk fresh;
             };
             return resp.json(ctx.arena, .ok, .{
@@ -415,7 +416,11 @@ pub fn exchangeOidcToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     const repository = oidcRepository(ctx, jwt) orelse
         return resp.fail(ctx.arena, .oidc_token_invalid, &.{.{ "detail", "not a token with a repository claim" }});
     const s = ctx.state;
-    const p = s.packageByName(name) orelse return resp.fail(ctx.arena, .oidc_not_trusted, &.{.{ "name", name }});
+    const p = s.packageByName(name) orelse {
+        // Once names are in namespaces, v1 creates nothing: a name nobody has gets the hint to update mopm.
+        if (!s.v1_creation) return ns_errors.flatCreationRefused(ctx.arena, name);
+        return resp.fail(ctx.arena, .oidc_not_trusted, &.{.{ "name", name }});
+    };
     for (p.trusted.items) |r| {
         if (!std.mem.eql(u8, r, repository)) continue;
         const now = s.now();

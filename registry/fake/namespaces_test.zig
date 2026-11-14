@@ -238,6 +238,11 @@ test "an organization namespace: created by an active admin with the App install
     try expectCode(no_app, 403, "namespace_unverified");
     try std.testing.expectEqualStrings("'komira-ai' cannot be verified on GitHub: the mopm registry GitHub App is not installed on the organization.", str(no_app.value.object.get("error").?, "message"));
     try nx.control("/_fake/org", "{\"login\":\"komira-ai\",\"installed\":true}");
+    // A pending admin and a non-member may not create it either.
+    _ = try nx.session("erin");
+    try nx.control("/_fake/org", "{\"login\":\"komira-ai\",\"members\":[{\"handle\":\"alice\",\"role\":\"admin\"},{\"handle\":\"bob\",\"role\":\"member\"},{\"handle\":\"carol\",\"role\":\"admin\",\"state\":\"pending\"},{\"handle\":\"dave\",\"role\":\"billing_manager\"}]}");
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces", body, carol), 403, "not_namespace_member");
+    try expectCode(try nx.call(.POST, "/api/v2/namespaces", body, try nx.session("erin")), 403, "not_namespace_member");
     // A member who is not an admin may not create it; a stale session may not either; reserved and bad names are refused.
     try expectCode(try nx.call(.POST, "/api/v2/namespaces", body, bob), 403, "not_namespace_member");
     const stale = try nx.call(.POST, "/_fake/session", "{\"handle\":\"alice\",\"fresh\":false}", null);
@@ -386,6 +391,9 @@ test "with v1 creation off, a claim and the OIDC packages form for a new name an
     try expectStatus(try nx.call(.POST, "/api/v1/auth/oidc/exchange", try nx.fmt("{{\"jwt\":\"{s}\",\"packages\":[{{\"name\":\"ci_old\",\"version\":\"1.0.0\"}}]}}", .{jwt}), null), 200);
     try nx.control("/_fake/v1_creation", "{\"enabled\":false}");
     try expectStatus(try nx.call(.POST, "/api/v1/auth/oidc/exchange", try nx.fmt("{{\"jwt\":\"{s}\",\"packages\":[{{\"name\":\"ci_old\",\"version\":\"1.0.1\"}}]}}", .{jwt}), null), 200);
+    // The single-name form for a name nobody has gets the same hint; for a name that exists it is unchanged.
+    try expectCode(try nx.call(.POST, "/api/v1/auth/oidc/exchange", try nx.fmt("{{\"jwt\":\"{s}\",\"name\":\"nobody_has\",\"version\":\"1.0.0\"}}", .{jwt}), null), 403, "name_reserved");
+    try expectCode(try nx.call(.POST, "/api/v1/auth/oidc/exchange", try nx.fmt("{{\"jwt\":\"{s}\",\"name\":\"ci_old\",\"version\":\"1.0.3\"}}", .{jwt}), null), 403, "oidc_not_trusted");
     const fresh = try nx.call(.POST, "/api/v1/auth/oidc/exchange", try nx.fmt("{{\"jwt\":\"{s}\",\"packages\":[{{\"name\":\"ci_old\",\"version\":\"1.0.2\"}},{{\"name\":\"ci_new\",\"version\":\"1.0.0\"}}]}}", .{jwt}), null);
     try expectCode(fresh, 403, "name_reserved");
     try std.testing.expect(nx.state.packageByName("ci_new") == null);
@@ -397,4 +405,38 @@ pub fn jwtFor(nx: *Nx, repository: []const u8) ![]const u8 {
     const enc = std.base64.url_safe_no_pad.Encoder;
     const buf = try nx.life.allocator().alloc(u8, enc.calcSize(payload.len));
     return nx.fmt("eyJhbGciOiJub25lIn0.{s}.c2ln", .{enc.encode(buf, payload)});
+}
+
+test "a device login makes the user namespace and writes its channel, once" {
+    var nx: Nx = undefined;
+    try nx.setup();
+    defer nx.deinit();
+    const started = try nx.call(.POST, "/api/v2/auth/device", "{\"client\":\"test\"}", null);
+    try expectStatus(started, 200);
+    try nx.control("/_fake/device", try nx.fmt("{{\"user_code\":\"{s}\",\"decision\":\"approve\",\"handle\":\"Dana\"}}", .{str(started.value, "user_code")}));
+    const poll = try nx.fmt("{{\"device_code\":\"{s}\"}}", .{str(started.value, "device_code")});
+    const approved = try nx.call(.POST, "/api/v2/auth/device/poll", poll, null);
+    try expectStatus(approved, 200);
+    try std.testing.expectEqualStrings("approved", str(approved.value, "status"));
+    try expectStatus(try nx.call(.GET, "/api/v2/namespaces/dana", "", null), 200);
+    try expectStatus(try nx.call(.GET, "/channel/dana/noarch/repodata.json", "", null), 200);
+    try std.testing.expectEqualStrings("dana:user:owner:\n", try namespacesOf(&nx, str(approved.value, "token")));
+    try expectStatus(try nx.call(.POST, "/api/v2/auth/device/poll", poll, null), 200);
+    try std.testing.expectEqual(@as(usize, 1), nx.state.namespaces.items.len);
+}
+
+test "a CI identity writes only in namespaces whose publishers name its repository" {
+    var nx: Nx = undefined;
+    try nx.setup();
+    defer nx.deinit();
+    _ = try nx.session("alice");
+    const ci = try nx.state.ciUser("acme/release");
+    try std.testing.expect(ci == try nx.state.ciUser("acme/release"));
+    const alice = nx.state.namespaceByName("alice").?;
+    try std.testing.expectEqual(st.Right.not_member, alice.right(ci));
+    try alice.publishers.append(nx.state.alloc, "acme/release");
+    try std.testing.expectEqual(st.Right.write, alice.right(ci));
+    try std.testing.expectEqual(st.Right.not_member, alice.right(try nx.state.ciUser("acme/other")));
+    // A CI identity's login is never a namespace.
+    try std.testing.expect(try nx.state.loginNamespace(ci) == null);
 }
