@@ -17,7 +17,7 @@ import { zstdFrame } from '../../zstd';
  *   subdir at the bucket's root (`<subdir>/mojo-<name>-*.conda`) and the version 1 index file. It prints them per name,
  *   the totals and a digest of the whole listing.
  * - `--apply=<digest>` lists again and refuses unless the digest is the dry run's, and refuses unless the stage serves
- *   index version 2 and `/api/v1` refuses to create a flat name. It never forces and never retries: a step that fails stops
+ *   index version 2 and `/api/v2` (from which on `/api/v1` refuses to create a flat name). It never forces and never retries: a step that fails stops
  *   the run.
  * - Per name, in this order: a `delete_global` audit record (the audit log is append-only and keeps the history); the
  *   name out of the version 1 index and out of the root repodata; its channel objects; its version, owner and publisher
@@ -92,8 +92,11 @@ export function parseDeleteArgs(argv: readonly string[]): DeleteArgs {
 export interface StageChecks {
   /** The index versions `/index/config.json` lists (`index_versions`, else `[index_version]`). */
   index_versions: number[];
-  /** Whether `/api/v1` refuses to create a flat name (`name_reserved`). */
-  v1_refuses_flat_creation: boolean;
+  /**
+   * Whether the stage serves `/api/v2`: `config.json` names `api_v2_url` and its `/health` answers 200. The spec has `/api/v1`
+   * refuse to create a flat name (`name_reserved`) once v2 is served, so this is the tokenless form of that check.
+   */
+  api_v2_served: boolean;
 }
 
 export interface DeleteDeps {
@@ -200,14 +203,21 @@ export async function runDelete(args: DeleteArgs, d: DeleteDeps): Promise<number
     return 2;
   }
   const checks = await d.checks();
-  if (!checks.index_versions.includes(2) || !checks.v1_refuses_flat_creation) {
-    d.out({ kind: 'refused', reason: 'the stage does not serve namespaces yet: index version 2 and a /api/v1 that refuses flat names come first', ...checks });
+  if (!checks.index_versions.includes(2) || !checks.api_v2_served) {
+    d.out({ kind: 'refused', reason: 'the stage does not serve namespaces yet: index version 2 and /api/v2 (with which /api/v1 refuses flat names) come first', ...checks });
     return 2;
   }
   const at = (d.now ?? (() => new Date()))().toISOString();
-  for (const n of listing.names) {
-    const code = await deleteName(n, args.stage, digest, at, d);
-    if (code !== 0) return code;
+  const emptied = new Set<string>();
+  try {
+    for (const n of listing.names) {
+      const code = await deleteName(n, args.stage, digest, at, d, emptied);
+      if (code !== 0) return code;
+    }
+  } finally {
+    // The deleted files leave the CDN in one batch per run: one wildcard per subdir, never a path per file (a stage's flat
+    // files number in the thousands, past what CloudFront lets be in progress). It runs however the run ends.
+    if (emptied.size) await d.invalidator.invalidate([...emptied].sort().map((s) => `/${s}/mojo-*`), `${AUDIT_ACTION}-files-${digest.slice(0, 16)}`);
   }
   d.out({ kind: 'done', stage: args.stage, names: listing.names.length, digest });
   return 0;
@@ -273,7 +283,7 @@ export function withoutName(repodata: Buffer, name: string): string | undefined 
   return changed ? canonicalJson(doc) : undefined;
 }
 
-async function deleteName(n: NameListing, stage: Stage, digest: string, at: string, d: DeleteDeps): Promise<number> {
+async function deleteName(n: NameListing, stage: Stage, digest: string, at: string, d: DeleteDeps, emptied: Set<string>): Promise<number> {
   const step = (s: string, extra: Record<string, unknown> = {}) => d.out({ kind: 'step', name: n.name, step: s, ...extra });
 
   // 1. The audit record first: whatever happens next, the log says who started deleting the name and from which listing.
@@ -306,11 +316,12 @@ async function deleteName(n: NameListing, stage: Stage, digest: string, at: stri
   step('index', { index: n.index ?? null, repodata: paths.filter((p) => p.endsWith('/repodata.json')).map((p) => p.slice(1)) });
 
   // 3. The channel objects. The bucket is versioned: each delete leaves the bytes as a non-current version.
-  for (const o of n.objects) {
-    await d.bucket.delete(o.key);
-    paths.push(`/${o.key}`);
-  }
+  // The index file and repodata leave the CDN now, one small batch per name; the files at the end of the run (runDelete).
   if (paths.length) await d.invalidator.invalidate(paths, `${AUDIT_ACTION}-${n.name}-${digest.slice(0, 16)}`);
+  for (const o of n.objects) {
+    emptied.add(o.key.split('/')[0]!);
+    await d.bucket.delete(o.key);
+  }
   step('objects', { deleted: n.objects.length });
 
   // 4. The rows. A version that appeared after the listing stops the run before the package row goes.

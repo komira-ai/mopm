@@ -2,7 +2,7 @@ import { authTablesFor, DynamoAuthStore } from '../../src/auth/dynamo-auth-store
 import { MemoryAuthStore } from '../../src/auth/memory-auth-store';
 import type { AuthStore } from '../../src/auth/types';
 import { indexKey } from '../../src/index-files';
-import { main, PROBE_NAME, realDeps, stageChecks } from '../../src/ops/delete-global-names/main';
+import { main, realDeps, stageChecks } from '../../src/ops/delete-global-names/main';
 import { digestOf, listStage, parseDeleteArgs, runDelete, withoutName, type DeleteArgs, type DeleteDeps, type StageChecks } from '../../src/ops/delete-global-names/tool';
 import type { HttpFn } from '../../src/publish/aws';
 import { MemoryObjectStore } from '../../src/publish/memory';
@@ -22,7 +22,7 @@ import { hex, rec } from '../helpers';
 const BUILD = 'mojo1.0.0_0';
 const conda = (subdir: string, name: string, version: string) => `${subdir}/mojo-${name}-${version}-${BUILD}.conda`;
 const BASE = { bucket: 'channel', distribution: 'DIST', configUrl: 'https://api.example.invalid/index/config.json' };
-const PASSING: StageChecks = { index_versions: [1, 2], v1_refuses_flat_creation: true };
+const PASSING: StageChecks = { index_versions: [1, 2], api_v2_served: true };
 
 describe('the flags', () => {
   const ok = ['--stage=beta', '--bucket=b', '--distribution=d', '--config-url=https://x.invalid/index/config.json'];
@@ -193,8 +193,8 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
     for (const [name, id] of [['json', 7], ['http_client', 7], ['http_client', 9], ['kci_api', 7]] as Array<[string, number]>) {
       await rig.store.addOwner({ name, github_id: id, handle: `user${id}`, added_at: '2026-11-01T00:00:00Z' });
     }
-    for (const name of ['json', 'kci_api']) {
-      await auth.addTrustedPublisher({ id: 'tp_1', name, repository_id: '11', repository_owner_id: '12', workflow: '.github/workflows/release.yml', added_by: 7, added_at: '2026-11-01T00:00:00Z' });
+    for (const [name, id] of [['json', 'tp_1'], ['json', 'tp_2'], ['kci_api', 'tp_1']]) {
+      await auth.addTrustedPublisher({ id: id!, name: name!, repository_id: '11', repository_owner_id: '12', workflow: '.github/workflows/release.yml', added_by: 7, added_at: '2026-11-01T00:00:00Z' });
     }
     for (const name of ['json', 'http_client', 'kci_api', 'orphan']) await bucket.put(indexKey(name), Buffer.from('{}\n'), { contentType: 'application/x-ndjson' });
     for (const key of [
@@ -253,7 +253,7 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
           package: true,
           versions: ['0.1.0 published', '0.2.0 yanked'],
           owners: ['user7'],
-          publishers: ['tp_1'],
+          publishers: ['tp_1', 'tp_2'],
           objects: 3,
           bytes: 9,
           index: 'index/js/on/json',
@@ -263,7 +263,7 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
       expect(out.filter((l) => l.kind !== 'name')).toEqual([
         { kind: 'kept', name: 'kci_api', reason: 'kci_ packages are kept' },
         { kind: 'checks', ...PASSING },
-        { kind: 'totals', stage: 'beta', names: 3, packages: 2, versions: 3, owners: 3, publishers: 1, objects: 6, bytes: 17, index_files: 3, kept: 1 },
+        { kind: 'totals', stage: 'beta', names: 3, packages: 2, versions: 3, owners: 3, publishers: 2, objects: 6, bytes: 17, index_files: 3, kept: 1 },
         { kind: 'digest', digest: expect.stringMatching(/^[0-9a-f]{64}$/), dry_run: true },
       ]);
     });
@@ -276,9 +276,9 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
     });
 
     test('runs whatever the stage checks say, and reports them', async () => {
-      checks = { index_versions: [1], v1_refuses_flat_creation: false };
+      checks = { index_versions: [1], api_v2_served: false };
       expect(await run()).toBe(0);
-      expect(out.find((l) => l.kind === 'checks')).toEqual({ kind: 'checks', index_versions: [1], v1_refuses_flat_creation: false });
+      expect(out.find((l) => l.kind === 'checks')).toEqual({ kind: 'checks', index_versions: [1], api_v2_served: false });
     });
   });
 
@@ -295,9 +295,9 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
         'put linux-64/repodata.json.zst',
         'put win-64/repodata.json',
         'put win-64/repodata.json.zst',
+        `invalidate ${ref('http_client')} /index/ht/tp/http_client,/linux-64/repodata.json,/linux-64/repodata.json.zst,/win-64/repodata.json,/win-64/repodata.json.zst`,
         'delete linux-64/mojo-http_client-1.0.0-mojo1.0.0_0.conda',
         'delete win-64/mojo-http_client-1.0.0-mojo1.0.0_0.conda',
-        `invalidate ${ref('http_client')} /index/ht/tp/http_client,/linux-64/repodata.json,/linux-64/repodata.json.zst,/win-64/repodata.json,/win-64/repodata.json.zst,/linux-64/mojo-http_client-1.0.0-mojo1.0.0_0.conda,/win-64/mojo-http_client-1.0.0-mojo1.0.0_0.conda`,
         'version http_client 1.0.0',
         'owner http_client 7',
         'owner http_client 9',
@@ -308,20 +308,23 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
         'put linux-64/repodata.json.zst',
         'put osx-arm64/repodata.json',
         'put osx-arm64/repodata.json.zst',
+        `invalidate ${ref('json')} /index/js/on/json,/linux-64/repodata.json,/linux-64/repodata.json.zst,/osx-arm64/repodata.json,/osx-arm64/repodata.json.zst`,
         'delete linux-64/mojo-json-0.1.0-mojo1.0.0_0.conda',
         'delete linux-64/mojo-json-0.2.0-mojo1.0.0_0.conda',
         'delete osx-arm64/mojo-json-0.1.0-mojo1.0.0_0.conda',
-        `invalidate ${ref('json')} /index/js/on/json,/linux-64/repodata.json,/linux-64/repodata.json.zst,/osx-arm64/repodata.json,/osx-arm64/repodata.json.zst,/linux-64/mojo-json-0.1.0-mojo1.0.0_0.conda,/linux-64/mojo-json-0.2.0-mojo1.0.0_0.conda,/osx-arm64/mojo-json-0.1.0-mojo1.0.0_0.conda`,
         'version json 0.1.0',
         'version json 0.2.0',
         'owner json 7',
         'publisher json tp_1',
+        'publisher json tp_2',
         'package json',
         // No rows and a repodata that never listed it: the index file and the file, nothing else.
         'audit orphan',
         'delete index/or/ph/orphan',
+        `invalidate ${ref('orphan')} /index/or/ph/orphan`,
         'delete noarch/mojo-orphan-1.0.0-mojo1.0.0_0.conda',
-        `invalidate ${ref('orphan')} /index/or/ph/orphan,/noarch/mojo-orphan-1.0.0-mojo1.0.0_0.conda`,
+        // The files leave the CDN once per run, one wildcard per subdir that lost a file.
+        `invalidate delete_global-files-${digest.slice(0, 16)} /linux-64/mojo-*,/noarch/mojo-*,/osx-arm64/mojo-*,/win-64/mojo-*`,
       ]);
       expect(out[out.length - 1]).toEqual({ kind: 'done', stage: 'beta', names: 3, digest });
       expect(out.filter((l) => l.kind === 'deleted').map((l) => l.name)).toEqual(['http_client', 'json', 'orphan']);
@@ -430,8 +433,8 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
 
   describe('the stage checks', () => {
     test.each([
-      ['index version 2 is not served', { index_versions: [1], v1_refuses_flat_creation: true }],
-      ['/api/v1 still creates flat names', { index_versions: [1, 2], v1_refuses_flat_creation: false }],
+      ['index version 2 is not served', { index_versions: [1], api_v2_served: true }],
+      ['/api/v2 is not served (so /api/v1 still creates flat names)', { index_versions: [1, 2], api_v2_served: false }],
     ])('%s: refused, and nothing is deleted', async (_why, failing) => {
       const digest = await dryRunDigest();
       checks = failing;
@@ -441,19 +444,22 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
       expect(await run({ apply: digest })).toBe(2);
       expect(ops).toEqual([]);
       expect(await state()).toEqual(before);
-      expect(out).toEqual([{ kind: 'refused', reason: 'the stage does not serve namespaces yet: index version 2 and a /api/v1 that refuses flat names come first', ...failing }]);
+      expect(out).toEqual([{ kind: 'refused', reason: 'the stage does not serve namespaces yet: index version 2 and /api/v2 (with which /api/v1 refuses flat names) come first', ...failing }]);
     });
   });
 
   describe('a run stopped part way', () => {
     test('stopped among the files: the next dry run lists what is left of the name, and its apply finishes the work', async () => {
       failAt = 'delete osx-arm64/mojo-json-0.1.0-mojo1.0.0_0.conda';
-      await expect(run({ apply: await dryRunDigest() })).rejects.toThrow('stopped at delete osx-arm64/mojo-json-0.1.0-mojo1.0.0_0.conda');
+      const first = await dryRunDigest();
+      await expect(run({ apply: first })).rejects.toThrow('stopped at delete osx-arm64/mojo-json-0.1.0-mojo1.0.0_0.conda');
       failAt = undefined;
+      // The files deleted before the stop still leave the CDN: the subdirs of every file it began to delete.
+      expect(ops[ops.length - 1]).toBe(`invalidate delete_global-files-${first.slice(0, 16)} /linux-64/mojo-*,/osx-arm64/mojo-*,/win-64/mojo-*`);
       expect(await rig.store.listPackageNames()).toEqual(['json', 'kci_api', 'komira-ai/json']);
       const digest = await dryRunDigest();
       expect(out.filter((l) => l.kind === 'name')).toEqual([
-        { kind: 'name', name: 'json', package: true, versions: ['0.1.0 published', '0.2.0 yanked'], owners: ['user7'], publishers: ['tp_1'], objects: 1, bytes: 3, index: null },
+        { kind: 'name', name: 'json', package: true, versions: ['0.1.0 published', '0.2.0 yanked'], owners: ['user7'], publishers: ['tp_1', 'tp_2'], objects: 1, bytes: 3, index: null },
         { kind: 'name', name: 'orphan', package: false, versions: [], owners: [], publishers: [], objects: 1, bytes: 2, index: 'index/or/ph/orphan' },
       ]);
       ops = [];
@@ -462,11 +468,11 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
       expect(ops.filter((o) => o.includes(' json') || o.includes('-json-'))).toEqual([
         'audit json',
         'delete osx-arm64/mojo-json-0.1.0-mojo1.0.0_0.conda',
-        `invalidate delete_global-json-${digest.slice(0, 16)} /osx-arm64/mojo-json-0.1.0-mojo1.0.0_0.conda`,
         'version json 0.1.0',
         'version json 0.2.0',
         'owner json 7',
         'publisher json tp_1',
+        'publisher json tp_2',
         'package json',
       ]);
       expect(await rig.store.listPackageNames()).toEqual(['kci_api', 'komira-ai/json']);
@@ -505,47 +511,47 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
 });
 
 describe('the stage checks over HTTP', () => {
-  function http(config: { status: number; body: string }, claim: { status: number; body: string }) {
-    const seen: Array<{ url: string; method: string; body?: unknown; auth?: string }> = [];
+  function http(config: { status: number; body: string }, health: { status: number } = { status: 200 }) {
+    const seen: Array<{ url: string; method: string; auth?: string }> = [];
     const fn: HttpFn = async (url, init) => {
-      seen.push({ url, method: init.method, body: init.body, auth: init.headers.authorization });
-      const r = seen.length === 1 ? config : claim;
+      seen.push({ url, method: init.method, auth: init.headers.authorization });
+      const r = seen.length === 1 ? config : { body: '{}', ...health };
       return { status: r.status, headers: { get: () => null }, text: async () => r.body, arrayBuffer: async () => new ArrayBuffer(0) };
     };
     return { fn, seen };
   }
+  const V2 = 'https://api.example.invalid/api/v2';
   const CONFIG = (extra: Record<string, unknown>) => ({ status: 200, body: JSON.stringify({ index_version: 1, api_url: 'https://api.example.invalid/api/v1', ...extra }) });
-  const RESERVED = { status: 403, body: JSON.stringify({ error: { code: 'name_reserved', message: 'm', hint: 'h' } }) };
 
-  test('reads index_versions from config.json and asks /api/v1 to claim the probe name with no token', async () => {
-    const h = http(CONFIG({ index_versions: [1, 2] }), RESERVED);
-    expect(await stageChecks(BASE.configUrl, h.fn)).toEqual({ index_versions: [1, 2], v1_refuses_flat_creation: true });
+  test('reads index_versions and api_v2_url from config.json and asks <api_v2_url>/health, with no token', async () => {
+    const h = http(CONFIG({ index_versions: [1, 2], api_v2_url: V2 }));
+    expect(await stageChecks(BASE.configUrl, h.fn)).toEqual({ index_versions: [1, 2], api_v2_served: true });
     expect(h.seen).toEqual([
-      { url: BASE.configUrl, method: 'GET', body: undefined, auth: undefined },
-      { url: `https://api.example.invalid/api/v1/packages/${PROBE_NAME}/claim`, method: 'POST', body: '{}', auth: undefined },
+      { url: BASE.configUrl, method: 'GET', auth: undefined },
+      { url: `${V2}/health`, method: 'GET', auth: undefined },
     ]);
   });
 
-  test('without index_versions the one index_version counts; without either, none; a trailing slash on api_url is dropped', async () => {
-    expect((await stageChecks(BASE.configUrl, http(CONFIG({}), RESERVED).fn)).index_versions).toEqual([1]);
-    const bare = http({ status: 200, body: JSON.stringify({ api_url: 'https://api.example.invalid/api/v1/' }) }, RESERVED);
-    expect(await stageChecks(BASE.configUrl, bare.fn)).toEqual({ index_versions: [], v1_refuses_flat_creation: true });
-    expect(bare.seen[1]!.url).toBe(`https://api.example.invalid/api/v1/packages/${PROBE_NAME}/claim`);
+  test('without index_versions the one index_version counts; without either, none; a trailing slash on api_v2_url is dropped', async () => {
+    expect((await stageChecks(BASE.configUrl, http(CONFIG({ api_v2_url: V2 })).fn)).index_versions).toEqual([1]);
+    const bare = http({ status: 200, body: JSON.stringify({ api_v2_url: `${V2}/` }) });
+    expect(await stageChecks(BASE.configUrl, bare.fn)).toEqual({ index_versions: [], api_v2_served: true });
+    expect(bare.seen[1]!.url).toBe(`${V2}/health`);
   });
 
-  test.each([
-    ['401 (the token is checked first)', { status: 401, body: JSON.stringify({ error: { code: 'unauthorized' } }) }],
-    ['403 with another code', { status: 403, body: JSON.stringify({ error: { code: 'forbidden' } }) }],
-    ['403 that is not JSON', { status: 403, body: '<html>' }],
-    ['403 with no error object', { status: 403, body: '{}' }],
-    ['200 (it created nothing: no token)', { status: 200, body: '{}' }],
-  ])('any answer but 403 name_reserved counts as not refused: %s', async (_why, claim) => {
-    expect((await stageChecks(BASE.configUrl, http(CONFIG({ index_versions: [1, 2] }), claim).fn)).v1_refuses_flat_creation).toBe(false);
+  test('a config.json without api_v2_url says v2 is not served, and nothing else is asked', async () => {
+    const h = http(CONFIG({ index_versions: [1] }));
+    expect(await stageChecks(BASE.configUrl, h.fn)).toEqual({ index_versions: [1], api_v2_served: false });
+    expect(h.seen).toHaveLength(1);
+    expect((await stageChecks(BASE.configUrl, http(CONFIG({ api_v2_url: 2 })).fn)).api_v2_served).toBe(false);
   });
 
-  test('a config.json that is not served, or names no api_url, is an error', async () => {
-    await expect(stageChecks(BASE.configUrl, http({ status: 404, body: '' }, RESERVED).fn)).rejects.toThrow(`${BASE.configUrl} answered 404`);
-    await expect(stageChecks(BASE.configUrl, http({ status: 200, body: '{"index_version":1}' }, RESERVED).fn)).rejects.toThrow(`${BASE.configUrl} names no api_url`);
+  test.each([404, 401, 500, 503])('a health answer of %i says v2 is not served', async (status) => {
+    expect((await stageChecks(BASE.configUrl, http(CONFIG({ index_versions: [1, 2], api_v2_url: V2 }), { status }).fn)).api_v2_served).toBe(false);
+  });
+
+  test('a config.json that is not served is an error', async () => {
+    await expect(stageChecks(BASE.configUrl, http({ status: 404, body: '' }).fn)).rejects.toThrow(`${BASE.configUrl} answered 404`);
   });
 });
 
@@ -609,13 +615,13 @@ describe('the entry point', () => {
     const urls: string[] = [];
     const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation((async (url: string) => {
       urls.push(url);
-      const body = urls.length === 1 ? JSON.stringify({ index_versions: [1, 2], api_url: 'https://api.example.invalid/api/v1' }) : JSON.stringify({ error: { code: 'name_reserved' } });
-      return { status: urls.length === 1 ? 200 : 403, headers: { get: () => null }, text: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+      const body = urls.length === 1 ? JSON.stringify({ index_versions: [1, 2], api_v2_url: 'https://api.example.invalid/api/v2' }) : '{}';
+      return { status: 200, headers: { get: () => null }, text: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
     }) as unknown as typeof fetch);
     try {
       const d = realDeps({ stage: 'beta', bucket: 'b', distribution: 'd', configUrl: 'https://api.example.invalid/index/config.json' });
       expect(await d.checks()).toEqual(PASSING);
-      expect(urls).toEqual(['https://api.example.invalid/index/config.json', `https://api.example.invalid/api/v1/packages/${PROBE_NAME}/claim`]);
+      expect(urls).toEqual(['https://api.example.invalid/index/config.json', 'https://api.example.invalid/api/v2/health']);
     } finally {
       fetchSpy.mockRestore();
     }

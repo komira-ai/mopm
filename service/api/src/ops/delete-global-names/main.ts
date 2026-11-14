@@ -10,30 +10,20 @@ import { parseDeleteArgs, runDelete, type DeleteArgs, type DeleteDeps, type Stag
  * which is what the tests run.
  */
 
-/** A flat name nobody may claim, in the grammar: the probe that `/api/v1` refuses flat creation. */
-export const PROBE_NAME = 'delete_global_probe';
-
 /**
- * The two stage checks, over HTTP. `index_versions` is read from the stage's `/index/config.json` (absent: the one
- * `index_version`). `/api/v1` is asked to claim PROBE_NAME with no token: it refuses flat creation only when it answers
- * 403 `name_reserved`. A request without a token creates nothing whatever the stage runs, so the probe is harmless; any
- * other answer (401 included) counts as "not refused", and the tool refuses to delete.
+ * The two stage checks, over HTTP, with no token. `index_versions` is read from the stage's `/index/config.json` (absent: the
+ * one `index_version`). `/api/v2` is served when `config.json` names `api_v2_url` and `<api_v2_url>/health` answers 200; the
+ * spec has `/api/v1` refuse flat creation from then on. (A claim sent to `/api/v1` would not do as a check: the route reads the
+ * token before the name, so a tokenless claim answers 401 whatever the stage runs.)
  */
 export async function stageChecks(configUrl: string, http: HttpFn = defaultHttp): Promise<StageChecks> {
   const r = await http(configUrl, { method: 'GET', headers: { accept: 'application/json' } });
   if (r.status !== 200) throw new Error(`${configUrl} answered ${r.status}`);
-  const config = JSON.parse(await r.text()) as { index_version?: number; index_versions?: number[]; api_url?: string };
+  const config = JSON.parse(await r.text()) as { index_version?: number; index_versions?: number[]; api_v2_url?: string };
   const index_versions = config.index_versions ?? (config.index_version === undefined ? [] : [config.index_version]);
-  if (!config.api_url) throw new Error(`${configUrl} names no api_url`);
-  const claim = await http(`${config.api_url.replace(/\/$/, '')}/packages/${PROBE_NAME}/claim`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-  const body = await claim.text();
-  let code: unknown;
-  try {
-    code = (JSON.parse(body) as { error?: { code?: unknown } }).error?.code;
-  } catch {
-    code = undefined;
-  }
-  return { index_versions, v1_refuses_flat_creation: claim.status === 403 && code === 'name_reserved' };
+  if (typeof config.api_v2_url !== 'string') return { index_versions, api_v2_served: false };
+  const health = await http(`${config.api_v2_url.replace(/\/$/, '')}/health`, { method: 'GET', headers: { accept: 'application/json' } });
+  return { index_versions, api_v2_served: health.status === 200 };
 }
 
 /** The adapters for a stage. */

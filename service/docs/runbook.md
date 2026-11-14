@@ -427,11 +427,14 @@ node dist/ops/delete-global-names/bin.js --stage=<beta|gamma|prod> --bucket=<cha
   per name, one `kept` line per `kci_` package (those are never touched), a `checks` line, a `totals` line and a `digest` line.
 - `--apply=<digest>` lists again and refuses (exit status 2, nothing deleted) unless the listing's digest is the dry run's: a version, a
   package, an owner, a publisher or a root file that appeared or went since the dry run stops it. The digest covers the stage, so one
-  stage's digest never applies to another. It also refuses unless `config.json` lists index version 2 in `index_versions` and `/api/v1`
-  answers a claim of `delete_global_probe` sent with no token with 403 `name_reserved`.
+  stage's digest never applies to another. It also refuses unless `config.json` lists index version 2 in `index_versions` and names
+  `api_v2_url`, and `<api_v2_url>/health` answers 200 (asked with no token): once `/api/v2` is served, `/api/v1` refuses to create a
+  flat name.
 - Per name it appends a `delete_global` audit record, deletes the version 1 index file, rewrites the root `repodata.json` and
-  `repodata.json.zst` of each subdir that lists the name without it, deletes the `.conda` files, invalidates those paths on the CDN,
-  deletes the version, owner and trusted publisher rows, and deletes the package row last. If a version appears while it deletes the
+  `repodata.json.zst` of each subdir that lists the name without it, invalidates those paths on the CDN, deletes the `.conda` files,
+  deletes the version, owner and trusted publisher rows, and deletes the package row last. The deleted files leave the CDN in one
+  invalidation per run, `/<subdir>/mojo-*` for each subdir that lost a file (also when the run stops part way): a path per file would
+  pass the number of paths CloudFront lets be in progress. The wildcard also refreshes the kept `kci_` files, which only costs a fetch. If a version appears while it deletes the
   rows, it stops before the package row (exit status 2).
 - It never retries: a step that fails stops the run (exit status 1) with the package row still there. Run the dry run again, read it,
   and apply its new digest: it lists only what is left and finishes it. A run with nothing left does nothing.
