@@ -95,6 +95,25 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(fake_tests).step);
 
+    // The cross-version test of names in namespaces (docs/design/namespaces.md, section 11): the readers and the fake registry of
+    // the previous release (v0.0.108, vendored under tests/compat/v0.0.108) against this code, in one process; the farm runs the
+    // same file as //:compat_namespaces.
+    const fake_fixture = b.createModule(.{
+        .root_source_file = b.path("registry/fake/groups_test.zig"),
+    });
+    const prev_v0_0_108 = b.createModule(.{
+        .root_source_file = b.path("tests/compat/prev_v0_0_108.zig"),
+    });
+    const compat_namespaces = b.addTest(.{
+        .root_source_file = b.path("tests/drivers/compat_namespaces_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    compat_namespaces.root_module.addImport("mopm_core", core);
+    compat_namespaces.root_module.addImport("fake_fixture", fake_fixture);
+    compat_namespaces.root_module.addImport("prev_v0_0_108", prev_v0_0_108);
+    test_step.dependOn(&b.addRunArtifact(compat_namespaces).step);
+
     // The import-name refusal of `mopm lock`, `tree` and `sync`, run as a command on temporary projects (no network);
     // the farm runs the same file as //:import_clash_cli.
     const import_clash_cli = b.addTest(.{ // native-only
