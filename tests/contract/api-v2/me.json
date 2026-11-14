@@ -1,0 +1,223 @@
+{
+  "cases": [
+    {
+      "name": "whoami with a user namespace and an organization namespace",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 1001,
+          "handle": "Alice",
+          "namespaces": [
+            {
+              "namespace": "alice",
+              "kind": "user",
+              "role": "owner",
+              "packages": [
+                "alice/json"
+              ]
+            },
+            {
+              "namespace": "komira-ai",
+              "kind": "org",
+              "role": "admin",
+              "packages": [
+                "komira-ai/json",
+                "komira-ai/yaml"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "whoami of an account whose login another namespace holds",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 2003,
+          "handle": "alice",
+          "namespaces": [],
+          "unavailable_namespace": "alice"
+        }
+      }
+    },
+    {
+      "name": "whoami of an organization member",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 2001,
+          "handle": "carol",
+          "namespaces": [
+            {
+              "namespace": "komira-ai",
+              "kind": "org",
+              "role": "member",
+              "packages": [
+                "komira-ai/json"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "MeV2 missing namespaces",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 1001,
+          "handle": "Alice"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "MeV2 with a role that is not one",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 2001,
+          "handle": "carol",
+          "namespaces": [
+            {
+              "namespace": "komira-ai",
+              "kind": "org",
+              "role": "viewer",
+              "packages": [
+                "komira-ai/json"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "MeV2 listing a flat package name",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 1001,
+          "handle": "Alice",
+          "namespaces": [
+            {
+              "namespace": "alice",
+              "kind": "user",
+              "role": "owner",
+              "packages": [
+                "json"
+              ]
+            },
+            {
+              "namespace": "komira-ai",
+              "kind": "org",
+              "role": "admin",
+              "packages": [
+                "komira-ai/json",
+                "komira-ai/yaml"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "whoami with a publish-only scheme",
+      "operationId": "getMe",
+      "request": {
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 2001,
+          "handle": "carol",
+          "namespaces": [
+            {
+              "namespace": "komira-ai",
+              "kind": "org",
+              "role": "member",
+              "packages": [
+                "komira-ai/json"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "whoami with no token answers 200",
+      "operationId": "getMe",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 2001,
+          "handle": "carol",
+          "namespaces": [
+            {
+              "namespace": "komira-ai",
+              "kind": "org",
+              "role": "member",
+              "packages": [
+                "komira-ai/json"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

@@ -13,3 +13,4 @@ export * from './dynamo-namespace-store';
 export * from './github-app';
 export * from './org-membership';
 export * from './dynamo-membership-pass-store';
+export * from './namespace-access';

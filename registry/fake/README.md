@@ -113,5 +113,7 @@ for the operations above against a running fake: each recipe sets the state
 the case describes, and the live answer must have the case's status and error
 code and pass the contract checks of `//:contract`. The farm builds it. Unit tests (`zig build test`) cover the catalogue templates,
 times, tokens, names and routing; `namespaces_test.zig` and `namespaces_publish_test.zig` cover `/api/v2`, namespaces
-and the files of index version 2 and the namespace channels. No contract case covers v2 yet: `tests/contract/api` holds
-v1's.
+and the files of index version 2 and the namespace channels. The contract cases of v2 are `tests/contract/api-v2` (checked
+against `spec/api/openapi-v2.yaml` by `//:contract`, and replayed against the hosted registry's router by `service/api`'s
+`test/http/replay-v2.test.ts`); `//:contract_replay` replays v1's only, and the fake's replay of the v2 cases is not part of that
+check yet.

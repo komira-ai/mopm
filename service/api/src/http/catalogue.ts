@@ -26,6 +26,10 @@ export const CATALOGUE: Partial<Record<ErrorCode, { message: string; hint: strin
     message: "'{name}' has no version '{version}'.",
     hint: "List the versions with 'mopm info {name}'.",
   },
+  name_reserved: {
+    message: "'{name}' is reserved.",
+    hint: 'Choose another name.',
+  },
   internal_error: {
     message: 'Something went wrong on our side.',
     hint: 'Try again; report the request id if it persists.',

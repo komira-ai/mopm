@@ -1,9 +1,10 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { Authenticator, authTablesFor, DynamoAuthStore } from '../auth';
-import { DynamoStore, tablesFor } from '../dynamo-store';
+import { Authenticator, authTablesFor, DynamoAuthStore, DynamoNamespaceStore, NamespaceAccess } from '../auth';
+import { DynamoStore, tablesFor, type DocClient } from '../dynamo-store';
 import { S3Channel, S3Presigner, SqsFifoQueue } from './aws';
 import { ClaimService } from './claim';
+import { CreateService } from './create';
 import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
 import { AnyFlag, DynamoFlags, GROUPS_POLICY_ENV, parseStaticGroupsPolicy, StaticFlags } from './flags';
@@ -39,8 +40,21 @@ export function flagsFor(env: Env, doc: ReturnType<typeof documentClient>, stage
   return new AnyFlag([new StaticFlags(env.MOPM_READ_ONLY === 'true', groups), new DynamoFlags(doc, publishTablesFor(stage).config)]);
 }
 
-/** The API Lambda's publish side, or undefined when the deployment has no upload bucket and queue (a stub). */
-export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, stage: string, flags: Flags) {
+/**
+ * Who may write in a namespace (src/auth/namespace-access.ts), from the stage's namespaces and users tables. The registry's
+ * GitHub App is not configured on any stage yet (its secret lands with ns-R4), so writes in an organization namespace answer
+ * `unavailable` and user namespaces work.
+ */
+export function namespaceAccessFor(doc: DocClient, stage: string): NamespaceAccess {
+  const tables = authTablesFor(stage);
+  return new NamespaceAccess({ namespaces: new DynamoNamespaceStore(doc, tables.namespaces), users: new DynamoAuthStore(doc, tables) });
+}
+
+/**
+ * The API Lambda's publish side, or undefined when the deployment has no upload bucket and queue (a stub). `access` is the
+ * namespace write check of `/api/v2`; with it, the side also has `creates`, the service of `PUT /api/v2/packages/{namespace}/{name}`.
+ */
+export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, stage: string, flags: Flags, access?: NamespaceAccess) {
   const bucket = env.MOPM_CHANNEL_BUCKET;
   const queueUrl = env.MOPM_VALIDATE_QUEUE_URL;
   const indexQueueUrl = env.MOPM_INDEX_QUEUE_URL;
@@ -64,12 +78,15 @@ export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, 
     // Yank and unyank ask the index writer to rewrite repodata; without the queue they answer `unavailable`.
     ...(indexQueueUrl ? { indexQueue: new SqsFifoQueue(indexQueueUrl, { region }) } : {}),
     config,
+    ...(access ? { namespaces: access } : {}),
   });
   // The group routes exist, and answer route_not_found until the `groups_enabled` item of the config table admits the caller.
   // A commit queues the group's validation on the group queue; without the queue it answers `unavailable`.
-  const groups = new GroupService({ registry, publishes, objects, presigner, config, ...(groupQueueUrl ? { groupQueue: new SqsFifoQueue(groupQueueUrl, { region }) } : {}) });
+  const groups = new GroupService({ registry, publishes, objects, presigner, config, ...(access ? { namespaces: access } : {}), ...(groupQueueUrl ? { groupQueue: new SqsFifoQueue(groupQueueUrl, { region }) } : {}) });
   const authStore = new DynamoAuthStore(doc, authTablesFor(stage));
   // The claim route: a user token names the owner of a free package name.
   const claims = new ClaimService({ registry, users: authStore, publishes, config, flags });
-  return { auth: new Authenticator({ store: authStore }), service, flags, groups, claims };
+  const auth = new Authenticator({ store: authStore });
+  const creates = access ? new CreateService({ registry, auth, access, publishes, config, flags }) : undefined;
+  return { auth, service, flags, groups, claims, ...(creates ? { creates } : {}) };
 }

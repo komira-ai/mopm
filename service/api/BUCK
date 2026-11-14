@@ -11,11 +11,14 @@ load("//vendor/buildrules_coverage:jest_cover.bzl", "jest_coverage_floor", "jest
 _NODE = "//tools/node:node"
 
 # The tests read the specification and the contract cases at their paths in the repository
-# (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`), and the validator's tests run
+# (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`, `.../tests/contract/api-v2`, `.../toolchain`, `.../src/core/names.zig`), and the validator's tests run
 # `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
 _TEST_DATA = {
     "spec": "//:spec",
+    "toolchain": "//:names_toolchain",
+    "src/core": "//:names_core",
     "tests/contract/api": "//:contract_api",
+    "tests/contract/api-v2": "//:contract_api_v2",
     "tests/validator_corpus": "//:validator_corpus_files",
 }
 
