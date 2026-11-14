@@ -13,7 +13,7 @@
  * - The device flow needs the OAuth app's client id only; the client secret is not used and not read.
  *   The client id comes from Secrets Manager at runtime and is passed to the constructor.
  */
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{
+export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
@@ -68,7 +68,11 @@ export const ORG_PAGES_MAX = 10;
 
 /** GitHub could not be reached or answered something unusable. The router maps it to `unavailable`. */
 export class GitHubUnavailable extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** GitHub's HTTP status, when it answered one. */
+    readonly status?: number,
+  ) {
     super(message);
     this.name = 'GitHubUnavailable';
   }

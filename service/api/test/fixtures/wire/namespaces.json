@@ -404,5 +404,327 @@
       ],
       "returns": []
     }
+  },
+  {
+    "adapter": "namespaces",
+    "method": "bindInstallation",
+    "args": [
+      "komira-ai",
+      77,
+      6666
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "namespace": "komira-ai",
+            "kind": "org",
+            "github_id": "77",
+            "github_id_num": 77,
+            "created_at": "2026-10-13T12:00:00.000Z",
+            "installation_id": 5555
+          }
+        }
+      },
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "TableName": "mopm-beta-namespaces",
+            "Key": {
+              "namespace": {
+                "S": "komira-ai"
+              }
+            },
+            "ConsistentRead": true
+          }
+        },
+        {
+          "target": "PutItem",
+          "body": {
+            "TableName": "mopm-beta-namespaces",
+            "Item": {
+              "namespace": {
+                "S": "komira-ai"
+              },
+              "kind": {
+                "S": "org"
+              },
+              "created_at": {
+                "S": "2026-10-13T12:00:00.000Z"
+              },
+              "installation_id": {
+                "N": "6666"
+              },
+              "github_id": {
+                "S": "77"
+              },
+              "github_id_num": {
+                "N": "77"
+              }
+            },
+            "ConditionExpression": "#g = :g AND #k = :k",
+            "ExpressionAttributeNames": {
+              "#g": "github_id",
+              "#k": "kind"
+            },
+            "ExpressionAttributeValues": {
+              ":g": {
+                "S": "77"
+              },
+              ":k": {
+                "S": "org"
+              }
+            }
+          }
+        }
+      ],
+      "returns": {
+        "namespace": "komira-ai",
+        "kind": "org",
+        "created_at": "2026-10-13T12:00:00.000Z",
+        "installation_id": 6666,
+        "github_id": 77
+      }
+    }
+  },
+  {
+    "adapter": "namespaces",
+    "method": "bindInstallation",
+    "args": [
+      "komira-ai",
+      77,
+      6666
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "namespace": "komira-ai",
+            "kind": "org",
+            "github_id": "77",
+            "github_id_num": 77,
+            "created_at": "2026-10-13T12:00:00.000Z",
+            "installation_id": 5555
+          }
+        }
+      },
+      {
+        "error": "ConditionalCheckFailedException"
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "TableName": "mopm-beta-namespaces",
+            "Key": {
+              "namespace": {
+                "S": "komira-ai"
+              }
+            },
+            "ConsistentRead": true
+          }
+        },
+        {
+          "target": "PutItem",
+          "body": {
+            "TableName": "mopm-beta-namespaces",
+            "Item": {
+              "namespace": {
+                "S": "komira-ai"
+              },
+              "kind": {
+                "S": "org"
+              },
+              "created_at": {
+                "S": "2026-10-13T12:00:00.000Z"
+              },
+              "installation_id": {
+                "N": "6666"
+              },
+              "github_id": {
+                "S": "77"
+              },
+              "github_id_num": {
+                "N": "77"
+              }
+            },
+            "ConditionExpression": "#g = :g AND #k = :k",
+            "ExpressionAttributeNames": {
+              "#g": "github_id",
+              "#k": "kind"
+            },
+            "ExpressionAttributeValues": {
+              ":g": {
+                "S": "77"
+              },
+              ":k": {
+                "S": "org"
+              }
+            }
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "namespaces",
+    "method": "bindInstallation",
+    "args": [
+      "komira-ai",
+      78,
+      6666
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "namespace": "komira-ai",
+            "kind": "org",
+            "github_id": "77",
+            "github_id_num": 77,
+            "created_at": "2026-10-13T12:00:00.000Z",
+            "installation_id": 5555
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "TableName": "mopm-beta-namespaces",
+            "Key": {
+              "namespace": {
+                "S": "komira-ai"
+              }
+            },
+            "ConsistentRead": true
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "passes",
+    "method": "putPass",
+    "args": [
+      77,
+      4242,
+      {
+        "role": "admin",
+        "expires_at": "2026-10-01T00:05:00.000Z"
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "TableName": "mopm-beta-membership_passes",
+            "Item": {
+              "key": {
+                "S": "77:4242"
+              },
+              "role": {
+                "S": "admin"
+              },
+              "expires_at": {
+                "N": "1790813100"
+              },
+              "expires_at_iso": {
+                "S": "2026-10-01T00:05:00.000Z"
+              }
+            }
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "passes",
+    "method": "getPass",
+    "args": [
+      77,
+      4242
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "key": "77:4242",
+            "role": "admin",
+            "expires_at": 1790813100,
+            "expires_at_iso": "2026-10-01T00:05:00.000Z"
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "TableName": "mopm-beta-membership_passes",
+            "Key": {
+              "key": {
+                "S": "77:4242"
+              }
+            },
+            "ConsistentRead": true
+          }
+        }
+      ],
+      "returns": {
+        "role": "admin",
+        "expires_at": "2026-10-01T00:05:00.000Z"
+      }
+    }
+  },
+  {
+    "adapter": "passes",
+    "method": "getPass",
+    "args": [
+      77,
+      5
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "TableName": "mopm-beta-membership_passes",
+            "Key": {
+              "key": {
+                "S": "77:5"
+              }
+            },
+            "ConsistentRead": true
+          }
+        }
+      ],
+      "returns": null
+    }
   }
 ]

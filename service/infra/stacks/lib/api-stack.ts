@@ -154,8 +154,10 @@ export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
  * - users: read and upsert a row at login.
  * - device_logins: start (PutItem), poll (GetItem), record the poll and consume (UpdateItem).
  * - trusted_publishers: read only; nothing in the Lambda registers publishers yet.
- * - namespaces: read one (GetItem), create one at login (PutItem, conditional on the key being absent: never an overwrite),
- *   and list an account's (Query on its by_github_id index).
+ * - namespaces: read one (GetItem), create one at login (PutItem, conditional on the key being absent), list an account's
+ *   (Query on its by_github_id index), and bind a new GitHub App installation to an organization namespace (PutItem,
+ *   conditional on the GitHub id and kind it read: the id is never changed, and no UpdateItem is granted).
+ * - membership_passes: read and keep a passed organization membership check (GetItem, PutItem); expiry is TTL.
  * - owners: read, and Query on its by_github_id index (POST /me/tokens lists the packages the account owns). The table is
  *   also in READ_TABLES; an index is a separate resource, so the index ARN is granted here.
  */
@@ -166,6 +168,7 @@ export const AUTH_GRANTS: Record<string, { actions: string[]; indexes?: string[]
   trusted_publishers: { actions: ['dynamodb:GetItem', 'dynamodb:Query'] },
   owners: { actions: ['dynamodb:GetItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
   namespaces: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
+  membership_passes: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
 };
 
 /** `GET /index/config.json` is built from code by the API Lambda; every other file under /index/ is read from the bucket by the reader. */

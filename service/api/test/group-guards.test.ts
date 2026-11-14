@@ -30,7 +30,16 @@ const ADAPTERS = ['dynamo-store.ts', 'memory-store.ts'];
 /** The only files that may use the raw port: the port itself, the group module and the adapters. */
 const RAW_PORT_USERS = ['raw-port.ts', 'group.ts', ...ADAPTERS];
 /** Every file that imports the DynamoDB SDK. A new one must be added here on purpose, which is a review of what it reads. */
-const DYNAMO_USERS = ['auth/dynamo-auth-store.ts', 'auth/owned-packages.ts', 'dynamo-store.ts', 'publish/dynamo-publish-store.ts', 'publish/flags.ts', 'publish/wiring.ts'];
+const DYNAMO_USERS = [
+  'auth/dynamo-auth-store.ts',
+  'auth/dynamo-membership-pass-store.ts', // the membership_passes table only
+  'auth/dynamo-namespace-store.ts', // the namespaces table only
+  'auth/owned-packages.ts',
+  'dynamo-store.ts',
+  'publish/dynamo-publish-store.ts',
+  'publish/flags.ts',
+  'publish/wiring.ts',
+];
 /** Files that define reads rather than use them. */
 const READ_DEFINITIONS = ['store.ts', 'group.ts', ...ADAPTERS];
 
