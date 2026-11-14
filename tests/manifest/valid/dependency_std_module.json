@@ -1,0 +1,24 @@
+{
+  "package": {
+    "name": "example/app",
+    "version": "0.1.0",
+    "description": null,
+    "license": null,
+    "repository": null,
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": []
+  },
+  "dependencies": [
+    {"name": "example/memory", "version": "1"}
+  ],
+  "dev-dependencies": [],
+  "native-dependencies": [],
+  "native": [],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}

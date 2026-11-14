@@ -77,3 +77,22 @@ test "a dependency without a namespace is refused with its entry written in full
         try testing.expectEqualStrings(cs[1], diag.message);
     }
 }
+
+test "a dependency whose import name is a standard library module is read with one warning; the package's own is refused" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var diag: manifest.Diagnostic = .{};
+    const head = "[package]\nname = \"example/app\"\nversion = \"0.1.0\"\n\n[dependencies]\n";
+    const m = try manifest.parse(a, head ++ "\"example/json\" = \"1\"\n\"example/memory\" = \"1\"\n\n[dev-dependencies]\n\"example/os\" = { path = \"../os\" }\n", &diag);
+    try testing.expectEqual(@as(usize, 2), m.dependencies.len);
+    try testing.expectEqual(@as(usize, 2), m.warnings.len);
+    try testing.expectEqualStrings("7:1: dependency 'example/memory' has the import name 'memory', a module of the Mojo standard library (std.memory); code that imports it shadows the standard module", m.warnings[0]);
+    try testing.expectEqualStrings("10:1: dependency 'example/os' has the import name 'os', a module of the Mojo standard library (std.os); code that imports it shadows the standard module", m.warnings[1]);
+
+    const plain = try manifest.parse(a, head ++ "\"example/json\" = \"1\"\n", &diag);
+    try testing.expectEqual(@as(usize, 0), plain.warnings.len);
+
+    try testing.expectError(error.Invalid, manifest.parse(a, "[package]\nname = \"example/memory\"\nversion = \"0.1.0\"\n", &diag));
+    try testing.expectEqualStrings("package name 'example/memory': the import name 'memory' is a module of the Mojo standard library (std.memory); choose another name", diag.message);
+}

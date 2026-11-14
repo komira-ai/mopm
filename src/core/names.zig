@@ -50,9 +50,9 @@ const reserved_namespaces = [_][]const u8{ "index", "quarantine", "native-mirror
 /// The platforms of a conda subdir, `<platform>-<arch>`; `noarch` is the one subdir without an arch.
 const subdir_platforms = [_][]const u8{ "linux", "osx", "win", "freebsd", "zos", "wasi", "emscripten" };
 
-/// The top-level modules of the Mojo standard library of every pinned toolchain, read from its `lib/mojo/std.mojoc`
-/// (toolchain/README.md). People write `import std.collections` and also the bare `import collections`, so a
-/// package of one of these names would shadow it.
+/// The top-level modules of the Mojo standard library, the union over every Mojo version mopm pins
+/// (src/core/std_modules.zig says how the file is made and checked). People write `import std.collections` and also
+/// the bare `import collections`, so a package of one of these names would shadow it.
 pub const std_modules_text = @embedFile("toolchain/std-modules.txt");
 
 fn isOneOf(word: []const u8, list: []const []const u8) bool {
@@ -83,10 +83,19 @@ pub fn isStdModule(name: []const u8) bool {
     return false;
 }
 
+/// Whether a top-level module of the standard library is refused as an import name (`refuse`: a package's own name,
+/// `mopm new`, `mopm init`) or left to the caller to warn about (`allow`: a dependency key, so that a project that
+/// depends on a package published before its name joined the list keeps building).
+pub const StdModules = enum { refuse, allow };
+
 /// Why `name` cannot be an import name (the name of a package, the part after `/`), or null if it can: a lowercase
 /// identifier that is not a Mojo keyword or builtin, a reserved name, or a top-level module of the standard library.
 /// `what` starts the message ("package name"). The length is checked by `fullNameProblem`.
 pub fn nameProblem(arena: Allocator, what: []const u8, name: []const u8) Allocator.Error!?[]const u8 {
+    return importProblem(arena, what, name, .refuse);
+}
+
+fn importProblem(arena: Allocator, what: []const u8, name: []const u8, std_modules: StdModules) Allocator.Error!?[]const u8 {
     if (name.len == 0) return try std.fmt.allocPrint(arena, "{s} is empty", .{what});
     if (!std.ascii.isLower(name[0])) {
         return try std.fmt.allocPrint(arena, "{s} '{s}' must start with a lowercase letter", .{ what, name });
@@ -105,8 +114,8 @@ pub fn nameProblem(arena: Allocator, what: []const u8, name: []const u8) Allocat
     if (isOneOf(name, &reserved_names)) {
         return try std.fmt.allocPrint(arena, "{s} '{s}' is reserved; choose another name", .{ what, name });
     }
-    if (isStdModule(name)) {
-        return try std.fmt.allocPrint(arena, "{s} '{s}' would shadow the Mojo standard library module std.{s}; choose another name", .{ what, name, name });
+    if (std_modules == .refuse and isStdModule(name)) {
+        return try std.fmt.allocPrint(arena, "{s} '{s}' is a module of the Mojo standard library (std.{s}); choose another name", .{ what, name, name });
     }
     return null;
 }
@@ -153,7 +162,8 @@ pub fn namespaceProblem(arena: Allocator, subject: []const u8, ns: []const u8) A
 
 /// Why `full` cannot be a full name, or null if it can. `what` starts the message ("package name", "dependency").
 /// A bare name (no `/`) is refused with the full form; the callers with more to say (the manifest) check that first.
-pub fn fullNameProblem(arena: Allocator, what: []const u8, full: []const u8) Allocator.Error!?[]const u8 {
+/// `std_modules` says whether an import name that is a standard library module is refused.
+pub fn fullNameProblem(arena: Allocator, what: []const u8, full: []const u8, std_modules: StdModules) Allocator.Error!?[]const u8 {
     const subject = try std.fmt.allocPrint(arena, "{s} '{s}'", .{ what, full });
     const parts = split(full) orelse {
         return try std.fmt.allocPrint(arena, "{s} has no namespace: write <namespace>/{s}", .{ subject, full });
@@ -166,68 +176,21 @@ pub fn fullNameProblem(arena: Allocator, what: []const u8, full: []const u8) All
     for (full) |b| upper = upper or std.ascii.isUpper(b);
     if (upper) {
         const lower = try std.ascii.allocLowerString(arena, full);
-        if (try plainProblem(arena, subject, split(lower).?) == null) {
+        if (try plainProblem(arena, subject, split(lower).?, std_modules) == null) {
             return try std.fmt.allocPrint(arena, "{s} is not in lower case; write '{s}'", .{ subject, lower });
         }
     }
-    return plainProblem(arena, subject, parts);
+    return plainProblem(arena, subject, parts, std_modules);
 }
 
-fn plainProblem(arena: Allocator, subject: []const u8, parts: FullName) Allocator.Error!?[]const u8 {
+fn plainProblem(arena: Allocator, subject: []const u8, parts: FullName, std_modules: StdModules) Allocator.Error!?[]const u8 {
     if (try namespaceProblem(arena, subject, parts.namespace)) |why| return why;
     const of_name = try std.fmt.allocPrint(arena, "{s}: the import name", .{subject});
-    if (try nameProblem(arena, of_name, parts.name)) |why| return why;
+    if (try importProblem(arena, of_name, parts.name, std_modules)) |why| return why;
     if (parts.name.len < min_name_len or parts.name.len > max_name_len) {
         return try std.fmt.allocPrint(arena, "{s}: the name '{s}' has {d} characters; a name has {d} to {d}", .{ subject, parts.name, parts.name.len, min_name_len, max_name_len });
     }
     return null;
-}
-
-// ---------------------------------------------------------------------------
-// The pin of toolchain/std-modules.txt
-// ---------------------------------------------------------------------------
-
-/// The mojo-compiler package of one Mojo version, as a closure file pins it.
-pub const Pin = struct { version: []const u8, subdir: []const u8, sha256: []const u8 };
-
-/// Why the `# from mojo-compiler <version> <subdir> <sha256>` lines of `list` do not match `pins`, or null: each pin
-/// has a line with its version, subdir and sha256, and each line is a pin. A toolchain bump changes the pin, and the
-/// list is read again from the new package (toolchain/README.md) before this passes.
-pub fn pinProblem(arena: Allocator, list: []const u8, pins: []const Pin) Allocator.Error!?[]const u8 {
-    var froms = std.ArrayList([]const u8).init(arena);
-    var it = listLines(list);
-    while (it.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        const prefix = "# from mojo-compiler ";
-        if (std.mem.startsWith(u8, line, prefix)) try froms.append(line[prefix.len..]);
-    }
-    for (pins) |p| {
-        const want = try std.fmt.allocPrint(arena, "{s} {s} {s}", .{ p.version, p.subdir, p.sha256 });
-        if (!isOneOf(want, froms.items)) {
-            return try std.fmt.allocPrint(arena, "toolchain/std-modules.txt was not read from mojo-compiler {s} for {s} (sha256 {s}); read the list again from that package", .{ p.version, p.subdir, p.sha256 });
-        }
-    }
-    for (froms.items) |f| {
-        var known = false;
-        for (pins) |p| {
-            const have = try std.fmt.allocPrint(arena, "{s} {s} {s}", .{ p.version, p.subdir, p.sha256 });
-            known = known or std.mem.eql(u8, have, f);
-        }
-        if (!known) return try std.fmt.allocPrint(arena, "toolchain/std-modules.txt names mojo-compiler {s}, which no closure pins; drop the line", .{f});
-    }
-    return null;
-}
-
-/// The sha256 of the mojo-compiler package in a closure file's JSON (src/core/toolchain/mojo-<version>-<subdir>.json).
-/// Only the tests read it.
-/// "" when it has none, which no `# from` line matches.
-fn compilerSha(arena: Allocator, closure: []const u8) ![]const u8 {
-    const doc = try std.json.parseFromSliceLeaky(std.json.Value, arena, closure, .{});
-    var sha: []const u8 = "";
-    for (doc.object.get("packages").?.array.items) |p| {
-        if (std.mem.eql(u8, p.object.get("name").?.string, "mojo-compiler")) sha = p.object.get("sha256").?.string;
-    }
-    return sha;
 }
 
 const testing = std.testing;
@@ -250,7 +213,7 @@ test "a full name is a lower-case namespace, one '/', and an importable name" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const ok = [_][]const u8{ "komira-ai/json", "a/xy", "a1-b2-c3/http_client", "0/ab", "x" ** 39 ++ "/" ++ "y" ** 64 };
-    for (ok) |full| try expectProblem(null, try fullNameProblem(a, "package name", full));
+    for (ok) |full| try expectProblem(null, try fullNameProblem(a, "package name", full, .refuse));
 
     const cases = [_][2][]const u8{
         .{ "json", "package name 'json' has no namespace: write <namespace>/json" },
@@ -279,10 +242,10 @@ test "a full name is a lower-case namespace, one '/', and an importable name" {
         .{ "komira-ai/hash", "package name 'komira-ai/hash': the import name 'hash' would shadow the Mojo builtin 'hash'; choose another name" },
         .{ "komira-ai/mopm", "package name 'komira-ai/mopm': the import name 'mopm' is reserved; choose another name" },
         .{ "komira-ai/stdlib", "package name 'komira-ai/stdlib': the import name 'stdlib' is reserved; choose another name" },
-        .{ "komira-ai/collections", "package name 'komira-ai/collections': the import name 'collections' would shadow the Mojo standard library module std.collections; choose another name" },
-        .{ "komira-ai/hashlib", "package name 'komira-ai/hashlib': the import name 'hashlib' would shadow the Mojo standard library module std.hashlib; choose another name" },
+        .{ "komira-ai/collections", "package name 'komira-ai/collections': the import name 'collections' is a module of the Mojo standard library (std.collections); choose another name" },
+        .{ "komira-ai/hashlib", "package name 'komira-ai/hashlib': the import name 'hashlib' is a module of the Mojo standard library (std.hashlib); choose another name" },
     };
-    for (cases) |c| try expectProblem(c[1], try fullNameProblem(a, "package name", c[0]));
+    for (cases) |c| try expectProblem(c[1], try fullNameProblem(a, "package name", c[0], .refuse));
 }
 
 test "names that only look like a conda subdir or a reserved prefix are namespaces" {
@@ -316,39 +279,14 @@ test "the standard library list holds the modules people import, and only names"
     try testing.expect(entries > 0);
 }
 
-test "the standard library list was read from the mojo-compiler each closure pins" {
+test "a dependency may have a standard library module's name, which its caller warns about; nothing else is allowed" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    // The closures mopm embeds (src/core/toolchain/mojo-<version>-<subdir>.json); the list is read on linux-64.
-    const unit_graph = @import("unit_graph.zig");
-    var pins = std.ArrayList(Pin).init(a);
-    for (unit_graph.targets) |t| {
-        if (!std.mem.eql(u8, t.subdir, "linux-64")) continue;
-        const doc = try std.json.parseFromSliceLeaky(std.json.Value, a, t.closure, .{});
-        const version = doc.object.get("mojo").?.string;
-        try pins.append(.{ .version = version, .subdir = t.subdir, .sha256 = try compilerSha(a, t.closure) });
-    }
-    try testing.expect(pins.items.len > 0);
-    try expectProblem(null, try pinProblem(a, std_modules_text, pins.items));
-}
-
-test "a list read from another package, or naming a version no closure pins, is refused" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    const list = "# from mojo-compiler 1.0.0 linux-64 " ++ "a" ** 64 ++ "\ncollections\n";
-    const pinned = [_]Pin{.{ .version = "1.0.0", .subdir = "linux-64", .sha256 = "a" ** 64 }};
-    try expectProblem(null, try pinProblem(a, list, &pinned));
-
-    const moved = [_]Pin{.{ .version = "1.0.0", .subdir = "linux-64", .sha256 = "b" ** 64 }};
-    try expectProblem("toolchain/std-modules.txt was not read from mojo-compiler 1.0.0 for linux-64 (sha256 " ++ "b" ** 64 ++ "); read the list again from that package", try pinProblem(a, list, &moved));
-
-    const added = [_]Pin{ pinned[0], .{ .version = "1.1.0", .subdir = "linux-64", .sha256 = "c" ** 64 } };
-    try expectProblem("toolchain/std-modules.txt was not read from mojo-compiler 1.1.0 for linux-64 (sha256 " ++ "c" ** 64 ++ "); read the list again from that package", try pinProblem(a, list, &added));
-
-    try expectProblem("toolchain/std-modules.txt names mojo-compiler 1.0.0 linux-64 " ++ "a" ** 64 ++ ", which no closure pins; drop the line", try pinProblem(a, list, &.{}));
-
-    // A closure without a mojo-compiler pins no package, so no line can match it.
-    try testing.expectEqualStrings("", try compilerSha(a, "{\"packages\": [{\"name\": \"libgcc\", \"sha256\": \"x\"}]}"));
+    try expectProblem(null, try fullNameProblem(a, "dependency", "example/collections", .allow));
+    try expectProblem("dependency 'Example/collections' is not in lower case; write 'example/collections'", try fullNameProblem(a, "dependency", "Example/collections", .allow));
+    try expectProblem("dependency 'example/fn': the import name 'fn' is a Mojo keyword; choose another name", try fullNameProblem(a, "dependency", "example/fn", .allow));
+    try expectProblem("dependency 'example/std': the import name 'std' is reserved; choose another name", try fullNameProblem(a, "dependency", "example/std", .allow));
+    // Refused when the caller says so; upper case is then not fixable by lower-casing alone.
+    try expectProblem("dependency 'Example/collections': the namespace 'Example' is not a GitHub login in lower case (letters, digits and single hyphens between them)", try fullNameProblem(a, "dependency", "Example/collections", .refuse));
 }

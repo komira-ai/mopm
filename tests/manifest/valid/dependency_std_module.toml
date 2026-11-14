@@ -1,0 +1,7 @@
+# A dependency whose import name is a module of the Mojo standard library is read, with a warning.
+[package]
+name = "example/app"
+version = "0.1.0"
+
+[dependencies]
+"example/memory" = "1"

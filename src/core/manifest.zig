@@ -130,6 +130,9 @@ pub const Manifest = struct {
     native_dependencies: []const NativeDep = &.{},
     native: []const NativeLib = &.{},
     targets: Targets = .{},
+    /// What mopm says about the file without refusing it, one line each (the callers print them): a dependency key
+    /// whose import name is a module of the Mojo standard library.
+    warnings: []const []const u8 = &.{},
 };
 
 fn isOneOf(word: []const u8, list: []const []const u8) bool {
@@ -146,7 +149,7 @@ pub const nameProblem = names.nameProblem;
 /// Parses and checks a mopm.toml, or fails with `diag` set.
 pub fn parse(arena: Allocator, src: []const u8, diag: *Diagnostic) Error!Manifest {
     const root = try toml.parse(arena, src, diag);
-    var c = Checker{ .arena = arena, .diag = diag };
+    var c = Checker{ .arena = arena, .diag = diag, .warnings = std.ArrayList([]const u8).init(arena) };
     return c.manifest(root);
 }
 
@@ -156,6 +159,7 @@ const Entry = *const toml.Entry;
 const Checker = struct {
     arena: Allocator,
     diag: *Diagnostic,
+    warnings: std.ArrayList([]const u8),
 
     fn fail(c: *Checker, at: toml.Pos, comptime fmt: []const u8, args: anytype) Error {
         return toml.fail(c.arena, c.diag, at, fmt, args);
@@ -211,9 +215,9 @@ const Checker = struct {
     }
 
     /// `full` checked as a full name and split; `bare` is the message for a name without a namespace.
-    fn fullName(c: *Checker, full: []const u8, at: toml.Pos, what: []const u8, bare: []const u8) Error!names.FullName {
+    fn fullName(c: *Checker, full: []const u8, at: toml.Pos, what: []const u8, bare: []const u8, std_modules: names.StdModules) Error!names.FullName {
         const parts = names.split(full) orelse return c.fail(at, "{s}", .{bare});
-        if (try names.fullNameProblem(c.arena, what, full)) |message| return c.fail(at, "{s}", .{message});
+        if (try names.fullNameProblem(c.arena, what, full, std_modules)) |message| return c.fail(at, "{s}", .{message});
         return parts;
     }
 
@@ -236,6 +240,7 @@ const Checker = struct {
         if (root.get("native-dependencies")) |e| m.native_dependencies = try c.nativeDeps(try c.table(e, "mopm.toml"));
         if (root.get("native")) |e| m.native = try c.nativeLibs(try c.table(e, "mopm.toml"));
         if (root.get("targets")) |e| m.targets = try c.targets(try c.table(e, "mopm.toml"), m.package.name);
+        m.warnings = c.warnings.items;
         return m;
     }
 
@@ -245,7 +250,7 @@ const Checker = struct {
         const name_e = t.get("name") orelse return c.fail(t.pos, "[package] is missing 'name'", .{});
         const name = try c.str(name_e, where);
         const bare = try std.fmt.allocPrint(c.arena, "package name '{s}' has no namespace: write name = \"<namespace>/{s}\"", .{ name, name });
-        const parts = try c.fullName(name, name_e.pos, "package name", bare);
+        const parts = try c.fullName(name, name_e.pos, "package name", bare, .refuse);
         const version_e = t.get("version") orelse return c.fail(t.pos, "[package] is missing 'version'", .{});
         const version = try c.str(version_e, where);
         if (!semver.isPackageVersion(version)) {
@@ -315,7 +320,10 @@ const Checker = struct {
     fn deps(c: *Checker, t: Table, where: []const u8) Error![]const Dep {
         var out = std.ArrayList(Dep).init(c.arena);
         for (t.entries.items) |*e| {
-            const parts = try c.fullName(e.key, e.pos, "dependency", try bareDep(c.arena, e));
+            const parts = try c.fullName(e.key, e.pos, "dependency", try bareDep(c.arena, e), .allow);
+            if (names.isStdModule(parts.name)) {
+                try c.warnings.append(try std.fmt.allocPrint(c.arena, "{d}:{d}: dependency '{s}' has the import name '{s}', a module of the Mojo standard library (std.{s}); code that imports it shadows the standard module", .{ e.pos.line, e.pos.col, e.key, parts.name, parts.name }));
+            }
             var requirement: ?[]const u8 = null;
             const source: Source = switch (e.value) {
                 .string => |s| .{ .version = s },

@@ -73,7 +73,7 @@ The older spelling of the compiler pin, and what `mopm new` writes. It is a vers
 
 ### Dependencies: `[dependencies]` and `[dev-dependencies]`
 
-Each entry is `"<namespace>/<name>" = <requirement>` or `"<namespace>/<name>" = { version = <requirement> }` or `"<namespace>/<name>" = { path = <directory> }`. The key is a full name and follows the rules of a package name; TOML needs the quotes because it holds `/`. A path dependency's key is the `[package] name` of the `mopm.toml` at the path. `[dev-dependencies]` has the same entries; they are locked and shown in `mopm tree`, and they are dependencies of the test units of `mopm plan`, but they are not part of a packed package.
+Each entry is `"<namespace>/<name>" = <requirement>` or `"<namespace>/<name>" = { version = <requirement> }` or `"<namespace>/<name>" = { path = <directory> }`. The key is a full name and follows the rules of a package name, except that an import name which is a module of the Mojo standard library is read with a warning instead of refused; TOML needs the quotes because it holds `/`. A path dependency's key is the `[package] name` of the `mopm.toml` at the path. `[dev-dependencies]` has the same entries; they are locked and shown in `mopm tree`, and they are dependencies of the test units of `mopm plan`, but they are not part of a packed package.
 
 The keys of the table form:
 

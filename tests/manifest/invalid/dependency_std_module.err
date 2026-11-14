@@ -1,1 +1,0 @@
-6:1: dependency 'example/memory': the import name 'memory' would shadow the Mojo standard library module std.memory; choose another name

@@ -63,9 +63,14 @@ A package's name is a full name, `<namespace>/<name>`, such as `komira-ai/json`.
 - The import name is what Mojo code imports (`import json`). It is never a Mojo
   keyword or builtin, never `mopm`, `mojo`, `max`, `modular`, `std` or `stdlib`,
   and never a top-level module of the Mojo standard library (`collections`,
-  `memory`, `os`, ...: the list of every pinned toolchain, in mopm's
-  `src/core/toolchain/std-modules.txt`), since Mojo code imports those both as
-  `std.<module>` and by the bare name.
+  `memory`, `os`, ...: the union of mopm's
+  `toolchain/mojo-<version>.std-modules.txt`), since Mojo code imports those
+  both as `std.<module>` and by the bare name: `package name
+  'example/collections': the import name 'collections' is a module of the Mojo
+  standard library (std.collections); choose another name`. A dependency key
+  whose import name is such a module is read with a warning naming the module
+  and the dependency, so a project that depends on a package published before
+  its name joined the list keeps building.
 - Reserved namespaces, which no package has: the shape of a conda subdir,
   `^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$`, and
   `index`, `quarantine` and `native-mirror`.

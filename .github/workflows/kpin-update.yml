@@ -363,6 +363,12 @@ jobs:
           rc=0
           ./zig-out/bin/mopm-closure --natives-libs src/core/toolchain toolchain/natives.libs || rc=$?
           [ "$rc" = 0 ] || { echo "::error title=natives.libs failed::mopm-closure --natives-libs exited $rc (a package file did not have its pinned sha256, or could not be read; see above). No pull request is opened."; exit 1; }
+          # toolchain/mojo-<version>.std-modules.txt and src/core/toolchain/std-modules.txt: the top-level modules of the Mojo
+          # standard library, read from each version's pinned mojo-compiler (checked against its sha256 and size), which
+          # no package's import name may be (docs/design/namespaces.md, section 1.1).
+          rc=0
+          ./zig-out/bin/mopm-closure --std-modules src/core/toolchain toolchain || rc=$?
+          [ "$rc" = 0 ] || { echo "::error title=std modules failed::mopm-closure --std-modules exited $rc (a mojo-compiler package did not have its pinned sha256, or its std.mojoc could not be read; see above). No pull request is opened."; exit 1; }
           if [ -z "$(git status --porcelain --untracked-files=all -- toolchain src/core/toolchain)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "The solver's answer is the committed one: nothing to open." | tee -a "$GITHUB_STEP_SUMMARY"

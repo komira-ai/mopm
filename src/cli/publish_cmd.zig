@@ -233,6 +233,7 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         }
         return null;
     };
+    for (m.warnings) |w| err("warning: {s}:{s}\n", .{ f.manifest, w });
     if (!m.package.publish) {
         err("{s}: {s} has publish = false, so it is not packed for a registry or published; remove the key to publish it\n", .{ f.manifest, m.package.full_name });
         return null;

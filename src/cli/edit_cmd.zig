@@ -33,7 +33,7 @@ fn specProblem(arena: Allocator, full: []const u8) Allocator.Error!?[]const u8 {
     if (core.names.split(full) == null) {
         return try std.fmt.allocPrint(arena, "dependency '{s}' has no namespace: write it as <namespace>/<name>, as in 'mopm add <namespace>/<name>'", .{full});
     }
-    return core.names.fullNameProblem(arena, "dependency", full);
+    return core.names.fullNameProblem(arena, "dependency", full, .allow);
 }
 
 /// The import name of a full name: the name the lock, the index and the resolver know it by.

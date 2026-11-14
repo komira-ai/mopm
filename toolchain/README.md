@@ -8,6 +8,7 @@ and everything they need) is a fixed list per Mojo version and platform:
 | `versions.txt` | the Mojo versions mopm can install | a person |
 | `mojo-<version>.pixi.lock` | the solver's answer for that version, all platforms | the `toolchain` job of `.github/workflows/kpin-update.yml` (pixi, on GitHub) |
 | `../src/core/toolchain/mojo-<version>-<subdir>.json` | the closure of one platform: url, sha256, size and conda-meta fields of every package | `mopm-closure`, from the lock |
+| `mojo-<version>.std-modules.txt` | the top-level modules of that version's standard library, one per line (below) | `mopm-closure --std-modules`, from the pinned `mojo-compiler` (the same job) |
 | `natives.txt` | the conda names of the native libraries a package may load (the allow-list), one per line | a person |
 | `natives.libs` | the shared libraries each catalog package holds, read from the package files (below) | `mopm-closure --natives-libs`, from the catalog (the same job) |
 | `natives.pixi.lock` | the solver's answer for all of `natives.txt` at once, all platforms; independent of the Mojo version | the same job |
@@ -59,19 +60,20 @@ dropped. Only `.conda` packages are read. By hand, after changing a lock, run th
 
 ## The standard library modules
 
-`../src/core/toolchain/std-modules.txt` lists the top-level modules of the Mojo standard library, which no package's
-import name may equal (`src/core/names.zig`; Mojo code writes both `import std.collections` and `import collections`).
-It is read from `lib/mojo/std.mojoc` of each pinned `mojo-compiler` package, and its `# from mojo-compiler <version>
-<subdir> <sha256>` lines name those packages. The unit test "the standard library list was read from the mojo-compiler
-each closure pins" fails when a closure's `mojo-compiler` sha256 is not on a `# from` line, or a line names a package
-no closure pins, so a toolchain bump reads the list again.
+`mojo-<version>.std-modules.txt` lists the top-level modules of the Mojo standard library of that version, one per
+line; no package's import name may be one (`src/core/names.zig`: Mojo code writes both `import std.collections` and
+`import collections`). `../src/core/toolchain/std-modules.txt`, which mopm embeds, is the union over every version of
+`versions.txt`. Both are made, never by hand, by
 
-To read it, by hand, from the package of the closure's `url` and `sha256`: unpack `lib/mojo/std.mojoc` from the
-package (`unzip -p <file>.conda 'pkg-*' | zstd -dc | tar -x lib/mojo/std.mojoc`); after its header (`MPKG` and the
-hex digest) the file is one zstd frame, which starts at the bytes `28 b5 2f fd`. Decompress that frame; the source
-paths it holds, `mojo/stdlib/std/<entry>/...` and `mojo/stdlib/std/<entry>.mojo`, give the top-level entries. Keep
-those that do not start with `_`, sorted, one per line, and update the `# from` line.
+    zig build run-closure -- --std-modules src/core/toolchain toolchain
 
-The list is read from the `linux-64` package only. The standard library is the same Mojo source on every platform of
-one version (`std.mojoc` records the paths of that source, `mojo/stdlib/std/...`), so the other platforms' packages hold
-the same top-level modules.
+which the weekly `toolchain` job runs after `--natives-libs`. For each version it downloads the linux-64
+`mojo-compiler` of `../src/core/toolchain/mojo-<version>-linux-64.json`, checks its pinned size and sha256 (a mismatch
+fails the run, naming both), and reads `lib/mojo/std.mojoc`: after its header the file is one zstd frame, whose content
+records the source path of each file of the library, `mojo/stdlib/std/<module>/...` or `mojo/stdlib/std/<module>.mojo`
+(`src/core/std_modules.zig`). The modules are those `<module>` names, except those starting with `_`. The standard
+library is the same Mojo source on every platform of one version, so one platform is read.
+
+The unit test "the embedded list is the union of the list of every version of toolchain/versions.txt" fails when
+`../src/core/toolchain/std-modules.txt` is not the union of the files here, and reading a version's file fails when
+`versions.txt` names a version that has none, so adding a Mojo version needs the command above.

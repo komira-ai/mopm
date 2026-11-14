@@ -1,1 +1,1 @@
-2:1: package name 'example/collections': the import name 'collections' would shadow the Mojo standard library module std.collections; choose another name
+2:1: package name 'example/collections': the import name 'collections' is a module of the Mojo standard library (std.collections); choose another name

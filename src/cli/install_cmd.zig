@@ -189,7 +189,7 @@ fn readManifest(arena: Allocator, cmd: Command, path: []const u8) !?manifest.Man
 /// one (reported).
 pub fn parseManifest(arena: Allocator, cmd: Command, path: []const u8, src: []const u8) !?manifest.Manifest {
     var diag: manifest.Diagnostic = .{};
-    return manifest.parse(arena, src, &diag) catch |e| {
+    const m = manifest.parse(arena, src, &diag) catch |e| {
         if (e == error.Invalid) {
             err(cmd, "{s}:{d}:{d}: {s}\n", .{ path, diag.pos.line, diag.pos.col, diag.message });
         } else {
@@ -197,6 +197,8 @@ pub fn parseManifest(arena: Allocator, cmd: Command, path: []const u8, src: []co
         }
         return null;
     };
+    for (m.warnings) |w| err(cmd, "warning: {s}:{s}\n", .{ path, w });
+    return m;
 }
 
 /// `dir` joined with `rel`, `/`-separated, with `.` and `..` resolved

@@ -21,8 +21,15 @@ what the code does.
   that length as well as the pattern.
 - The **import name** is the name, the part after `/`. It is not a Mojo keyword or builtin (the lists in
   `src/core/names.zig`), nor `mopm`, `mojo`, `max`, `modular`, `std` or `stdlib`, nor a top-level module of the Mojo
-  standard library (`src/core/toolchain/std-modules.txt`, read from each pinned toolchain). The client refuses those
-  (`spec/mopm-toml.md`, "Names"); the registry is to refuse them too.
+  standard library. The client refuses those (`spec/mopm-toml.md`, "Names"); the registry is to refuse them too.
+- The **standard library's modules** are those of every Mojo version in `toolchain/versions.txt`, one file per version,
+  `toolchain/mojo-<version>.std-modules.txt`, read from the `lib/mojo/std.mojoc` of that version's pinned
+  `mojo-compiler` package (`mopm-closure --std-modules`). For Mojo 1.0.0: `algorithm`, `atomic`, `base64`, `benchmark`,
+  `bit`, `builtin`, `collections`, `compile`, `complex`, `documentation`, `ffi`, `format`, `gpu`, `hashlib`, `io`,
+  `iter`, `itertools`, `logger`, `math`, `memory`, `origin`, `os`, `pathlib`, `prelude`, `pwd`, `python`, `random`,
+  `reflection`, `runtime`, `stat`, `subprocess`, `sys`, `tempfile`, `testing`, `time`, `traits`, `utils`. The registry
+  is to refuse creating a package with such an import name; the client refuses it as `[package] name` and warns when a
+  dependency key has it (live in `spec/mopm-toml.md`).
 - The **conda name** of `<namespace>/<name>` is `mojo-<namespace>.<name>`.
 - Lower case only, one spelling. Nothing normalises a namespace; `Komira-AI` is refused, with the lower-case form in
   the message.
@@ -59,7 +66,8 @@ The file stays at `lib/mojo/<import name>.mopm.json`, beside `lib/mojo/<import n
 
 - Layout: one channel per namespace, `https://conda.<site>/<namespace>/`, with the four subdirs and the files of
   "Layout (v1)" below it. A namespace channel holds only that namespace's packages.
-- The channel root `https://conda.<site>/` keeps its four subdirs, each with an empty valid `repodata.json`.
+- The channel root `https://conda.<site>/` keeps its four subdirs, each with a valid `repodata.json` that holds only
+  the packages kept under flat names (on mopm.dev, the `kci_*` packages).
 - Package naming: the conda package name is `mojo-<namespace>.<name>`; the file is
   `mojo-<namespace>.<name>-<version>-<build>.conda`. `pixi workspace channel add https://conda.mopm.dev/komira-ai/`
   then `pixi add mojo-komira-ai.json` installs `komira-ai/json`.
@@ -218,9 +226,13 @@ namespace_reserved:    { status: 403, message: "'{namespace}' is reserved.", hin
 namespace_not_found:   { status: 404, message: "There is no namespace '{namespace}'.", hint: "A user's namespace is made at their first 'mopm login'; an organization's by one of its admins." }
 ```
 
+`createPackage` answers `name_reserved` (403) for an import name that is a module of the Mojo standard library, with
+the message `'{name}' is a module of the Mojo standard library (std.{name}).` and the hint `Choose another name.`.
+
 `/api/v1` once v2 is served: `claimPackage`, and `exchangeOidcToken` for a package that does not exist, answer
 `name_reserved` with the hint "package names are in namespaces now; update mopm". Every other v1 operation is
-unchanged.
+unchanged. Flat names that remain after the deletion (on mopm.dev, the `kci_*` packages) are served by v1 and the
+version 1 index as before.
 
 ## unit-graph.md
 

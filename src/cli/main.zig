@@ -206,6 +206,7 @@ fn metadataCmd(arena: std.mem.Allocator, args: []const []const u8) u8 {
         }
         return 1;
     };
+    for (m.warnings) |w| std.debug.print("mopm: warning: {s}:{s}\n", .{ path, w });
     var buf = std.ArrayList(u8).init(arena);
     core.manifest.writeJson(m, buf.writer()) catch return 1;
     std.io.getStdOut().writeAll(buf.items) catch return 1;
@@ -245,7 +246,7 @@ fn scaffoldProblem(arena: std.mem.Allocator, cmd: []const u8, full: []const u8, 
     if (core.names.split(full) == null) {
         return try std.fmt.allocPrint(arena, "mopm {s} {s} needs a namespace: name it, as in 'mopm {s} <your GitHub login>/{s}'{s}", .{ cmd, full, cmd, full, hint });
     }
-    if (try core.names.fullNameProblem(arena, "package name", full)) |problem| {
+    if (try core.names.fullNameProblem(arena, "package name", full, .refuse)) |problem| {
         return try std.fmt.allocPrint(arena, "mopm {s}: {s}", .{ cmd, problem });
     }
     return null;
