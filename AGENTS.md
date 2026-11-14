@@ -119,6 +119,7 @@ The Mojo here is test fixtures, examples and the scaffold goldens (`tests/`, `ex
 
 ## 3. This repository
 
+- B9 BLOCK (this repository). Where B9 forbids macOS in per-PR checks, this repository adds: a workflow that runs on `pull_request` names Linux x86_64 hosted runners only (`ubuntu-*`, never `-arm`, `macos-*` or `windows-*`; a matrix is read through its `pull_request` branch), and there is no label that opts a PR into another platform. Linux arm64 and macOS arm64 build and test as the beta stage of the release (`release.yml`: `beta`, `beta-user`), after the merge. Check: `tests/drivers/hygiene.zig`.
 - B18 SHOULD. mopm: any conda-forge native is allowed (no name allow-lists, one `mopm.lock`, warn rather than refuse; integrity errors only). Downloaded native code is pinned by version, sha256, and size. A new `build.zig` root, executable, module, or `addTest` needs the matching BUCK target.
 - B18 in practice: the matching target is a `zig_exe`, `zig_module` or `zig_test` in `BUCK`, and `//:build_parity` (`tools/build_parity.zig`) fails when the two builds differ. A call in `BUCK` with no `build.zig` counterpart (a helper, a driver) says `buck-only` on its first line.
 - T19 in practice: the golden files of the command line are `tests/golden`; a behaviour change updates them in the same pull request and says why.

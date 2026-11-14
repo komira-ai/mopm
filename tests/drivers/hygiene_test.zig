@@ -193,7 +193,7 @@ test "id-token and environments are for the deploy workflows only" {
         \\on: [push]
         \\jobs:
         \\  j:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\
@@ -202,7 +202,7 @@ test "id-token and environments are for the deploy workflows only" {
         \\on: [push]
         \\jobs:
         \\  j:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    environment: beta
         \\
     , &.{"only deploy.yml, e2e.yml, promote.yml may use a deployment environment"});
@@ -210,7 +210,7 @@ test "id-token and environments are for the deploy workflows only" {
         \\on: [pull_request]
         \\jobs:
         \\  test:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    environment: beta
         \\    permissions:
         \\      id-token: write
@@ -220,7 +220,7 @@ test "id-token and environments are for the deploy workflows only" {
         \\on: [push, pull_request]
         \\jobs:
         \\  test:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\
     , &.{});
 }
@@ -234,24 +234,24 @@ test "the pull-request tier: unit on a pull request, beta only after the merge" 
         \\    branches: [main]
         \\jobs:
         \\  package:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\
     , &.{"a pull request runs build and unit tests only"});
     // Defect caught: an e2e workflow gains a pull_request trigger.
-    try expectStructure("e2e-extra.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{"a pull request runs build and unit tests only"});
+    try expectStructure("e2e-extra.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: ubuntu-24.04\n", &.{"a pull request runs build and unit tests only"});
     // The same trigger is fine in a unit workflow (lint.yml, farm.yml and ci.yml have rules of their own).
     for ([_][]const u8{"service-ci.yml"}) |ok| {
-        try expectStructure(ok, header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{});
+        try expectStructure(ok, header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: ubuntu-24.04\n", &.{});
     }
     // Defect caught: a guard with a clause that lets the beta job run on a pull request (the whole `if:` is compared, not a substring).
-    const guard_head = header ++ "on: [pull_request, push]\njobs:\n  test:\n    runs-on: x\n  registry-build:\n    runs-on: x\n  pack-conformance:\n    runs-on: x\n    if: ";
+    const guard_head = header ++ "on: [pull_request, push]\njobs:\n  test:\n    runs-on: ubuntu-24.04\n  registry-build:\n    runs-on: ubuntu-24.04\n  pack-conformance:\n    runs-on: ubuntu-24.04\n    if: ";
     try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request' || true\n", &.{"job pack-conformance is not a unit job"});
     try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request' || github.ref == 'refs/heads/main'\n", &.{"job pack-conformance is not a unit job"});
     // The exact guard passes, bare or in ${{ }}.
     try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request'\n", &.{});
     try expectStructure("ci.yml", guard_head ++ "${{ github.event_name != 'pull_request' }}\n", &.{});
     // lint.yml must run the release lint test on every pull request.
-    const lint_head = header ++ "on: [pull_request, push]\njobs:\n  lint:\n    runs-on: x\n    steps:\n";
+    const lint_head = header ++ "on: [pull_request, push]\njobs:\n  lint:\n    runs-on: ubuntu-24.04\n    steps:\n";
     const lint_step = "      - run: zig test tests/drivers/release_lint_test.zig\n";
     try expectStructure("lint.yml", lint_head ++ lint_step, &.{});
     try expectStructure("lint.yml", lint_head ++ "      - if: ${{ !cancelled() }}\n        run: zig test tests/drivers/release_lint_test.zig\n", &.{});
@@ -260,21 +260,21 @@ test "the pull-request tier: unit on a pull request, beta only after the merge" 
     try expectStructure("lint.yml", lint_head ++ "      - run: zig test tests/drivers/hygiene_test.zig\n", &.{no_release_lint});
     try expectStructure("lint.yml", lint_head ++ "      - if: github.event_name == 'push'\n        run: zig test tests/drivers/release_lint_test.zig\n", &.{no_release_lint});
     try expectStructure("lint.yml", lint_head ++ "      - continue-on-error: true\n        run: zig test tests/drivers/release_lint_test.zig\n", &.{no_release_lint});
-    try expectStructure("lint.yml", header ++ "on: [pull_request]\njobs:\n  lint:\n    runs-on: x\n    continue-on-error: true\n    steps:\n" ++ lint_step, &.{no_release_lint});
-    try expectStructure("lint.yml", header ++ "on: [push]\njobs:\n  lint:\n    runs-on: x\n    steps:\n" ++ lint_step, &.{"the lints must run on pull_request"});
+    try expectStructure("lint.yml", header ++ "on: [pull_request]\njobs:\n  lint:\n    runs-on: ubuntu-24.04\n    continue-on-error: true\n    steps:\n" ++ lint_step, &.{no_release_lint});
+    try expectStructure("lint.yml", header ++ "on: [push]\njobs:\n  lint:\n    runs-on: ubuntu-24.04\n    steps:\n" ++ lint_step, &.{"the lints must run on pull_request"});
     // Defect caught: a beta job of ci.yml loses its guard, or is new and unguarded.
     try expectStructure("ci.yml", header ++
         \\on: [pull_request, push]
         \\jobs:
         \\  test:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\  registry-build:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\  mojo-e2e:
         \\    if: github.event_name != 'pull_request'
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\  pack-conformance:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\
     , &.{"job pack-conformance is not a unit job"});
     try expectStructure("ci.yml", header ++
@@ -282,27 +282,27 @@ test "the pull-request tier: unit on a pull request, beta only after the merge" 
         \\jobs:
         \\  installer:
         \\    if: github.event_name == 'push'
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\
     , &.{"job installer is not a unit job"});
     // With no pull_request trigger every job of ci.yml is free.
-    try expectStructure("ci.yml", header ++ "on: [push]\njobs:\n  mojo-e2e:\n    runs-on: x\n", &.{});
+    try expectStructure("ci.yml", header ++ "on: [push]\njobs:\n  mojo-e2e:\n    runs-on: ubuntu-24.04\n", &.{});
 }
 
 test "the autopin workflows: compute and pin-verify may run on a pull request, commit only on workflow_run and with an environment" {
     // The two pull_request workflows are in the unit tier; the same trigger in a look-alike file name is not.
     for ([_][]const u8{ "autopin-compute.yml", "pin-verify.yml" }) |ok| {
-        try expectStructure(ok, header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{});
+        try expectStructure(ok, header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: ubuntu-24.04\n", &.{});
     }
-    try expectStructure("autopin-compute2.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{"a pull request runs build and unit tests only"});
+    try expectStructure("autopin-compute2.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: ubuntu-24.04\n", &.{"a pull request runs build and unit tests only"});
     // They may hold neither an environment nor an id-token on a pull request.
-    try expectStructure("autopin-compute.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n    environment: autopin\n", &.{ "may use a deployment environment", "must not run on pull_request" });
+    try expectStructure("autopin-compute.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    environment: autopin\n", &.{ "may use a deployment environment", "must not run on pull_request" });
     // autopin-commit.yml: workflow_run alone, an environment allowed, no id-token.
-    try expectStructure("autopin-commit.yml", header ++ "on: [workflow_run]\njobs:\n  j:\n    runs-on: x\n    environment: autopin\n", &.{});
-    try expectStructure("autopin-commit.yml", header ++ "on: [workflow_run, pull_request]\njobs:\n  j:\n    runs-on: x\n    environment: autopin\n", &.{"triggers must be exactly workflow_run"});
-    try expectStructure("autopin-commit.yml", header ++ "on: [workflow_run]\njobs:\n  j:\n    runs-on: x\n    permissions:\n      id-token: write\n", &.{"an id-token permission is only allowed in"});
+    try expectStructure("autopin-commit.yml", header ++ "on: [workflow_run]\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    environment: autopin\n", &.{});
+    try expectStructure("autopin-commit.yml", header ++ "on: [workflow_run, pull_request]\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    environment: autopin\n", &.{"triggers must be exactly workflow_run"});
+    try expectStructure("autopin-commit.yml", header ++ "on: [workflow_run]\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    permissions:\n      id-token: write\n", &.{"an id-token permission is only allowed in"});
     // The environment stays forbidden in any other file.
-    try expectStructure("autopin-commit2.yml", header ++ "on: [workflow_run]\njobs:\n  j:\n    runs-on: x\n    environment: autopin\n", &.{"may use a deployment environment"});
+    try expectStructure("autopin-commit2.yml", header ++ "on: [workflow_run]\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    environment: autopin\n", &.{"may use a deployment environment"});
 }
 
 test "autopin-compute.yml: --set has a line for every package-lock.json, and only for those" {
@@ -363,7 +363,7 @@ const deploy_ok = header ++
     \\  j:
     \\    if: github.ref == 'refs/heads/main'
     \\    environment: beta
-    \\    runs-on: x
+    \\    runs-on: ubuntu-24.04
     \\    permissions:
     \\      id-token: write
     \\
@@ -377,7 +377,7 @@ test "a deploy workflow: triggers, push branches, guarded credential jobs" {
         \\  j:
         \\    if: github.ref == 'refs/heads/main'
         \\    environment: beta
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\
     , &.{ "triggers [\"pull_request\"] are not allowed in a workflow that can use id-token", "must not run on pull_request" });
     try expectStructure("deploy.yml", header ++
@@ -386,7 +386,7 @@ test "a deploy workflow: triggers, push branches, guarded credential jobs" {
         \\    branches: [main, dev]
         \\jobs:
         \\  j:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\
     , &.{"push must be limited to branches: [main]"});
     try expectStructure("deploy.yml", header ++
@@ -394,7 +394,7 @@ test "a deploy workflow: triggers, push branches, guarded credential jobs" {
         \\  push:
         \\jobs:
         \\  j:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\
     , &.{"push must be limited to branches: [main]"});
     try expectStructure("deploy.yml", header ++
@@ -402,7 +402,7 @@ test "a deploy workflow: triggers, push branches, guarded credential jobs" {
         \\jobs:
         \\  j:
         \\    if: github.ref == 'refs/heads/main'
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\
@@ -413,7 +413,7 @@ test "a deploy workflow: triggers, push branches, guarded credential jobs" {
         \\jobs:
         \\  j:
         \\    environment: beta
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\
@@ -437,13 +437,13 @@ test "oidc-subject-check.yml: manual, main only, beta at most, no AWS" {
         \\jobs:
         \\  a:
         \\    if: github.ref == 'refs/heads/main'
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\  b:
         \\    if: github.ref == 'refs/heads/main'
         \\    environment: beta
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\
@@ -453,7 +453,7 @@ test "oidc-subject-check.yml: manual, main only, beta at most, no AWS" {
         \\on: [workflow_dispatch, push]
         \\jobs:
         \\  a:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\
     , &.{"triggers must be exactly workflow_dispatch"});
     try expectStructure("oidc-subject-check.yml", header ++
@@ -463,7 +463,7 @@ test "oidc-subject-check.yml: manual, main only, beta at most, no AWS" {
         \\  a:
         \\    if: github.ref == 'refs/heads/main'
         \\    environment: prod
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\
@@ -473,7 +473,7 @@ test "oidc-subject-check.yml: manual, main only, beta at most, no AWS" {
         \\  workflow_dispatch:
         \\jobs:
         \\  a:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\
@@ -483,7 +483,7 @@ test "oidc-subject-check.yml: manual, main only, beta at most, no AWS" {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
         const a = arena.allocator();
-        const yaml = try std.fmt.allocPrint(a, "{s}on:\n  workflow_dispatch:\njobs:\n  a:\n    runs-on: x\n    steps:\n      - {s}\n", .{ header, step });
+        const yaml = try std.fmt.allocPrint(a, "{s}on:\n  workflow_dispatch:\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - {s}\n", .{ header, step });
         try c.expectLines(step, try structure(a, "oidc-subject-check.yml", yaml), &.{"must not use AWS or secrets"});
     }
     try expectStructure("oidc-subject-check.yml", header ++
@@ -491,7 +491,7 @@ test "oidc-subject-check.yml: manual, main only, beta at most, no AWS" {
         \\  workflow_dispatch:
         \\jobs:
         \\  a:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    steps:
         \\      # aws s3 ls is only a comment, and a paws is not a command
         \\      - run: echo paws
@@ -509,7 +509,7 @@ test "farm.yml: a push to main or a pull request from this repository, no secret
         \\jobs:
         \\  build:
         \\    if: github.event.pull_request.head.repo.full_name == github.repository
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\
@@ -526,7 +526,7 @@ test "farm.yml: a push to main or a pull request from this repository, no secret
         try expectStructure("farm.yml", header ++ on ++
             \\jobs:
             \\  build:
-            \\    runs-on: x
+            \\    runs-on: ubuntu-24.04
             \\
         , &.{"triggers must be exactly pull_request and push of branches [main]"});
     }
@@ -538,7 +538,7 @@ test "farm.yml: a push to main or a pull request from this repository, no secret
         \\jobs:
         \\  build:
         \\    environment: beta
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\
     , &.{"must not use secrets or an environment"});
     try expectStructure("farm.yml", header ++
@@ -548,7 +548,7 @@ test "farm.yml: a push to main or a pull request from this repository, no secret
         \\    branches: [main]
         \\jobs:
         \\  build:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    steps:
         \\      - run: echo ${{ secrets.X }}
         \\
@@ -560,7 +560,7 @@ test "farm.yml: a push to main or a pull request from this repository, no secret
         \\    branches: [main]
         \\jobs:
         \\  build:
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\
@@ -583,21 +583,21 @@ test "release.yml may name the release bot's key exactly three times (tag, tap, 
         \\jobs:
         \\  tag:
         \\    environment: release
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    steps:
         \\      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
         \\        with:
         \\          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
         \\  tap:
         \\    environment: release
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    steps:
         \\      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
         \\        with:
         \\          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
         \\  bump:
         \\    environment: release
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    steps:
         \\      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
         \\        with:
@@ -621,8 +621,8 @@ test "release.yml may name the release bot's key exactly three times (tag, tap, 
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, tap_env, "  tap:\n    environment: prod\n"), &.{"job tap reads RELEASE_BOT_* so it must declare environment release, got \"prod\""});
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, tag_env, "  tag:\n    environment: relase\n"), &.{"job tag reads RELEASE_BOT_* so it must declare environment release, got \"relase\""});
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, bump_env, "  bump:\n    environment: prod\n"), &.{"job bump reads RELEASE_BOT_* so it must declare environment release, got \"prod\""});
-    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: release\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});
-    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: prod\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});
+    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: release\n    runs-on: ubuntu-24.04\n" }), &.{"job publish: must not use secrets or an environment"});
+    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: prod\n    runs-on: ubuntu-24.04\n" }), &.{"job publish: must not use secrets or an environment"});
 }
 
 test "release.yml: the signing key is read only in the apt-signing environment and the publish role only in apt-publish, each a fixed number of times" {
@@ -637,7 +637,7 @@ test "release.yml: the signing key is read only in the apt-signing environment a
         \\jobs:
         \\  apt-index:
         \\    environment: apt-signing
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    steps:
         \\      - id: gate
         \\        env:
@@ -652,7 +652,7 @@ test "release.yml: the signing key is read only in the apt-signing environment a
         \\        run: 'true'
         \\  apt-deploy-write:
         \\    environment: apt-publish
-        \\    runs-on: x
+        \\    runs-on: ubuntu-24.04
         \\    permissions:
         \\      id-token: write
         \\    steps:
@@ -679,8 +679,8 @@ test "release.yml: the signing key is read only in the apt-signing environment a
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, sign_env, "  apt-index:\n    environment: apt-publish\n"), &.{"job apt-index reads APT_GPG_* so it must declare environment apt-signing, got \"apt-publish\""});
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, publish_env, "  apt-deploy-write:\n"), &.{"job apt-deploy-write reads APT_PUBLISH_* so it must declare environment apt-publish, got nil"});
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, publish_env, "  apt-deploy-write:\n    environment: release\n"), &.{"job apt-deploy-write reads APT_PUBLISH_* so it must declare environment apt-publish, got \"release\""});
-    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: apt-publish\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});
-    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: apt-signing\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});
+    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: apt-publish\n    runs-on: ubuntu-24.04\n" }), &.{"job publish: must not use secrets or an environment"});
+    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: apt-signing\n    runs-on: ubuntu-24.04\n" }), &.{"job publish: must not use secrets or an environment"});
 }
 
 test "kpin-update.yml: KPIN_SETS has a line for every pins.lock.bzl, and only for those" {
@@ -794,14 +794,14 @@ test "the real farm.yml and BUCK: a faulty beta target or a dropped exclusion go
 // ---- lint.yml and ci.yml: no skipped check ---------------------------------------------------------
 
 test "lint.yml and ci.yml: no pull_request filter, and no job-level if on a lint job" {
-    const lint_job = "jobs:\n  lint:\n    runs-on: x\n";
-    // The unfiltered triggers pass, and so do the default types with more added (ci.yml's `labeled`).
+    const lint_job = "jobs:\n  lint:\n    runs-on: ubuntu-24.04\n";
+    // The unfiltered triggers pass, and so do the default types with more added.
     try expectStructure("lint.yml", header ++ "on:\n  pull_request:\n  push:\n    branches: [main]\n" ++ lint_job ++ "    steps:\n      - run: zig test tests/drivers/release_lint_test.zig\n", &.{});
-    try expectStructure("ci.yml", header ++ "on:\n  pull_request:\n    types: [opened, synchronize, reopened, labeled]\njobs:\n  test:\n    runs-on: x\n", &.{});
+    try expectStructure("ci.yml", header ++ "on:\n  pull_request:\n    types: [opened, synchronize, reopened, labeled]\njobs:\n  test:\n    runs-on: ubuntu-24.04\n", &.{});
     // Defect caught: each filter key, on each file.
     const run_step = "    steps:\n      - run: zig test tests/drivers/release_lint_test.zig\n";
     inline for ([_][]const u8{ "lint.yml", "ci.yml" }) |f| {
-        const jobs = comptime if (std.mem.eql(u8, f, "lint.yml")) lint_job ++ run_step else "jobs:\n  test:\n    runs-on: x\n";
+        const jobs = comptime if (std.mem.eql(u8, f, "lint.yml")) lint_job ++ run_step else "jobs:\n  test:\n    runs-on: ubuntu-24.04\n";
         try expectStructure(f, header ++ "on:\n  pull_request:\n    paths: ['src/**']\n" ++ jobs, &.{"the pull_request trigger must have no paths filter"});
         try expectStructure(f, header ++ "on:\n  pull_request:\n    paths-ignore: ['docs/**']\n" ++ jobs, &.{"the pull_request trigger must have no paths-ignore filter"});
         try expectStructure(f, header ++ "on:\n  pull_request:\n    branches: [main]\n" ++ jobs, &.{"the pull_request trigger must have no branches filter"});
@@ -810,7 +810,7 @@ test "lint.yml and ci.yml: no pull_request filter, and no job-level if on a lint
         try expectStructure(f, header ++ "on:\n  pull_request:\n    types: [opened, reopened]\n" ++ jobs, &.{"types must keep synchronize"});
     }
     // A job-level `if:` on a lint job can skip the check; only `!cancelled()` is allowed.
-    const with_if = "on: [pull_request]\njobs:\n  lint:\n    runs-on: x\n    if: ";
+    const with_if = "on: [pull_request]\njobs:\n  lint:\n    runs-on: ubuntu-24.04\n    if: ";
     try expectStructure("lint.yml", header ++ with_if ++ "github.event_name == 'push'\n" ++ run_step, &.{"job lint has an `if:` (github.event_name == 'push')"});
     try expectStructure("lint.yml", header ++ with_if ++ "${{ !cancelled() || false }}\n" ++ run_step, &.{"job lint has an `if:`"});
     try expectStructure("lint.yml", header ++ with_if ++ "false\n" ++ run_step, &.{"job lint has an `if:`"});
@@ -893,4 +893,33 @@ test "dependabot.yml: every npm entry waits 7 days, and every package-lock.json 
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, "      aws-sdk:\n", "      aws:\n"), tree, &out);
     try c.expectLines("renamed group", out.items, &.{});
+}
+
+// ---- a pull request runs on Linux x86_64 only ------------------------------------------------------
+
+test "a pull_request workflow names Linux x86_64 runners only; the other platforms are the release's beta stage" {
+    const arm_msg = "job test runs on ubuntu-24.04-arm for a pull request";
+    // The runners a pull request gets are hosted Linux x86_64.
+    try expectStructure("ci.yml", header ++ "on: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-24.04\n", &.{});
+    try expectStructure("ci.yml", header ++ "on: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-22.04\n", &.{});
+    // Defect caught: a pull_request job on macOS, Windows, a Linux arm runner or a self-hosted one.
+    try expectStructure("service-ci.yml", header ++ "on: [pull_request]\njobs:\n  test:\n    runs-on: macos-15\n", &.{"job test runs on macos-15 for a pull request"});
+    try expectStructure("service-ci.yml", header ++ "on: [pull_request]\njobs:\n  test:\n    runs-on: windows-latest\n", &.{"job test runs on windows-latest for a pull request"});
+    try expectStructure("service-ci.yml", header ++ "on: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-24.04-arm\n", &.{arm_msg});
+    try expectStructure("service-ci.yml", header ++ "on: [pull_request]\njobs:\n  test:\n    runs-on: self-hosted\n", &.{"job test runs on self-hosted for a pull request"});
+    // A matrix: a list, an include entry, and the pull_request branch of the expression ci.yml uses.
+    const matrix = "on: [pull_request]\njobs:\n  test:\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n";
+    try expectStructure("ci.yml", header ++ matrix ++ "        os: [ubuntu-24.04]\n", &.{});
+    try expectStructure("ci.yml", header ++ matrix ++ "        os: [ubuntu-24.04, ubuntu-24.04-arm]\n", &.{arm_msg});
+    try expectStructure("ci.yml", header ++ matrix ++ "        os: [ubuntu-24.04]\n        include:\n          - os: macos-15\n", &.{"job test runs on macos-15 for a pull request"});
+    const expr = "        os: ${{ fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]') }}\n";
+    try expectStructure("ci.yml", header ++ matrix ++ expr, &.{});
+    const expr_arm = "        os: ${{ fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\"]') }}\n";
+    try expectStructure("ci.yml", header ++ matrix ++ expr_arm, &.{arm_msg});
+    const expr_label = "        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '[\"ubuntu-24.04\",\"macos-15\"]' || '[\"ubuntu-24.04\"]') }}\n";
+    try expectStructure("ci.yml", header ++ matrix ++ expr_label, &.{"job test: matrix.os is an expression the lint cannot read"});
+    // A beta job (guarded so it never runs on a pull request), a job with no runs-on (a reusable workflow) and a workflow with no pull_request trigger are free.
+    try expectStructure("ci.yml", header ++ "on: [pull_request, push]\njobs:\n  mojo-e2e:\n    if: github.event_name != 'pull_request'\n    runs-on: macos-15\n", &.{});
+    try expectStructure("ci.yml", header ++ "on: [pull_request]\njobs:\n  test:\n    uses: ./.github/workflows/x.yml\n", &.{});
+    try expectStructure("release-build.yml", header ++ "on: [push]\njobs:\n  test:\n    runs-on: macos-15\n", &.{});
 }
