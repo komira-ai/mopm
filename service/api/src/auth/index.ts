@@ -8,3 +8,5 @@ export * from './tokens';
 export * from './device-login';
 export * from './oidc';
 export * from './ci-publishers';
+export * from './namespaces';
+export * from './dynamo-namespace-store';

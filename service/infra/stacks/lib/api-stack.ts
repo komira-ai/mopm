@@ -154,6 +154,8 @@ export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
  * - users: read and upsert a row at login.
  * - device_logins: start (PutItem), poll (GetItem), record the poll and consume (UpdateItem).
  * - trusted_publishers: read only; nothing in the Lambda registers publishers yet.
+ * - namespaces: read one (GetItem), create one at login (PutItem, conditional on the key being absent: never an overwrite),
+ *   and list an account's (Query on its by_github_id index).
  * - owners: read, and Query on its by_github_id index (POST /me/tokens lists the packages the account owns). The table is
  *   also in READ_TABLES; an index is a separate resource, so the index ARN is granted here.
  */
@@ -163,6 +165,7 @@ export const AUTH_GRANTS: Record<string, { actions: string[]; indexes?: string[]
   device_logins: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'] },
   trusted_publishers: { actions: ['dynamodb:GetItem', 'dynamodb:Query'] },
   owners: { actions: ['dynamodb:GetItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
+  namespaces: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
 };
 
 /** `GET /index/config.json` is built from code by the API Lambda; every other file under /index/ is read from the bucket by the reader. */

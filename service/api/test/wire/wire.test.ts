@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
-import { DynamoAuthStore, authTablesFor, ownedPackagesFrom } from '../../src/auth';
+import { DynamoAuthStore, DynamoNamespaceStore, authTablesFor, ownedPackagesFrom } from '../../src/auth';
 import { DynamoStore, tablesFor } from '../../src/dynamo-store';
 import { DynamoPublishStore, publishTablesFor } from '../../src/publish/dynamo-publish-store';
 import { DynamoFlags } from '../../src/publish/flags';
@@ -32,7 +32,7 @@ import { DynamoFlags } from '../../src/publish/flags';
  */
 
 const DIR = path.join(__dirname, '..', 'fixtures', 'wire');
-const FILES = ['auth.json', 'flags.json', 'group.json', 'publish.json', 'store.json'];
+const FILES = ['auth.json', 'flags.json', 'group.json', 'namespaces.json', 'publish.json', 'store.json'];
 const FIXED_NOW = '2026-10-01T00:00:00.000Z';
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
@@ -43,7 +43,7 @@ interface Reply {
   reasons?: string[];
 }
 interface Step {
-  adapter: 'store' | 'auth' | 'publish' | 'flags' | 'owned';
+  adapter: 'store' | 'auth' | 'publish' | 'flags' | 'owned' | 'namespaces';
   method: string;
   args: Json[];
   replies?: Reply[];
@@ -114,6 +114,7 @@ function adapters(recorder: Recorder) {
     publish: new DynamoPublishStore(doc, publishTablesFor('beta')),
     flags: new DynamoFlags(doc, publishTablesFor('beta').config),
     owned: { call: ownedPackagesFrom(doc, 'mopm-beta-owners') },
+    namespaces: new DynamoNamespaceStore(doc, authTablesFor('beta').namespaces),
   };
 }
 

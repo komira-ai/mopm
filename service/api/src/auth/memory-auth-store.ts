@@ -1,4 +1,4 @@
-import type { AuthStore, DeviceLoginRecord, TokenRecord, TrustedPublisher, UserRecord } from './types';
+import type { AuthStore, DeviceLoginRecord, TokenRecord, TrustedPublisher, UserOrg, UserRecord } from './types';
 
 const copy = <T>(v: T): T => structuredClone(v);
 
@@ -8,10 +8,12 @@ export class MemoryAuthStore implements AuthStore {
   private logins = new Map<string, DeviceLoginRecord>();
   private trusted = new Map<string, TrustedPublisher[]>();
 
-  async upsertUser(github_id: number, handle: string, now: string, two_factor?: boolean) {
+  async upsertUser(github_id: number, handle: string, now: string, two_factor?: boolean, orgs?: UserOrg[]) {
     const old = this.users.get(github_id);
     const rec: UserRecord = { github_id, handle, created_at: old?.created_at ?? now, last_login_at: now };
     if (two_factor !== undefined) rec.two_factor = two_factor;
+    const keep = orgs ?? old?.orgs;
+    if (keep !== undefined) rec.orgs = copy(keep);
     this.users.set(github_id, rec);
     return copy(rec);
   }
