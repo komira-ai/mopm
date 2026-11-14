@@ -81,14 +81,14 @@ pub const Fx = struct {
 
     /// A member `name` at `version` in `ws/src/<name>`, with the lines of `[dependencies]`, and its noarch artifact.
     pub fn member(fx: Fx, name: []const u8, version: []const u8, deps: []const u8) !void {
-        const manifest = try std.fmt.allocPrint(fx.a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}\n", .{ name, version, deps });
+        const manifest = try std.fmt.allocPrint(fx.a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}\n", .{ name, version, deps });
         try fx.put(try std.fmt.allocPrint(fx.a, "ws/src/{s}/mopm.toml", .{name}), manifest);
         try fx.put(try std.fmt.allocPrint(fx.a, "art/noarch/{s}.mojoc", .{name}), try std.fmt.allocPrint(fx.a, "the mojoc of {s}", .{name}));
     }
 
     /// `pkg_x = { path = "../pkg_x", version = "<req>" }`
     fn pathDep(fx: Fx, name: []const u8, req: []const u8) ![]const u8 {
-        return std.fmt.allocPrint(fx.a, "{s} = {{ path = \"../{s}\", version = \"{s}\" }}\n", .{ name, name, req });
+        return std.fmt.allocPrint(fx.a, "\"example/{s}\" = {{ path = \"../{s}\", version = \"{s}\" }}\n", .{ name, name, req });
     }
 
     pub fn flags(fx: Fx, out: []const u8, packages: []const []const u8) !stage.Flags {
@@ -193,10 +193,10 @@ test "a registry dependency on a member is an edge, and a dev-dependency is not"
     const a = st.allocator();
     var fx = try Fx.init(a);
     defer fx.deinit();
-    try fx.member("pkg_a", "1.0.0", "pkg_b = \"^1\"\n");
+    try fx.member("pkg_a", "1.0.0", "\"example/pkg_b\" = \"^1\"\n");
     try fx.member("pkg_b", "1.4.0", "");
     // pkg_b lists pkg_a as a dev-dependency: that would be a cycle if it counted.
-    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"1.4.0\"\nmojo = [\"1.0.0\"]\n\n[dev-dependencies]\npkg_a = { path = \"../pkg_a\" }\n");
+    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"example/pkg_b\"\nversion = \"1.4.0\"\nmojo = [\"1.0.0\"]\n\n[dev-dependencies]\n\"example/pkg_a\" = { path = \"../pkg_a\" }\n");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "reg", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
@@ -251,7 +251,7 @@ test "a package that needs itself is a cycle" {
     const a = st.allocator();
     var fx = try Fx.init(a);
     defer fx.deinit();
-    try fx.member("pkg_a", "1.0.0", "pkg_a = { path = \".\", version = \"1\" }\n");
+    try fx.member("pkg_a", "1.0.0", "\"example/pkg_a\" = { path = \".\", version = \"1\" }\n");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "self", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
@@ -269,13 +269,13 @@ test "a sibling whose version does not meet the requirement is refused, by path 
     var stub = newStub(a);
     var r = try runStage(fx, &stub, "path", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
-    try std.testing.expect(contains(r.err, "pkg_b requires pkg_a \"^2\", but the workspace has pkg_a 1.0.0"));
+    try std.testing.expect(contains(r.err, "example/pkg_b requires example/pkg_a \"^2\", but the workspace has example/pkg_a 1.0.0"));
     try std.testing.expect(!fx.exists("path"));
 
-    try fx.member("pkg_b", "1.0.0", "pkg_a = \">=1.1\"\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/pkg_a\" = \">=1.1\"\n");
     r = try runStage(fx, &stub, "name", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
-    try std.testing.expect(contains(r.err, "pkg_b requires pkg_a \">=1.1\", but the workspace has pkg_a 1.0.0"));
+    try std.testing.expect(contains(r.err, "example/pkg_b requires example/pkg_a \">=1.1\", but the workspace has example/pkg_a 1.0.0"));
     try std.testing.expect(!fx.exists("name"));
     try std.testing.expectEqual(@as(usize, 0), stub.asked.items.len);
 }
@@ -290,32 +290,32 @@ test "a dependency that cannot be staged is refused with the reason" {
     try fx.member("pkg_a", "1.0.0", "");
 
     // A path that is not a member.
-    try fx.member("pkg_b", "1.0.0", "outside = { path = \"../../../outside\", version = \"1\" }\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/outside\" = { path = \"../../../outside\", version = \"1\" }\n");
     var r = try runStage(fx, &stub, "o1", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b depends on 'outside' at the path '../../../outside', which is not a member of the workspace"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_b depends on 'example/outside' at the path '../../../outside', which is not a member of the workspace"));
 
     // A path to a member by another name.
-    try fx.member("pkg_b", "1.0.0", "other = { path = \"../pkg_a\", version = \"1\" }\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/other\" = { path = \"../pkg_a\", version = \"1\" }\n");
     r = try runStage(fx, &stub, "o2", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b calls the package at '../pkg_a' other, but it is pkg_a"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_b calls the package at '../pkg_a' example/other, but it is example/pkg_a"));
 
     // A path with no version.
-    try fx.member("pkg_b", "1.0.0", "pkg_a = { path = \"../pkg_a\" }\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/pkg_a\" = { path = \"../pkg_a\" }\n");
     r = try runStage(fx, &stub, "o3", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "is a path dependency with no version"));
 
     // A requirement that is not one (the manifest parser says so, naming the file).
-    try fx.member("pkg_b", "1.0.0", "pkg_a = \"^^\"\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/pkg_a\" = \"^^\"\n");
     r = try runStage(fx, &stub, "o4", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b/mopm.toml:") and contains(r.err, "invalid version requirement"));
 
     // Native libraries are built for one platform: a noarch artifact cannot hold them.
-    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nmode = \"link\"\n");
+    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"example/pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nmode = \"link\"\n");
     r = try runStage(fx, &stub, "o5", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b declares native libraries, which are built for one platform"));
 
     // Native dependencies to link are not packed by anything yet: the packer says so.
-    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nzlib = { version = \">=1.2\", kind = \"shared\", mode = \"link\" }\n");
+    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"example/pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nzlib = { version = \">=1.2\", kind = \"shared\", mode = \"link\" }\n");
     r = try runStage(fx, &stub, "o6", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b: native dependency 'zlib' is mode = \"link\"; only mode = \"load\" is packed"));
     for ([_][]const u8{ "o1", "o2", "o3", "o4", "o5", "o6" }) |o| try std.testing.expect(!fx.exists(o));
@@ -334,9 +334,9 @@ test "a workspace that cannot be read is refused" {
 
     try fx.member("pkg_a", "1.0.0", "");
     try fx.member("pkg_a2", "1.0.0", "");
-    try fx.put("ws/src/pkg_a2/mopm.toml", "[package]\nname = \"pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("ws/src/pkg_a2/mopm.toml", "[package]\nname = \"example/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
     r = try runStage(fx, &stub, "twice", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "are both the package pkg_a"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "are both the package example/pkg_a"));
 
     try fx.put("ws/src/pkg_a2/mopm.toml", "[package\n");
     r = try runStage(fx, &stub, "broken", &.{});
@@ -372,21 +372,94 @@ test "a member with no artifact, an empty one, a version that is not one, or a r
     try std.testing.expect(r.code == 1 and contains(r.err, "is not UTF-8 text"));
 
     try fx.put("ws/src/pkg_a/README.md", "# a\n");
-    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"pkg_a\"\nversion = \"1.0.0\"\nreadme = \"DOCS.md\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"example/pkg_a\"\nversion = \"1.0.0\"\nreadme = \"DOCS.md\"\nmojo = [\"1.0.0\"]\n");
     r = try runStage(fx, &stub, "p4", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "DOCS.md: FileNotFound"));
 
-    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"pkg_a\"\nversion = \"1.0.0-rc.1\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"example/pkg_a\"\nversion = \"1.0.0-rc.1\"\nmojo = [\"1.0.0\"]\n");
     r = try runStage(fx, &stub, "p5", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "must be exactly MAJOR.MINOR.PATCH"));
 
-    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"example/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
     var flags = try fx.flags("p6", &.{});
     flags.compiler = "one";
     var console = Console.init(a, null);
     const code = try stage.run(.{ .arena = a, .net = stub.net(), .console = &console, .api_url = api, .flags = flags });
     try std.testing.expect(code == 1 and contains(console.err.items, "--compiler one"));
     for ([_][]const u8{ "p1", "p2", "p3", "p4", "p5", "p6" }) |o| try std.testing.expect(!fx.exists(o));
+}
+
+// ------------------------------------------------------------------- full names
+
+test "a member is named on the command line by its full name or its import name" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "1"));
+    try fx.member("pkg_c", "1.0.0", "");
+    var stub = newStub(a);
+    var r = try runStage(fx, &stub, "full", &.{"example/pkg_b"});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expectEqualStrings("pkg_a,pkg_b", try names(a, try readPlan(fx, "full")));
+    r = try runStage(fx, &stub, "import", &.{"pkg_b"});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expectEqualStrings("pkg_a,pkg_b", try names(a, try readPlan(fx, "import")));
+}
+
+test "two members with one import name are refused, even from different namespaces" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.member("pkg_a2", "1.0.0", "");
+    try fx.put("ws/src/pkg_a2/mopm.toml", "[package]\nname = \"other/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    const r = try runStage(fx, &stub, "same_import", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(contains(r.err, " are example/pkg_a and other/pkg_a, which have the same import name pkg_a; a staged set holds one package per import name"));
+    try std.testing.expect(!fx.exists("same_import"));
+    try std.testing.expectEqual(@as(usize, 0), stub.asked.items.len);
+}
+
+test "a path dependency whose package has another namespace than its key is refused naming both" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"other/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "1"));
+    const r = try runStage(fx, &stub, "namespace", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(contains(r.err, "example/pkg_b calls the package at '../pkg_a' example/pkg_a, but it is other/pkg_a"));
+    try std.testing.expect(!fx.exists("namespace"));
+}
+
+test "a registry dependency is an edge only to the member with its full name" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("json", "1.0.0", "");
+    // other/json is not the member example/json: no edge, so the two are ordered by name alone and the registry is asked about both.
+    try fx.member("app_x", "1.0.0", "\"other/json\" = \"^1\"\n");
+    var r = try runStage(fx, &stub, "other", &.{});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expectEqualStrings("app_x,json", try names(a, try readPlan(fx, "other")));
+    // example/json is the member: it comes first.
+    try fx.member("app_x", "1.0.0", "\"example/json\" = \"^1\"\n");
+    r = try runStage(fx, &stub, "same", &.{});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expectEqualStrings("json,app_x", try names(a, try readPlan(fx, "same")));
 }
 
 // ---------------------------------------------------------------------- registry
@@ -541,7 +614,7 @@ test "a registry that cannot be asked, or answers what is not a version, stops t
 /// `art/linux-64/pkg_n.mojoc` and `art/linux-64/pkg_n.native/libshim.a`.
 fn nativeWorkspace(fx: Fx) !void {
     try fx.member("pkg_a", "1.0.0", "");
-    try fx.put("ws/src/pkg_n/mopm.toml", "[package]\nname = \"pkg_n\"\nversion = \"1.2.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libshim\"\n");
+    try fx.put("ws/src/pkg_n/mopm.toml", "[package]\nname = \"example/pkg_n\"\nversion = \"1.2.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libshim\"\n");
     try fx.put("art/linux-64/pkg_n.mojoc", "the mojoc of pkg_n");
 }
 
@@ -655,7 +728,7 @@ test "a package that loads a system library records it as a conda dependency of 
     defer fx.deinit();
     try fx.member("pkg_a", "1.0.0", "");
     try fx.member("pkg_b", "2.1.0", "");
-    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"2.1.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nlz4 = { version = \">=1.9.3\", kind = \"shared\", mode = \"load\" }\n");
+    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"example/pkg_b\"\nversion = \"2.1.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nlz4 = { version = \">=1.9.3\", kind = \"shared\", mode = \"load\" }\n");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "load", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
@@ -928,7 +1001,7 @@ test "a set of more members than a group holds is refused before anything is pac
     var i: usize = 0;
     while (i <= plan_mod.max_members) : (i += 1) {
         const name = try std.fmt.allocPrint(a, "pkg_{d}", .{i});
-        try fx.put(try std.fmt.allocPrint(a, "ws/src/{s}/mopm.toml", .{name}), try std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n", .{name}));
+        try fx.put(try std.fmt.allocPrint(a, "ws/src/{s}/mopm.toml", .{name}), try std.fmt.allocPrint(a, "[package]\nname = \"example/{s}\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n", .{name}));
     }
     const r = try runStage(fx, &stub, "big", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "501 members; a group has at most 500"));
@@ -978,7 +1051,7 @@ test "the flags: all of them are needed, and --registry has no default" {
 
 /// A member `benchy` whose `[targets] bins` is `bins`, its artifact for `noarch` and two source files for programs.
 fn binsWorkspace(fx: Fx, bins: []const u8) !void {
-    try fx.put("ws/benchy/mopm.toml", try std.fmt.allocPrint(fx.a, "[package]\nname = \"benchy\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{s}]\n", .{bins}));
+    try fx.put("ws/benchy/mopm.toml", try std.fmt.allocPrint(fx.a, "[package]\nname = \"example/benchy\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{s}]\n", .{bins}));
     try fx.put("art/noarch/benchy.mojoc", "the mojoc of benchy");
     try fx.put("ws/benchy/src/agg.mojo", "def main(): print(\"agg\")\n");
     try fx.put("ws/benchy/bench/ring.mojo", "def main(): print(\"ring\")\n");

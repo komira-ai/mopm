@@ -49,13 +49,13 @@ const Fx = struct {
     /// A member `name` in `ws/<name>`. `publish` is the text of a `publish` line ("" for none); `deps` and `dev` are lines
     /// of `[dependencies]` and `[dev-dependencies]`. Only `built` members have an artifact, as a helper never does.
     fn member(fx: Fx, name: []const u8, publish: []const u8, deps: []const u8, dev: []const u8, built: bool) !void {
-        const text = try std.fmt.allocPrint(fx.a, "[package]\nname = \"{s}\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n{s}\n[dependencies]\n{s}\n[dev-dependencies]\n{s}\n", .{ name, publish, deps, dev });
+        const text = try std.fmt.allocPrint(fx.a, "[package]\nname = \"example/{s}\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n{s}\n[dependencies]\n{s}\n[dev-dependencies]\n{s}\n", .{ name, publish, deps, dev });
         try fx.put(try std.fmt.allocPrint(fx.a, "ws/{s}/mopm.toml", .{name}), text);
         if (built) try fx.put(try std.fmt.allocPrint(fx.a, "art/noarch/{s}.mojoc", .{name}), "the mojoc");
     }
 
     fn dep(fx: Fx, name: []const u8) ![]const u8 {
-        return std.fmt.allocPrint(fx.a, "{s} = {{ path = \"../{s}\", version = \"1.0\" }}\n", .{ name, name });
+        return std.fmt.allocPrint(fx.a, "\"example/{s}\" = {{ path = \"../{s}\", version = \"1.0\" }}\n", .{ name, name });
     }
 };
 
@@ -138,7 +138,7 @@ test "stage refuses a publishable member that needs a publish = false one, direc
     try fx.member("pkg_helper", "publish = false\n", "", "", true);
     const all = try runStage(fx, "all", &.{});
     try std.testing.expectEqual(@as(u8, 1), all.code);
-    try std.testing.expect(has(all.err, "pkg_mid is staged for publishing but depends on pkg_helper, which has publish = false"));
+    try std.testing.expect(has(all.err, "example/pkg_mid is staged for publishing but depends on example/pkg_helper, which has publish = false"));
     try std.testing.expect(!fx.exists("all"));
     // Naming the top reaches the same member through its closure.
     const top = try runStage(fx, "top", &.{"pkg_top"});

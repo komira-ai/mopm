@@ -4,6 +4,14 @@
 //!   mopm-closure --natives <natives.pixi.lock> <natives.txt> <closure directory>
 //!
 //!   mopm-closure --natives-libs <closure directory> <natives.libs>
+//!   mopm-closure --std-modules <closure directory> <toolchain directory>
+//!
+//! The fourth form writes <toolchain directory>/mojo-<version>.std-modules.txt for each version of
+//! <toolchain directory>/versions.txt, the top-level modules of the Mojo standard library (src/core/std_modules.zig):
+//! it downloads the version's linux-64 mojo-compiler package from <closure directory>/mojo-<version>-linux-64.json,
+//! checks it against its pinned size and sha256 (a mismatch is exit 1, naming both), and reads its lib/mojo/std.mojoc.
+//! It then writes <closure directory>/std-modules.txt, the union over the versions, which mopm embeds. It downloads
+//! into `.std-modules-part` of the working directory and removes that when it is done.
 //!
 //! The third form brings toolchain/natives.libs up to date with the natives-<subdir>.json files of the directory
 //! (src/core/natives_libs.zig): a package whose sha256 the file already holds is not read again; any other is
@@ -30,6 +38,7 @@ const native_catalog = core.native_catalog;
 const natives_libs = core.natives_libs;
 const pkg_fetch = core.pkg_fetch;
 const conda_unpack = core.conda_unpack;
+const std_modules = core.std_modules;
 
 pub fn main() !u8 {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -39,8 +48,9 @@ pub fn main() !u8 {
     const stderr = std.io.getStdErr().writer();
     if (args.len == 5 and std.mem.eql(u8, args[1], "--natives")) return natives(a, args[2], args[3], args[4]);
     if (args.len == 4 and std.mem.eql(u8, args[1], "--natives-libs")) return nativesLibs(a, args[2], args[3]);
+    if (args.len == 4 and std.mem.eql(u8, args[1], "--std-modules")) return stdModules(a, args[2], args[3]);
     if (args.len != 3) {
-        try stderr.writeAll("usage: mopm-closure <mojo-<version>.pixi.lock> <output directory>\n       mopm-closure --natives <natives.pixi.lock> <natives.txt> <closure directory>\n       mopm-closure --natives-libs <closure directory> <natives.libs>\n");
+        try stderr.writeAll("usage: mopm-closure <mojo-<version>.pixi.lock> <output directory>\n       mopm-closure --natives <natives.pixi.lock> <natives.txt> <closure directory>\n       mopm-closure --natives-libs <closure directory> <natives.libs>\n       mopm-closure --std-modules <closure directory> <toolchain directory>\n");
         return 2;
     }
     const lock_text = std.fs.cwd().readFileAlloc(a, args[1], 64 << 20) catch |e| {
@@ -204,5 +214,48 @@ fn nativesLibs(a: std.mem.Allocator, dir_path: []const u8, libs_path: []const u8
     };
     try std.fs.cwd().writeFile(libs_path, text);
     try stdout.print("{s}: {d} bytes\n", .{ libs_path, text.len });
+    return 0;
+}
+
+/// The fourth form's downloads: `pkg_fetch` into the part directory, which checks the pinned size and sha256.
+const PartFetcher = struct {
+    dir: std.fs.Dir,
+    diag: pkg_fetch.Diag = .{},
+
+    pub fn bytesOf(self: *PartFetcher, arena: std.mem.Allocator, file: []const u8, url: []const u8, sha256: []const u8, size: u64) ![]const u8 {
+        pkg_fetch.fetch(arena, self.dir, file, url, .{ .sha256 = sha256, .size = size }, &self.diag) catch |e| {
+            std.io.getStdErr().writer().print("mopm-closure: {s}: {s}\n", .{ url, self.diag.message }) catch {};
+            return e;
+        };
+        return self.dir.readFileAlloc(arena, file, 1 << 30);
+    }
+};
+
+/// The fourth form: each version's standard library modules, then their union (src/core/std_modules.zig `regenerate`).
+fn stdModules(a: std.mem.Allocator, closure_path: []const u8, toolchain_path: []const u8) !u8 {
+    const stderr = std.io.getStdErr().writer();
+    var closure_dir = std.fs.cwd().openDir(closure_path, .{}) catch |e| {
+        try stderr.print("mopm-closure: {s}: {s}\n", .{ closure_path, @errorName(e) });
+        return 1;
+    };
+    defer closure_dir.close();
+    var toolchain_dir = std.fs.cwd().openDir(toolchain_path, .{}) catch |e| {
+        try stderr.print("mopm-closure: {s}: {s}\n", .{ toolchain_path, @errorName(e) });
+        return 1;
+    };
+    defer toolchain_dir.close();
+    var part = try std.fs.cwd().makeOpenPath(".std-modules-part", .{});
+    defer {
+        part.close();
+        std.fs.cwd().deleteTree(".std-modules-part") catch {};
+    }
+    var fetcher = PartFetcher{ .dir = part };
+    const window = try a.alloc(u8, conda_unpack.window_size);
+    var why: []const u8 = "";
+    const n = std_modules.regenerate(a, closure_dir, toolchain_dir, window, &fetcher, &why) catch |e| {
+        try stderr.print("mopm-closure: --std-modules: {s}: {s}\n", .{ @errorName(e), why });
+        return 1;
+    };
+    try std.io.getStdOut().writer().print("{s}/std-modules.txt: the standard library modules of {d} Mojo versions\n", .{ closure_path, n });
     return 0;
 }

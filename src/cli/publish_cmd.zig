@@ -233,8 +233,9 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         }
         return null;
     };
+    for (m.warnings) |w| err("warning: {s}:{s}\n", .{ f.manifest, w });
     if (!m.package.publish) {
-        err("{s}: {s} has publish = false, so it is not packed for a registry or published; remove the key to publish it\n", .{ f.manifest, m.package.name });
+        err("{s}: {s} has publish = false, so it is not packed for a registry or published; remove the key to publish it\n", .{ f.manifest, m.package.full_name });
         return null;
     }
     if (try versionProblem(arena, m.package.version)) |problem| {
@@ -394,7 +395,7 @@ fn pathVersions(arena: Allocator, m: manifest.Manifest, manifest_dir: []const u8
         if (d.requirement == null) continue;
         const file = try std.fs.path.join(arena, &.{ manifest_dir, p, "mopm.toml" });
         const src = std.fs.cwd().readFileAlloc(arena, file, 1 << 20) catch |e| {
-            err("{s}: dependency '{s}' has the path '{s}', which cannot be read: {s}\n", .{ file, d.name, p, @errorName(e) });
+            err("{s}: dependency '{s}' has the path '{s}', which cannot be read: {s}\n", .{ file, d.full_name, p, @errorName(e) });
             return null;
         };
         var diag: manifest.Diagnostic = .{};
@@ -406,15 +407,15 @@ fn pathVersions(arena: Allocator, m: manifest.Manifest, manifest_dir: []const u8
             }
             return null;
         };
-        if (!std.mem.eql(u8, dm.package.name, d.name)) {
-            err("{s} names the package {s}, but dependency '{s}' calls it {s}\n", .{ file, dm.package.name, d.name, d.name });
+        if (!std.mem.eql(u8, dm.package.full_name, d.full_name)) {
+            err("{s} names the package {s}, but dependency '{s}' calls it {s}\n", .{ file, dm.package.full_name, d.full_name, d.full_name });
             return null;
         }
         if (!dm.package.publish) {
-            err("{s} depends on {s} (at {s}), which has publish = false; a published package cannot need one that is never published (a dev-dependency may)\n", .{ m.package.name, d.name, file });
+            err("{s} depends on {s} (at {s}), which has publish = false; a published package cannot need one that is never published (a dev-dependency may)\n", .{ m.package.full_name, d.full_name, file });
             return null;
         }
-        try out.append(.{ .name = d.name, .version = dm.package.version });
+        try out.append(.{ .name = d.full_name, .version = dm.package.version });
     }
     return out.items;
 }
@@ -789,7 +790,7 @@ test "--native names an archive per native library and subdir, and nothing that 
 
 const native_manifest_text =
     \\[package]
-    \\name = "demo"
+    \\name = "example/demo"
     \\version = "0.1.0"
     \\
     \\[toolchain]
@@ -851,7 +852,7 @@ test "nativeFiles reads the archive of each native library for each subdir it pa
     try std.testing.expectEqualStrings("!<arch>\nosx\n", got.get("osx-arm64").?[0].archive);
 
     // A manifest with no native libraries packs as it always did: no entries, whatever the subdirs.
-    const plain = try manifest.parse(a, "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", &diag);
+    const plain = try manifest.parse(a, "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", &diag);
     const none = try nativeOk(a, plain, nativeFlags(&.{.{ .subdir = "noarch", .path = "x" }}, &.{}));
     try std.testing.expectEqual(@as(u32, 0), none.count());
 
@@ -884,7 +885,7 @@ test "a member's native built from srcs is packed from the archive the build sys
     try tmp.dir.writeFile("libother.a", "!<arch>\nother\n");
     const root = try tmp.dir.realpathAlloc(a, ".");
     var diag: manifest.Diagnostic = .{};
-    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const head = "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
     const m = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\n", &diag);
     const renamed = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nsoname = \"libother.a\"\n", &diag);
     const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
@@ -919,7 +920,7 @@ test "a provided native is packed under lib<id>.a or its soname, and an archive 
     try tmp.dir.writeFile("libother.a", "!<arch>\nother\n");
     const root = try tmp.dir.realpathAlloc(a, ".");
     var diag: manifest.Diagnostic = .{};
-    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const head = "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
     const m = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nprovided = true\n", &diag);
     const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
     const right = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libshim.a" }) };

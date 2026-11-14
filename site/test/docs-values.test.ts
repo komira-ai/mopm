@@ -177,7 +177,9 @@ describe('allowed values and defaults', () => {
   });
 
   test('the reserved package names the page gives as examples are reserved', () => {
-    const words = (name: string) => [...found(manifest, new RegExp(`const ${name} = \\[_\\]\\[\\]const u8\\{([\\s\\S]*?)\\};`), name).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    // The lists live in src/core/names.zig, which the manifest's checks call.
+    const names = read('src/core/names.zig');
+    const words = (name: string) => [...found(names, new RegExp(`const ${name} = \\[_\\]\\[\\]const u8\\{([\\s\\S]*?)\\};`), name).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
     const name = row(section('`[package]`'), 'name')[3];
     const fromPage = (kind: string) => found(name, new RegExp(`${kind} \\(([^)]*)\\)`), kind);
     const keywordsOnPage = fromPage('a Mojo keyword');

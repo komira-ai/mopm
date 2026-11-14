@@ -1,5 +1,5 @@
 [package]
-name = "slug"
+name = "example/slug"
 version = "1.2.0"
 description = "Turn a title into a URL slug"
 license = "Apache-2.0"
@@ -8,7 +8,7 @@ readme = "README.md"
 mojo = ["1.0.0"]
 
 [dependencies]
-text_tools = "0.3"
+"example/text_tools" = "0.3"
 
 [targets]
 lib = { path = "src/slug" }

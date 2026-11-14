@@ -8,6 +8,10 @@ const st = @import("state.zig");
 const resp = @import("resp.zig");
 const Response = resp.Response;
 const util = @import("util.zig");
+const keys = @import("keys.zig");
+const names = @import("names.zig");
+const ns_errors = @import("ns_errors.zig");
+const files = @import("files.zig");
 
 // ---------------------------------------------------------------------------
 // Bearer tokens
@@ -118,6 +122,8 @@ pub fn pollDeviceLogin(ctx: *Ctx, _: []const []const u8) anyerror!Response {
             const t = login.token orelse blk: {
                 const fresh = try s.newSession(login.user.?, true);
                 login.token = fresh;
+                // A login makes the account's user namespace when its login is free (docs/design/namespaces.md 2.1).
+                if (try s.loginNamespace(login.user.?) != null) try files.rewrite(ctx.arena, s);
                 break :blk fresh;
             };
             return resp.json(ctx.arena, .ok, .{
@@ -191,8 +197,13 @@ pub fn createToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         .string => |w| {
             if (!std.mem.eql(u8, w, "all_current")) return resp.invalid(ctx.arena, "'packages' is a list of names or \"all_current\"");
             all_current = true;
-            // A snapshot of the caller's packages now, not future claims.
-            for (try s.ownedNames(ctx.arena, session.user)) |owned| try packages.append(try s.alloc.dupe(u8, owned));
+            // A snapshot of the caller's packages now, not future claims; under v2, the packages of every namespace the
+            // caller can write now.
+            if (ctx.v2) {
+                for (try writable(ctx, session.user)) |owned| try packages.append(try s.alloc.dupe(u8, owned));
+            } else {
+                for (try s.ownedNames(ctx.arena, session.user)) |owned| try packages.append(try s.alloc.dupe(u8, owned));
+            }
         },
         .array => |a| {
             if (a.items.len == 0) return resp.invalid(ctx.arena, "'packages' must not be empty");
@@ -201,7 +212,12 @@ pub fn createToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
                     .string => |w| w,
                     else => return resp.invalid(ctx.arena, "each package must be a string"),
                 };
-                if (!util.isName(pkg)) return resp.fail(ctx.arena, .invalid_name, &.{.{ "name", pkg }});
+                if (try keys.problem(ctx, pkg)) |r| return r;
+                // Under v2 a token may name a package not created yet, in a namespace the caller can write now.
+                if (names.namespaceOf(pkg)) |n| {
+                    const in = s.namespaceByName(n) orelse return ns_errors.fail(ctx.arena, .namespace_not_found, &.{.{ "namespace", n }});
+                    if (try keys.namespaceRefusal(ctx, in, session.user)) |r| return r;
+                }
                 for (packages.items) |seen| {
                     if (std.mem.eql(u8, seen, pkg)) return resp.invalid(ctx.arena, "'packages' repeats a name");
                 }
@@ -232,6 +248,16 @@ pub fn createToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         .packages = Packages{ .t = t },
         .expires_at = try util.rfc3339(ctx.arena, t.expires_at),
     });
+}
+
+/// The full names of the packages in namespaces that `u` can write now, sorted.
+pub fn writable(ctx: *Ctx, u: *const st.User) std.mem.Allocator.Error![]const []const u8 {
+    var out = std.ArrayList([]const u8).init(ctx.arena);
+    for (ctx.state.packages.items) |p| {
+        if (p.namespace != null and p.isOwner(u)) try out.append(p.name);
+    }
+    std.mem.sort([]const u8, out.items, {}, st.lessString);
+    return out.items;
 }
 
 pub fn listTokens(ctx: *Ctx, _: []const []const u8) anyerror!Response {
@@ -286,7 +312,7 @@ pub fn revokeToken(ctx: *Ctx, params: []const []const u8) anyerror!Response {
 /// The `repository` claim of a JWT-shaped CI identity token (three base64url
 /// parts, the middle one a JSON object), or null. The fake checks the shape
 /// and the claim, not a signature: there is no identity provider to ask.
-fn oidcRepository(ctx: *Ctx, jwt: []const u8) ?[]const u8 {
+pub fn oidcRepository(ctx: *Ctx, jwt: []const u8) ?[]const u8 {
     var parts = std.mem.splitScalar(u8, jwt, '.');
     _ = parts.next() orelse return null;
     const payload = parts.next() orelse return null;
@@ -340,7 +366,7 @@ fn exchangePackages(ctx: *Ctx, obj: std.json.ObjectMap, jwt: []const u8, stage: 
     for (wanted.items) |w| {
         if (s.packageByName(w.name)) |p| {
             if (!p.isOwner(owner)) return resp.fail(ctx.arena, .not_owner, &.{.{ "name", w.name }});
-        }
+        } else if (!s.v1_creation) return ns_errors.flatCreationRefused(ctx.arena, w.name);
     }
     const now = s.now();
     var kept = try s.alloc.alloc(st.NameVersion, wanted.items.len);
@@ -370,7 +396,7 @@ fn exchangePackages(ctx: *Ctx, obj: std.json.ObjectMap, jwt: []const u8, stage: 
     });
 }
 
-fn kindOf(stage: bool) []const u8 {
+pub fn kindOf(stage: bool) []const u8 {
     return if (stage) "stage" else "publish";
 }
 
@@ -390,7 +416,11 @@ pub fn exchangeOidcToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     const repository = oidcRepository(ctx, jwt) orelse
         return resp.fail(ctx.arena, .oidc_token_invalid, &.{.{ "detail", "not a token with a repository claim" }});
     const s = ctx.state;
-    const p = s.packageByName(name) orelse return resp.fail(ctx.arena, .oidc_not_trusted, &.{.{ "name", name }});
+    const p = s.packageByName(name) orelse {
+        // Once names are in namespaces, v1 creates nothing: a name nobody has gets the hint to update mopm.
+        if (!s.v1_creation) return ns_errors.flatCreationRefused(ctx.arena, name);
+        return resp.fail(ctx.arena, .oidc_not_trusted, &.{.{ "name", name }});
+    };
     for (p.trusted.items) |r| {
         if (!std.mem.eql(u8, r, repository)) continue;
         const now = s.now();

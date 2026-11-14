@@ -1,4 +1,4 @@
-# demo
+# example/demo
 
 A Mojo package.
 

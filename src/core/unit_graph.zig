@@ -1177,10 +1177,10 @@ const app_init_changed = "from http_core import get\nfrom util import hello\n\nd
 const test_app = "from app import run\n\ndef main():\n    run()\n";
 const util_init = "def hello():\n    pass\n";
 
-const toml_app = "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\", \"1.1.0\"]\n\n[dependencies]\n";
-const toml_util_dep = "util = { path = \"util\" }\n";
-const toml_core_dep = "http_core = \"1.2\"\n";
-const toml_util = "[package]\nname = \"util\"\nversion = \"0.3.0\"\nmojo = [\"1.0.0\", \"1.1.0\"]\n";
+const toml_app = "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\", \"1.1.0\"]\n\n[dependencies]\n";
+const toml_util_dep = "\"example/util\" = { path = \"util\" }\n";
+const toml_core_dep = "\"example/http_core\" = \"1.2\"\n";
+const toml_util = "[package]\nname = \"example/util\"\nversion = \"0.3.0\"\nmojo = [\"1.0.0\", \"1.1.0\"]\n";
 
 /// The lock of the fixture: http_core 1.2.5 built for both Mojo versions, util a member.
 const lock_two =
@@ -1446,7 +1446,7 @@ test "a package builds only for the Mojo versions it lists" {
     try writeWorkspace(tmp.dir, app_init);
     const dir = try tmp.dir.realpathAlloc(a, ".");
     // util lists 1.0.0 only.
-    try put(tmp.dir, "util/mopm.toml", "[package]\nname = \"util\"\nversion = \"0.3.0\"\nmojo = [\"1.0.0\"]\n");
+    try put(tmp.dir, "util/mopm.toml", "[package]\nname = \"example/util\"\nversion = \"0.3.0\"\nmojo = [\"1.0.0\"]\n");
     var why: []const u8 = "";
     _ = try graphOf(a, dir, toml_core_dep ++ toml_util_dep, lock_two, "1.0.0", &why);
     try std.testing.expectError(error.Refused, graphOf(a, dir, toml_core_dep ++ toml_util_dep, lock_two, "1.1.0", &why));
@@ -1653,7 +1653,7 @@ const lock_static_chain =
     \\
 ;
 
-const toml_tls_dep = "tls_sys = \"2.4\"\n";
+const toml_tls_dep = "\"example/tls_sys\" = \"2.4\"\n";
 
 fn nativeSonames(a: Allocator, u: Unit) ![]const u8 {
     var out = std.ArrayList(u8).init(a);
@@ -1841,8 +1841,8 @@ test "spike: a package that ships natives is taken by exact subdir, with that su
     ;
     const both = try std.mem.replaceOwned(u8, a, lock_static_chain, "    {\"name\": \"tls_sys\"", osx_entry ++ "    {\"name\": \"tls_sys\"");
 
-    const linux = try graphOfIn(a, dir, "crypto_sys = \"1\"\n", both, "1.0.0", "linux-64", &why);
-    const mac = try graphOfIn(a, dir, "crypto_sys = \"1\"\n", both, "1.0.0", "osx-arm64", &why);
+    const linux = try graphOfIn(a, dir, "\"example/crypto_sys\" = \"1\"\n", both, "1.0.0", "linux-64", &why);
+    const mac = try graphOfIn(a, dir, "\"example/crypto_sys\" = \"1\"\n", both, "1.0.0", "osx-arm64", &why);
     const lin_native = linux.units[linux.find(id_app).?].natives;
     const mac_native = mac.units[mac.find(id_app).?].natives;
     try std.testing.expectEqual(@as(usize, 1), lin_native.len);
@@ -2019,7 +2019,7 @@ const id_native_app = "native:app/app_shim";
 const id_native_util = "native:util/util_shim";
 
 const toml_bin = "\n[targets]\nbins = [{ name = \"appbin\", path = \"src/main.mojo\" }]\n";
-const toml_crypto_dep = "crypto_sys = \"1\"\n";
+const toml_crypto_dep = "\"example/crypto_sys\" = \"1\"\n";
 /// app's own native, with flags for every OS and one OS each, and no needs.
 const toml_app_alone = "\n[native.app_shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/*.h\"]\ncflags = [\"-O2\"]\ncflags_by_os = { linux = [\"-DLINUX\"], macos = [\"-DMACOS\"] }\n";
 /// app's own native, which needs the native of util.
@@ -2451,7 +2451,7 @@ test "golden: the unit graph of a package with a native of its own, a binary and
 
 // ------------------------------------------------- sibling members under a workspace root
 
-const sib_root_toml = "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n";
+const sib_root_toml = "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n";
 
 /// A lock of path packages only; `packages` is the JSON of the entries.
 fn sibLock(a: Allocator, packages: []const u8) ![]const u8 {
@@ -2462,18 +2462,18 @@ fn sibLock(a: Allocator, packages: []const u8) ![]const u8 {
 }
 
 const sib_b_to_c =
-    \\{"name": "b", "version": "0.1.0", "source": "path", "path": "../b", "deps": ["c"]},
-    \\{"name": "c", "version": "0.1.0", "source": "path", "path": "../c"}
+    \\{"name": "bb", "version": "0.1.0", "source": "path", "path": "../bb", "deps": ["cc"]},
+    \\{"name": "cc", "version": "0.1.0", "source": "path", "path": "../cc"}
 ;
 const sib_diamond =
-    \\{"name": "b", "version": "0.1.0", "source": "path", "path": "../b", "deps": ["c"]},
-    \\{"name": "c", "version": "0.1.0", "source": "path", "path": "../c"},
-    \\{"name": "d", "version": "0.1.0", "source": "path", "path": "../d", "deps": ["c"]}
+    \\{"name": "bb", "version": "0.1.0", "source": "path", "path": "../bb", "deps": ["cc"]},
+    \\{"name": "cc", "version": "0.1.0", "source": "path", "path": "../cc"},
+    \\{"name": "dd", "version": "0.1.0", "source": "path", "path": "../dd", "deps": ["cc"]}
 ;
 
 /// A package `name` at `at` (relative to `dir`) with a library, a test and a manifest listing `deps` (TOML lines).
 fn writeSibling(a: Allocator, dir: std.fs.Dir, at: []const u8, name: []const u8, deps: []const u8) !void {
-    const toml = try std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}", .{ name, deps });
+    const toml = try std.fmt.allocPrint(a, "[package]\nname = \"example/{s}\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}", .{ name, deps });
     try put(dir, try std.fmt.allocPrint(a, "{s}/mopm.toml", .{at}), toml);
     try put(dir, try std.fmt.allocPrint(a, "{s}/src/{s}/__init__.mojo", .{ at, name }), try std.fmt.allocPrint(a, "def {s}_fn():\n    pass\n", .{name}));
     try put(dir, try std.fmt.allocPrint(a, "{s}/tests/test_{s}.mojo", .{ at, name }), test_app);
@@ -2487,12 +2487,12 @@ fn siblingGraph(a: Allocator, dir: []const u8, pkg: []const u8, deps: []const u8
     return build(a, .{ .dir = dir, .pkg = pkg, .m = m, .members = &.{}, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, why);
 }
 
-/// Sibling packages app, b, c, d side by side under `dir`, as a repository holds them.
+/// Sibling packages app, bb, cc, dd side by side under `dir`, as a repository holds them.
 fn writeSiblings(a: Allocator, dir: std.fs.Dir) !void {
-    try writeSibling(a, dir, "app", "app", "b = { path = \"../b\" }\n");
-    try writeSibling(a, dir, "b", "b", "c = { path = \"../c\" }\n");
-    try writeSibling(a, dir, "c", "c", "");
-    try writeSibling(a, dir, "d", "d", "c = { path = \"../c\" }\n");
+    try writeSibling(a, dir, "app", "app", "\"example/bb\" = { path = \"../bb\" }\n");
+    try writeSibling(a, dir, "bb", "bb", "\"example/cc\" = { path = \"../cc\" }\n");
+    try writeSibling(a, dir, "cc", "cc", "");
+    try writeSibling(a, dir, "dd", "dd", "\"example/cc\" = { path = \"../cc\" }\n");
 }
 
 fn countKind(g: Graph, kind: []const u8) usize {
@@ -2520,22 +2520,22 @@ test "sibling members under a workspace root have workspace-relative roots and s
     try writeSiblings(a, tmp.dir);
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
-    const g = siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why) catch |e| {
+    const g = siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n", try sibLock(a, sib_b_to_c), &why) catch |e| {
         std.debug.print("refused: {s}\n", .{why});
         return e;
     };
     const app = g.units[g.find(id_app) orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("app/src/app", app.root);
     try std.testing.expectEqualStrings("app/src/app/__init__.mojo", app.srcs[0].path);
-    const b = g.units[g.find("b@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
-    try std.testing.expectEqualStrings("b/src/b", b.root);
-    try std.testing.expectEqual(@as(usize, 1), b.srcs.len);
-    try std.testing.expectEqualStrings("b/src/b/__init__.mojo", b.srcs[0].path);
-    try std.testing.expectEqualStrings("b@0.1.0#mojo1.0.0/lib", app.deps[0]);
+    const bb = g.units[g.find("bb@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("bb/src/bb", bb.root);
+    try std.testing.expectEqual(@as(usize, 1), bb.srcs.len);
+    try std.testing.expectEqualStrings("bb/src/bb/__init__.mojo", bb.srcs[0].path);
+    try std.testing.expectEqualStrings("bb@0.1.0#mojo1.0.0/lib", app.deps[0]);
     try noDotDot(g);
 }
 
-test "a nested sibling (app, b, c) gives c one unit, the dependency of b" {
+test "a nested sibling (app, bb, cc) gives cc one unit, the dependency of bb" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -2544,21 +2544,21 @@ test "a nested sibling (app, b, c) gives c one unit, the dependency of b" {
     try writeSiblings(a, tmp.dir);
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
-    const g = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why);
+    const g = try siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n", try sibLock(a, sib_b_to_c), &why);
     var c_units: usize = 0;
     for (g.units) |u| {
-        if (std.mem.eql(u8, u.package, "c")) c_units += 1;
+        if (std.mem.eql(u8, u.package, "cc")) c_units += 1;
     }
     try std.testing.expectEqual(@as(usize, 1), c_units);
-    const c = g.units[g.find("c@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
-    try std.testing.expectEqualStrings("c/src/c", c.root);
-    const b = g.units[g.find("b@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
-    try std.testing.expectEqual(@as(usize, 1), b.deps.len);
-    try std.testing.expectEqualStrings("c@0.1.0#mojo1.0.0/lib", b.deps[0]);
+    const cc = g.units[g.find("cc@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("cc/src/cc", cc.root);
+    const bb = g.units[g.find("bb@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqual(@as(usize, 1), bb.deps.len);
+    try std.testing.expectEqualStrings("cc@0.1.0#mojo1.0.0/lib", bb.deps[0]);
     try noDotDot(g);
 }
 
-test "a diamond (b and d both use c) gives c exactly one unit, and both depend on it" {
+test "a diamond (bb and dd both use cc) gives cc exactly one unit, and both depend on it" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -2567,16 +2567,16 @@ test "a diamond (b and d both use c) gives c exactly one unit, and both depend o
     try writeSiblings(a, tmp.dir);
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
-    const g = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\nd = { path = \"../d\" }\n", try sibLock(a, sib_diamond), &why);
+    const g = try siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n\"example/dd\" = { path = \"../dd\" }\n", try sibLock(a, sib_diamond), &why);
     var c_units: usize = 0;
     for (g.units) |u| {
-        if (std.mem.eql(u8, u.package, "c")) c_units += 1;
+        if (std.mem.eql(u8, u.package, "cc")) c_units += 1;
     }
     try std.testing.expectEqual(@as(usize, 1), c_units);
     try std.testing.expectEqual(@as(usize, 4), countKind(g, "lib"));
-    for ([_][]const u8{ "b@0.1.0#mojo1.0.0/lib", "d@0.1.0#mojo1.0.0/lib" }) |id| {
+    for ([_][]const u8{ "bb@0.1.0#mojo1.0.0/lib", "dd@0.1.0#mojo1.0.0/lib" }) |id| {
         const u = g.units[g.find(id) orelse return error.NoSuchUnit];
-        try std.testing.expectEqualStrings("c@0.1.0#mojo1.0.0/lib", u.deps[0]);
+        try std.testing.expectEqualStrings("cc@0.1.0#mojo1.0.0/lib", u.deps[0]);
     }
     try noDotDot(g);
 }
@@ -2590,14 +2590,14 @@ test "the root package's tests are planned from its own directory, named from th
     try writeSiblings(a, tmp.dir);
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
-    const g = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why);
-    // b, c and d each have tests/test_<name>.mojo; none of them is a unit, and no unit lists one as a source.
+    const g = try siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n", try sibLock(a, sib_b_to_c), &why);
+    // bb, cc and dd each have tests/test_<name>.mojo; none of them is a unit, and no unit lists one as a source.
     try std.testing.expectEqual(@as(usize, 1), countKind(g, "test"));
     for (g.units) |u| {
         if (std.mem.eql(u8, u.kind, "test")) try std.testing.expectEqualStrings("app", u.package);
         for (u.srcs) |s| {
-            try std.testing.expect(std.mem.indexOf(u8, s.path, "test_b.mojo") == null);
-            try std.testing.expect(std.mem.indexOf(u8, s.path, "test_c.mojo") == null);
+            try std.testing.expect(std.mem.indexOf(u8, s.path, "test_bb.mojo") == null);
+            try std.testing.expect(std.mem.indexOf(u8, s.path, "test_cc.mojo") == null);
         }
     }
     const t = g.units[g.find("app@1.0.0#mojo1.0.0/test:app/tests/test_app.mojo") orelse return error.NoSuchUnit];
@@ -2617,8 +2617,8 @@ test "a graph is the same bytes wherever the workspace is on disk" {
     try writeSiblings(a, two.dir);
     var why: []const u8 = "";
     const lock_text = try sibLock(a, sib_b_to_c);
-    const g1 = try siblingGraph(a, try one.dir.realpathAlloc(a, "."), "app", "b = { path = \"../b\" }\n", lock_text, &why);
-    const g2 = try siblingGraph(a, try two.dir.realpathAlloc(a, "."), "app", "b = { path = \"../b\" }\n", lock_text, &why);
+    const g1 = try siblingGraph(a, try one.dir.realpathAlloc(a, "."), "app", "\"example/bb\" = { path = \"../bb\" }\n", lock_text, &why);
+    const g2 = try siblingGraph(a, try two.dir.realpathAlloc(a, "."), "app", "\"example/bb\" = { path = \"../bb\" }\n", lock_text, &why);
     try std.testing.expectEqualStrings(try render(a, g1), try render(a, g2));
 }
 
@@ -2629,14 +2629,14 @@ test "a member outside the workspace root is refused, naming the member and the 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     // repo/app depends on ../../outside: below tmp, but not below the root repo.
-    try writeSibling(a, tmp.dir, "repo/app", "app", "outside = { path = \"../../outside\" }\n");
+    try writeSibling(a, tmp.dir, "repo/app", "app", "\"example/outside\" = { path = \"../../outside\" }\n");
     try writeSibling(a, tmp.dir, "outside", "outside", "");
     const dir = try tmp.dir.realpathAlloc(a, "repo");
     var why: []const u8 = "";
     const lock_text = try sibLock(a,
         \\{"name": "outside", "version": "0.1.0", "source": "path", "path": "../../outside"}
     );
-    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "outside = { path = \"../../outside\" }\n", lock_text, &why));
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/outside\" = { path = \"../../outside\" }\n", lock_text, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency outside is ../../outside (resolves to ../outside), which is not below the workspace ") != null);
     try std.testing.expect(std.mem.indexOf(u8, why, "not below the workspace ") != null);
     try std.testing.expect(std.mem.indexOf(u8, why, dir) != null);
@@ -2648,17 +2648,17 @@ test "a member reached through another member is checked against the workspace r
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try writeSibling(a, tmp.dir, "repo/app", "app", "b = { path = \"../b\" }\n");
-    try writeSibling(a, tmp.dir, "repo/b", "b", "far = { path = \"../../far\" }\n");
+    try writeSibling(a, tmp.dir, "repo/app", "app", "\"example/bb\" = { path = \"../bb\" }\n");
+    try writeSibling(a, tmp.dir, "repo/bb", "bb", "\"example/far\" = { path = \"../../far\" }\n");
     try writeSibling(a, tmp.dir, "far", "far", "");
     const dir = try tmp.dir.realpathAlloc(a, "repo");
     var why: []const u8 = "";
     // The lock holds every member's path relative to the package, whatever member names it.
     const lock_text = try sibLock(a,
-        \\{"name": "b", "version": "0.1.0", "source": "path", "path": "../b", "deps": ["far"]},
+        \\{"name": "bb", "version": "0.1.0", "source": "path", "path": "../bb", "deps": ["far"]},
         \\{"name": "far", "version": "0.1.0", "source": "path", "path": "../../far"}
     );
-    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", lock_text, &why));
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n", lock_text, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency far is ../../far (resolves to ../far), which is not below the workspace ") != null);
 }
 
@@ -2668,15 +2668,15 @@ test "a path that goes up and back down shows as written and as resolved" {
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try writeSibling(a, tmp.dir, "repo/app", "app", "x = { path = \"../x/../../x\" }\n");
-    try writeSibling(a, tmp.dir, "x", "x", "");
+    try writeSibling(a, tmp.dir, "repo/app", "app", "\"example/xx\" = { path = \"../xx/../../xx\" }\n");
+    try writeSibling(a, tmp.dir, "xx", "xx", "");
     const dir = try tmp.dir.realpathAlloc(a, "repo");
     var why: []const u8 = "";
     const lock_text = try sibLock(a,
-        \\{"name": "x", "version": "0.1.0", "source": "path", "path": "../x/../../x"}
+        \\{"name": "xx", "version": "0.1.0", "source": "path", "path": "../xx/../../xx"}
     );
-    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "x = { path = \"../x/../../x\" }\n", lock_text, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency x is ../x/../../x (resolves to ../x), which is not below the workspace ") != null);
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/xx\" = { path = \"../xx/../../xx\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency xx is ../xx/../../xx (resolves to ../xx), which is not below the workspace ") != null);
 }
 
 test "a member that is the workspace itself is refused with a path shown, not an empty one" {
@@ -2685,14 +2685,14 @@ test "a member that is the workspace itself is refused with a path shown, not an
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try writeSibling(a, tmp.dir, "repo/app", "app", "top = { path = \"..\" }\n");
-    try put(tmp.dir, "repo/mopm.toml", "[package]\nname = \"top\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n");
+    try writeSibling(a, tmp.dir, "repo/app", "app", "\"example/top\" = { path = \"..\" }\n");
+    try put(tmp.dir, "repo/mopm.toml", "[package]\nname = \"example/top\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n");
     const dir = try tmp.dir.realpathAlloc(a, "repo");
     var why: []const u8 = "";
     const lock_text = try sibLock(a,
         \\{"name": "top", "version": "0.1.0", "source": "path", "path": ".."}
     );
-    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "top = { path = \"..\" }\n", lock_text, &why));
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/top\" = { path = \"..\" }\n", lock_text, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency top is .. (resolves to .), which is not below the workspace ") != null);
     try std.testing.expect(std.mem.indexOf(u8, why, " is , ") == null);
 }
@@ -2707,17 +2707,17 @@ test "a path written with ./ segments or a trailing slash is the same member as 
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
     const lock_text = try sibLock(a,
-        \\{"name": "b", "version": "0.1.0", "source": "path", "path": "./../b/./", "deps": ["c"]},
-        \\{"name": "c", "version": "0.1.0", "source": "path", "path": "../c/"}
+        \\{"name": "bb", "version": "0.1.0", "source": "path", "path": "./../bb/./", "deps": ["cc"]},
+        \\{"name": "cc", "version": "0.1.0", "source": "path", "path": "../cc/"}
     );
-    const g = try siblingGraph(a, dir, "app", "b = { path = \"./../b/./\" }\n", lock_text, &why);
-    const plain = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why);
+    const g = try siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"./../bb/./\" }\n", lock_text, &why);
+    const plain = try siblingGraph(a, dir, "app", "\"example/bb\" = { path = \"../bb\" }\n", try sibLock(a, sib_b_to_c), &why);
     try std.testing.expectEqual(@as(usize, 3), countKind(g, "lib"));
-    const b = g.units[g.find("b@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
-    try std.testing.expectEqualStrings("b/src/b", b.root);
-    try std.testing.expectEqualStrings("b/src/b/__init__.mojo", b.srcs[0].path);
-    const c = g.units[g.find("c@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
-    try std.testing.expectEqualStrings("c/src/c", c.root);
+    const bb = g.units[g.find("bb@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("bb/src/bb", bb.root);
+    try std.testing.expectEqualStrings("bb/src/bb/__init__.mojo", bb.srcs[0].path);
+    const cc = g.units[g.find("cc@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("cc/src/cc", cc.root);
     try std.testing.expectEqualStrings(try render(a, plain), try render(a, g));
 }
 
@@ -2732,21 +2732,23 @@ test "a library that points into a sibling whose name starts with its package's 
     try writeSibling(a, tmp.dir, "app2", "app2", "");
     try writeSibling(a, tmp.dir, "mem", "mem", "");
     try writeSibling(a, tmp.dir, "mem2", "mem2", "");
-    try put(tmp.dir, "mem/mopm.toml", "[package]\nname = \"mem\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\n[targets]\nlib = { path = \"../mem2/src/mem2\" }\n");
+    try put(tmp.dir, "mem/mopm.toml", "[package]\nname = \"example/mem\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\n[targets]\nlib = { path = \"../mem2/src/mem\" }\n");
+    try put(tmp.dir, "mem2/src/mem/__init__.mojo", util_init);
+    try put(tmp.dir, "app2/src/app/__init__.mojo", util_init);
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var diag: manifest.Diagnostic = .{};
 
     var why: []const u8 = "";
-    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ sib_root_toml, "\n[targets]\nlib = { path = \"../app2/src/app2\" }\n" }), &diag);
+    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ sib_root_toml, "\n[targets]\nlib = { path = \"../app2/src/app\" }\n" }), &diag);
     const l = try lock.parse(a, try sibLock(a, ""), &why);
     try std.testing.expectError(error.Refused, build(a, .{ .dir = dir, .pkg = "app", .m = m, .members = &.{}, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the library of the root package is app2/src/app2, which is not inside its package app") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "the library of the root package is app2/src/app, which is not inside its package app") != null);
 
     const lock_text = try sibLock(a,
         \\{"name": "mem", "version": "0.1.0", "source": "path", "path": "../mem"}
     );
-    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "mem = { path = \"../mem\" }\n", lock_text, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the library of a path dependency is mem2/src/mem2, which is not inside its package mem") != null);
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "\"example/mem\" = { path = \"../mem\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the library of a path dependency is mem2/src/mem, which is not inside its package mem") != null);
 }
 
 test "without a workspace root a sibling is refused as it always was: the workspace is the package directory" {
@@ -2758,8 +2760,8 @@ test "without a workspace root a sibling is refused as it always was: the worksp
     try writeSiblings(a, tmp.dir);
     const dir = try tmp.dir.realpathAlloc(a, "app");
     var why: []const u8 = "";
-    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency b is ../b, which is not below the workspace ") != null);
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "", "\"example/bb\" = { path = \"../bb\" }\n", try sibLock(a, sib_b_to_c), &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency bb is ../bb, which is not below the workspace ") != null);
 }
 
 test "a library or binary that leaves its package for a sibling's directory is refused" {
@@ -2769,15 +2771,15 @@ test "a library or binary that leaves its package for a sibling's directory is r
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try writeSiblings(a, tmp.dir);
-    try put(tmp.dir, "b/src/other/__init__.mojo", util_init);
-    // app's [targets] lib points into b's tree, which is below the workspace root but not inside app.
+    try put(tmp.dir, "bb/src/app/__init__.mojo", util_init);
+    // app's [targets] lib points into bb's tree, which is below the workspace root but not inside app.
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
     var diag: manifest.Diagnostic = .{};
-    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ sib_root_toml, "b = { path = \"../b\" }\n\n[targets]\nlib = { path = \"../b/src/other\" }\n" }), &diag);
+    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ sib_root_toml, "\"example/bb\" = { path = \"../bb\" }\n\n[targets]\nlib = { path = \"../bb/src/app\" }\n" }), &diag);
     const l = try lock.parse(a, try sibLock(a, sib_b_to_c), &why);
     try std.testing.expectError(error.Refused, build(a, .{ .dir = dir, .pkg = "app", .m = m, .members = &.{}, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the library of the root package is b/src/other, which is not inside its package app") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "the library of the root package is bb/src/app, which is not inside its package app") != null);
 }
 
 // ----------------------------------------- a member's natives under a workspace root
@@ -2798,16 +2800,16 @@ test "with a workspace root, the root package's and a sibling's own natives are 
     try writeSiblings(a, tmp.dir);
     try put(tmp.dir, "app/native/app.c", c_app);
     try put(tmp.dir, "app/native/app.h", h_app);
-    try put(tmp.dir, "b/native/shim.c", c_util);
-    try put(tmp.dir, "b/native/shim.h", h_util);
-    // b's manifest, as writeSibling made it, with a native of its own.
-    try put(tmp.dir, "b/mopm.toml", try std.mem.concat(a, u8, &.{
-        "[package]\nname = \"b\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\nc = { path = \"../c\" }\n",
+    try put(tmp.dir, "bb/native/shim.c", c_util);
+    try put(tmp.dir, "bb/native/shim.h", h_util);
+    // bb's manifest, as writeSibling made it, with a native of its own.
+    try put(tmp.dir, "bb/mopm.toml", try std.mem.concat(a, u8, &.{
+        "[package]\nname = \"example/bb\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\"example/cc\" = { path = \"../cc\" }\n",
         try nativeSection(a, "b_shim"),
     }));
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
-    const deps = try std.mem.concat(a, u8, &.{ "b = { path = \"../b\" }\n", try nativeSection(a, "app_shim") });
+    const deps = try std.mem.concat(a, u8, &.{ "\"example/bb\" = { path = \"../bb\" }\n", try nativeSection(a, "app_shim") });
     const g = siblingGraph(a, dir, "app", deps, try sibLock(a, sib_b_to_c), &why) catch |e| {
         std.debug.print("refused: {s}\n", .{why});
         return e;
@@ -2825,10 +2827,10 @@ test "with a workspace root, the root package's and a sibling's own natives are 
     try std.testing.expectEqualStrings("native", na.includes[0]);
 
     // The sibling's native, reached through a path dependency.
-    const nb = g.units[g.find("native:b/b_shim") orelse return error.NoSuchUnit];
-    try std.testing.expectEqualStrings("b", nb.package);
-    try std.testing.expectEqualStrings("b/native/shim.c", nb.srcs[0].path);
-    try std.testing.expectEqualStrings("b/native/shim.h", nb.hdrs[0].path);
+    const nb = g.units[g.find("native:bb/b_shim") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("bb", nb.package);
+    try std.testing.expectEqualStrings("bb/native/shim.c", nb.srcs[0].path);
+    try std.testing.expectEqualStrings("bb/native/shim.h", nb.hdrs[0].path);
     try std.testing.expectEqualStrings("native", nb.includes[0]);
     try std.testing.expectEqual(@as(usize, 2), countKind(g, "native"));
 
@@ -2839,13 +2841,13 @@ test "with a workspace root, the root package's and a sibling's own natives are 
     var saw_b = false;
     for (app.natives) |n| {
         if (std.mem.eql(u8, n.built, "native:app/app_shim")) saw_a = true;
-        if (std.mem.eql(u8, n.built, "native:b/b_shim")) saw_b = true;
+        if (std.mem.eql(u8, n.built, "native:bb/b_shim")) saw_b = true;
     }
     try std.testing.expect(saw_a and saw_b);
-    // b's library lists only its own.
-    const bl = g.units[g.find("b@0.1.0#mojo1.0.0/lib").?];
+    // bb's library lists only its own.
+    const bl = g.units[g.find("bb@0.1.0#mojo1.0.0/lib").?];
     try std.testing.expectEqual(@as(usize, 1), bl.natives.len);
-    try std.testing.expectEqualStrings("native:b/b_shim", bl.natives[0].built);
+    try std.testing.expectEqualStrings("native:bb/b_shim", bl.natives[0].built);
     try noDotDot(g);
 }
 

@@ -1,5 +1,5 @@
 [package]
-name = "cxxlib"
+name = "example/cxxlib"
 version = "1.0.0"
 mojo = ["1.0.0"]
 

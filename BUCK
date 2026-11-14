@@ -38,8 +38,8 @@ _TOOLS = {
 }
 
 # The files each root imports by a relative name (all siblings of the root).
-# src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig.
-_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json"])
+# src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig, std-modules.txt by src/core/names.zig and src/core/std_modules.zig.
+_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json", "src/core/toolchain/*.txt"])
 _CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig", "src/cli/build_options.zig"])
 _FAKE_SRCS = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig"])
 
@@ -254,7 +254,7 @@ zig_test(  # buck-only: readmes as uploaded objects, and the fall back to inline
 # (registry/fake). A file of the release that is byte for byte what the live tree holds is read from the live tree; only the files
 # that differ are vendored under tests/compat/v0.0.104 (README.md there; SHA256SUMS pins every file, and the test checks it).
 # The `tree` targets (tests/compat/tree.bzl) lay both out in one directory, where the release's files find each other by their relative imports.
-_PREV_FAKE_LIVE = ["api", "errors", "resp", "source_commit", "token_scopes", "util", "versions"]
+_PREV_FAKE_LIVE = ["errors", "resp", "source_commit", "token_scopes", "util", "versions"]
 _PREV_CLI_LIVE = ["group_stage_token", "publish_cmd", "registry_cmd"]
 
 tree(  # buck-only: the fake registry of v0.0.104 as its files lay out at the tag, and the fixture that calls it

@@ -139,7 +139,7 @@ const Mopm = struct {
 };
 
 fn tomlText(a: Allocator, name: []const u8, version: []const u8) ![]u8 {
-    return std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", .{ name, version });
+    return std.fmt.allocPrint(a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", .{ name, version });
 }
 
 fn sha256Hex(a: Allocator, bytes: []const u8) ![]u8 {
