@@ -1,0 +1,10 @@
+{
+  "lock_version": 1,
+  "toolchain": {
+    "mojo": "1.0.0"
+  },
+  "channels": [
+    "https://conda.mopm.dev/"
+  ],
+  "packages": []
+}
