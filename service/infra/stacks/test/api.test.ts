@@ -3,7 +3,7 @@ import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, V2_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
-import { STAGES, stageConfig, tableName } from '../lib/config';
+import { STAGES, appSecretName, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
 const acts = (s: any): string[] => ([] as string[]).concat(s.Action);
@@ -321,10 +321,11 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       expect(flatten(one.Resource)).toContain(`secret:mopm/${stage}/${name}-??????`);
       expect(flatten(one.Resource)).not.toContain('"*"');
     }
-    // The App secret is named, never carried: the environment holds its name beside the OAuth one.
-    t.hasResourceProperties('AWS::Lambda::Function', {
-      Environment: { Variables: Match.objectLike({ MOPM_APP_SECRET_NAME: `mopm/${stage}/github-app` }) },
-    });
+    // The App secret's name is derived from the stage by the function (service/api/src/http/app-secret.ts): no environment
+    // variable configures it, and nothing carries its value.
+    for (const fn of Object.values(t.findResources('AWS::Lambda::Function'))) {
+      expect(Object.keys((fn as any).Properties?.Environment?.Variables ?? {})).not.toContain('MOPM_APP_SECRET_NAME');
+    }
     t.hasResourceProperties('AWS::Lambda::Function', {
       Environment: { Variables: Match.objectLike({ MOPM_OAUTH_SECRET_NAME: `mopm/${stage}/github-oauth`, MOPM_REQUIRE_2FA: 'true' }) },
     });
@@ -603,4 +604,15 @@ test('no stage allows another stage\'s origin (the three origin lists are pairwi
   const all = origins.flat();
   expect(new Set(all).size).toBe(all.length);
   expect(all.sort()).toEqual(['https://beta.mopm.dev', 'https://gamma.mopm.dev', 'https://mopm.dev']);
+});
+
+// The API derives the App secret's name from its stage (no setting names it); the IAM grant above uses config.ts's rule. The
+// two definitions must be the same rule, or the function would be denied its own secret.
+test('the GitHub App secret the API reads is the one its role may read, on every stage', () => {
+  const src = fs.readFileSync(path.resolve(__dirname, '../../../api/src/http/app-secret.ts'), 'utf8');
+  const m = /export const appSecretName = \(stage: string\): string => `([^`]*)`;/.exec(src);
+  expect(m).not.toBeNull();
+  for (const stage of STAGES) expect(m![1]!.replace('${stage}', stage)).toBe(appSecretName(stage));
+  // A different rule in the API is caught: the same check on a changed copy fails.
+  expect(m![1]!.replace('github-app', 'github-app2').replace('${stage}', 'beta')).not.toBe(appSecretName('beta'));
 });

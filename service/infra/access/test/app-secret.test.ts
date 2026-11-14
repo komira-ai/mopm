@@ -2,6 +2,8 @@
 // Proves: a dry run touches nothing and reads no key; --apply creates or updates mopm/<stage>/github-app with the right
 // JSON; the private key is never in any argument, any output, or any file left behind; bad input and failures change nothing.
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { appSecret } from '../lib/app-secret';
 import { FakeHost, Reply, acct } from './fake-host';
 
@@ -37,7 +39,10 @@ function setup(mode: Mode, profileAccount?: string) {
   return { host, seen };
 }
 
-const BASE = ['--stage', 'gamma', '--profile', 'p', '--app-id', '123456', '--key-file', 'app.pem'];
+// The test's own scratch directory, standing in for the workspace scratch directory an operator passes.
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'app-secret-test-'));
+afterAll(() => fs.rmSync(SCRATCH, { recursive: true, force: true }));
+const BASE = ['--stage', 'gamma', '--profile', 'p', '--app-id', '123456', '--key-file', 'app.pem', '--scratch', SCRATCH];
 const noRead = (): string => { throw new Error('the dry run read the key'); };
 const reading = (s: string) => ({ readKey: () => s });
 const everything = (h: FakeHost): string => [h.out_, h.err_, ...h.calls.map((c) => c.argv.join(' '))].join('\n');
@@ -64,8 +69,48 @@ test('--apply, secret missing: created with {app_id, private_key}, in a 600 file
   expect(host.lines.some((l) => l.includes('put-secret-value'))).toBe(false);
   expect(JSON.parse(seen[0].content)).toEqual({ app_id: '123456', private_key: PEM });
   expect(seen[0].mode).toBe(0o600);
+  expect(path.dirname(path.dirname(seen[0].path))).toBe(SCRATCH);
+  expect(path.basename(path.dirname(seen[0].path))).toMatch(/^mopm-app-/);
   expect(fs.existsSync(seen[0].path)).toBe(false);
+  expect(fs.readdirSync(SCRATCH)).toEqual([]);
   expect(leaks(host)).toBe(false);
+});
+
+test('--apply stages the secret in a directory only the admin can read', () => {
+  const { host } = setup('missing');
+  const modes: number[] = [];
+  const inh = host.inherit.bind(host);
+  host.inherit = (argv: string[]): number => {
+    const f = argv.find((a) => a.startsWith('file://'));
+    if (f) modes.push(fs.statSync(path.dirname(f.slice('file://'.length))).mode & 0o777);
+    return inh(argv);
+  };
+  expect(appSecret([...BASE, '--apply'], host, reading(PEM))).toBe(0);
+  expect(modes).toEqual([0o700]);
+});
+
+test('--apply with a --scratch that is not an existing directory exits 2, calls nothing, writes nothing', () => {
+  const file = path.join(SCRATCH, 'not-a-dir');
+  fs.writeFileSync(file, 'x');
+  try {
+    for (const scratch of [path.join(SCRATCH, 'missing'), file]) {
+      const { host } = setup('missing');
+      const args = [...BASE.slice(0, -2), '--scratch', scratch, '--apply'];
+      expect(appSecret(args, host, reading(PEM))).toBe(2);
+      expect(host.err_).toContain(`--scratch ${scratch} is not an existing directory`);
+      expect(host.calls).toEqual([]);
+      expect(leaks(host)).toBe(false);
+    }
+  } finally {
+    fs.rmSync(file);
+  }
+  expect(fs.readdirSync(SCRATCH)).toEqual([]);
+});
+
+test('the dry run names the scratch directory the secret would be staged in', () => {
+  const { host } = setup('exists');
+  expect(appSecret(BASE, host, { readKey: noRead })).toBe(0);
+  expect(host.out_).toContain(`under ${SCRATCH}`);
 });
 
 test('--apply, secret exists: a new version, not a second create', () => {
@@ -103,6 +148,7 @@ describe('bad input changes nothing and calls nothing', () => {
     ['app id with a leading zero', ['--stage', 'beta', '--profile', 'p', '--app-id', '012', '--key-file', 'k'], PEM],
     ['no app id', ['--stage', 'beta', '--profile', 'p', '--key-file', 'k'], PEM],
     ['no key file', ['--stage', 'beta', '--profile', 'p', '--app-id', '1'], PEM],
+    ['no scratch directory', ['--stage', 'beta', '--profile', 'p', '--app-id', '1', '--key-file', 'k'], PEM],
     ['unknown flag (there is no --force)', [...BASE, '--force'], PEM],
     ['empty region', [...BASE, '--region', ''], PEM],
     ['bad account', [...BASE, '--account', '123'], PEM],

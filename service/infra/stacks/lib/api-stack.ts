@@ -266,9 +266,6 @@ export class ApiStack extends Stack {
         // The NAME of the secret holding the stage's GitHub OAuth app (never its value). Created by
         // service/infra/access/lib/oauth-secret.ts; until it exists the device login routes answer 503.
         MOPM_OAUTH_SECRET_NAME: oauthSecretName(c.stage),
-        // The NAME of the secret holding the registry's GitHub App (never its value), created by service/infra/access/lib/app-secret.ts;
-        // until it exists, writes in an organization namespace and namespace creation answer 503.
-        MOPM_APP_SECRET_NAME: appSecretName(c.stage),
         MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
         // Beta only: the CI identity this stage trusts (BETA_CI_PUBLISHERS). Absent elsewhere, and the handler refuses it elsewhere.
         ...(c.stage === 'beta' ? { [CI_PUBLISHERS_ENV]: JSON.stringify(BETA_CI_PUBLISHERS) } : {}),

@@ -193,15 +193,16 @@ from a file, a flag or an environment variable, and never writes them to a log. 
 
 1. In GitHub: create the App (one per stage, as for the OAuth apps), generate a private key (a `.pem` file) and note the App id.
 2. Store both with the held script, run with that stage's admin credentials. Preview first; nothing is read or called
-   without `--apply`. The key is read from the file named by `--key-file`, only with `--apply`, never from a flag value:
+   without `--apply`. The key is read from the file named by `--key-file`, only with `--apply`, never from a flag value, and
+   staged for the AWS CLI in a mode-700 directory under `--scratch` (the workspace scratch directory), removed at the end:
    ```sh
-   npm --prefix service/infra/access run -s app-secret -- --stage beta --profile <your profile> --app-id <app id> --key-file <key.pem>
-   npm --prefix service/infra/access run -s app-secret -- --stage beta --profile <your profile> --app-id <app id> --key-file <key.pem> --apply
+   npm --prefix service/infra/access run -s app-secret -- --stage beta --profile <your profile> --app-id <app id> --key-file <key.pem> --scratch <workspace scratch dir>
+   npm --prefix service/infra/access run -s app-secret -- --stage beta --profile <your profile> --app-id <app id> --key-file <key.pem> --scratch <workspace scratch dir> --apply
    ```
    It creates the secret, or stores a new version when it exists (rotation: generate a new key, run it again; the API picks
    it up within five minutes, with no redeploy). Delete the `.pem` file afterwards.
 3. The Lambda role may read exactly this secret (`secretsmanager:GetSecretValue` on `mopm/<stage>/github-app-??????`) beside
-   the OAuth one; the stacks tests pin both. The API function gets the secret's name in `MOPM_APP_SECRET_NAME`.
+   the OAuth one; the stacks tests pin both. The API derives the secret's name from its stage; no setting names it.
 
 ## Verification
 

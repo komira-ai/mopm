@@ -5,7 +5,10 @@ import type { SecretReader } from './oauth-secret';
 /**
  * The registry's GitHub App credentials are one JSON secret per stage, `mopm/<stage>/github-app`, stored by
  * service/infra/access/lib/app-secret.ts: {"app_id": "123456", "private_key": "-----BEGIN RSA PRIVATE KEY-----..."}.
+ * The name is derived from the stage (the same rule as `appSecretName` in service/infra/stacks/lib/config.ts, whose IAM grant
+ * names it); nothing configures it.
  */
+export const appSecretName = (stage: string): string => `mopm/${stage}/github-app`;
 
 export interface AppSecretOptions {
   secretId: string;

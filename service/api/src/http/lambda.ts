@@ -22,7 +22,7 @@ import type { Store } from '../store';
 import type { V2Deps } from './v2-routes';
 import type { Flags } from '../publish/ports';
 import type { AuthServices } from './auth-routes';
-import { SecretGitHubAppApi } from './app-secret';
+import { appSecretName, SecretGitHubAppApi } from './app-secret';
 import { OAuthSecretSource, readSecretFromAws, type SecretReader } from './oauth-secret';
 import { route, type RouterDeps, type Stage } from './router';
 
@@ -105,7 +105,7 @@ export function packagesInFrom(registry: Pick<Store, 'searchPackages'>): (namesp
 /**
  * What `/api/v2` needs (src/http/v2-routes.ts). `getMe` and `createToken` need the auth tables, so they are wired with login
  * (MOPM_OAUTH_SECRET_NAME); `createPackage` with the publish side; `createNamespace` with the organization check
- * (`membership`, built by `membershipFor` when MOPM_APP_SECRET_NAME is set; without it `createNamespace` answers `unavailable`).
+ * (`membership`, built by `membershipFor`; while the stage's GitHub App secret is absent `createNamespace` answers `unavailable`).
  */
 export function configureV2(
   stage: Stage,
@@ -129,14 +129,13 @@ export function configureV2(
 }
 
 /**
- * The organization membership check, when the stage names a GitHub App secret (MOPM_APP_SECRET_NAME). The secret is read on
- * the first organization question, not here; while it is absent or malformed that question answers `unavailable`.
+ * The organization membership check. Its GitHub App credentials are the stage's secret `appSecretName(stage)`, a name derived
+ * from the stage, not configured. The secret is read on the first organization question, not here; while it is absent or
+ * malformed that question answers `unavailable`, and everything else is served.
  */
-export function membershipFor(stage: Stage, doc: DocClient, env: NodeJS.ProcessEnv, read: SecretReader = readSecretFromAws): OrgMembership | undefined {
-  const secretId = env.MOPM_APP_SECRET_NAME;
-  if (!secretId) return undefined;
+export function membershipFor(stage: Stage, doc: DocClient, read: SecretReader = readSecretFromAws): OrgMembership {
   return new OrgMembership({
-    app: new SecretGitHubAppApi({ secretId, read }),
+    app: new SecretGitHubAppApi({ secretId: appSecretName(stage), read }),
     passes: new DynamoMembershipPassStore(doc, authTablesFor(stage).membership_passes),
     now: () => new Date(),
   });
@@ -148,7 +147,7 @@ function configure(): Configured {
   const flags = flagsFor(process.env, doc, stage);
   const envReadOnly = process.env.MOPM_READ_ONLY === 'true';
   const store = new DynamoStore(doc, tablesFor(stage));
-  const membership = membershipFor(stage, doc, process.env);
+  const membership = membershipFor(stage, doc);
   const access = namespaceAccessFor(doc, stage, membership);
   const publish = publishApiFor(process.env, doc, stage, flags, access);
   return {

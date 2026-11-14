@@ -1,6 +1,6 @@
-import { GitHubUnavailable, MemoryAuthStore, MemoryMembershipPassStore, MemoryNamespaceStore, NamespaceAccess, OrgMembership, type GitHubAppApi } from '../../src/auth';
+import { GitHubUnavailable, MemoryAuthStore, MemoryMembershipPassStore, MemoryNamespaceStore, NamespaceAccess, OrgMembership, type GitHubAppApi, type GitHubOrgMembershipOf } from '../../src/auth';
 import { TokenServiceV2 } from '../../src/auth/tokens-v2';
-import { SecretGitHubAppApi } from '../../src/http/app-secret';
+import { appSecretName, SecretGitHubAppApi } from '../../src/http/app-secret';
 import { configureV2, membershipFor, packagesInFrom } from '../../src/http/lambda';
 import type { SecretReader } from '../../src/http/oauth-secret';
 import { MemoryStore } from '../../src/memory-store';
@@ -84,7 +84,7 @@ describe('configureV2', () => {
   });
 });
 
-// The GitHub App wiring: the secret is named by MOPM_APP_SECRET_NAME and read on the first organization question.
+// The GitHub App wiring: the secret's name is derived from the stage, and it is read on the first organization question.
 describe('membershipFor and the GitHub App secret', () => {
   const doc = new FakeAuthDoc({});
   const { generateKeyPairSync } = require('node:crypto') as typeof import('node:crypto');
@@ -110,13 +110,22 @@ describe('membershipFor and the GitHub App secret', () => {
     getOrgMembership: async () => undefined,
   });
 
-  test('without MOPM_APP_SECRET_NAME there is no membership check and the secret is never read', () => {
-    expect(membershipFor('beta', doc, {}, async () => { throw new Error('read'); })).toBeUndefined();
+  test('the secret name is derived from the stage, and building the check reads nothing', async () => {
+    expect(appSecretName('beta')).toBe('mopm/beta/github-app');
+    expect(appSecretName('prod')).toBe('mopm/prod/github-app');
+    const r = reader([undefined]);
+    quiet();
+    const m = membershipFor('gamma', doc, r.read);
+    expect(m).toBeInstanceOf(OrgMembership);
+    expect(r.calls).toEqual([]);
+    // The first organization question reads the stage's secret; absent, it is GitHub unavailable.
+    await expect((m as unknown as { d: { app: GitHubAppApi } }).d.app.getOrgInstallation('komira-ai')).rejects.toBeInstanceOf(GitHubUnavailable);
+    expect(r.calls).toEqual(['mopm/gamma/github-app']);
   });
 
   test('configureV2 carries the membership check it is given', () => {
     const access = new NamespaceAccess({ namespaces: new MemoryNamespaceStore(), users: new MemoryAuthStore() });
-    const m = membershipFor('beta', doc, { MOPM_APP_SECRET_NAME: 'mopm/beta/github-app' }, reader([good]).read);
+    const m = membershipFor('beta', doc, reader([good]).read);
     expect(m).toBeInstanceOf(OrgMembership);
     expect(configureV2('beta', doc, {}, new MemoryStore(), access, undefined, m).membership).toBe(m);
   });
@@ -127,6 +136,39 @@ describe('membershipFor and the GitHub App secret', () => {
     const api = new SecretGitHubAppApi({ secretId: 'mopm/beta/github-app', read: r.read }, (c) => (built.push(c), fakeApi()));
     expect(r.calls).toEqual([]);
     expect((await api.getInstallation(5))?.id).toBe(5);
+    expect(r.calls).toEqual(['mopm/beta/github-app']);
+    expect(built).toEqual([{ appId: '12345', privateKey: pem }]);
+  });
+
+  test('each call is forwarded with its arguments to the client the secret built, and answers its result', async () => {
+    const calls: unknown[][] = [];
+    const installation = { id: 41, account: { id: 7, login: 'komira-ai' }, suspended: false };
+    const orgInstallation = { id: 42, account: { id: 8, login: 'acme' }, suspended: true };
+    const user = { id: 2, login: 'alice' };
+    const membership: GitHubOrgMembershipOf = { user_id: 3, state: 'active', role: 'admin' };
+    const api = new SecretGitHubAppApi({ secretId: 'mopm/beta/github-app', read: reader([good]).read }, () => ({
+      getInstallation: async (...a) => (calls.push(['getInstallation', ...a]), installation),
+      getOrgInstallation: async (...a) => (calls.push(['getOrgInstallation', ...a]), orgInstallation),
+      getUserById: async (...a) => (calls.push(['getUserById', ...a]), user),
+      getOrgMembership: async (...a) => (calls.push(['getOrgMembership', ...a]), membership),
+    }));
+    expect(await api.getInstallation(41)).toBe(installation);
+    expect(await api.getOrgInstallation('acme')).toBe(orgInstallation);
+    expect(await api.getUserById(42, 2)).toBe(user);
+    expect(await api.getOrgMembership(42, 'acme', 'bob')).toBe(membership);
+    expect(calls).toEqual([
+      ['getInstallation', 41],
+      ['getOrgInstallation', 'acme'],
+      ['getUserById', 42, 2],
+      ['getOrgMembership', 42, 'acme', 'bob'],
+    ]);
+  });
+
+  test('the secret is read once for many calls', async () => {
+    const r = reader([good]);
+    const built: Array<{ appId: string }> = [];
+    const api = new SecretGitHubAppApi({ secretId: 'mopm/beta/github-app', read: r.read }, (c) => (built.push(c), fakeApi()));
+    await api.getInstallation(5);
     await api.getOrgInstallation('x');
     await api.getUserById(1, 2);
     await api.getOrgMembership(1, 'o', 'u');

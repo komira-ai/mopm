@@ -60,7 +60,11 @@ export const tableName = (s: Stage, table: string) => `mopm-${s}-${table}`;
 
 /** The secret holding a stage's GitHub OAuth app ({"client_id","client_secret"}); created by service/infra/access/lib/oauth-secret.ts. */
 export const oauthSecretName = (s: Stage) => `mopm/${s}/github-oauth`;
-/** The secret holding a stage's registry GitHub App ({"app_id","private_key"}); created by service/infra/access/lib/app-secret.ts. */
+/**
+ * The secret holding a stage's registry GitHub App ({"app_id","private_key"}); created by service/infra/access/lib/app-secret.ts.
+ * The API function derives the same name from its stage (`appSecretName` in service/api/src/http/app-secret.ts); this one names
+ * the IAM grant, so the two must agree.
+ */
 export const appSecretName = (s: Stage) => `mopm/${s}/github-app`;
 
 /** FIFO queues of the publish pipeline (the API stack builds the validate queue's URL from the name, so the names live here). */
