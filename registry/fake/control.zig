@@ -1,6 +1,7 @@
 //! Test controls under `/_fake/`. Not part of the contract and absent from the
 //! hosted registry: they put the fake in the states a test needs (a second
-//! account, a stale session, time passing, read-only mode, a server fault).
+//! account, a stale session, time passing, read-only mode, a server fault, a
+//! GitHub organization and its members).
 //! Every control is a POST with a JSON object body and answers 200 with JSON.
 
 const std = @import("std");
@@ -11,6 +12,7 @@ const resp = @import("resp.zig");
 const Response = resp.Response;
 const util = @import("util.zig");
 const files = @import("files.zig");
+const st = @import("state.zig");
 
 pub fn handle(ctx: *Ctx) anyerror!Response {
     if (ctx.method != .POST) return resp.invalid(ctx.arena, "the /_fake controls take POST");
@@ -25,12 +27,39 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         return resp.json(ctx.arena, .ok, .{ .github_id = u.github_id, .handle = u.handle });
     }
     // {"handle", "fresh"?} -> {"token"}: a session token, as a login would
-    // give, fresh unless "fresh" is false.
+    // give, fresh unless "fresh" is false. Like a login, it makes the user
+    // namespace of the handle when that is free.
     if (std.mem.eql(u8, path, "/session")) {
         const who = util.getStr(obj, "handle") orelse return resp.invalid(ctx.arena, "'handle' must be a string");
         const u = try s.ensureUser(who);
         const t = try s.newSession(u, util.getBool(obj, "fresh") orelse true);
+        if (try s.loginNamespace(u) != null) try files.rewrite(ctx.arena, s);
         return resp.json(ctx.arena, .ok, .{ .token = t.secret });
+    }
+    // {"login", "installed"?, "members"?: [{"handle", "role", "state"?}]} -> {"github_id", "login"}: a GitHub
+    // organization (made on first use). "installed" installs the mopm registry App (a new installation each time it goes
+    // from false to true) or removes it; "members" replaces the members: role admin, member or billing_manager, state
+    // active (the default) or pending.
+    if (std.mem.eql(u8, path, "/org")) return org(ctx, obj);
+    // {"login", "to"}: the GitHub account or organization `login` is called `to` from now on. Namespaces keep their name.
+    if (std.mem.eql(u8, path, "/rename")) {
+        const login = util.getStr(obj, "login") orelse return resp.invalid(ctx.arena, "'login' must be a string");
+        const to = util.getStr(obj, "to") orelse return resp.invalid(ctx.arena, "'to' must be a string");
+        if (s.userByHandle(to) != null or s.orgByLogin(to) != null) return resp.invalid(ctx.arena, "another account has that login");
+        if (s.userByHandle(login)) |u| {
+            u.handle = try s.alloc.dupe(u8, to);
+        } else if (s.orgByLogin(login)) |o| {
+            o.login = try s.alloc.dupe(u8, to);
+        } else return resp.invalid(ctx.arena, "no account or organization has that login");
+        try files.rewrite(ctx.arena, s);
+        return resp.json(ctx.arena, .ok, .{});
+    }
+    // {"enabled"}: whether /api/v1 still creates packages (the default). Off, claimPackage and the OIDC `packages` form
+    // for a name nobody has answer name_reserved with the hint to update mopm, as the registry does once names are in
+    // namespaces.
+    if (std.mem.eql(u8, path, "/v1_creation")) {
+        s.v1_creation = util.getBool(obj, "enabled") orelse return resp.invalid(ctx.arena, "'enabled' must be a boolean");
+        return resp.json(ctx.arena, .ok, .{});
     }
     // {"user_code", "decision": "approve"|"deny", "handle"}: the person's
     // answer on the approval page.
@@ -108,9 +137,16 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
     }
     // {"name", "repository"}: a trusted publisher of the package, so a CI
     // identity token whose repository claim is that repository may publish.
+    // {"namespace", "repository"}: a trusted publisher of a namespace, for
+    // /api/v2's exchange: it may create and publish any package there.
     if (std.mem.eql(u8, path, "/trusted")) {
-        const name = util.getStr(obj, "name") orelse return resp.invalid(ctx.arena, "'name' must be a string");
         const repository = util.getStr(obj, "repository") orelse return resp.invalid(ctx.arena, "'repository' must be a string");
+        if (util.getStr(obj, "namespace")) |n| {
+            const in = s.namespaceByName(n) orelse return resp.invalid(ctx.arena, "no such namespace");
+            try in.publishers.append(s.alloc, try s.alloc.dupe(u8, repository));
+            return resp.json(ctx.arena, .ok, .{});
+        }
+        const name = util.getStr(obj, "name") orelse return resp.invalid(ctx.arena, "'name' must be a string");
         const p = s.packageByName(name) orelse return resp.invalid(ctx.arena, "no such package");
         try p.trusted.append(s.alloc, try s.alloc.dupe(u8, repository));
         return resp.json(ctx.arena, .ok, .{});
@@ -162,4 +198,50 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         return resp.invalid(ctx.arena, "no such published version");
     }
     return resp.invalid(ctx.arena, "no such control");
+}
+
+fn org(ctx: *Ctx, obj: std.json.ObjectMap) anyerror!Response {
+    const s = ctx.state;
+    const login = util.getStr(obj, "login") orelse return resp.invalid(ctx.arena, "'login' must be a string");
+    if (login.len == 0) return resp.invalid(ctx.arena, "'login' must not be empty");
+    const o = s.orgByLogin(login) orelse blk: {
+        if (s.userByHandle(login) != null) return resp.invalid(ctx.arena, "a user account has that login");
+        const made = try s.add(st.Org, &s.orgs, .{ .login = try s.alloc.dupe(u8, login), .github_id = s.next_github_id });
+        s.next_github_id += 1;
+        break :blk made;
+    };
+    if (obj.get("installed")) |v| {
+        const installed = switch (v) {
+            .bool => |b| b,
+            else => return resp.invalid(ctx.arena, "'installed' must be a boolean"),
+        };
+        if (!installed) {
+            o.installation_id = 0;
+        } else if (o.installation_id == 0) {
+            o.installation_id = s.next_installation_id;
+            s.next_installation_id += 1;
+        }
+    }
+    if (obj.get("members")) |v| {
+        const list = switch (v) {
+            .array => |a| a.items,
+            else => return resp.invalid(ctx.arena, "'members' must be an array"),
+        };
+        var members = std.ArrayListUnmanaged(st.Membership){};
+        for (list) |item| {
+            const m = switch (item) {
+                .object => |m| m,
+                else => return resp.invalid(ctx.arena, "a member is a JSON object"),
+            };
+            const who = util.getStr(m, "handle") orelse return resp.invalid(ctx.arena, "a member's 'handle' must be a string");
+            const role_word = util.getStr(m, "role") orelse return resp.invalid(ctx.arena, "a member's 'role' must be a string");
+            const role = std.meta.stringToEnum(st.OrgRole, role_word) orelse return resp.invalid(ctx.arena, "'role' is admin, member or billing_manager");
+            const state_word = util.getStr(m, "state") orelse "active";
+            const active = if (std.mem.eql(u8, state_word, "active")) true else if (std.mem.eql(u8, state_word, "pending")) false else return resp.invalid(ctx.arena, "'state' is active or pending");
+            try members.append(s.alloc, .{ .user = try s.ensureUser(who), .role = role, .active = active });
+        }
+        o.members = members;
+    }
+    try files.rewrite(ctx.arena, s);
+    return resp.json(ctx.arena, .ok, .{ .github_id = o.github_id, .login = o.login });
 }

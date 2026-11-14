@@ -21,6 +21,8 @@ const auth = @import("auth.zig");
 const versions = @import("versions.zig");
 const channel = @import("files.zig");
 const gr = @import("group_readmes.zig");
+const keys = @import("keys.zig");
+const names = @import("names.zig");
 
 const subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64", "noarch" };
 
@@ -62,15 +64,20 @@ fn scoped(ctx: *Ctx, name: []const u8, version: ?[]const u8, scopes: []const st.
     return a;
 }
 
-/// Checks the `{name}` and `{version}` of a path: `invalid_name`,
-/// `invalid_version`, `package_not_found`.
-const Target = union(enum) { ok: *st.Package, fail: Response };
+/// Checks the `{name}` and `{version}` of a path: `invalid_name` (and, under v2, `invalid_namespace`),
+/// `invalid_version`, then `package_not_found` (and `namespace_not_found`).
+const Target = keys.Found;
 
 fn target(ctx: *Ctx, name: []const u8, version: []const u8) Allocator.Error!Target {
-    if (!util.isName(name)) return .{ .fail = try resp.fail(ctx.arena, .invalid_name, &.{.{ "name", name }}) };
+    if (try keys.problem(ctx, name)) |r| return .{ .fail = r };
     if (!util.isVersion(version)) return .{ .fail = try resp.fail(ctx.arena, .invalid_version, &.{.{ "version", version }}) };
-    const p = ctx.state.packageByName(name) orelse return .{ .fail = try resp.fail(ctx.arena, .package_not_found, &.{.{ "name", name }}) };
-    return .{ .ok = p };
+    return keys.find(ctx, name);
+}
+
+/// The URL of a file of the package `key`: under the flat channel root for a v1 package, under the namespace's channel
+/// for a package in a namespace.
+pub fn fileUrl(arena: Allocator, s: *const st.State, key: []const u8, f: st.File) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}/{s}/{s}/{s}", .{ s.base_url, try names.channelDir(arena, key), f.subdir, f.filename });
 }
 
 /// The version of `p` equal to `version` under conda ordering, in any state.
@@ -96,6 +103,7 @@ pub fn beginUpload(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |p| p,
         .fail => |r| return r,
     };
+    if (try keys.useRefusal(ctx, p, t.user)) |r| return r;
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
     const subdir = util.getStr(obj, "subdir") orelse return resp.invalid(ctx.arena, "'subdir' must be a string");
     for (subdirs) |d| {
@@ -193,6 +201,7 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |p| p,
         .fail => |r| return r,
     };
+    if (try keys.useRefusal(ctx, p, t.user)) |r| return r;
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
     // Optional. Given, it is checked for its format as before; the fake opens no archive, so it does not compare it with a manifest.
     const given: ?[]const u8 = if (obj.get("manifest_sha256")) |v| switch (v) {
@@ -315,7 +324,7 @@ fn sameIds(a: []const []const u8, b: []const []const u8) bool {
 fn accepted(ctx: *Ctx, p: *const st.Publish) anyerror!Response {
     return resp.json(ctx.arena, .accepted, .{
         .publish_id = p.id,
-        .status_url = try std.fmt.allocPrint(ctx.arena, "/api/v1/publishes/{s}", .{p.id}),
+        .status_url = try std.fmt.allocPrint(ctx.arena, "{s}/publishes/{s}", .{ ctx.prefix(), p.id }),
     });
 }
 
@@ -326,7 +335,7 @@ fn accepted(ctx: *Ctx, p: *const st.Publish) anyerror!Response {
 /// The rejection the fake finds in a publish's files, or null.
 fn validate(ctx: *Ctx, p: *st.Publish) anyerror!?[]const u8 {
     const v = p.version;
-    const want = try std.fmt.allocPrint(ctx.arena, "mojo-{s}-{s}-", .{ v.package.name, v.version });
+    const want = try std.fmt.allocPrint(ctx.arena, "{s}-{s}-", .{ try names.condaName(ctx.arena, v.package.name), v.version });
     var dir = try std.fs.cwd().openDir(ctx.state.dir, .{});
     defer dir.close();
     for (v.files) |f| {
@@ -410,7 +419,7 @@ fn finish(ctx: *Ctx, v: *st.Version) anyerror!void {
 // ---------------------------------------------------------------------------
 
 pub fn setYanked(ctx: *Ctx, params: []const []const u8) anyerror!Response {
-    _ = switch (try scoped(ctx, params[0], params[1], &.{ .yank, .publish }, "yank")) {
+    const t = switch (try scoped(ctx, params[0], params[1], &.{ .yank, .publish }, "yank")) {
         .ok => |t| t,
         .fail => |r| return r,
     };
@@ -418,6 +427,7 @@ pub fn setYanked(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |p| p,
         .fail => |r| return r,
     };
+    if (try keys.useRefusal(ctx, p, t.user)) |r| return r;
     const v = findVersion(p, params[1]) orelse return notFound(ctx, p.name, params[1]);
     if (v.state == .rejected) return notFound(ctx, p.name, params[1]);
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
@@ -593,7 +603,7 @@ pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
             .filename = f.filename,
             .sha256 = f.sha256,
             .size = f.size,
-            .url = try std.fmt.allocPrint(ctx.arena, "{s}/channel/{s}/{s}", .{ s.base_url, f.subdir, f.filename }),
+            .url = try fileUrl(ctx.arena, s, p.name, f),
         });
     }
     return gr.withReadme(ctx.arena, try withGroupId(ctx.arena, v, .{

@@ -150,4 +150,10 @@ test {
     _ = @import("group_readmes_test.zig");
     _ = @import("group_readmes_stored_test.zig");
     _ = @import("files.zig");
+    _ = @import("names.zig");
+    _ = @import("ns_errors.zig");
+    _ = @import("keys.zig");
+    _ = @import("namespaces.zig");
+    _ = @import("namespaces_test.zig");
+    _ = @import("namespaces_publish_test.zig");
 }
