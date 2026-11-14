@@ -130,6 +130,33 @@ zig_exe(
     **_TOOLS
 )
 
+# ---- mopm-api-gen: the outputs of the registry API's protos ------------------------
+
+# tools/api_gen.zig reads spec/api/mopm/registry/v2/*.proto and writes spec/api/openapi-v2.yaml, service/api/src/gen/registry-v2.ts
+# and src/core/registry_v2.zig; api_gen_test fails when a checked-in output is not what it writes.
+_API_GEN_SRCS = glob(["tools/api_gen/*.zig"])
+
+zig_exe(
+    name = "mopm-api-gen",
+    src = "tools/api_gen.zig",
+    imports = _API_GEN_SRCS,
+    unit_tests = [":api_gen_test"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+zig_test(
+    name = "api_gen_test",
+    src = "tools/api_gen_test.zig",
+    imports = _API_GEN_SRCS,
+    data = glob(["spec/api/mopm/registry/v2/*.proto"]) + [
+        "spec/api/openapi-v2.yaml",
+        "service/api/src/gen/registry-v2.ts",
+        "src/core/registry_v2.zig",
+    ],
+    **_TOOLS
+)
+
 # ---- The fake registry the CLI is tested against -----------------------------
 
 zig_exe(
@@ -617,6 +644,8 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "src/cli/main.zig",
         "src/cli/build_options.zig",
         "tools/closure_gen.zig",
+        "tools/api_gen.zig",
+        "tools/api_gen_test.zig",
         "registry/fake/main.zig",
         "tests/drivers/group_e2e.zig",
     ],
