@@ -1,8 +1,8 @@
 # Owner namespaces (proposed)
 
 **Proposed, not implemented.** No released mopm or registry reads or serves anything on this page except what the
-sections below say is live, and no test reads it (`//:contract` checks only `spec/*.schema.json` and
-`spec/api/openapi.yaml`). It is the spec text that
+sections below say is live, and no test reads it (`//:contract` checks only `spec/*.schema.json`,
+`spec/api/openapi.yaml` and `spec/api/openapi-v2.yaml`). It is the spec text that
 `docs/design/namespaces.md` implies, one section per live spec it changes. Each section moves into its live file (and
 the schema fragments into the `.schema.json` files) in the task that implements it; until then the live files describe
 what the code does.

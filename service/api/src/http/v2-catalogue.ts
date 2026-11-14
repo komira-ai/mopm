@@ -11,6 +11,9 @@ type Entry = { status: number; message: string; hint: string };
 /** The auth-only codes, with the status `x-mopm-errors` gives them (the auth catalogue holds no status). */
 const AUTH_STATUS: Record<string, number> = { stale_session: 401, oidc_token_invalid: 401, oidc_not_trusted: 403, device_code_unknown: 404, token_not_found: 404 };
 
+/** Codes only v1's claim answers: `createPackage` answers 200 for a package that exists, and compares no names. */
+const V1_ONLY: ReadonlySet<string> = new Set(['name_taken', 'name_too_similar']);
+
 /**
  * The error catalogue of `/api/v2` (`x-mopm-errors` of spec/api/openapi-v2.yaml): v1's, with `name_reserved` saying why
  * (`'{name}' is {what}.`: `reserved`, or a module of the Mojo standard library) and the five codes of the namespaces.
@@ -22,7 +25,10 @@ export const V2_CATALOGUE: Record<string, Entry> = {
       .filter(([code]) => AUTH_STATUS[code] !== undefined)
       .map(([code, e]) => [code, { status: AUTH_STATUS[code]!, ...e! }]),
   ),
-  ...PUBLISH_CATALOGUE,
+  ...Object.fromEntries(Object.entries(PUBLISH_CATALOGUE).filter(([code]) => !V1_ONLY.has(code))),
+  // v1's hints name its claim and its owners; under v2 a package is created by publishing it, and the namespace is the owner.
+  package_not_found: { status: 404, message: "There is no package '{name}'.", hint: 'Check the spelling; a package is created by publishing it.' },
+  not_owner: { status: 403, message: "You are not an owner of '{name}'.", hint: 'Use a token of an account that can write the namespace.' },
   name_reserved: { status: 403, message: "'{name}' is {what}.", hint: 'Choose another name.' },
   invalid_namespace: {
     status: 400,

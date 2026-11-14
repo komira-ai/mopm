@@ -40,10 +40,10 @@ describe('the /api/v2 error catalogue is the contract\'s', () => {
   const enumCodes = specErrorCodes();
 
   test('both tables were found (the parsers read what the test thinks they read)', () => {
-    expect(Object.keys(spec).length).toBeGreaterThan(40);
+    expect(Object.keys(spec).length).toBeGreaterThan(38);
     expect(spec.name_reserved).toBeDefined();
     expect(spec.namespace_not_found).toBeDefined();
-    expect(enumCodes.length).toBeGreaterThan(40);
+    expect(enumCodes.length).toBeGreaterThan(38);
   });
 
   test.each(Object.keys(V2_CATALOGUE))('%s: status, message and hint equal the spec text', (code) => {

@@ -19,11 +19,10 @@ import { RECIPES } from './replay-v2-recipes';
 // (//:contract does that). Also checked here, on GitHub's runners where //:contract is not run: every operation of the spec has a
 // passing success case, every error code and rejection code a case, and every error case follows the catalogue.
 
-/** Cases the handler cannot produce, with the reason. */
-const NOT_PRODUCED_V2: Record<string, string> = {
-  'error name_taken': 'No operation of /api/v2 answers it: createPackage answers 200 with the package that exists, a lost race included. The code was v1 claim\'s.',
-  'error name_too_similar': 'No operation of /api/v2 compares names: only v1 claim did. The code stays in the catalogue for old clients.',
-};
+/** Cases the handler cannot produce, with the reason (none). */
+// Every valid case is produced by the handler: name_taken and name_too_similar, the two codes only v1's claim answered, are not
+// in /api/v2's catalogue.
+const NOT_PRODUCED_V2: Record<string, string> = {};
 
 const ops = new Map(specOperations().map((o) => [o.operationId, o]));
 const catalogue = specCatalogue();
@@ -33,7 +32,7 @@ const valid = cases.filter((c) => (c.expect ?? 'valid') === 'valid');
 describe('the v2 contract cases are the spec\'s', () => {
   test('the spec was read: its operations, its error table and its rejection codes', () => {
     expect(ops.size).toBe(24);
-    expect(Object.keys(catalogue).length).toBe(41);
+    expect(Object.keys(catalogue).length).toBe(39);
     expect(specRejectionCodes()).toHaveLength(7);
     expect(cases.length).toBeGreaterThan(100);
   });

@@ -205,7 +205,7 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
 - **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
   trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
   config-table item for it), so the fastest stop is the deploy.
-- **Gamma gets none of it, and prod only the acting-for row below.** Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the claim route's, on every stage, and there is no CI-only grant), and answers the `packages`
+- **Gamma gets none of it, and prod only the acting-for row below.** Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the create route's, `PUT /api/v2/packages/{namespace}/{name}`, on every stage, and there is no CI-only grant), and answers the `packages`
   form of the exchange with `oidc_not_trusted`. The handler also refuses to start on gamma if the variable is present, and on prod if a
   row does not carry `acts_for`, so a function that fails to start with "may be set on the beta stage only" or "trusts only rows that
   carry 'acts_for'" means the variable reached the wrong stage or has the wrong shape: fix it in the stack and redeploy. Trusting a CI
@@ -235,8 +235,9 @@ addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-
   stay valid until their 10 minutes end, and a deploy without the row refuses every later exchange with `oidc_not_trusted`. The
   account's own tokens, groups and `groups_enabled` item are untouched. To stop CI groups without a deploy, remove `u:<id>` from
   `groups_enabled` (that also stops the human account).
-- **Reading a refusal.** As for beta, plus: `package_not_found` at the exchange means the account has not claimed the name (claim it
-  with the account's own login first); an `oidc_token_invalid` "wrong audience" means the job asked for an audience other than `mopm.dev`.
+- **Reading a refusal.** As for beta, plus: `package_not_found` at the exchange means the account owns no flat package of that name.
+  `/api/v1` creates no new flat names any more (claims are refused `name_reserved`), so a new package is published in a namespace
+  through `/api/v2` instead; an `oidc_token_invalid` "wrong audience" means the job asked for an audience other than `mopm.dev`.
 - **What a CI-created package looks like.** `claimed`, `ci_owner` = `gh-repo:<repository_id>`, no owner rows (so `owners` is empty in
   the read API), and an audit entry `ci_claim`. Only a token minted for that identity may publish to it. Fixing a wrong name means a
   takedown by an operator; the service has no route that renames or transfers it. Since `/api/v2` is served the exchange creates no

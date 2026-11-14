@@ -10,8 +10,10 @@ info:
     over a package: a v1 package has a flat name (`json`) and is seen only by
     `/api/v1`; a v2 package has a full name (`komira-ai/json`) and is seen only
     by `/api/v2`. An operation that names no package (`/health`, `/auth/device`,
-    `/auth/device/poll`, listing and revoking tokens in `/me/tokens`,
-    `/publishes/{publish_id}`) behaves the same at both prefixes. The design is
+    `/auth/device/poll`, listing and revoking tokens in `/me/tokens`) behaves
+    the same at both prefixes. A publish (`/publishes/{publish_id}`) is seen only
+    by the prefix its package's name belongs to: a flat name's by `/api/v1`, a
+    full name's by `/api/v2`. The design is
     `docs/design/namespaces.md`.
 
     ## Versioning rule (additive only)
@@ -595,7 +597,8 @@ paths:
         publishes nothing and makes nothing visible.
 
         The token must be an API token with the `publish` or `stage` scope for every member's package, and the caller must be
-        able to write the namespace of each package. A CI identity token is for one version of one package and cannot create a group. The first member
+        able to write the namespace of each package; or a CI identity token minted by `exchangeOidcToken` for a publisher of the
+        namespace, which must name every member's package and version. The first member
         that fails any of these refuses the whole group and is named in the error. A number that a published version
         already holds is `version_exists`; one that another group is still using is `group_conflict`. A
         `group_conflict` carries a `reason` (see `Error`) that tells the causes apart without reading the message.
@@ -1121,8 +1124,6 @@ components:
         - token_not_found
         - publish_not_found
         - group_not_found
-        - name_taken
-        - name_too_similar
         - version_exists
         - upload_used
         - group_not_open
@@ -1356,7 +1357,7 @@ components:
         kind: { type: string, enum: [user, org] }
         github_id: { type: integer, minimum: 1 }
         login: { type: string, minLength: 1, description: The GitHub login the account has now; differs from namespace after a rename. }
-        frozen: { type: boolean, description: True when no App installation of this GitHub id is bound; reads work, writes are refused. }
+        frozen: { type: boolean, description: "True when no App installation of this GitHub id is bound; reads work, writes are refused." }
     MeV2:
       type: object
       required: [github_id, handle, namespaces]
@@ -1945,18 +1946,16 @@ x-mopm-errors:
   stale_session:         { status: 401, message: "This action needs a login from the last 15 minutes.", hint: "Run 'mopm login' again." }
   oidc_token_invalid:    { status: 401, message: "The CI identity token was rejected: {detail}.", hint: "Check the audience and that the job has permission to request an identity token." }
   scope_missing:         { status: 403, message: "The token does not have the '{scope}' scope for '{name}'.", hint: "Create a token with that scope and that package." }
-  not_owner:             { status: 403, message: "You are not an owner of '{name}'.", hint: "Ask an owner to invite you." }
+  not_owner:             { status: 403, message: "You are not an owner of '{name}'.", hint: "Use a token of an account that can write the namespace." }
   name_reserved:         { status: 403, message: "'{name}' is {what}.", hint: "Choose another name." }
   oidc_not_trusted:      { status: 403, message: "No trusted publisher of '{name}' matches this CI identity.", hint: "Register the repository, workflow and environment as a trusted publisher of the package." }
   limit_exceeded:        { status: 403, message: "Adding this file would put '{name}' over its storage limit of {limit} bytes; {remaining} bytes are left.", hint: "Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size." }
-  package_not_found:     { status: 404, message: "There is no package '{name}'.", hint: "Check the spelling, or claim the name." }
+  package_not_found:     { status: 404, message: "There is no package '{name}'.", hint: "Check the spelling; a package is created by publishing it." }
   version_not_found:     { status: 404, message: "'{name}' has no version '{version}'.", hint: "List the versions with 'mopm info {name}'." }
   device_code_unknown:   { status: 404, message: "The device code is not recognised.", hint: "Start the login again." }
   token_not_found:       { status: 404, message: "There is no such token.", hint: "List yours with 'mopm token list'." }
   publish_not_found:     { status: 404, message: "There is no such publish.", hint: "Publish ids are only valid for the caller who made them." }
   group_not_found:       { status: 404, message: "There is no such group.", hint: "Group ids are only valid for the caller who made them, or for an owner of every package in the group." }
-  name_taken:            { status: 409, message: "'{name}' is already taken.", hint: "Choose another name." }
-  name_too_similar:      { status: 409, message: "'{name}' is too similar to '{other}'.", hint: "Choose another name, or claim again with confirm_similar if you are sure." }
   version_exists:        { status: 409, message: "'{name}' {version} already exists (sha256 {sha256}); versions are immutable.", hint: "Publish a new version." }
   upload_used:           { status: 409, message: "The upload '{upload_id}' was already used.", hint: "Begin a new upload." }
   group_not_open:        { status: 409, message: "Group {group_id} is {status}; only an open group can be aborted.", hint: "Create the group again with the same request to open it again." }

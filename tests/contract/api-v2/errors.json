@@ -514,7 +514,7 @@
           "error": {
             "code": "not_owner",
             "message": "You are not an owner of 'komira-ai/json'.",
-            "hint": "Ask an owner to invite you."
+            "hint": "Use a token of an account that can write the namespace."
           }
         }
       }
@@ -640,7 +640,7 @@
           "error": {
             "code": "package_not_found",
             "message": "There is no package 'komira-ai/ghost'.",
-            "hint": "Check the spelling, or claim the name."
+            "hint": "Check the spelling; a package is created by publishing it."
           }
         }
       }
@@ -711,54 +711,6 @@
             "code": "group_not_found",
             "message": "There is no such group.",
             "hint": "Group ids are only valid for the caller who made them, or for an owner of every package in the group."
-          }
-        }
-      }
-    },
-    {
-      "name": "error name_taken",
-      "operationId": "createPackage",
-      "request": {
-        "path": {
-          "namespace": "alice",
-          "name": "json"
-        },
-        "auth": "userToken"
-      },
-      "response": {
-        "status": 409,
-        "headers": {
-          "x-mopm-request-id": "req-7f3a2c19d0e4"
-        },
-        "body": {
-          "error": {
-            "code": "name_taken",
-            "message": "'alice/json' is already taken.",
-            "hint": "Choose another name."
-          }
-        }
-      }
-    },
-    {
-      "name": "error name_too_similar",
-      "operationId": "createPackage",
-      "request": {
-        "path": {
-          "namespace": "alice",
-          "name": "json"
-        },
-        "auth": "userToken"
-      },
-      "response": {
-        "status": 409,
-        "headers": {
-          "x-mopm-request-id": "req-7f3a2c19d0e4"
-        },
-        "body": {
-          "error": {
-            "code": "name_too_similar",
-            "message": "'alice/jsn' is too similar to 'alice/json'.",
-            "hint": "Choose another name, or claim again with confirm_similar if you are sure."
           }
         }
       }
@@ -1275,7 +1227,7 @@
           "error": {
             "code": "package_gone",
             "message": "There is no package 'komira-ai/ghost'.",
-            "hint": "Check the spelling, or claim the name."
+            "hint": "Check the spelling; a package is created by publishing it."
           }
         }
       },
@@ -1372,7 +1324,7 @@
           "error": {
             "code": "package_not_found",
             "message": "There is no package 'komira-ai/ghost'.",
-            "hint": "Check the spelling, or claim the name.",
+            "hint": "Check the spelling; a package is created by publishing it.",
             "reason": "number_held"
           }
         }
