@@ -12,13 +12,13 @@ To try an example, copy its directory out of `examples/` and run the commands in
 
 ## 1. A library
 
-The smallest useful package: a manifest, a library directory with the package's name, and a test. `mopm new greeter --lib` makes the same layout.
+The smallest useful package: a manifest, a library directory with the package's name, and a test. `mopm new example/greeter --lib` makes the same layout.
 
 **`examples/greeter/mopm.toml`**
 
 ```toml
 [package]
-name = "greeter"
+name = "example/greeter"
 version = "0.1.0"
 description = "Greetings, as a library"
 license = "Apache-2.0"
@@ -83,7 +83,7 @@ mopm test --list
 ```json
 {
   "package": {
-    "name": "greeter",
+    "name": "example/greeter",
     "version": "0.1.0",
     "description": "Greetings, as a library",
     "license": "Apache-2.0",
@@ -120,7 +120,7 @@ A manifest is checked strictly, so a typo is an error that names the line. Each 
 |---|---|
 | `[target]` for `[targets]` | `unknown key 'target' in mopm.toml` |
 | `homepage = "..."` in `[package]` | `unknown key 'homepage' in [package]` (`keywords` is refused the same way) |
-| `name = "Greeter"` | `package name 'Greeter' must start with a lowercase letter` |
+| `name = "example/Greeter"` | `package name 'example/Greeter' is not in lower case; write 'example/greeter'` |
 | `version = "0.1"` | `must be exactly MAJOR.MINOR.PATCH`, with the form it wants (no pre-release or build part, such as `0.1.0`) |
 
 ## 2. A program with a dependency
@@ -131,16 +131,16 @@ A program is a package with a `[targets] bins` entry. This one depends on the li
 
 ```toml
 [package]
-name = "app"
+name = "example/app"
 version = "0.1.0"
 
 [toolchain]
 mojo = "1.0.0"
 
 [dependencies]
-greeter = { path = "../greeter" }
+"example/greeter" = { path = "../greeter" }
 # A package from the registry is a version requirement instead:
-# http_client = "0.4"
+# "example/http_client" = "0.4"
 
 [targets]
 bins = [{ name = "hello", path = "src/main.mojo" }]
@@ -200,7 +200,7 @@ app 0.1.0
 └── greeter 0.1.0 (../greeter)
 ```
 
-Running `mopm lock` again changes nothing and prints `locked 1 packages for mojo 1.0.0`. Removing the comment from the `http_client` line makes the project depend on the registry, and `mopm lock` then needs one: with the registry unreachable it stops with `cannot reach` and the address, and writes no lock. `mopm add http_client` writes that line for you, as `^X.Y.Z` for the newest version that fits, and locks.
+Running `mopm lock` again changes nothing and prints `locked 1 packages for mojo 1.0.0`. Removing the comment from the `http_client` line makes the project depend on the registry, and `mopm lock` then needs one: with the registry unreachable it stops with `cannot reach` and the address, and writes no lock. `mopm add example/http_client` writes that line for you, as `^X.Y.Z` for the newest version that fits, and locks.
 
 After `mopm sync` installs the lock and the Mojo toolchain into `.mopm/env`, `mopm build src/main.mojo -o hello` builds the program with the native libraries of every installed package linked.
 
@@ -212,18 +212,18 @@ mopm has no `[workspace]` table. The packages of one repository are path depende
 
 ```toml
 [package]
-name = "app"
+name = "example/app"
 version = "0.2.0"
 
 [toolchain]
 mojo = "1.0.0"
 
 [dependencies]
-core = { path = "core" }
-util = { path = "util" }
+"example/core" = { path = "core" }
+"example/util" = { path = "util" }
 
 [dev-dependencies]
-testkit = { path = "testkit" }
+"example/testkit" = { path = "testkit" }
 
 [targets]
 bins = [{ name = "run", path = "src/main.mojo" }]
@@ -233,21 +233,21 @@ bins = [{ name = "run", path = "src/main.mojo" }]
 
 ```toml
 [package]
-name = "core"
+name = "example/core"
 version = "0.1.0"
 
 [toolchain]
 mojo = "1.0.0"
 
 [dependencies]
-util = { path = "../util" }
+"example/util" = { path = "../util" }
 ```
 
 **`examples/workspace/util/mopm.toml`**
 
 ```toml
 [package]
-name = "util"
+name = "example/util"
 version = "0.1.0"
 
 [toolchain]
@@ -258,7 +258,7 @@ mojo = "1.0.0"
 
 ```toml
 [package]
-name = "testkit"
+name = "example/testkit"
 version = "0.1.0"
 
 [toolchain]
@@ -388,7 +388,7 @@ app 0.2.0
 
 ```toml
 [package]
-name = "mathkit"
+name = "example/mathkit"
 version = "0.1.0"
 
 [toolchain]
@@ -530,7 +530,7 @@ A package is published as a `.conda` file per platform, made from a `.mojoc` tha
 
 ```toml
 [package]
-name = "slug"
+name = "example/slug"
 version = "1.2.0"
 description = "Turn a title into a URL slug"
 license = "Apache-2.0"
@@ -539,7 +539,7 @@ readme = "README.md"
 mojo = ["1.0.0"]
 
 [dependencies]
-text_tools = "0.3"
+"example/text_tools" = "0.3"
 
 [targets]
 lib = { path = "src/slug" }
@@ -612,7 +612,7 @@ A `.mojoc` is tied to the compiler that built it, so a project says which compil
 
 ```toml
 [package]
-name = "pinned"
+name = "example/pinned"
 version = "0.1.0"
 mojo = ["1.0.0"]
 

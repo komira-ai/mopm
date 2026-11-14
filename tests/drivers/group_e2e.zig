@@ -186,9 +186,9 @@ pub fn depOf(name: []const u8) ?[]const u8 {
 /// The mopm.toml of a member at `version`: a path dependency on the member below it, which the package keeps as a requirement
 /// for that version or a newer one of the same major.
 pub fn memberToml(a: Allocator, name: []const u8, version: []const u8) ![]u8 {
-    const head = try std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\nmojo = [\"{s}\"]\n\n[dependencies]\n", .{ name, version, compiler });
+    const head = try std.fmt.allocPrint(a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\nmojo = [\"{s}\"]\n\n[dependencies]\n", .{ name, version, compiler });
     const dep = depOf(name) orelse return head;
-    return std.fmt.allocPrint(a, "{s}{s} = {{ path = \"../{s}\", version = \"^{s}\" }}\n", .{ head, dep, dep, version });
+    return std.fmt.allocPrint(a, "{s}\"example/{s}\" = {{ path = \"../{s}\", version = \"^{s}\" }}\n", .{ head, dep, dep, version });
 }
 
 /// The Mojo source of a member (src/<name>/__init__.mojo): each package adds one to the one below it.
@@ -775,7 +775,7 @@ fn stageStep(cx: *Cx, label: []const u8, ws: []const u8, art: []const u8, out: [
 
 /// A project that depends on nothing yet, named `consumer`, in `dir`.
 fn writeConsumer(cx: *Cx, dir: []const u8) !void {
-    try h.writeFile(try cx.join(&.{ dir, "mopm.toml" }), "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"" ++ compiler ++ "\"\n\n[dependencies]\n");
+    try h.writeFile(try cx.join(&.{ dir, "mopm.toml" }), "[package]\nname = \"example/consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"" ++ compiler ++ "\"\n\n[dependencies]\n");
 }
 
 /// Step 2b. A fresh project locks and installs the staged set (`--overlay`) before the registry holds any of it, and builds and
@@ -784,7 +784,7 @@ fn overlayStep(cx: *Cx, label: []const u8, staged: []const u8, pkgs: []const Pkg
     const dir = try cx.join(&.{ cx.o.work, "overlay_consumer" });
     try writeConsumer(cx, dir);
     const app = pkgs[pkgs.len - 1];
-    const spec = try std.fmt.allocPrint(cx.a, "{s}@={s}", .{ app.name, app.version });
+    const spec = try std.fmt.allocPrint(cx.a, "example/{s}@={s}", .{ app.name, app.version });
     var ran = try cx.mopmRun(dir, &.{ "add", spec, "--registry", cx.o.base, "--overlay", staged }, false);
     const add_name = try std.fmt.allocPrint(cx.a, "{s}: mopm add --overlay locks the staged set", .{label});
     cx.check(add_name, ran.code == 0, tailOf(ran.text));
@@ -1125,7 +1125,7 @@ fn lockStep(cx: *Cx, chain: Chain) !void {
     const dir = try cx.join(&.{ cx.o.work, "consumer" });
     try writeConsumer(cx, dir);
     const app = chain.pkgs[chain.pkgs.len - 1];
-    const spec = try std.fmt.allocPrint(cx.a, "{s}@={s}", .{ app.name, app.version });
+    const spec = try std.fmt.allocPrint(cx.a, "example/{s}@={s}", .{ app.name, app.version });
     const ran = try cx.mopmRun(dir, &.{ "add", spec, "--registry", cx.o.base }, false);
     cx.check("lock: mopm add of the top package resolves", ran.code == 0, tailOf(ran.text));
     if (ran.code != 0) return;

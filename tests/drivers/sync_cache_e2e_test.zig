@@ -135,14 +135,14 @@ test "without --cache the files go to XDG_CACHE_HOME/mopm/pkgs, else HOME/.cache
         var env = try h.cloneEnv(a, &c.env);
         if (case.home) |home| try env.put("HOME", home);
         if (case.xdg) |xdg| try env.put("XDG_CACHE_HOME", xdg);
-        const app = try c.project(try c.fmt("case{d}", .{i}), "greet = \"1\"");
+        const app = try c.project(try c.fmt("case{d}", .{i}), "\"example/greet\" = \"1\"");
         const args = if (case.flag) |f| try c.cat(&.{ &.{"sync"}, &reg, &.{ "--toolchain", t.closure, "--cache", f } }) else try c.cat(&.{ &.{"sync"}, &reg, &.{ "--toolchain", t.closure } });
         const r = try c.runIn(app, args, &env);
         rep.check(try c.fmt("{s}: the toolchain's files are in <cache>/<sha256>/<file>, and in no other cache", .{case.name}), r.code == 0 and holds(c, case.root, t) and !c.exists(case.absent, ""), c.detail(r));
     }
 
     // No HOME and no XDG_CACHE_HOME, and --cache a file in the way: the old environment stays.
-    const app = try c.project("fixed", "greet = \"1\"");
+    const app = try c.project("fixed", "\"example/greet\" = \"1\"");
     const own = c.path(&.{ c.work, "own-cache" });
     var r = try c.run(app, &.{ "sync", "--registry", c.fake.base, "--toolchain", t.closure, "--cache", own });
     rep.check("a project synced with --cache", r.code == 0, c.detail(r));
@@ -182,7 +182,7 @@ test "two projects share one cache: the same file name with other bytes is anoth
     try std.testing.expectEqualStrings(b.t.files[0].file_name, b.t2.files[0].file_name);
     try std.testing.expect(!std.mem.eql(u8, b.t.files[0].sha256, b.t2.files[0].sha256));
 
-    const app_b = try c.project("app_b", "greet = \"1\"");
+    const app_b = try c.project("app_b", "\"example/greet\" = \"1\"");
     const env_b = c.path(&.{ app_b, ".mopm/env" });
     var r = try c.run(app_b, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
     rep.check("project B installs its toolchain T2 into the cache A used", r.code == 0, c.detail(r));

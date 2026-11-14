@@ -40,7 +40,7 @@ test "a project moved to another path installs again for the new path, from the 
     const t = try c.toolchain("channel/toolchain", "toolchain.json", "T");
     const cache = try h.join(a, &.{ c.work, "cache" });
     const flags = [_][]const u8{ "--registry", c.fake.base, "--toolchain", t.closure, "--cache", cache };
-    const app = try c.project("app", "phfile = \"1\"");
+    const app = try c.project("app", "\"example/phfile\" = \"1\"");
 
     var r = try c.run(app, &(.{"sync"} ++ flags));
     const before_prefix = c.read(app, ".mopm/env/share/ph/prefix.txt") orelse "";
@@ -186,7 +186,7 @@ test "the legacy pixi layout beside .mopm/env is never read, moved or deleted, w
     const t = try c.toolchain("channel/toolchain", "toolchain.json", "T");
     const t2 = try c.toolchain("channel/toolchain2", "toolchain2.json", "T2");
     const cache = try h.join(a, &.{ c.work, "cache" });
-    const app = try c.project("app", "greet = \"1\"");
+    const app = try c.project("app", "\"example/greet\" = \"1\"");
     const dot = c.path(&.{ app, ".mopm" });
     try fs.cwd().makePath(c.path(&.{ dot, ".pixi/envs/default/bin" }));
     try fs.cwd().makePath(c.path(&.{ dot, "channel/noarch" }));

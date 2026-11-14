@@ -60,7 +60,7 @@ test "a locked archive without its metadata, or with a native library the lock d
     {
         const nometa = try cp.package(a, "mojo-nometa", "1.0.0", build_tag, c.subdir, &.{"mojo-compiler ==" ++ mojo}, &.{.{ .path = "lib/libnometa.so", .data = "the library of nometa\n", .mode = 0o755 }});
         try c.publish("nometa", nometa);
-        _ = try c.project("app", "greet = \"1\"\nnometa = \"1\"");
+        _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/nometa\" = \"1\"");
         const r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
         rep.same("an archive without lib/mojo/nometa.mopm.json: the refusal", "mopm sync: cannot install into .mopm/env: mojo-nometa 1.0.0 is installed without lib/mojo/nometa.mopm.json: a corrupt package; the environment is as it was\n", r.stderr);
         rep.check("an archive without its metadata: exit 1, the archive was downloaded and checked", r.code == 1 and h.contains(r.stdout, "downloading mojo-nometa-1.0.0-" ++ build_tag ++ ".conda"), c.detail(r));
@@ -131,7 +131,7 @@ test "a locked package that ships a toolchain file with other contents is refuse
     try c.publish("plain", plain);
 
     for ([_][]const u8{ "clash", "linked" }) |name| {
-        _ = try c.project("app", try c.fmt("greet = \"1\"\n{s} = \"1\"", .{name}));
+        _ = try c.project("app", try c.fmt("\"example/greet\" = \"1\"\n\"example/{s}\" = \"1\"", .{name}));
         const r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
         const want = try c.fmt("mopm sync: cannot install into .mopm/env: bin/mojo is installed by both mojo 1.0.0 and mojo-{s} 1.0.0 with different contents; refused; the environment is as it was\n", .{name});
         rep.same(try c.fmt("{s} ships bin/mojo with other contents: the refusal", .{name}), want, r.stderr);
@@ -139,19 +139,19 @@ test "a locked package that ships a toolchain file with other contents is refuse
         untouched(c, b, name);
     }
 
-    _ = try c.project("app", "greet = \"1\"\ndotted = \"1\"");
+    _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/dotted\" = \"1\"");
     var r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
     rep.same("dotted ships bin/./mojo: the refusal", try c.fmt("mopm sync: cannot install into .mopm/env: the package holds the path '{s}', which has a '.' component; a path is written one way only; the environment is as it was\n", .{dotted_path}), r.stderr);
     rep.check("dotted ships bin/./mojo: exit 1", r.code == 1, c.detail(r));
     untouched(c, b, "dotted");
 
-    _ = try c.project("app", "greet = \"1\"\nplain = \"1\"");
+    _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/plain\" = \"1\"");
     r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
     rep.same("plain ships bin/mojo with the same bytes but not executable: the refusal", "mopm sync: cannot install into .mopm/env: bin/mojo is installed by both mojo 1.0.0 and mojo-plain 1.0.0 with different permissions; refused; the environment is as it was\n", r.stderr);
     rep.check("plain ships bin/mojo not executable: exit 1", r.code == 1, c.detail(r));
     untouched(c, b, "plain");
 
-    _ = try c.project("app", "greet = \"1\"\ntwin = \"1\"");
+    _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/twin\" = \"1\"");
     r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
     rep.check("twin ships bin/mojo with the toolchain's bytes: accepted, the file is the toolchain's", r.code == 0 and r.stderr.len == 0 and
         std.mem.eql(u8, c.read(b.env_dir, "bin/mojo") orelse "", mojo_bin.data) and c.exists(b.env_dir, "lib/libtwin.so"), c.detail(r));
@@ -176,7 +176,7 @@ test "a version 2 lock that records another toolchain closure is refused before 
     const t = try c.toolchain("channel/toolchain", "toolchain.json", "T");
     const mirror = try c.toolchain("channel/mirror", "mirror.json", "T");
     const cache = try h.join(a, &.{ c.work, "cache" });
-    const app = try fx.projectV2(c, "app", "greet = \"1\"");
+    const app = try fx.projectV2(c, "app", "\"example/greet\" = \"1\"");
     const reg = [_][]const u8{ "--registry", c.fake.base };
 
     var r = try c.run(app, &(.{"lock"} ++ reg));
@@ -198,7 +198,7 @@ test "a version 2 lock that records another toolchain closure is refused before 
     r = try c.run(app, &.{ "sync", "--locked", "--toolchain", t.closure, "--cache", cache });
     rep.check("the closure the lock records is accepted", r.code == 0 and h.contains(r.stdout, "installed 1 packages for") and r.stderr.len == 0, c.detail(r));
 
-    const app_m = try fx.projectV2(c, "app_m", "greet = \"1\"");
+    const app_m = try fx.projectV2(c, "app_m", "\"example/greet\" = \"1\"");
     try fs.cwd().copyFile(c.path(&.{ app, "mopm.lock" }), fs.cwd(), c.path(&.{ app_m, "mopm.lock" }), .{});
     r = try c.run(app_m, &.{ "sync", "--locked", "--toolchain", mirror.closure, "--cache", cache });
     rep.check("a mirror of the recorded closure has the same hash and is accepted", r.code == 0 and h.contains(r.stdout, "installed 1 packages for") and r.stderr.len == 0, c.detail(r));
@@ -221,7 +221,7 @@ test "a short body and an HTTP 404 of a locked file or a toolchain file are refu
     try c.publish("late", late);
     const late_file = "mojo-late-1.0.0-" ++ build_tag ++ ".conda";
     const late_url = try c.fmt("{s}/channel/{s}/{s}", .{ c.fake.base, c.subdir, late_file });
-    _ = try c.project("app", "greet = \"1\"\nlate = \"1\"");
+    _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/late\" = \"1\"");
     try c.serve("late", late[0 .. late.len / 2]);
     var r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t }));
     rep.same("a locked file with a short body: the refusal", try c.fmt("mopm sync: {s} is {d} bytes; the pin says {d}; the download is short or broke off; refused\n", .{ late_url, late.len / 2, late.len }), r.stderr);
@@ -235,7 +235,7 @@ test "a short body and an HTTP 404 of a locked file or a toolchain file are refu
     untouched(c, b, "a locked file the registry does not have");
 
     // A toolchain file of T2, which the cache has not got: a short body, then no file.
-    _ = try c.project("app", "greet = \"1\"");
+    _ = try c.project("app", "\"example/greet\" = \"1\"");
     const t2_mojo = b.t2.files[0];
     const t2_url = try c.fmt("{s}/{s}", .{ c.fake.base, t2_mojo.served });
     const served_path = c.path(&.{ c.fake_dir, t2_mojo.served });

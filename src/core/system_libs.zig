@@ -159,7 +159,7 @@ fn parseManifest(a: Allocator, text: []const u8) !manifest.Manifest {
     return manifest.parse(a, text, &diag);
 }
 
-const toml_head = "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n";
+const toml_head = "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n";
 
 test "a project that loads nothing keeps its lock: no system_libs, the same bytes" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

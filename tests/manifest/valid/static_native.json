@@ -1,6 +1,6 @@
 {
   "package": {
-    "name": "tls_sys",
+    "name": "example/tls_sys",
     "version": "2.4.0",
     "description": null,
     "license": null,
@@ -11,7 +11,7 @@
     "mojo": ["1.0.0"]
   },
   "dependencies": [
-    {"name": "crypto_sys", "version": "1.39"}
+    {"name": "example/crypto_sys", "version": "1.39"}
   ],
   "dev-dependencies": [],
   "native-dependencies": [],

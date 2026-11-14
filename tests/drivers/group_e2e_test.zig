@@ -1542,8 +1542,8 @@ test "the workspace: each member depends on the one below it, by path and by ver
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try std.testing.expectEqualStrings("[package]\nname = \"zz_e2e_core\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n", try g.memberToml(a, g.pkg_core, "1.5.1"));
-    try std.testing.expectEqualStrings("[package]\nname = \"zz_e2e_mid\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\nzz_e2e_core = { path = \"../zz_e2e_core\", version = \"^1.5.1\" }\n", try g.memberToml(a, g.pkg_mid, "1.5.1"));
+    try std.testing.expectEqualStrings("[package]\nname = \"example/zz_e2e_core\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n", try g.memberToml(a, g.pkg_core, "1.5.1"));
+    try std.testing.expectEqualStrings("[package]\nname = \"example/zz_e2e_mid\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\"example/zz_e2e_core\" = { path = \"../zz_e2e_core\", version = \"^1.5.1\" }\n", try g.memberToml(a, g.pkg_mid, "1.5.1"));
     try std.testing.expectEqualStrings(g.pkg_mid, g.depOf(g.pkg_app).?);
     try std.testing.expect(g.depOf(g.pkg_core) == null);
     // The sources chain: the app imports the middle package, which imports the core.

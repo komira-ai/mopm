@@ -61,7 +61,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
     const with_t2 = [_][]const u8{ "--toolchain", tc2.closure, "--cache", cache };
 
     // ------------------------------------------------ the first sync
-    const app = try c.project("app", "greet = \"1\"");
+    const app = try c.project("app", "\"example/greet\" = \"1\"");
     var before = try c.served();
     var r = try c.run(app, &(.{"sync"} ++ reg ++ with_t));
     const env_dir = c.path(&.{ app, ".mopm/env" });
@@ -120,7 +120,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
     // ------------------------------------------------ a mirror
     // T's url serves nothing now: only the mirror can supply its bytes.
     try fs.cwd().rename(c.path(&.{ fake_dir, "channel/toolchain" }), c.path(&.{ fake_dir, "channel/toolchain-away" }));
-    const app_m = try c.project("app_m", "greet = \"1\"");
+    const app_m = try c.project("app_m", "\"example/greet\" = \"1\"");
     try fs.cwd().copyFile(c.path(&.{ app, "mopm.lock" }), fs.cwd(), c.path(&.{ app_m, "mopm.lock" }), .{});
     const cache_m = try h.join(a, &.{ work, "cache-m" });
     before = try c.served();
@@ -184,7 +184,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
 
     // ------------------------------------------------ an unpack that fails in the middle
     try c.publish("broken", try fx.brokenPackage(a, c.subdir));
-    _ = try c.project("app", "greet = \"1\"\nbroken = \"1\"");
+    _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/broken\" = \"1\"");
     r = try c.run(app, &(.{"sync"} ++ reg ++ with_t2));
     rep.check("an unpack that fails in the middle fails the sync, saying the environment is as it was", r.code == 1 and h.contains(r.stderr, "mopm sync: cannot install into .mopm/env: mojo-broken-1.0.0-" ++ build_tag ++ ".conda: ") and
         h.contains(r.stderr, "; the environment is as it was\n"), c.detail(r));
@@ -193,7 +193,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
     rep.check("the interrupted unpack leaves no temporary directory beside the environment", std.mem.eql(u8, try c.names(c.path(&.{ app, ".mopm" })), beside), try c.names(c.path(&.{ app, ".mopm" })));
 
     // A temporary directory a killed sync left behind goes with the next install.
-    _ = try c.project("app", "greet = \"1\"");
+    _ = try c.project("app", "\"example/greet\" = \"1\"");
     try fs.cwd().makePath(c.path(&.{ app, ".mopm/.env.tmp-0123456789ab/lib" }));
     try h.writeFile(c.path(&.{ app, ".mopm/.env.tmp-0123456789ab/lib/half" }), "half");
     r = try c.run(app, &(.{"sync"} ++ reg ++ with_t));

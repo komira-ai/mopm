@@ -38,8 +38,8 @@ _TOOLS = {
 }
 
 # The files each root imports by a relative name (all siblings of the root).
-# src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig.
-_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json"])
+# src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig, std-modules.txt by src/core/names.zig and src/core/std_modules.zig.
+_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json", "src/core/toolchain/*.txt"])
 _CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig", "src/cli/build_options.zig"])
 _FAKE_SRCS = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig"])
 

@@ -49,7 +49,7 @@ const is_macos = builtin.os.tag == .macos;
 const shim_value: []const u8 = if (is_macos) "43" else "42";
 const app_value: []const u8 = if (is_macos) "44" else "43";
 
-const consumer_toml = "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n";
+const consumer_toml = "[package]\nname = \"example/consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n";
 
 const consumer_main =
     \\from nativeapp import plus_one
@@ -510,7 +510,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const consumer = try h.join(a, &.{ work, "consumer" });
     try h.writeFile(try h.join(a, &.{ consumer, "mopm.toml" }), consumer_toml);
     try h.writeFile(try h.join(a, &.{ consumer, "main.mojo" }), consumer_main);
-    r = try c.mopmRun(&env, consumer, &.{ "add", "nativeapp@=1.0.0", "--registry", fake.base, "--overlay", dist });
+    r = try c.mopmRun(&env, consumer, &.{ "add", "example/nativeapp@=1.0.0", "--registry", fake.base, "--overlay", dist });
     try c.must("mopm add --overlay locks the staged set in a fresh project", r);
     const consumer_lock = try h.readFile(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     rep.check("the lock pins the sha256 of libshim.a, the archive the member's pack carries", h.contains(consumer_lock, try sha256Hex(a, archive_bytes)), consumer_lock);
@@ -723,9 +723,9 @@ fn runCxx(a: Allocator, rep: *h.Report) !void {
     var fake = try h.Fake.start(a, try h.toolPathAbs(a, "MOPM_FAKE_REGISTRY"), try h.join(a, &.{ work, "fake" }));
     defer fake.close();
     const consumer = try h.join(a, &.{ work, "consumer" });
-    try h.writeFile(try h.join(a, &.{ consumer, "mopm.toml" }), "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n");
+    try h.writeFile(try h.join(a, &.{ consumer, "mopm.toml" }), "[package]\nname = \"example/consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n");
     try h.writeFile(try h.join(a, &.{ consumer, "main.mojo" }), "from cxxapp import plus_one\nfrom cxxlib import cxx_answer\n\n\ndef main():\n    print(\"cxx\", cxx_answer())\n    print(\"app\", plus_one())\n");
-    r = try c.mopmRun(&env, consumer, &.{ "add", "cxxapp@=1.0.0", "--registry", fake.base, "--overlay", dist });
+    r = try c.mopmRun(&env, consumer, &.{ "add", "example/cxxapp@=1.0.0", "--registry", fake.base, "--overlay", dist });
     try c.must("mopm add --overlay locks the staged set in a fresh project", r);
     const consumer_lock = try h.readFile(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     rep.check("the lock carries link = [\"c++\"] for the native", h.contains(consumer_lock, "\"link\": [\n            \"c++\"\n          ]"), consumer_lock);
