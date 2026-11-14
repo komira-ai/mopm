@@ -108,6 +108,22 @@ pub fn build(b: *std.Build) void {
     run_import_clash_cli.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
     test_step.dependOn(&run_import_clash_cli.step);
 
+    // `zig build test-pixi -Dpixi=<pixi binary>`: pixi installs packages `mopm pack` wrote from one conda channel per
+    // namespace, served on loopback by the test (tests/drivers/pixi_channels_test.zig). The farm has no pixi, so no
+    // Buck2 target runs it; the `pixi-channels` job of ci.yml does, with the pinned pixi of tools/install_pixi.sh.
+    const pixi = b.option([]const u8, "pixi", "The pixi binary the pixi channel test drives");
+    const pixi_channels = b.addTest(.{ // native-only
+        .root_source_file = b.path("tests/drivers/pixi_channels_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_pixi_channels = b.addRunArtifact(pixi_channels);
+    run_pixi_channels.step.dependOn(b.getInstallStep());
+    run_pixi_channels.has_side_effects = true;
+    run_pixi_channels.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
+    if (pixi) |p| run_pixi_channels.setEnvironmentVariable("PIXI", b.pathFromRoot(p));
+    b.step("test-pixi", "Run the pixi channel test natively (-Dpixi=<pixi binary>)").dependOn(&run_pixi_channels.step);
+
     // `zig build test-e2e -Dmojo-env=<environment>` runs the Mojo end-to-end
     // drivers (tests/drivers/test_*_test.zig, the same files Buck2 runs on the
     // farm as //:autolink, //:discovery, //:supervisor and //:flaky) natively,

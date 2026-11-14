@@ -3,7 +3,8 @@
 #          every pull request, and on a push to main, nightly and by hand. No coverage is measured by any job of this
 #          repository today, so none is reported.
 #   beta   each component against its real counterpart: `mojo-e2e` (the CLI against the real Mojo), `pack-conformance` (the
-#          packer against the registry's validator) and `installer` (site/static/install.sh against a fake release). They have
+#          packer against the registry's validator), `pixi-channels` (pixi 0.79 installing what the packer wrote from one channel
+#          per namespace) and `installer` (site/static/install.sh against a fake release). They have
 #          `if: github.event_name != 'pull_request'`: never on a pull request. release.yml runs this whole workflow on the
 #          pushed commit as its `beta` stage, and a push to main runs it too.
 #   gamma  the whole system with real consumers: promote.yml (deploy.yml, e2e.yml), not this file.
@@ -155,6 +156,31 @@ jobs:
           npm run build:validate-lib
       - name: mopm pack, then the validator on the result
         run: node tests/pack_conformance/check.mjs ./zig-out/bin/mopm service/api/dist-validate
+
+  # pixi installs packages `mopm pack` wrote from one conda channel per namespace (docs/design/namespaces.md, section 5):
+  # the documented `pixi workspace channel add` and `pixi add`, a closure over two namespaces, a dependency's channel
+  # missing, and two packages with one import name. The test builds the channels and serves them on loopback with a
+  # stand-in mojo-compiler (tests/drivers/pixi_channels_test.zig); the farm has no pixi, so only a hosted runner runs it.
+  pixi-channels:
+    name: pixi channels (${{ matrix.os }})
+    # Beta tier: never on a pull request.
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Install pixi 0.79.0 (sha256-pinned)
+        run: tools/install_pixi.sh "$RUNNER_TEMP/pixi"
+      - name: pixi installs from namespace channels served on loopback (pixi-channels)
+        run: zig build test-pixi -Dpixi="$RUNNER_TEMP/pixi/pixi"
 
   # install.sh against a fake release served over loopback, then with known defects that it must catch.
   # It needs a shell, curl and a network stack, so only a GitHub-hosted runner runs it (no Buck2 target does).

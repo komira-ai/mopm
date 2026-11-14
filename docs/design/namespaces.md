@@ -293,7 +293,7 @@ https://conda.mopm.dev/<namespace>/
   `lib/mojo/json.mojoc` and `lib/mojo/json.mopm.json`, whose `name` is the full name.
 - Why the namespace is in the conda name although the channel already carries it: conda's `depends` cannot name a
   channel. With `mojo-<name>`, a `depends` on `mojo-json` would be met by whichever channel the user lists first that
-  has a `mojo-json`, any namespace's, and a pixi environment would install it with only a clobber warning. With the
+  has a `mojo-json`, any namespace's, and a pixi environment would install it with no message at all. With the
   namespace in the name, `depends: mojo-komira-ai.json` means one package. It also cannot collide with the conda
   packages of the Mojo toolchain (`mojo-compiler`, `mojo-python`), which have no `.`.
 - `depends` of another mopm package is `mojo-<namespace>.<name> <range>`.
@@ -305,8 +305,8 @@ pixi add mojo-komira-ai.json
 ```
 
   A package whose closure spans namespaces needs each namespace's channel; the package page lists them. Two
-  packages with one import name in a pixi environment are a file clash, which pixi reports as a clobber; mopm refuses
-  it (section 4).
+  packages with one import name in a pixi environment are a file clash: pixi 0.79 installs both with no message, and
+  one `lib/mojo/<import name>.mojoc` is left (`tests/drivers/pixi_channels_test.zig`); mopm refuses it (section 4).
 - The registry writes each namespace's repodata on its own, so publishing in one namespace never rewrites another's
   files.
 - The flat root (`https://conda.mopm.dev/<subdir>/`) keeps a valid `repodata.json` per subdir after the deletion
