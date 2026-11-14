@@ -141,6 +141,14 @@ describe('createPackage: refusals, in order', () => {
     expect(e.message).toMatch(/^'frozen-org' cannot be verified on GitHub: /);
   });
 
+  test('a CI token of a frozen organization is namespace_unverified, and nothing is written', async () => {
+    const r = await rig();
+    const e = await refused(r.creates.create(await r.ci('frozen-org', ['frozen-org/json']), 'frozen-org', 'json'));
+    expect([e.status, e.code]).toEqual([403, 'namespace_unverified']);
+    expect(e.message).toBe("'frozen-org' cannot be verified on GitHub: the mopm registry GitHub App is not installed on the organization.");
+    await nothingWritten(r, 'frozen-org/json');
+  });
+
   test('GitHub being down is unavailable, and nothing is written', async () => {
     const r = await rig();
     r.gh.state.faults.push({ path: /memberships/, reject: true });

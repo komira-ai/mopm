@@ -11,7 +11,7 @@ import type { Flags, PublishStore } from './ports';
 export interface CreateDeps {
   registry: Store;
   auth: Pick<Authenticator, 'authenticate'>;
-  access: Pick<NamespaceAccess, 'find' | 'require'>;
+  access: Pick<NamespaceAccess, 'require' | 'requireCi'>;
   /** The rate counters (the table the publish limits use). */
   publishes: Pick<PublishStore, 'hit'>;
   config: Pick<PublishConfig, 'claimRatePerAccountPerDay' | 'claimRatePerTokenPerDay'>;
@@ -52,8 +52,9 @@ export class CreateService {
     const full = `${namespace}/${name}`;
     const account = this.requireNamed(p, namespace, full);
 
-    // A CI token's right is the namespace publisher it was minted for; an account's is the live check of the namespace.
-    if (account === undefined) await this.d.access.find(namespace);
+    // A CI token's right is the namespace publisher it was minted for (a frozen organization refuses it, as every write);
+    // an account's is the live check of the namespace.
+    if (account === undefined) await this.d.access.requireCi(namespace);
     else await this.d.access.require(namespace, account);
 
     if (await this.d.registry.getPackage(full)) return { created: false };
