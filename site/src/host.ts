@@ -17,12 +17,18 @@ function known(hostname: string): boolean {
   return Object.hasOwn(SITES, hostname);
 }
 
-/** The read API base URL for a site hostname, e.g. 'https://api.mopm.dev/api/v1', or null for an unknown host. */
+/**
+ * The read API base URL for a site hostname, e.g. 'https://api.mopm.dev/api/v2', or null for an unknown host. The site
+ * reads version 2, whose packages are full names `<namespace>/<name>` (spec/api/openapi-v2.yaml).
+ */
 export function apiBase(hostname: string): string | null {
-  return known(hostname) ? `https://api.${hostname}/api/v1` : null;
+  return known(hostname) ? `https://api.${hostname}/api/v2` : null;
 }
 
-/** The conda channel URL for a site hostname, e.g. 'https://conda.mopm.dev/', or null for an unknown host. */
+/**
+ * The conda channel root for a site hostname, e.g. 'https://conda.mopm.dev/', or null for an unknown host. Each
+ * namespace's channel is under it (snippet.ts namespaceChannel).
+ */
 export function condaBase(hostname: string): string | null {
   return known(hostname) ? `https://conda.${hostname}/` : null;
 }

@@ -1,22 +1,23 @@
-// /packages/<name>/<version>: one version (getVersion).
+// /packages/<namespace>/<name>/<version>: one version (getVersion).
 //
 // One version has one spelling (spec Version), so the API answers only for the address's own spelling; the version it
 // returns is the page's address (canonicalPath; mount.ts writes it without a reload, a no-op when they agree). A yanked version says why; a tombstoned one says its
-// files were removed, and never gets a download link, even if a url came with it. A file links only to the conda
-// channel of the site the page is served on, and only for a published or yanked version. A dependency links only when
-// its name is a valid package name.
+// files were removed, and never gets a download link, even if a url came with it. A file links only into the conda
+// channel of the package's namespace on the site the page is served on, and only for a published or yanked version. A
+// dependency is a full name and links only when it is a valid one.
 //
-// The head band is the package page's (pageHead). A published or yanked version leads with the package page's one
-// install command, pixi, with a line saying it installs the newest version (spec/channel.md documents no
-// version-pinned spelling); the pinned mopm.toml lines (published only) and the channel sit under "Other ways". Each
+// The head band is the package page's (pageHead). A published or yanked version leads with the package page's install
+// commands, pixi, plus a channel line for each other namespace its dependencies are in, with a line saying they install
+// the newest version (spec/channel.md documents no version-pinned spelling); the pinned mopm.toml lines (published
+// only) and the channel sit under "Other ways". Each
 // file's SHA-256 is a .copy-box, so the page script gives it a Copy button.
 
 import { type Doc, h } from '../doc.js';
 import { formatBytes, stateLabel } from '../format.js';
 import { condaBase } from '../host.js';
 import { anchorHref, channelFileHref, internalHref } from '../links.js';
-import { isCanonicalName, isVersion, packagePath, versionPath } from '../routes.js';
-import { pinnedSnippet, refusalSentence } from '../snippet.js';
+import { type FullName, fullName, isVersion, packagePath, splitFullName, versionPath } from '../routes.js';
+import { namespaceChannel, pinnedSnippet, refusalSentence } from '../snippet.js';
 import type { FileRef, VersionDetail } from '../types.js';
 import { details, timeEl, type View } from './common.js';
 import { inlineList, installCard, type PageContext, pageHead, readmeSection, webLink } from './package.js';
@@ -78,9 +79,10 @@ function fileRow<N>(doc: Doc<N>, f: FileRef, i: number, channel: string | null, 
  * small grid (file, then platform and size, then the digest), and a browser may drop a table's semantics when its
  * display changes; the roles keep it a table to a screen reader.
  */
-function filesTable<N>(doc: Doc<N>, v: VersionDetail, ctx: PageContext): N {
+function filesTable<N>(doc: Doc<N>, f: FullName, v: VersionDetail, ctx: PageContext): N {
   if (v.files.length === 0) return h(doc, 'p', { class: 'muted' }, 'No files.');
-  const channel = condaBase(ctx.host);
+  const base = condaBase(ctx.host);
+  const channel = base === null ? null : namespaceChannel(base, f.namespace);
   const allow = downloadable(v);
   return h(
     doc,
@@ -90,7 +92,7 @@ function filesTable<N>(doc: Doc<N>, v: VersionDetail, ctx: PageContext): N {
       doc,
       'table',
       { role: 'table' },
-      h(doc, 'caption', { class: 'visually-hidden' }, `Files of ${v.name} ${v.version}`),
+      h(doc, 'caption', { class: 'visually-hidden' }, `Files of ${fullName(f)} ${v.version}`),
       h(
         doc,
         'thead',
@@ -108,15 +110,16 @@ function depsList<N>(doc: Doc<N>, v: VersionDetail): N {
     doc,
     'ul',
     { class: 'deps' },
-    ...v.deps.map((d) =>
-      h(
+    ...v.deps.map((d) => {
+      const f = splitFullName(d.name);
+      return h(
         doc,
         'li',
         null,
-        isCanonicalName(d.name) ? h(doc, 'a', { href: internalHref(packagePath(d.name)) }, d.name) : h(doc, 'span', null, d.name),
+        f !== null ? h(doc, 'a', { href: internalHref(packagePath(f)) }, d.name) : h(doc, 'span', null, d.name),
         d.range ? h(doc, 'code', { class: 'range' }, d.range) : null,
-      ),
-    ),
+      );
+    }),
   );
 }
 
@@ -140,7 +143,7 @@ function platforms(v: VersionDetail): string[] {
 export const CAVEAT_PUBLISHED = 'This installs the newest version, not necessarily this one.';
 export const CAVEAT_YANKED = 'This installs the newest version, not this yanked one.';
 
-export function versionView<N>(doc: Doc<N>, name: string, v: VersionDetail, ctx: PageContext): View<N> {
+export function versionView<N>(doc: Doc<N>, name: FullName, v: VersionDetail, ctx: PageContext): View<N> {
   // The address shows the version the registry returned, when it is in the grammar.
   const spelling = isVersion(v.version) ? v.version : null;
   const shown = spelling ?? v.version;
@@ -168,9 +171,10 @@ export function versionView<N>(doc: Doc<N>, name: string, v: VersionDetail, ctx:
   if (spelling !== null && (v.state === 'published' || v.state === 'yanked')) {
     const pinned = pinnedSnippet(name, spelling, v.state);
     const why = pinned !== null || v.state !== 'published' ? null : refusalSentence(`Version ${spelling}`, spelling);
-    doc.append(main, installCard(doc, name, pinned, ctx, why, v.state === 'yanked' ? CAVEAT_YANKED : CAVEAT_PUBLISHED));
+    const deps = v.deps.map((d) => d.name);
+    doc.append(main, installCard(doc, name, pinned, ctx, why, v.state === 'yanked' ? CAVEAT_YANKED : CAVEAT_PUBLISHED, deps));
   }
-  doc.append(main, h(doc, 'section', { 'aria-labelledby': 'files-heading' }, h(doc, 'h2', { id: 'files-heading' }, 'Files'), filesTable(doc, v, ctx)));
+  doc.append(main, h(doc, 'section', { 'aria-labelledby': 'files-heading' }, h(doc, 'h2', { id: 'files-heading' }, 'Files'), filesTable(doc, name, v, ctx)));
   doc.append(main, h(doc, 'section', { 'aria-labelledby': 'deps-heading' }, h(doc, 'h2', { id: 'deps-heading' }, 'Dependencies'), depsList(doc, v)));
   const native = nativeList(doc, v);
   if (native) doc.append(main, native);
@@ -195,21 +199,19 @@ export function versionView<N>(doc: Doc<N>, name: string, v: VersionDetail, ctx:
     ['Manifest SHA-256', h(doc, 'code', { class: 'hash' }, v.manifest_sha256)],
   ]);
   if (meta) doc.append(aside, h(doc, 'section', { 'aria-labelledby': 'side-about' }, h(doc, 'h2', { id: 'side-about' }, 'About this version'), meta));
-  if (isCanonicalName(name)) {
-    doc.append(
-      aside,
-      h(
-        doc,
-        'section',
-        { 'aria-labelledby': 'side-versions' },
-        h(doc, 'h2', { id: 'side-versions' }, 'Other versions'),
-        h(doc, 'p', { class: 'small' }, h(doc, 'a', { href: internalHref(`${packagePath(name)}#versions-heading`) }, `All versions of ${name}`)),
-      ),
-    );
-  }
+  doc.append(
+    aside,
+    h(
+      doc,
+      'section',
+      { 'aria-labelledby': 'side-versions' },
+      h(doc, 'h2', { id: 'side-versions' }, 'Other versions'),
+      h(doc, 'p', { class: 'small' }, h(doc, 'a', { href: internalHref(`${packagePath(name)}#versions-heading`) }, `All versions of ${fullName(name)}`)),
+    ),
+  );
 
   return {
-    title: `${name} ${shown}`,
+    title: `${fullName(name)} ${shown}`,
     nodes: [head, h(doc, 'div', { class: 'layout' }, main, aside)],
     canonicalPath: spelling !== null ? versionPath(name, spelling) : undefined,
   };

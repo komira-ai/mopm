@@ -10,7 +10,7 @@ import type { ApiError } from '../errors.js';
 import { type Child, type Doc, h } from '../doc.js';
 import { formatTime } from '../format.js';
 import { internalHref, webHref } from '../links.js';
-import { packagePath, searchPath } from '../routes.js';
+import { type FullName, fullName, packagePath, searchPath } from '../routes.js';
 
 export interface View<N> {
   /** The document title, without the site suffix (titleOf adds it). */
@@ -145,8 +145,12 @@ export function errorView<N>(doc: Doc<N>, err: ApiError, heading = 'Something we
   return { title: heading, nodes: [box] };
 }
 
-/** A well-formed address for a package or version the registry does not have. */
-export function notFoundView<N>(doc: Doc<N>, name: string, version?: string): View<N> {
+/**
+ * A well-formed address for a package or version the registry does not have. The way on from a missing package is a
+ * search for its name in every namespace (another namespace may have it); from a missing version, the package.
+ */
+export function notFoundView<N>(doc: Doc<N>, f: FullName, version?: string): View<N> {
+  const name = fullName(f);
   const heading = version === undefined ? 'Package not found' : 'Version not found';
   const sentence =
     version === undefined
@@ -158,12 +162,12 @@ export function notFoundView<N>(doc: Doc<N>, name: string, version?: string): Vi
     heading,
     {},
     h(doc, 'p', { class: 'lost-lede' }, ...sentence),
-    searchBox(doc, 'lost-q', version === undefined ? name : ''),
+    searchBox(doc, 'lost-q', version === undefined ? f.name : ''),
     wayOn(
       doc,
       version === undefined
-        ? h(doc, 'a', { href: internalHref(searchPath({ q: name })) }, `Search for names starting with ${name}`)
-        : h(doc, 'a', { href: internalHref(packagePath(name)) }, `All versions of ${name}`),
+        ? h(doc, 'a', { href: internalHref(searchPath({ q: f.name })) }, `Search every namespace for names starting with ${f.name}`)
+        : h(doc, 'a', { href: internalHref(packagePath(f)) }, `All versions of ${name}`),
     ),
   );
   return { title: heading, nodes: [box], noindex: true };

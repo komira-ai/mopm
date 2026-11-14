@@ -1,10 +1,10 @@
-// The API contract fixtures (tests/contract/api/*.json at the repo root): the same cases the contract check
-// validates, so the site is tested against exactly what the API promises.
+// The API contract fixtures of version 2 (tests/contract/api-v2/*.json at the repo root), the API the site reads: the
+// same cases the contract check validates, so the site is tested against exactly what the API promises.
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-export const CONTRACT_DIR = join(__dirname, '..', '..', 'tests', 'contract', 'api');
+export const CONTRACT_DIR = join(__dirname, '..', '..', 'tests', 'contract', 'api-v2');
 
 export interface ContractCase {
   name: string;
@@ -23,13 +23,13 @@ export interface ContractCase {
 export const READ_OPS = ['getHealth', 'searchPackages', 'getPackage', 'getVersion'] as const;
 export type ReadOp = (typeof READ_OPS)[number];
 
-export function load(file: 'packages' | 'owners' | 'meta' | 'errors'): ContractCase[] {
+export function load(file: 'packages' | 'meta' | 'errors'): ContractCase[] {
   const doc = JSON.parse(readFileSync(join(CONTRACT_DIR, `${file}.json`), 'utf8')) as { cases: ContractCase[] };
   return doc.cases;
 }
 
 export function allCases(): ContractCase[] {
-  return (['packages', 'owners', 'meta', 'errors'] as const).flatMap(load);
+  return (['packages', 'meta', 'errors'] as const).flatMap(load);
 }
 
 /** Valid (no `expect` key) successful answers of the read operations. */

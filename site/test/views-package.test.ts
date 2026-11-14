@@ -3,45 +3,71 @@
 // value is shown as text; only checked URLs become links; the state of a version is words, not only a class. The page
 // leads with ONE install command (pixi, which installs a published package today), with the others under "Other ways
 // to install", then the readme; the side panel lists the newest versions with their state.
-import { packageView, README_MAX_BYTES, SIDE_VERSIONS } from '../src/views/package';
+import { CHANNELS_NOTE, DEP_CHANNELS_NOTE, packageView, README_MAX_BYTES, SIDE_VERSIONS } from '../src/views/package';
 import { PLANNED, WORKING_TODAY } from '../tools/pages';
 import { hrefs, html, packageFixture, sdoc, text, uniqueIds } from './view-helpers';
 
 const CTX = { host: 'mopm.dev' };
-const render = (info = packageFixture(), ctx = CTX) => html(packageView(sdoc, 'http_client', info, ctx));
+const FN = { namespace: 'komira-ai', name: 'json' };
+const CH = 'https://conda.mopm.dev/komira-ai/';
+const CH_CMD = `pixi workspace channel add ${CH}`;
+const render = (info = packageFixture(), ctx = CTX) => html(packageView(sdoc, FN, info, ctx));
+
+const rich = (r: Record<string, unknown>) =>
+  Object.assign(r, { description: 'JSON parser', license: 'Apache-2.0', repository: 'https://github.com/komira-ai/json' });
+const installCard = (page: string) => page.slice(page.indexOf('<section class="install-card"'), page.indexOf('</section>', page.indexOf('<section class="install-card"')));
+const cmdRow = (cmd: string, label: string, describedBy = 'install-note') =>
+  `<div class="cmd cmd-lg copy-box"><span class="prompt" aria-hidden="true">$</span><pre tabindex="0" role="region" aria-label="${label}" aria-describedby="${describedBy}"><code>${cmd}</code></pre></div>`;
 
 describe('an active package (fixture: package info)', () => {
-  const out = render();
+  const out = render(packageFixture(rich));
 
-  test('one h1, the name', () => {
+  test('one h1 holding the namespace and the name; the title is the full name', () => {
     expect(out.match(/<h1>/g)).toHaveLength(1);
-    expect(out).toContain('<h1>http_client</h1>');
+    expect(out).toContain('<h1><span class="ns">komira-ai/</span><span>json</span></h1>');
+    expect(text(out.slice(out.indexOf('<h1>'), out.indexOf('</h1>')))).toBe('komira-ai/json');
+    expect(packageView(sdoc, FN, packageFixture(), CTX).title).toBe('komira-ai/json');
   });
 
-  test('the mopm.toml line names the latest version as published', () => {
-    expect(out).toContain('<code>[dependencies]\nhttp_client = "0.4.0"</code>');
-  });
-
-  test('the conda channel of this host and the pixi command are shown', () => {
-    expect(out).toContain('<code>https://conda.mopm.dev/</code>');
-    expect(out).toContain('<code>pixi add mojo-http_client</code>');
-  });
-
-  // Catches: a second command promoted beside pixi, the channel or manifest moved out of the <details>, or a block a
-  // copy button cannot find (copy.ts looks for a .copy-box holding one <pre>).
-  test('ONE install command comes first, in a copy box, with the other ways in a closed <details>', () => {
-    const card = out.slice(out.indexOf('<section class="install-card"'), out.indexOf('</section>', out.indexOf('<section class="install-card"')));
-    const before = card.slice(0, card.indexOf('<details'));
-    expect(before.match(/class="cmd[^"]*copy-box"/g)).toHaveLength(1);
-    expect(before).toContain(
-      '<div class="cmd cmd-lg copy-box"><span class="prompt" aria-hidden="true">$</span><pre tabindex="0" role="region" aria-label="install command" aria-describedby="install-note"><code>pixi add mojo-http_client</code></pre></div>',
+  test('the crumb links Packages, the namespace search and ends at the name', () => {
+    expect(out).toContain(
+      '<nav class="crumb" aria-label="Breadcrumb"><a href="/search">Packages</a><span class="sep" aria-hidden="true">/</span><a href="/search?q=komira-ai%2F" class="crumb-pkg">komira-ai</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">json</span></nav>',
     );
-    expect(before).toContain('<p class="install-note" id="install-note">in a pixi project that lists the channel <code>https://conda.mopm.dev/</code></p>');
+  });
+
+  test('the mopm.toml line has the full name as a quoted key and names the latest version as published', () => {
+    expect(out).toContain('<code>[dependencies]\n"komira-ai/json" = "1.1.0"</code>');
+    expect(out).not.toContain('\njson = ');
+  });
+
+  test('the conda channel is the namespace channel of this host and the pixi commands name it', () => {
+    expect(out).toContain(`<code>${CH}</code>`);
+    expect(out).toContain(`<code>${CH_CMD}</code>`);
+    expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
+    expect(out).not.toContain('<code>https://conda.mopm.dev/</code>');
+  });
+
+  // Catches: the channel line after the package line (pixi would not find the package), a command without a label a
+  // copy button can use, the channel or manifest moved out of the <details>, or a block copy.ts cannot find (it looks
+  // for a .copy-box holding one <pre>).
+  test('the commands come first in order, each in its own named copy box, with the other ways in a closed <details>', () => {
+    const card = installCard(out);
+    const before = card.slice(0, card.indexOf('<details'));
+    expect(before.match(/class="cmd[^"]*copy-box"/g)).toHaveLength(2);
+    expect(before.indexOf(cmdRow(CH_CMD, 'channel command'))).toBeGreaterThan(-1);
+    expect(before.indexOf(cmdRow('pixi add mojo-komira-ai.json', 'install command'))).toBeGreaterThan(before.indexOf(cmdRow(CH_CMD, 'channel command')));
+    expect(before).toContain(`<p class="install-note" id="install-note">in a pixi workspace: add the conda channel of the namespace, <code>${CH}</code>, then the package</p>`);
     const others = card.slice(card.indexOf('<details'));
     expect(others.startsWith('<details class="other-ways"><summary>Other ways to install</summary>')).toBe(true);
-    expect(others).toContain('<div class="cmd copy-box"><pre tabindex="0" role="region" aria-labelledby="snippet-channel"><code>https://conda.mopm.dev/</code></pre></div>');
-    expect(others).toContain('<code>[dependencies]\nhttp_client = "0.4.0"</code>');
+    expect(others).toContain(`<div class="cmd copy-box"><pre tabindex="0" role="region" aria-labelledby="snippet-channel"><code>${CH}</code></pre></div>`);
+    expect(others).toContain('<code>[dependencies]\n"komira-ai/json" = "1.1.0"</code>');
     expect(card).not.toContain('<button'); // the page script adds the buttons; a view never does
+  });
+
+  test('the package page says a dependency in another namespace needs its channel, and adds no channel of its own for it', () => {
+    expect(text(installCard(out))).toContain(text(CHANNELS_NOTE));
+    expect(installCard(out)).not.toContain('channel command 2');
+    expect(text(out)).not.toContain(text(DEP_CHANNELS_NOTE));
   });
 
   test('the page reads in order: name, install card, readme, versions table', () => {
@@ -53,18 +79,17 @@ describe('an active package (fixture: package info)', () => {
   });
 
   test('the head: latest version, description, and the published time of the latest version', () => {
-    expect(out).toContain('<span class="ver"><span class="visually-hidden">latest version </span>0.4.0</span>');
-    expect(out).toContain('<p class="lede">HTTP/1.1 client</p>');
-    expect(text(out)).toContain('Published 2026-10-13 12:00 UTC');
+    expect(out).toContain('<span class="ver"><span class="visually-hidden">latest version </span>1.1.0</span>');
+    expect(out).toContain('<p class="lede">JSON parser</p>');
+    expect(text(out)).toContain('Published 2026-11-10 08:30 UTC');
     expect(text(out)).toContain('License Apache-2.0');
     expect(text(out)).toContain('2 versions');
-    expect(out).toContain('<nav class="crumb" aria-label="Breadcrumb"><a href="/search">Packages</a>');
   });
 
   test('the side panel lists versions with their state in words and links to the full table', () => {
     const side = out.slice(out.indexOf('<aside'));
-    expect(side).toContain('<li class="state-published"><a href="/packages/http_client/0.4.0">0.4.0</a><span>2026-10-13</span></li>');
-    expect(side).toContain('<li class="state-yanked"><a href="/packages/http_client/0.3.0">0.3.0</a><span>yanked</span></li>');
+    expect(side).toContain('<li class="state-published"><a href="/packages/komira-ai/json/1.1.0">1.1.0</a><span>2026-11-10</span></li>');
+    expect(side).toContain('<li class="state-yanked"><a href="/packages/komira-ai/json/1.0.0">1.0.0</a><span>yanked</span></li>');
     expect(side).toContain('<a href="#versions-heading">All 2 versions</a>');
   });
 
@@ -77,30 +102,31 @@ describe('an active package (fixture: package info)', () => {
     for (const cmd of named) expect([...WORKING_TODAY, ...PLANNED]).toContain(cmd);
   });
 
-  test('the versions table has a caption, column headers and the state as text', () => {
-    expect(out).toContain('<caption>Versions of http_client, newest first</caption>');
+  test('the versions table has a caption with the full name, column headers and the state as text', () => {
+    expect(out).toContain('<caption>Versions of komira-ai/json, newest first</caption>');
     expect(out).toContain('<th scope="col">State</th>');
-    expect(out).toContain('<td>yanked: crashes on empty body</td>');
+    expect(out).toContain('<td>yanked: wrong license text</td>');
     expect(out).toContain('<td>published</td>');
-    expect(hrefs(out)).toEqual(expect.arrayContaining(['/packages/http_client/0.4.0', '/packages/http_client/0.3.0']));
+    expect(hrefs(out)).toEqual(expect.arrayContaining(['/packages/komira-ai/json/1.1.0', '/packages/komira-ai/json/1.0.0']));
   });
 
-  test('owners are text, the repository is a nofollow link', () => {
-    expect(out).toContain('<li><span class="avatar" aria-hidden="true">OC</span>octocat</li>');
-    expect(out).toContain('<a href="https://github.com/example/http_client" rel="nofollow noopener noreferrer ugc">');
+  test('the repository is a nofollow link', () => {
+    expect(out).toContain('<a href="https://github.com/komira-ai/json" rel="nofollow noopener noreferrer ugc">');
   });
 
-  test('a page served from another stage shows that stage\'s channel', () => {
-    expect(render(packageFixture(), { host: 'beta.mopm.dev' })).toContain('<code>https://conda.beta.mopm.dev/</code>');
+  test('a page served from another stage shows that stage\'s channel of the namespace', () => {
+    const beta = render(packageFixture(), { host: 'beta.mopm.dev' });
+    expect(beta).toContain('<code>https://conda.beta.mopm.dev/komira-ai/</code>');
+    expect(beta).toContain('<code>pixi workspace channel add https://conda.beta.mopm.dev/komira-ai/</code>');
   });
 
   // Catches a fixed note naming prod's channel beside a command run on another stage: a reader following the visible
   // line would install prod's package of that name.
-  test("the line beside the one install command names this stage's channel", () => {
+  test("the line beside the commands names this stage's channel of the namespace", () => {
     for (const host of ['beta.mopm.dev', 'gamma.mopm.dev']) {
       const page = render(packageFixture(), { host });
       const note = page.slice(page.indexOf('<p class="install-note"'), page.indexOf('</p>', page.indexOf('<p class="install-note"')));
-      expect(text(note)).toBe(`in a pixi project that lists the channel https://conda.${host}/`);
+      expect(text(note)).toBe(`in a pixi workspace: add the conda channel of the namespace, https://conda.${host}/komira-ai/, then the package`);
     }
   });
 
@@ -126,9 +152,126 @@ describe('an active package (fixture: package info)', () => {
   test('a page on an unknown host shows no channel and no pixi command; the mopm.toml lines stand alone', () => {
     const out2 = render(packageFixture(), { host: 'localhost' });
     expect(out2).not.toContain('conda.');
-    expect(out2).not.toContain('pixi add');
+    expect(out2).not.toContain('pixi');
     expect(out2).not.toContain('<details');
-    expect(out2).toContain('<code>[dependencies]\nhttp_client = "0.4.0"</code>');
+    expect(out2).not.toContain('cmd-lg');
+    expect(text(out2)).not.toContain(text(CHANNELS_NOTE));
+    expect(out2).toContain('<code>[dependencies]\n"komira-ai/json" = "1.1.0"</code>');
+  });
+});
+
+describe('a full name the site cannot write into a command', () => {
+  test.each([
+    ['a namespace with a space', { namespace: 'bad ns', name: 'json' }],
+    ['a namespace with an uppercase letter', { namespace: 'Komira', name: 'json' }],
+    ['a name with a quote', { namespace: 'komira-ai', name: 'js"on' }],
+    ['a name the registry would normalise', { namespace: 'komira-ai', name: 'Json' }],
+  ])('%s: no channel, no pixi command and no mopm.toml line, though the page still renders', (_what, f) => {
+    const out = html(packageView(sdoc, f, packageFixture(), CTX));
+    expect(out).not.toContain('pixi');
+    expect(out).not.toContain('[dependencies]');
+    expect(out).not.toContain('cmd-lg');
+    expect(out).not.toContain('conda.');
+    expect(out.match(/<h1>/g)).toHaveLength(1);
+  });
+});
+
+describe('the namespace section of the side panel', () => {
+  const section = (change: (ns: Record<string, unknown>) => void = () => undefined) => {
+    const page = render(packageFixture((r) => change(r.namespace as Record<string, unknown>)));
+    const side = page.slice(page.indexOf('<aside'));
+    const at = side.indexOf('<section aria-labelledby="side-namespace">');
+    return side.slice(at, side.indexOf('</section>', at));
+  };
+
+  test('shows the namespace as a link to its packages, the kind and the GitHub account (fixture: an org)', () => {
+    const sec = section();
+    expect(sec).toContain('<h2 id="side-namespace">Namespace</h2>');
+    expect(sec).toContain('<dt>Namespace</dt><dd><a href="/search?q=komira-ai%2F" class="crumb-pkg">komira-ai</a></dd>');
+    expect(sec).toContain('<dt>Kind</dt><dd>GitHub organization</dd>');
+    expect(sec).toContain('<dt>GitHub</dt><dd><a href="https://github.com/komira-ai" rel="nofollow noopener noreferrer ugc">@komira-ai</a></dd>');
+  });
+
+  test.each([
+    ['user', 'GitHub user'],
+    ['org', 'GitHub organization'],
+    ['unknown', 'unknown'],
+  ])('the kind %s is labelled %s', (kind, label) => {
+    expect(section((ns) => Object.assign(ns, { kind }))).toContain(`<dt>Kind</dt><dd>${label}</dd>`);
+  });
+
+  test.each([
+    ['upper case', 'Komira-AI'],
+    ['a double hyphen', 'komira--ai'],
+    ['40 characters', 'a'.repeat(40)],
+    ['a slash', 'komira-ai/x'],
+  ])('a namespace the registry answers with %s is text, not a link to a search', (_what, namespace) => {
+    const sec = section((ns) => Object.assign(ns, { namespace, login: namespace }));
+    expect(sec).toContain(`<dt>Namespace</dt><dd>${namespace}</dd>`);
+    expect(sec).not.toContain('/search?q=');
+  });
+
+  test('a kind the registry newly adds is labelled unknown', () => {
+    expect(section((ns) => Object.assign(ns, { kind: 'bot' }))).toContain('<dt>Kind</dt><dd>unknown</dd>');
+  });
+
+  test.each([
+    ['a plain login', 'alice'],
+    ['a login with digits and a single hyphen', 'Alice-99'],
+    ['39 characters', 'a'.repeat(39)],
+    ['an enterprise-managed login with an underscore', 'alice_corp'],
+  ])('%s links to its GitHub page', (_what, login) => {
+    const sec = section((ns) => Object.assign(ns, { login }));
+    expect(sec).toContain(`<a href="https://github.com/${login}" rel="nofollow noopener noreferrer ugc">@${login}</a>`);
+  });
+
+  test.each([
+    ['a space', 'bad login'],
+    ['a slash', 'a/b'],
+    ['40 characters', 'a'.repeat(40)],
+    ['a leading hyphen', '-alice'],
+    ['a double hyphen', 'al--ice'],
+    ['a trailing hyphen', 'alice-'],
+    ['a query', 'alice?x=1'],
+    ['the empty string', ''],
+  ])('a login with %s is shown as text, never a link', (_what, login) => {
+    const page = render(packageFixture((r) => Object.assign(r.namespace as Record<string, unknown>, { login })));
+    expect(hrefs(page).filter((x) => x.includes('github.com/') && !x.includes('/komira-ai/json'))).toEqual([]);
+    const sec = section((ns) => Object.assign(ns, { login }));
+    expect(sec).toContain(`<dt>GitHub</dt><dd><span>${login}</span></dd>`);
+  });
+
+  test('a login that differs from the namespace only in case says nothing about a rename', () => {
+    const sec = section((ns) => Object.assign(ns, { namespace: 'komira-ai', login: 'Komira-AI' }));
+    expect(sec).not.toContain('now');
+    expect(sec).toContain('@Komira-AI');
+  });
+
+  test('a login that differs beyond case says the account was renamed and the namespace keeps its name', () => {
+    const sec = section((ns) => Object.assign(ns, { login: 'komira-labs' }));
+    expect(text(sec)).toContain('The GitHub account is now komira-labs; the namespace keeps the name komira-ai.');
+    expect(sec).toContain('href="https://github.com/komira-labs"');
+  });
+
+  test('a renamed login that is not a GitHub login is still named, as text', () => {
+    const sec = section((ns) => Object.assign(ns, { login: 'new name' }));
+    expect(text(sec)).toContain('The GitHub account is now new name; the namespace keeps the name komira-ai.');
+    expect(sec).not.toContain('github.com/new');
+  });
+
+  test('a frozen namespace says publishing is refused and installing works', () => {
+    const sec = section((ns) => Object.assign(ns, { frozen: true }));
+    expect(text(sec)).toContain('Frozen: the registry’s GitHub App is not installed for this account, so nothing new can be published here. Installing works as before.');
+  });
+
+  test('a namespace that is not frozen has no frozen line', () => {
+    expect(text(section())).not.toContain('Frozen');
+  });
+
+  test('the old owners list is gone', () => {
+    const page = render();
+    expect(page).not.toContain('class="avatar"');
+    expect(text(page)).not.toContain('Owners');
   });
 });
 
@@ -150,8 +293,8 @@ describe('package shapes the fixtures do not cover', () => {
     );
     expect(out).not.toContain('[dependencies]');
     expect(text(out)).toContain('The registry names no latest version this page can show, so there is no mopm.toml line.');
-    expect(out).toContain('<code>https://conda.mopm.dev/</code>');
-    expect(out).toContain('<code>pixi add mojo-http_client</code>');
+    expect(out).toContain(`<code>${CH}</code>`);
+    expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
   });
 
   // spec/channel.md: a yanked version leaves packages.conda, a tombstoned one loses its bytes; with no published
@@ -180,16 +323,16 @@ describe('package shapes the fixtures do not cover', () => {
     const out = render(packageFixture((r) => Object.assign(r, { latest: v })));
     expect(out).not.toContain('[dependencies]');
     expect(text(out)).toContain(`The latest version, ${v}, has a part larger than a mopm.toml requirement allows (2^64-1).`);
-    expect(out).toContain('<code>pixi add mojo-http_client</code>');
+    expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
   });
 
   test.each(['1.0', '1.0rc1'])('latest %s (outside the grammar): no mopm.toml line, not shown as the latest, pixi still shown', (v) => {
     const out = render(packageFixture((r) => Object.assign(r, { latest: v })));
     expect(out).not.toContain('[dependencies]');
-    expect(render()).toContain('latest version </span>0.4.0'); // the marker the next line looks for
+    expect(render()).toContain('latest version </span>1.1.0'); // the marker the next line looks for
     expect(out).not.toContain('latest version </span>');
     expect(text(out)).toContain('The registry names no latest version this page can show');
-    expect(out).toContain('<code>pixi add mojo-http_client</code>');
+    expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
   });
 
   // Any published version makes the package installable, wherever it sits: newest first, the newest is often the
@@ -208,9 +351,9 @@ describe('package shapes the fixtures do not cover', () => {
   ])('active, %s, with another version published: the channel and pixi line are shown', (_what, versions) => {
     const latest = versions.find((v) => v.state === 'published')?.version ?? null;
     const out = render(packageFixture((r) => Object.assign(r, { latest, versions })));
-    expect(out).toContain('<code>https://conda.mopm.dev/</code>');
-    expect(out).toContain('<code>pixi add mojo-http_client</code>');
-    expect(out).toContain(`<code>[dependencies]\nhttp_client = "${latest}"</code>`);
+    expect(out).toContain(`<code>${CH}</code>`);
+    expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
+    expect(out).toContain(`<code>[dependencies]\n"komira-ai/json" = "${latest}"</code>`);
     expect(text(out)).not.toContain('Nothing can be installed');
   });
 
@@ -254,7 +397,7 @@ describe('package shapes the fixtures do not cover', () => {
     const out = render(packageFixture((r) => Object.assign(r, { latest: '0.6.0', versions })));
     const side = out.slice(out.indexOf('<aside'));
     expect(side.match(/<li class="state-/g)).toHaveLength(SIDE_VERSIONS);
-    expect(side).toContain('<li class="state-tombstoned"><a href="/packages/http_client/0.7.0">0.7.0</a><span>tombstoned</span></li>');
+    expect(side).toContain('<li class="state-tombstoned"><a href="/packages/komira-ai/json/0.7.0">0.7.0</a><span>tombstoned</span></li>');
     expect(side).not.toContain('0.2.0');
     expect(side).toContain('All 7 versions');
     expect(out.slice(0, out.indexOf('<aside')).match(/<tr class="state-/g)).toHaveLength(7);
@@ -287,7 +430,7 @@ describe('package shapes the fixtures do not cover', () => {
     expect(out).toContain('<span>javascript:alert(1)</span>');
     expect(out).toContain('<span>data:text/html,x</span>');
     // The page's own in-page links (the side panel's link to the versions table) are the only other hrefs.
-    expect(hrefs(out).filter((h) => !h.startsWith('/') && !h.startsWith('https://github.com/example/') && h !== '#versions-heading')).toEqual([]);
+    expect(hrefs(out).filter((h) => !h.startsWith('/') && h !== 'https://github.com/komira-ai' && h !== '#versions-heading')).toEqual([]);
   });
 
   test('a mailto: or fragment repository or homepage is text, though readme links may use them', () => {
@@ -305,7 +448,7 @@ describe('package shapes the fixtures do not cover', () => {
   test('a version that does not match the grammar is not a link', () => {
     const out = render(packageFixture((r) => Object.assign(r, { versions: [{ version: '../x', state: 'published', published_at: '2026-10-13T12:00:00Z' }] })));
     expect(out).toContain('<span>../x</span>');
-    expect(hrefs(out)).not.toContain('/packages/http_client/..%2Fx');
+    expect(hrefs(out)).not.toContain('/packages/komira-ai/json/..%2Fx');
   });
 });
 

@@ -861,13 +861,13 @@ filegroup(
 filegroup(
     name = "contract_api",
     srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},
-    visibility = ["//service/api:", "//site:"],
+    visibility = ["//service/api:"],
 )
 
 filegroup(
     name = "contract_api_v2",
     srcs = {f[len("tests/contract/api-v2/"):]: f for f in glob(["tests/contract/api-v2/*.json"])},
-    visibility = ["//service/api:"],
+    visibility = ["//service/api:", "//site:"],
 )
 
 # ---- What the Rust crates (service/lambda/*) read -----------------------------------
