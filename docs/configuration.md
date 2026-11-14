@@ -47,7 +47,7 @@ Any key other than these is refused, including `workspace`, `tool` and `profile`
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
-| `name` | string | none, required | a lowercase identifier: a lowercase letter, then lowercase letters, digits and `_`; not a Mojo keyword (`for`, `fn`, `struct`, ...) or a builtin it would shadow (`len`, `print`, `range`, ...) | `name = "http_client"` |
+| `name` | string | none, required | a full name, `<namespace>/<name>`: the namespace is a GitHub login in lower case (letters, digits and single hyphens, 1 to 39 characters; not a conda subdir such as `linux-64`, nor `index`, `quarantine` or `native-mirror`); the name, which Mojo code imports, is a lowercase letter, then lowercase letters, digits and `_`, 2 to 64 characters in all, and not a Mojo keyword (`for`, `fn`, `struct`, ...), a builtin it would shadow (`len`, `print`, `range`, ...), a top-level module of the Mojo standard library (`collections`, `memory`, `os`, ...) or `mopm`, `mojo`, `max`, `modular`, `std`, `stdlib`. A name without a namespace is refused with the full form in the message | `name = "example/http_client"` |
 | `version` | string | none, required | semantic versioning: `MAJOR.MINOR.PATCH` with an optional `-pre.release` and `+build`. `pack` and `publish` accept exactly `MAJOR.MINOR.PATCH` | `version = "0.4.0"` |
 | `description` | string | none | any string; mopm checks only that it is a string | `description = "HTTP/1.1 client"` |
 | `license` | string | none | any string; mopm checks only that it is a string | `license = "Apache-2.0"` |
@@ -57,7 +57,7 @@ Any key other than these is refused, including `workspace`, `tool` and `profile`
 | `mojo` | string or array of strings | none | exact compiler versions, such as `"1.0.0"`: at least one, none empty, none repeated; not together with `[toolchain]` | `mojo = ["1.0.0", "1.1.0"]` |
 | `metadata` | table | none | any keys and values the TOML subset reads | `[package.metadata.some_tool]` |
 
-A package name is also the name of its directory under `src/` that `mopm new` makes, the import name, and, in the registry, `mojo-<name>`. `homepage` and `keywords`, which [the mopm.toml draft](../spec/mopm-toml.md) lists, are not keys of the parser today: `unknown key 'homepage' in [package]`.
+The part of the name after `/` is the import name (`import http_client`). It is also the name of the package's directory under `src/` that `mopm new` makes, and of the directory `[targets] lib` names; the lock and, in the registry, `mojo-<name>` still use it alone. `homepage` and `keywords`, which [the mopm.toml draft](../spec/mopm-toml.md) lists, are not keys of the parser today: `unknown key 'homepage' in [package]`.
 
 `mojo` in `[package]` makes a version 2 lock (below) for every version listed, and a unit graph for one of them. `[package.metadata]` is the one place for the settings of other tools: mopm neither reads nor checks it, and `mopm metadata` prints it under `package.metadata`, in file order, only when the file has it.
 
@@ -73,7 +73,7 @@ The older spelling of the compiler pin, and what `mopm new` writes. It is a vers
 
 ### Dependencies: `[dependencies]` and `[dev-dependencies]`
 
-Each entry is `name = <requirement>` or `name = { version = <requirement> }` or `name = { path = <directory> }`. The name follows the rules of a package name. `[dev-dependencies]` has the same entries; they are locked and shown in `mopm tree`, and they are dependencies of the test units of `mopm plan`, but they are not part of a packed package.
+Each entry is `"<namespace>/<name>" = <requirement>` or `"<namespace>/<name>" = { version = <requirement> }` or `"<namespace>/<name>" = { path = <directory> }`. The key is a full name and follows the rules of a package name; TOML needs the quotes because it holds `/`. A path dependency's key is the `[package] name` of the `mopm.toml` at the path. `[dev-dependencies]` has the same entries; they are locked and shown in `mopm tree`, and they are dependencies of the test units of `mopm plan`, but they are not part of a packed package.
 
 The keys of the table form:
 
@@ -143,7 +143,7 @@ A native library that the package builds and ships. The id is a lowercase identi
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
-| `lib` | table | `src/<name>`, when that directory exists | a table with one key, `path` (below) | `lib = { path = "src/http_client" }` |
+| `lib` | table | `src/<name>` (the import name), when that directory exists | a table with one key, `path` (below), whose last component is the import name: Mojo imports a package by its directory's name | `lib = { path = "src/http_client" }` |
 | `bins` | array of tables | empty | tables with `name` and `path` (below) | `bins = [{ name = "fetch", path = "src/fetch.mojo" }]` |
 | `tests` | array of strings | empty | any strings | `tests = ["tests"]` |
 

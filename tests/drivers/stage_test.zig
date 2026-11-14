@@ -62,7 +62,7 @@ const World = struct {
 
     /// A member of the workspace `ws` at `version`, with its `[dependencies]` lines, and the artifact `art` holds for it.
     fn member(w: World, ws: []const u8, art: []const u8, name: []const u8, version: []const u8, deps: []const u8, mojoc: []const u8) !void {
-        const manifest = try std.fmt.allocPrint(w.a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}", .{ name, version, deps });
+        const manifest = try std.fmt.allocPrint(w.a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}", .{ name, version, deps });
         try h.writeFile(try w.path(&.{ w.work, ws, "src", name, "mopm.toml" }), manifest);
         try h.writeFile(try w.path(&.{ w.work, ws, "src", name, "README.md" }), try std.fmt.allocPrint(w.a, "# {s}\n", .{name}));
         try h.writeFile(try w.path(&.{ w.work, art, "noarch", try std.fmt.allocPrint(w.a, "{s}.mojoc", .{name}) }), mojoc);
@@ -70,8 +70,8 @@ const World = struct {
 
     fn chain(w: World, ws: []const u8, art: []const u8, version: []const u8, z_mojoc: []const u8) !void {
         try w.member(ws, art, "stg_z", version, "", z_mojoc);
-        try w.member(ws, art, "stg_m", version, "stg_z = { path = \"../stg_z\", version = \"1\" }\n", "the mojoc of m");
-        try w.member(ws, art, "stg_a", version, "stg_m = { path = \"../stg_m\", version = \"^1.0\" }\n", "the mojoc of a");
+        try w.member(ws, art, "stg_m", version, "\"example/stg_z\" = { path = \"../stg_z\", version = \"1\" }\n", "the mojoc of m");
+        try w.member(ws, art, "stg_a", version, "\"example/stg_m\" = { path = \"../stg_m\", version = \"^1.0\" }\n", "the mojoc of a");
     }
 
     fn stage(w: World, ws: []const u8, art: []const u8, out: []const u8, extra: []const []const u8) !Out {
@@ -188,16 +188,16 @@ fn theRegistryDecides(w: World) !void {
 fn aCycleAndDeterminism(w: World) !void {
     const a = w.a;
     // A cycle: nothing staged.
-    try w.member("cyc", "art_cyc", "stg_p", "0.1.0", "stg_q = { path = \"../stg_q\", version = \"0.1\" }\n", "p");
-    try w.member("cyc", "art_cyc", "stg_q", "0.1.0", "stg_p = { path = \"../stg_p\", version = \"0.1\" }\n", "q");
+    try w.member("cyc", "art_cyc", "stg_p", "0.1.0", "\"example/stg_q\" = { path = \"../stg_q\", version = \"0.1\" }\n", "p");
+    try w.member("cyc", "art_cyc", "stg_q", "0.1.0", "\"example/stg_p\" = { path = \"../stg_p\", version = \"0.1\" }\n", "q");
     const cyc = try w.stage("cyc", "art_cyc", "set_cycle", &.{});
     w.rep.check("a cycle ends 1, names the packages, and stages nothing", cyc.code == 1 and h.contains(cyc.stderr, "stg_p, stg_q form a cycle") and
         !w.exists(&.{ w.work, "set_cycle" }), try w.text(cyc));
 
     // The same workspace twice: the same bytes, a plan with no loopback address in it, and packages with none either.
     try w.chain("ws2", "art2", "0.2.0", "the mojoc of z");
-    try w.member("ws2", "art2", "stg_m", "0.2.0", "stg_z = { path = \"../stg_z\", version = \"0.2\" }\n", "the mojoc of m");
-    try w.member("ws2", "art2", "stg_a", "0.2.0", "stg_m = { path = \"../stg_m\", version = \"0.2\" }\n", "the mojoc of a");
+    try w.member("ws2", "art2", "stg_m", "0.2.0", "\"example/stg_z\" = { path = \"../stg_z\", version = \"0.2\" }\n", "the mojoc of m");
+    try w.member("ws2", "art2", "stg_a", "0.2.0", "\"example/stg_m\" = { path = \"../stg_m\", version = \"0.2\" }\n", "the mojoc of a");
     const one = try w.stage("ws2", "art2", "set_one", &.{});
     const two = try w.stage("ws2", "art2", "set_two", &.{});
     var same = one.code == 0 and two.code == 0;
@@ -218,7 +218,7 @@ fn aCycleAndDeterminism(w: World) !void {
 /// A member with a `[native.<id>]` static library: staged from the archive beside its `.mojoc`, and published as staged.
 fn aNativeMember(w: World) !void {
     const archive = "!<arch>\nthe archive of stg_n\n";
-    try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" }), "[package]\nname = \"stg_n\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.stg_n]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libstg\"\n");
+    try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" }), "[package]\nname = \"example/stg_n\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.stg_n]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libstg\"\n");
     try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "README.md" }), "# stg_n\n");
     try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "stg_n.mojoc" }), "the mojoc of n");
     var r = try w.stage("wsn", "artn", "set_n_missing", &.{});
@@ -244,7 +244,7 @@ fn aNativeMember(w: World) !void {
 /// publishes.
 fn aBinsMember(w: World) !void {
     const manifest_path = try w.path(&.{ w.work, "wsb", "src", "stg_b", "mopm.toml" });
-    try h.writeFile(manifest_path, "[package]\nname = \"stg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{ name = \"ring_bench\", path = \"bench/ring.mojo\" }, { name = \"agg_bench\", path = \"bench/agg.mojo\" }]\n");
+    try h.writeFile(manifest_path, "[package]\nname = \"example/stg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{ name = \"ring_bench\", path = \"bench/ring.mojo\" }, { name = \"agg_bench\", path = \"bench/agg.mojo\" }]\n");
     try h.writeFile(try w.path(&.{ w.work, "wsb", "src", "stg_b", "README.md" }), "# stg_b\n");
     try h.writeFile(try w.path(&.{ w.work, "artb", "linux-64", "stg_b.mojoc" }), "the mojoc of b");
     var r = try w.stage("wsb", "artb", "set_b_missing", &.{});

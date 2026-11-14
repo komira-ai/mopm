@@ -5,7 +5,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
-const manifest = core.manifest;
 const semver = core.semver;
 const resolve = core.resolve;
 const toml_edit = core.toml_edit;
@@ -27,6 +26,19 @@ const Spec = struct { name: []const u8, req: ?[]const u8 };
 fn splitSpec(spec: []const u8) Spec {
     const at = std.mem.indexOfScalar(u8, spec, '@') orelse return .{ .name = spec, .req = null };
     return .{ .name = spec[0..at], .req = spec[at + 1 ..] };
+}
+
+/// Why `full` cannot name a dependency (`<namespace>/<name>`), or null. A bare name gets the form to write.
+fn specProblem(arena: Allocator, full: []const u8) Allocator.Error!?[]const u8 {
+    if (core.names.split(full) == null) {
+        return try std.fmt.allocPrint(arena, "dependency '{s}' has no namespace: write it as <namespace>/<name>, as in 'mopm add <namespace>/<name>'", .{full});
+    }
+    return core.names.fullNameProblem(arena, "dependency", full);
+}
+
+/// The import name of a full name: the name the lock, the index and the resolver know it by.
+fn importName(full: []const u8) []const u8 {
+    return if (core.names.split(full)) |parts| parts.name else full;
 }
 
 /// `s` as a TOML basic string.
@@ -81,7 +93,7 @@ fn editText(arena: Allocator, cmd: Command, src: []const u8, dev: bool, name: []
 /// edited manifest, and only then write mopm.toml and mopm.lock.
 pub fn edit(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
     const spec = splitSpec(args.spec);
-    if (try manifest.nameProblem(arena, "dependency name", spec.name)) |why| {
+    if (try specProblem(arena, spec.name)) |why| {
         err(cmd, "{s}\n", .{why});
         return 1;
     }
@@ -125,12 +137,12 @@ pub fn edit(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8)
     }
     const project = (try projectOf(arena, cmd, m)) orelse return 1;
     var resolve_args = args;
-    resolve_args.packages = if (cmd == .add) try arena.dupe([]const u8, &.{spec.name}) else &.{};
+    resolve_args.packages = if (cmd == .add) try arena.dupe([]const u8, &.{importName(spec.name)}) else &.{};
     const r = (try resolveProject(arena, cmd, project, old, resolve_args, cli_version)) orelse return 1;
 
     var final = trial;
     if (cmd == .add and spec.req == null and args.path == null) {
-        const picked = r.lock.versionOf(spec.name) orelse return error.AddedPackageNotLocked;
+        const picked = r.lock.versionOf(importName(spec.name)) orelse return error.AddedPackageNotLocked;
         final = switch (try editText(arena, cmd, src, args.dev, spec.name, try tomlString(arena, try caretOf(arena, picked)))) {
             .ok => |t| t,
             .bad => |why| {
@@ -181,6 +193,58 @@ const golden_before =
     \\# trailing comment
     \\
 ;
+
+test "a dependency is named by a full name, and a bare one is refused with the form to write" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try std.testing.expect((try specProblem(a, "komira-ai/json")) == null);
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/<name>, as in 'mopm add <namespace>/<name>'",
+        (try specProblem(a, "json")).?,
+    );
+    try std.testing.expectEqualStrings(
+        "dependency 'Komira-AI/json' is not in lower case; write 'komira-ai/json'",
+        (try specProblem(a, "Komira-AI/json")).?,
+    );
+    try std.testing.expectEqualStrings(
+        "dependency 'komira-ai/fn': the import name 'fn' is a Mojo keyword; choose another name",
+        (try specProblem(a, "komira-ai/fn")).?,
+    );
+    try std.testing.expectEqualStrings("json", importName("komira-ai/json"));
+    try std.testing.expectEqualStrings("komira-ai/json", splitSpec("komira-ai/json@^1.2").name);
+    try std.testing.expectEqualStrings("^1.2", splitSpec("komira-ai/json@^1.2").req.?);
+}
+
+test "add writes the full name as a quoted key, and remove finds it" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const added = (try editText(a, .add, golden_before, false, "komira-ai/json", "\"^0.5.0\"")).ok;
+    try std.testing.expectEqualStrings(
+        \\# The project. Comments, blank lines, order and spacing survive add and remove.
+        \\[package]
+        \\name    = "app"
+        \\version = "0.1.0"
+        \\
+        \\[toolchain]
+        \\mojo = "1.0.0"   # one compiler
+        \\
+        \\[dependencies]
+        \\# transport
+        \\tls   =   "1"        # the major only
+        \\legacy = "1"
+        \\"komira-ai/json" = "^0.5.0"
+        \\
+        \\[dev-dependencies]  # tests only
+        \\
+        \\# trailing comment
+        \\
+    , added);
+    const removed = (try editText(a, .remove, added, false, "komira-ai/json", "")).ok;
+    try std.testing.expectEqualStrings(golden_before, removed);
+    try std.testing.expectEqualStrings("json is not a dependency: [dependencies] of mopm.toml does not name it", (try editText(a, .remove, added, false, "json", "")).bad);
+}
 
 test "add keeps every other byte of mopm.toml, in [dependencies] and [dev-dependencies]" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

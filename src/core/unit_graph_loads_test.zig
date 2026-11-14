@@ -17,10 +17,10 @@ fn put(dir: std.fs.Dir, path: []const u8, bytes: []const u8) !void {
     try dir.writeFile(path, bytes);
 }
 
-const toml_util_plain = "[package]\nname = \"util\"\nversion = \"0.3.0\"\nmojo = [\"1.0.0\"]\n";
+const toml_util_plain = "[package]\nname = \"example/util\"\nversion = \"0.3.0\"\nmojo = [\"1.0.0\"]\n";
 const toml_util_loads = toml_util_plain ++ "\n[native-dependencies]\nlz4 = { mode = \"load\" }\n";
 
-const toml_app_head = "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\nhttp_core = \"1.2\"\nutil = { path = \"util\" }\n";
+const toml_app_head = "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\"example/http_core\" = \"1.2\"\n\"example/util\" = { path = \"util\" }\n";
 const toml_app_tail = "\n[targets]\nbins = [{ name = \"appbin\", path = \"src/main.mojo\" }]\n";
 const toml_app_plain = toml_app_head ++ toml_app_tail;
 const toml_app_loads = toml_app_head ++ "\n[native-dependencies]\nlibsqlite = { version = \">=3.40\", mode = \"load\" }\nz = { mode = \"link\" }\n" ++ toml_app_tail;
@@ -194,7 +194,7 @@ test "a project that loads nothing keeps format 2 even when the lock pins librar
     var why: []const u8 = "";
     // Libraries are pinned for another reason (the registry package asks for libbrotlidec), but no test or binary
     // has a closure that loads one: here the registry package is not a dependency of anything the graph holds.
-    const toml_no_deps = "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n";
+    const toml_no_deps = "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n";
     const g = try graphOf(a, toml_no_deps, toml_util_plain, try lockText(a, .full, 'e'), "linux-64", &why);
     try std.testing.expectEqual(ug.format_version, g.unit_graph);
     try std.testing.expectEqual(@as(usize, 0), g.system_libs.len);

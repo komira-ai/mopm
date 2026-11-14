@@ -239,24 +239,24 @@ fn create(c: *Ctx) !void {
     var r = try c.mopm(c.ws, &.{"--version"});
     c.check("candidate: mopm --version is exactly the candidate's version", r.code == 0 and std.mem.eql(u8, r.stdout, try h.fmt(a, "mopm {s}\n", .{c.o.version})), r);
 
-    r = try c.mopm(c.ws, &.{ "new", "beta_lib", "--lib" });
+    r = try c.mopm(c.ws, &.{ "new", "example/beta_lib", "--lib" });
     const lib_files = [_][]const u8{ "mopm.toml", "src/beta_lib/__init__.mojo", "tests/test_beta_lib.mojo", "README.md", ".gitignore" };
     var all = true;
     for (lib_files) |f| all = all and Ctx.exists(c.path(&.{ c.ws, "beta_lib", f }));
-    c.check("new --lib creates the library package and its files", r.code == 0 and all and std.mem.eql(u8, r.stdout, "created library package 'beta_lib' in beta_lib/\n"), r);
+    c.check("new --lib creates the library package and its files", r.code == 0 and all and std.mem.eql(u8, r.stdout, "created library package 'example/beta_lib' in beta_lib/\n"), r);
 
-    r = try c.mopm(c.ws, &.{ "new", "beta_app", "--bin" });
+    r = try c.mopm(c.ws, &.{ "new", "example/beta_app", "--bin" });
     c.check("new --bin creates the binary package with src/main.mojo", r.code == 0 and Ctx.exists(c.path(&.{ c.ws, "beta_app", "src/main.mojo" })) and
-        std.mem.eql(u8, r.stdout, "created binary package 'beta_app' in beta_app/\n"), r);
+        std.mem.eql(u8, r.stdout, "created binary package 'example/beta_app' in beta_app/\n"), r);
 
-    r = try c.mopm(c.ws, &.{ "new", "beta_lib" });
+    r = try c.mopm(c.ws, &.{ "new", "example/beta_lib" });
     c.check("new refuses a directory that exists", r.code == 1 and h.contains(r.stderr, "'beta_lib' already exists"), r);
 
     const here = c.path(&.{ c.ws, "init_here" });
     try std.fs.cwd().makePath(here);
-    r = try c.mopm(here, &.{ "init", "--lib", "--name", "beta_init" });
-    c.check("init writes the package into this directory", r.code == 0 and Ctx.exists(c.path(&.{ here, "mopm.toml" })) and std.mem.eql(u8, r.stdout, "created library package 'beta_init'\n"), r);
-    r = try c.mopm(here, &.{ "init", "--lib", "--name", "beta_init" });
+    r = try c.mopm(here, &.{ "init", "--lib", "--name", "example/beta_init" });
+    c.check("init writes the package into this directory", r.code == 0 and Ctx.exists(c.path(&.{ here, "mopm.toml" })) and std.mem.eql(u8, r.stdout, "created library package 'example/beta_init'\n"), r);
+    r = try c.mopm(here, &.{ "init", "--lib", "--name", "example/beta_init" });
     c.check("init refuses to overwrite", r.code == 1 and h.contains(r.stderr, "already exists; nothing was written"), r);
 
     r = try c.mopm(c.ws, &.{ "metadata", "beta_lib/mopm.toml" });
@@ -379,10 +379,10 @@ fn depend(c: *Ctx) !void {
     const a = c.a;
     const app = c.path(&.{ c.ws, "beta_app" });
     const reg = [_][]const u8{ "--registry", c.fake.base };
-    var r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "add", "beta_lib" }, &reg }));
+    var r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "add", "example/beta_lib" }, &reg }));
     const manifest = c.read(c.path(&.{ app, "mopm.toml" }));
     const lock = c.read(c.path(&.{ app, "mopm.lock" }));
-    c.check("add resolves the package from the registry and writes mopm.toml and mopm.lock", r.code == 0 and h.contains(manifest, "beta_lib = \"^0.1.0\"") and h.contains(lock, "beta_lib") and h.contains(lock, "0.1.0"), r);
+    c.check("add resolves the package from the registry and writes mopm.toml and mopm.lock", r.code == 0 and h.contains(manifest, "\"example/beta_lib\" = \"^0.1.0\"") and h.contains(lock, "beta_lib") and h.contains(lock, "0.1.0"), r);
 
     r = try c.mopm(app, &.{"tree"});
     c.check("tree draws the locked graph", r.code == 0 and h.contains(r.stdout, "beta_lib"), r);
@@ -392,7 +392,7 @@ fn depend(c: *Ctx) !void {
     r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{"update"}, &reg }));
     c.check("update succeeds with nothing newer to move to", r.code == 0 and h.contains(c.read(c.path(&.{ app, "mopm.lock" })), "0.1.0"), r);
 
-    r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "add", "no_such_package_beta" }, &reg }));
+    r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "add", "example/no_such_package_beta" }, &reg }));
     c.check("add of a package the registry does not have is refused and writes nothing", r.code != 0 and !h.contains(c.read(c.path(&.{ app, "mopm.toml" })), "no_such_package_beta"), r);
 
     h.stage = "sync";
@@ -476,8 +476,8 @@ fn native(c: *Ctx) !void {
 /// 7: remove the dependency, log out.
 fn finish(c: *Ctx) !void {
     const app = c.path(&.{ c.ws, "beta_app" });
-    var r = try c.mopm(app, &.{ "remove", "beta_lib", "--registry", c.fake.base });
-    c.check("remove takes the dependency out of mopm.toml and mopm.lock", r.code == 0 and !h.contains(c.read(c.path(&.{ app, "mopm.toml" })), "beta_lib =") and !h.contains(c.read(c.path(&.{ app, "mopm.lock" })), "\"beta_lib\""), r);
+    var r = try c.mopm(app, &.{ "remove", "example/beta_lib", "--registry", c.fake.base });
+    c.check("remove takes the dependency out of mopm.toml and mopm.lock", r.code == 0 and !h.contains(c.read(c.path(&.{ app, "mopm.toml" })), "\"example/beta_lib\" =") and !h.contains(c.read(c.path(&.{ app, "mopm.lock" })), "\"beta_lib\""), r);
     r = try c.mopm(c.ws, &.{ "logout", "--registry", c.fake.base, "--config-dir", c.conf });
     c.check("logout removes the stored token", r.code == 0 and h.contains(r.stdout, "Logged out of beta."), r);
     r = try c.mopm(c.ws, &.{ "whoami", "--registry", c.fake.base, "--config-dir", c.conf });

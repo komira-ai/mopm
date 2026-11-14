@@ -164,22 +164,32 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
     {
         const sub = try h.join(a, &.{ work, "new" });
         try std.fs.cwd().makePath(sub);
-        const r1 = try h.run(a, try c.mopmArgv(&.{ "new", "demo" }), &base, .{ .cwd = sub });
-        exitIs(&rep, "new demo", r1, 0);
-        rep.check("new demo: tree equals tests/new/lib", try sameTree(a, "tests/new/lib", try h.join(a, &.{ sub, "demo" })), "trees differ");
-        const r2 = try h.run(a, try c.mopmArgv(&.{ "new", "demo" }), &base, .{ .cwd = sub });
+        const r1 = try h.run(a, try c.mopmArgv(&.{ "new", "example/demo" }), &base, .{ .cwd = sub });
+        exitIs(&rep, "new example/demo", r1, 0);
+        rep.check("new example/demo: tree equals tests/new/lib", try sameTree(a, "tests/new/lib", try h.join(a, &.{ sub, "demo" })), "trees differ");
+        const r2 = try h.run(a, try c.mopmArgv(&.{ "new", "example/demo" }), &base, .{ .cwd = sub });
         rep.check("new over an existing directory is refused", r2.signaled or r2.code != 0, "accepted");
         const bindir = try h.join(a, &.{ sub, "bin/demo" });
         try std.fs.cwd().makePath(bindir);
-        const r3 = try h.run(a, try c.mopmArgv(&.{ "init", "--bin" }), &base, .{ .cwd = bindir });
-        exitIs(&rep, "init --bin", r3, 0);
-        rep.check("init --bin: tree equals tests/new/bin", try sameTree(a, "tests/new/bin", bindir), "trees differ");
-        const r4 = try h.run(a, try c.mopmArgv(&.{ "init", "--bin" }), &base, .{ .cwd = bindir });
+        const r3 = try h.run(a, try c.mopmArgv(&.{ "init", "--bin", "--name", "example/demo" }), &base, .{ .cwd = bindir });
+        exitIs(&rep, "init --bin --name example/demo", r3, 0);
+        rep.check("init --bin --name example/demo: tree equals tests/new/bin", try sameTree(a, "tests/new/bin", bindir), "trees differ");
+        const r4 = try h.run(a, try c.mopmArgv(&.{ "init", "--bin", "--name", "example/demo" }), &base, .{ .cwd = bindir });
         rep.check("init over an existing package is refused", r4.signaled or r4.code != 0, "accepted");
-        const r5 = try h.run(a, try c.mopmArgv(&.{ "new", "async" }), &base, .{ .cwd = sub });
+        const r5 = try h.run(a, try c.mopmArgv(&.{ "new", "example/async" }), &base, .{ .cwd = sub });
         rep.check("new accepts a Mojo keyword as a name", r5.signaled or r5.code != 0, "accepted");
         const made = if (std.fs.cwd().access(try h.join(a, &.{ sub, "async" }), .{})) true else |_| false;
         rep.check("new made a directory for a refused name", !made, "made");
+        const r6 = try h.run(a, try c.mopmArgv(&.{ "new", "json" }), &base, .{ .cwd = sub, .capture = .stderr });
+        rep.check("new refuses a bare name", !r6.signaled and r6.code != 0, "accepted");
+        rep.check("new refuses a bare name: text", std.mem.eql(u8, "mopm new json needs a namespace: name it, as in 'mopm new <your GitHub login>/json'", h.chomp(r6.text)), r6.text);
+        const bare_dir = if (std.fs.cwd().access(try h.join(a, &.{ sub, "json" }), .{})) true else |_| false;
+        rep.check("new made a directory for a bare name", !bare_dir, "made");
+        const emptydir = try h.join(a, &.{ sub, "empty" });
+        try std.fs.cwd().makePath(emptydir);
+        const r7 = try h.run(a, try c.mopmArgv(&.{"init"}), &base, .{ .cwd = emptydir, .capture = .stderr });
+        rep.check("init refuses the directory's bare name", !r7.signaled and r7.code != 0, "accepted");
+        rep.check("init refuses the directory's bare name: text", std.mem.eql(u8, "mopm init empty needs a namespace: name it, as in 'mopm init <your GitHub login>/empty' (the name comes from this directory; pass --name <namespace>/<name>)", h.chomp(r7.text)), r7.text);
     }
 
     // ---- build, run, repl --print-cmd on each environment, both spellings

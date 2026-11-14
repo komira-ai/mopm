@@ -56,3 +56,22 @@ pin that moved without its lines being read again. Update it with the lock.
 package is downloaded from its catalog url, checked against its pinned sha256 (a mismatch fails the run, naming both)
 and its `lib/*.so*` and `lib/*.dylib` entries are listed, and the lines of packages the catalog no longer pins are
 dropped. Only `.conda` packages are read. By hand, after changing a lock, run the same command.
+
+## The standard library modules
+
+`../src/core/toolchain/std-modules.txt` lists the top-level modules of the Mojo standard library, which no package's
+import name may equal (`src/core/names.zig`; Mojo code writes both `import std.collections` and `import collections`).
+It is read from `lib/mojo/std.mojoc` of each pinned `mojo-compiler` package, and its `# from mojo-compiler <version>
+<subdir> <sha256>` lines name those packages. The unit test "the standard library list was read from the mojo-compiler
+each closure pins" fails when a closure's `mojo-compiler` sha256 is not on a `# from` line, or a line names a package
+no closure pins, so a toolchain bump reads the list again.
+
+To read it, by hand, from the package of the closure's `url` and `sha256`: unpack `lib/mojo/std.mojoc` from the
+package (`unzip -p <file>.conda 'pkg-*' | zstd -dc | tar -x lib/mojo/std.mojoc`); after its header (`MPKG` and the
+hex digest) the file is one zstd frame, which starts at the bytes `28 b5 2f fd`. Decompress that frame; the source
+paths it holds, `mojo/stdlib/std/<entry>/...` and `mojo/stdlib/std/<entry>.mojo`, give the top-level entries. Keep
+those that do not start with `_`, sorted, one per line, and update the `# from` line.
+
+The list is read from the `linux-64` package only. The standard library is the same Mojo source on every platform of
+one version (`std.mojoc` records the paths of that source, `mojo/stdlib/std/...`), so the other platforms' packages hold
+the same top-level modules.

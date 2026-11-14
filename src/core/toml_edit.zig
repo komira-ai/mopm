@@ -592,6 +592,11 @@ test "a new key that is not bare is quoted" {
     try expectSet("[t]\n", "t", "a b", "1", "[t]\n\"a b\" = 1\n");
 }
 
+test "a full package name as a new key is quoted, because of its '/'" {
+    // Catches: writing example/json = "0.1", which does not parse.
+    try expectSet("[dependencies]\n", "dependencies", "example/json", "\"0.1\"", "[dependencies]\n\"example/json\" = \"0.1\"\n");
+}
+
 test "removing a single-line entry takes its line and comment, nothing else" {
     // Catches: leaving the comment or a blank line behind, or eating the next line.
     try expectRemove("[t]\na = 1 # c\nb = 2\n", "t", "a", "[t]\nb = 2\n");

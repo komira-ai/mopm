@@ -20,8 +20,9 @@ what the code does.
 - A **full name** is `<namespace>/<name>`. The namespace is at most 39 characters (a GitHub login); a reader checks
   that length as well as the pattern.
 - The **import name** is the name, the part after `/`. It is not a Mojo keyword or builtin (the lists in
-  `src/core/manifest.zig`) nor `mopm`, `mojo`, `max`, `modular`, `std` or `stdlib`. The client and the registry both
-  refuse those.
+  `src/core/names.zig`), nor `mopm`, `mojo`, `max`, `modular`, `std` or `stdlib`, nor a top-level module of the Mojo
+  standard library (`src/core/toolchain/std-modules.txt`, read from each pinned toolchain). The client refuses those
+  (`spec/mopm-toml.md`, "Names"); the registry is to refuse them too.
 - The **conda name** of `<namespace>/<name>` is `mojo-<namespace>.<name>`.
 - Lower case only, one spelling. Nothing normalises a namespace; `Komira-AI` is refused, with the lower-case form in
   the message.
@@ -30,18 +31,11 @@ what the code does.
 
 ## mopm-toml.md
 
-Replaces, under `[package]`, the dependency tables and `[targets]`:
+The names of `[package]`, `[dependencies]` and `[dev-dependencies]`, the refusal of a name without a namespace, the
+import-name rules and the library directory rule are live in `spec/mopm-toml.md` ("Names", "`[targets]`"). What is left:
 
-- `[package] name` is a full name: `name = "komira-ai/parquet"`. Its import name is the name Mojo code imports.
-- `[targets] lib` defaults to `src/<import name>`. A `path` whose last component is not the import name is an error
-  naming both.
-- The keys of `[dependencies]` and `[dev-dependencies]` are full names, quoted because they hold `/`:
-  `"komira-ai/json" = "0.1"`. A path dependency's key equals the `[package] name` at the path.
-- A name without a namespace is an error naming the key and giving the full form:
-  `dependency 'json' has no namespace: write it "<namespace>/json" = "0.1"`;
-  `package name 'json' has no namespace: write name = "<namespace>/json"`, where mopm puts the user namespace stored
-  by `mopm login` in place of `<namespace>` when it has one.
-- `[native-dependencies]` keys are unchanged (conda names).
+- In the refusal of a name without a namespace, mopm puts the user namespace stored by `mopm login` in place of
+  `<namespace>` when it has one.
 - New rule (under "Rules"): two packages in one dependency closure (the root, path packages and registry packages, from
   `[dependencies]` and `[dev-dependencies]`) may not have the same import name. There is no rename.
 

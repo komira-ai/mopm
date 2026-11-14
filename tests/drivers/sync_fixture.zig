@@ -168,7 +168,7 @@ pub const Cx = struct {
         try fs.cwd().makePath(d);
         try h.writeFile(c.path(&.{ d, "mopm.toml" }), try c.fmt(
             \\[package]
-            \\name = "app"
+            \\name = "example/app"
             \\version = "0.1.0"
             \\
             \\[toolchain]
@@ -301,7 +301,7 @@ pub fn baseline(c: *Cx) !Base {
     const reg = try a.dupe([]const u8, &.{ "--registry", c.fake.base });
     const with_t = try a.dupe([]const u8, &.{ "--toolchain", t.closure, "--cache", cache });
     const with_t2 = try a.dupe([]const u8, &.{ "--toolchain", t2.closure, "--cache", cache });
-    const app = try c.project("app", "greet = \"1\"");
+    const app = try c.project("app", "\"example/greet\" = \"1\"");
     const env_dir = c.path(&.{ app, ".mopm/env" });
     const r = try c.run(app, try c.cat(&.{ &.{"sync"}, reg, with_t }));
     c.rep.check("baseline: the first sync installs greet and T", r.code == 0 and h.contains(r.stdout, "installed 1 packages for"), c.detail(r));
@@ -327,7 +327,7 @@ pub fn projectV2(c: *Cx, name: []const u8, deps: []const u8) ![]const u8 {
     try fs.cwd().makePath(d);
     try h.writeFile(c.path(&.{ d, "mopm.toml" }), try c.fmt(
         \\[package]
-        \\name = "app"
+        \\name = "example/app"
         \\version = "0.1.0"
         \\mojo = ["{s}"]
         \\

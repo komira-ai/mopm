@@ -423,7 +423,7 @@ fn theTokenIsInNoTestEnvironmentAndNoSyncFile(w: World, probe: []const u8) !void
     // `mopm sync`: a project with no dependency is locked with no registry; the stand-in toolchain is served by the fake registry.
     const sync_dir = try w.dir("proj_sync");
     try std.fs.cwd().makePath(sync_dir);
-    try h.writeFile(try h.join(a, &.{ sync_dir, "mopm.toml" }), "[package]\nname = \"probe_sync\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
+    try h.writeFile(try h.join(a, &.{ sync_dir, "mopm.toml" }), "[package]\nname = \"example/probe_sync\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
     const tc = try cp.fakeToolchain(a, w.fake_dir, w.fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ w.work, "toolchain.json" }), "T");
     const cache = try h.join(a, &.{ w.work, "probe_cache" });
     var sync_env = try h.cloneEnv(a, &w.m.env);

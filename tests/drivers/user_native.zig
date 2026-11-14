@@ -252,8 +252,8 @@ fn walk(w: *Walk) !void {
     const user = try h.join(a, &.{ root, "user" });
     try cwd.makePath(user);
     const app = try h.join(a, &.{ user, "nat_app" });
-    _ = try w.mopm("native: mopm new --bin", user, &.{ "new", "nat_app", "--bin" }, o.env);
-    _ = try w.mopm("native: mopm add shimlib from the registry", app, &.{ "add", "shimlib", "--registry", o.registry }, o.env);
+    _ = try w.mopm("native: mopm new --bin", user, &.{ "new", "example/nat_app", "--bin" }, o.env);
+    _ = try w.mopm("native: mopm add shimlib from the registry", app, &.{ "add", "example/shimlib", "--registry", o.registry }, o.env);
     const lock = try h.readFile(a, try h.join(a, &.{ app, "mopm.lock" }));
     rep.check("native: the lock names shimlib", h.contains(lock, "shimlib"), lock);
     var sync_argv = std.ArrayList([]const u8).init(a);

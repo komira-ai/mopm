@@ -1,7 +1,7 @@
 [package]
-name = "a"
+name = "example/demo"
 version = "0.1.0"
 
 [dependencies]
-tls = { version = "0.9" }
-tls.path = "../tls"
+"example/tls" = { version = "0.9" }
+"example/tls".path = "../tls"

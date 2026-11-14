@@ -1,5 +1,5 @@
 [package]
-name = "greeter"
+name = "example/greeter"
 version = "0.1.0"
 description = "Greetings, as a library"
 license = "Apache-2.0"

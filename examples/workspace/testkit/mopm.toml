@@ -1,5 +1,5 @@
 [package]
-name = "testkit"
+name = "example/testkit"
 version = "0.1.0"
 
 [toolchain]

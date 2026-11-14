@@ -1,1 +1,1 @@
-2:1: package name 'hash' would shadow the Mojo builtin 'hash'; choose another name
+2:1: package name 'example/hash': the import name 'hash' would shadow the Mojo builtin 'hash'; choose another name

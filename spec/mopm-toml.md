@@ -5,7 +5,7 @@ reads and checks it.
 
 ```toml
 [package]
-name = "http_client"          # the import name and the registry name
+name = "example/http_client"  # a full name, <namespace>/<name>; Mojo code imports "http_client"
 version = "0.4.0"           # MAJOR.MINOR.PATCH, see Package versions
 description = "HTTP/1.1 client"
 license = "Apache-2.0"
@@ -16,16 +16,16 @@ readme = "README.md"
 publish = true                # false: never staged, packed or published (a test-support helper); default true
 mojo = ["1.0.0", "1.1.0"]     # exact compiler versions it builds for, one .mojoc each (a .mojoc is tied to one)
 
-[dependencies]                # Mojo packages
-http_core = "1.2"
-tls = { version = "0.9" }
-local_util = { path = "../local_util", version = "0.2" }   # a path needs a version to be published
+[dependencies]                # Mojo packages, by full name; a key holding "/" is quoted
+"example/http_core" = "1.2"
+"example/tls" = { version = "0.9" }
+"example/local_util" = { path = "../local_util", version = "0.2" }   # a path needs a version to be published
 
 [native-dependencies]         # non-Mojo libraries the package links
 zlib = { version = ">=1.2", kind = "shared", mode = "link" }
 
 [dev-dependencies]            # only for tests and tooling
-mopm_test = "0.1"
+"example/mopm_test" = "0.1"
 
 [native.curl_shim]            # a native library this package ships
 kind = "shared"               # shared | static | both
@@ -34,15 +34,48 @@ build = "cmake -S native -B out && cmake --build out"
 outputs = ["out/libcurl_shim.so.1"]
 
 [targets]                     # what to build
-lib = { path = "src/http_client" }
+lib = { path = "src/http_client" }  # the directory is the import name
 bins = [{ name = "fetch", path = "src/fetch.mojo" }]
 tests = ["tests"]
 ```
 
+## Names
+
+A package's name is a full name, `<namespace>/<name>`, such as `komira-ai/json`.
+
+| part | grammar | example |
+|---|---|---|
+| namespace | a GitHub login in lower case: `^[a-z0-9]+(-[a-z0-9]+)*$`, 1 to 39 characters | `komira-ai` |
+| name | `^[a-z][a-z0-9_]{1,63}$` | `json` |
+| full name | `<namespace>/<name>` | `komira-ai/json` |
+| import name | the name, the part after `/` | `json` |
+
+- `[package] name` and every key of `[dependencies]` and `[dev-dependencies]`
+  are full names. TOML needs quotes around a key that holds `/`:
+  `"komira-ai/json" = "0.1"`. `[native-dependencies]` keys are conda names and
+  are not full names.
+- A name without a namespace is refused, naming the key and giving the full
+  form: `dependency 'json' has no namespace: write it "<namespace>/json" =
+  "0.1"`, `package name 'json' has no namespace: write name =
+  "<namespace>/json"`.
+- One spelling, lower case: `Komira-AI/json` is refused with a message that
+  gives `komira-ai/json`. Nothing normalises a name.
+- The import name is what Mojo code imports (`import json`). It is never a Mojo
+  keyword or builtin, never `mopm`, `mojo`, `max`, `modular`, `std` or `stdlib`,
+  and never a top-level module of the Mojo standard library (`collections`,
+  `memory`, `os`, ...: the list of every pinned toolchain, in mopm's
+  `src/core/toolchain/std-modules.txt`), since Mojo code imports those both as
+  `std.<module>` and by the bare name.
+- Reserved namespaces, which no package has: the shape of a conda subdir,
+  `^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$`, and
+  `index`, `quarantine` and `native-mirror`.
+- A path dependency's key must equal the `[package] name` of the `mopm.toml` at
+  the path; a path package in another namespace is fine.
+
 ## Sections
 
-- `[package]`: identity. `name` is unique in the registry; only its owner can
-  publish versions of it, and a published version is immutable.
+- `[package]`: identity. `name` is the full name (see Names). Only its owner
+  can publish versions of it, and a published version is immutable.
   All of `description`, `license`, `repository`, `homepage`, `keywords` and
   `readme` are optional. When present they are checked as below and served by
   the registry's read API (`description`, `license`, `repository`, `homepage`,
@@ -93,7 +126,10 @@ tests = ["tests"]
   the library must be `kind = "static"` with `mode = "link"`. It applies with and
   without `provided = true`, and is carried into `<name>.mopm.json`, the lock and
   the unit graph (`unit-graph.md`, "System libraries of a native").
-- `[targets]`: the library, executables and tests to build.
+- `[targets]`: the library, executables and tests to build. `lib` defaults to
+  `src/<import name>`. Mojo imports a package by its directory's name, so a
+  `lib` path whose last component is not the import name is refused, naming
+  both.
 
 ## Other tools' settings: `[package.metadata]`
 

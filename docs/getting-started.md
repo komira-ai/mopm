@@ -92,17 +92,19 @@ it or pass `--prefix`.
 ## 2. Start a package: `new` and `init`
 
 ```sh
-mopm new my_pkg --lib        # a library in a new directory my_pkg (the default kind)
-mopm new my_app --bin        # a program
-cd existing_dir && mopm init [--lib|--bin] [--name <name>]    # in the current directory
+mopm new alice/my_pkg --lib  # a library in a new directory my_pkg (the default kind)
+mopm new alice/my_app --bin  # a program
+cd existing_dir && mopm init [--lib|--bin] [--name <namespace>/<name>]    # in the current directory
 ```
 
-A new library contains `mopm.toml`, `src/<name>/__init__.mojo`, `tests/test_<...>.mojo`, a README and a
+A package name is a full name, `<namespace>/<name>`: the namespace is your GitHub login (here `alice`), or an
+organization's, and the name is what Mojo code imports. A name without a namespace is refused. A new library contains
+`mopm.toml`, `src/<name>/__init__.mojo`, `tests/test_<...>.mojo`, a README and a
 `.gitignore`. Its manifest:
 
 ```toml
 [package]
-name = "my_pkg"
+name = "alice/my_pkg"
 version = "0.1.0"
 
 [toolchain]
@@ -120,11 +122,11 @@ A `--bin` package adds `bins = [{ name = "my_app", path = "src/main.mojo" }]` to
 ## 3. Dependencies: `add`, `remove`, `lock`, `update`, `tree`, `sync`
 
 ```sh
-mopm add http_client            # newest version that fits, written as ^X.Y.Z; then lock
-mopm add http_client@0.4        # with a requirement
-mopm add test_util --dev        # into [dev-dependencies]
-mopm add helper --path ../helper
-mopm remove http_client
+mopm add example/http_client          # newest version that fits, written as ^X.Y.Z; then lock
+mopm add example/http_client@0.4      # with a requirement
+mopm add example/test_util --dev      # into [dev-dependencies]
+mopm add alice/helper --path ../helper
+mopm remove example/http_client
 mopm lock                       # resolve mopm.toml against the registry's index, write mopm.lock
 mopm update [pkg...]            # move the named packages (all, with none) to the newest that fit
 mopm tree                       # draw the dependency graph in mopm.lock
@@ -284,7 +286,7 @@ uses to build a library for a build farm.
 
 ```toml
 [package]
-name = "http_client"             # import name and registry name: lowercase letters, digits, underscore
+name = "example/http_client"     # <namespace>/<name>; the name is the import name: lowercase letters, digits, underscore
 version = "0.4.0"                # MAJOR.MINOR.PATCH, nothing else
 description = "HTTP/1.1 client"  # optional display fields: description, license, repository
 license = "Apache-2.0"           #   (checked to be strings), and readme (a Markdown file of at most 64 KiB)
@@ -293,12 +295,12 @@ readme = "README.md"
 mojo = ["1.0.0", "1.1.0"]        # exact compilers this package builds for (or use [toolchain] below)
 
 [dependencies]
-http_core = "1.2"                # caret: >=1.2.0, <2.0.0
-tls = { version = "0.9" }
-local_util = { path = "../local_util" }   # a path or a version, not both; a path cannot be published
+"example/http_core" = "1.2"      # full names, quoted; caret: >=1.2.0, <2.0.0
+"example/tls" = { version = "0.9" }
+"example/local_util" = { path = "../local_util" }   # a path or a version, not both; a path cannot be published
 
 [dev-dependencies]
-mopm_test = "0.1"
+"example/mopm_test" = "0.1"
 
 [native-dependencies]
 zlib = { version = ">=1.2", kind = "shared", mode = "link" }
@@ -359,7 +361,7 @@ The [examples page](examples.md) walks through six complete packages (a library,
 **A library with a test, from nothing**
 
 ```sh
-mopm new greeter --lib
+mopm new alice/greeter --lib
 cd greeter
 mopm sync                           # the Mojo toolchain into .mopm/env (no dependencies yet)
 mopm test                           # builds tests/test_*.mojo and runs each test in its own process
@@ -376,12 +378,12 @@ mopm test --retries 2 --deny-flaky --junit report.xml
 
 ```toml
 [package]
-name = "app"
+name = "alice/app"
 version = "0.1.0"
 [toolchain]
 mojo = "1.0.0"
 [dependencies]
-crypto = "0.3"          # ships libcrypto_native.so.1
+"example/crypto" = "0.3"          # ships libcrypto_native.so.1
 ```
 
 ```sh

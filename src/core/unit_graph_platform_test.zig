@@ -23,7 +23,7 @@ fn put(dir: std.fs.Dir, path: []const u8, bytes: []const u8) !void {
 
 fn pinnedGraph(a: Allocator, dir: []const u8, subdir: []const u8, l: lock.Lock, why: *[]const u8) !Graph {
     var diag: manifest.Diagnostic = .{};
-    const m = try manifest.parse(a, "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n", &diag);
+    const m = try manifest.parse(a, "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n", &diag);
     return build(a, .{ .dir = dir, .m = m, .members = &.{}, .l = l, .subdir = subdir, .mojo = "1.0.0" }, why);
 }
 
