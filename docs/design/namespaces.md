@@ -153,8 +153,8 @@ Login asks for `read:user` only and records no organization.
 Members live in mopm: a table of `(namespace, GitHub id, role)`, `role` being `owner` or `member`, with who added the
 row and when. A member is named by a mopm username, the account's user namespace (its lower-case GitHub login, section
 2.1), so a person must have logged in to mopm once to be added; a string that is not a user namespace is
-`user_not_found`. Owners manage the members: `mopm org add <org> <user> [--owner]` sets the role (so `add` without
-`--owner` turns an owner into a member), `mopm org remove <org> <user>` removes, `mopm org list <org>` shows them. An
+`user_not_found`. Owners manage the members: `mopm org add <org> <user> [--role owner|member]` sets the role (`member` when no
+`--role` is given, so a plain `add` turns an owner into a member), `mopm org remove <org> <user>` removes, `mopm org list <org>` shows them. An
 owner may remove themselves while another owner remains. The last owner can be neither demoted nor removed
 (`last_owner`), so a namespace always has an owner; the check and the change are one atomic step. Members and owners
 may read the member list.
@@ -400,8 +400,8 @@ starts with a digit, so `/versions` and `/{version}` stay apart.
 | (no stored namespace, bare name) | | refused: "mopm new json needs a namespace: run 'mopm login' (your GitHub login is your namespace) or name it, as in 'mopm new <your login>/json'". The full form works offline |
 | `mopm add <name>` | adds `<name>` | `mopm add komira-ai/json[@0.1]`; a bare name is refused with up to 5 full names whose name part is it, from `GET /api/v2/packages?q=` (a suggestion, never a substitute) |
 | `mopm login` | stores token and handle | also stores the user namespace (one more optional key in `credentials.json`) |
-| `mopm whoami` | handle, packages | handle, then each namespace with its kind and role (`owner` or `member`), then its packages |
-| `mopm org create <org>`, `add <org> <user> [--owner]`, `remove <org> <user>`, `list <org>` | (none) | register an organization namespace (GitHub device flow, once), set or remove a member by mopm username, list the members |
+| `mopm whoami` | handle, packages | the answer of `GET /me` as `key: value` lines (generated, ns-P2): the handle, the GitHub id, then each namespace with its kind, role (`owner` or `member`) and packages |
+| `mopm org create <org>`, `add <org> <user> [--role owner|member]`, `remove <org> <user>`, `list <org>` | (none) | register an organization namespace (GitHub device flow, once), set or remove a member by mopm username, list the members |
 | `mopm publish` | uploads | creates the package if it does not exist (`PUT`), then uploads |
 | `mopm stage` | members by name | members by full name; `--artifacts <dir>/<subdir>/<namespace>/<name>.mojoc` |
 | `mopm tree`, `plan`, errors | names | full names |

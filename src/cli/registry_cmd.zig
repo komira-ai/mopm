@@ -56,12 +56,6 @@ pub const Session = struct {
     arena: Allocator,
     config: registry.Config,
     config_dir: []const u8,
-
-    /// The root of the registry's API: version 2 when the registry serves it, else the one `api_url` names (the device
-    /// flow is the same at both).
-    pub fn root(s: Session) []const u8 {
-        return if (s.config.api_v2_url.len > 0) s.config.api_v2_url else s.config.api_url;
-    }
 };
 
 fn err(comptime fmt: []const u8, args: anytype) void {
@@ -150,7 +144,7 @@ fn readMe(s: Session, net: gp.Net, token: []const u8) ?v2.MeV2 {
 /// `con`, so a test drives it without waiting and without touching the real standard streams.
 fn login(s: Session, net: gp.Net, con: *gp.Console, cli_version: []const u8) anyerror!u8 {
     const client = try std.fmt.allocPrint(s.arena, "mopm {s}", .{cli_version});
-    const started = try v2.sendOnce(v2.StartDeviceLogin, s.arena, net, s.root(), null, .{ .body = .{ .client = client } });
+    const started = try v2.sendOnce(v2.StartDeviceLogin, s.arena, net, s.config.api_url, null, .{ .body = .{ .client = client } });
     if (!started.ok()) {
         reportFailure(con, started);
         return 1;
@@ -162,7 +156,7 @@ fn login(s: Session, net: gp.Net, con: *gp.Console, cli_version: []const u8) any
     const deadline = net.now() + start.expires_in + 30;
     while (net.now() < deadline) {
         net.pause(@intCast(interval));
-        const polled = try v2.sendOnce(v2.PollDeviceLogin, s.arena, net, s.root(), null, .{ .body = .{ .device_code = start.device_code } });
+        const polled = try v2.sendOnce(v2.PollDeviceLogin, s.arena, net, s.config.api_url, null, .{ .body = .{ .device_code = start.device_code } });
         if (!polled.ok()) {
             reportFailure(con, polled);
             return 1;

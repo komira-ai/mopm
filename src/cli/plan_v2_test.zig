@@ -11,23 +11,6 @@ const publish_cmd = @import("publish_cmd.zig");
 const st = @import("stage_test.zig");
 const gt = @import("group_publish_test.zig");
 
-test "the status URL resolves against the API host, under /api/v2 or /api/v1, and nothing else does" {
-    var arena = st.arenaTest();
-    defer arena.deinit();
-    const a = arena.allocator();
-    try std.testing.expectEqualStrings(
-        "http://127.0.0.1:5000/api/v2/publishes/pub_1",
-        (try publish_cmd.resolveStatusUrl(a, "http://127.0.0.1:5000/api/v2", "/api/v2/publishes/pub_1")).?,
-    );
-    try std.testing.expectEqualStrings(
-        "https://mopm.dev/api/v1/publishes/x",
-        (try publish_cmd.resolveStatusUrl(a, "https://mopm.dev/api/v1", "/api/v1/publishes/x")).?,
-    );
-    for ([_][]const u8{ "https://evil.example/api/v2/publishes/x", "//evil.example/api/v2/publishes/x", "/api/v2/publishes/", "/api/v1/publishes/", "/api/v3/publishes/x", "/other" }) |bad| {
-        try std.testing.expect((try publish_cmd.resolveStatusUrl(a, "https://mopm.dev/api/v2", bad)) == null);
-    }
-}
-
 test "stage writes plan.json version 2: members by full name, files named for the conda package, a readme under the namespace, and the registry asked at the version 2 path" {
     var arena = st.arenaTest();
     defer arena.deinit();

@@ -205,21 +205,6 @@ pub fn readmeProblem(arena: Allocator, path: []const u8, bytes: []const u8) Allo
     return null;
 }
 
-/// The URL of a publish's status: `status_url` is a path on the API's host
-/// (`/api/v2/publishes/...`, or `/api/v1/publishes/...`), resolved against the scheme and host of
-/// `api_v2_url`. Null when it is not such a path.
-pub fn resolveStatusUrl(arena: Allocator, api_url: []const u8, status_url: []const u8) Allocator.Error!?[]const u8 {
-    var ok = false;
-    // not the registry API: the prefixes a status URL is checked against, no request is made here
-    for ([_][]const u8{ "/api/v2/publishes/", "/api/v1/publishes/" }) |prefix| {
-        if (std.mem.startsWith(u8, status_url, prefix) and status_url.len > prefix.len) ok = true;
-    }
-    if (!ok) return null;
-    const scheme_end = (std.mem.indexOf(u8, api_url, "://") orelse return null) + 3;
-    const origin_end = std.mem.indexOfScalarPos(u8, api_url, scheme_end, '/') orelse api_url.len;
-    return try std.fmt.allocPrint(arena, "{s}{s}", .{ api_url[0..origin_end], status_url });
-}
-
 const Prepared = struct {
     m: manifest.Manifest,
     packs: []const conda.Packed,

@@ -61,12 +61,19 @@ fn commandWords(a: Allocator, golden: []const u8) ![]const []const u8 {
     return words.toOwnedSlice();
 }
 
+/// This process's environment without `MOPM_TOKEN`, so a token of the machine never reaches a command under test.
+fn cleanEnv(a: Allocator) !std.process.EnvMap {
+    var env = try h.environ(a);
+    env.remove("MOPM_TOKEN");
+    return env;
+}
+
 test "mopm <command> --help prints the help golden of every generated command" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var rep = h.Report{};
-    const m = Mopm{ .a = a, .exe = try h.toolPath(a, "MOPM"), .env = try h.environ(a) };
+    const m = Mopm{ .a = a, .exe = try h.toolPath(a, "MOPM"), .env = try cleanEnv(a) };
 
     var dir = try std.fs.cwd().openDir(golden_dir, .{ .iterate = true });
     defer dir.close();
@@ -102,7 +109,7 @@ test "a usage error of a registry command exits 2 and prints the usage" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var rep = h.Report{};
-    const m = Mopm{ .a = a, .exe = try h.toolPath(a, "MOPM"), .env = try h.environ(a) };
+    const m = Mopm{ .a = a, .exe = try h.toolPath(a, "MOPM"), .env = try cleanEnv(a) };
 
     var r = try m.run(&.{ "org", "add", "only-one-arg" });
     rep.check("org add with one argument exits 2 and prints its usage", r.code == 2 and h.contains(r.stderr, "usage: mopm org add "), r.stderr);
@@ -134,7 +141,7 @@ test "registry commands against the fake registry" {
     h.stage = "starting the fake registry";
     var fake = try h.Fake.start(a, fake_exe, try h.join(a, &.{ work, "fake" }));
     defer fake.close();
-    const m = Mopm{ .a = a, .exe = mopm_exe, .env = try h.environ(a) };
+    const m = Mopm{ .a = a, .exe = mopm_exe, .env = try cleanEnv(a) };
 
     var r = try m.run(&.{ "health", "--registry", fake.base, "--config-dir", conf });
     rep.check("health prints the registry's answer as text", r.code == 0 and h.hasLine(r.stdout, "status: ok"), r.stdout);
