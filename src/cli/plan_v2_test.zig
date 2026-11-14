@@ -110,7 +110,9 @@ test "yanking a group goes to the version 2 API root" {
     var arena = st.arenaTest();
     defer arena.deinit();
     const a = arena.allocator();
-    const yanked = "{\"group_id\":\"" ++ gt.gid ++ "\",\"status\":\"visible\",\"yank\":{\"state\":\"yanked\",\"reason\":\"r\",\"yanked_members\":2}}";
+    // A Group as the contract has it: every required field, and the yank's `requested_at`.
+    const yanked = "{\"group_id\":\"" ++ gt.gid ++ "\",\"attempt\":1,\"created_at\":\"2026-10-22T00:00:00Z\",\"deadline_at\":\"2026-10-23T00:00:00Z\",\"member_count\":2,\"members\":[]," ++
+        "\"status\":\"visible\",\"yank\":{\"state\":\"yanked\",\"reason\":\"r\",\"requested_at\":\"2026-10-22T00:00:00Z\",\"yanked_members\":2}}";
     var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/yank", .status = 200, .body = yanked }});
     var console = gp.Console.init(a, null);
     var y = yank_cmd.Yanker{

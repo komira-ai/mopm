@@ -45,6 +45,33 @@ const Gen = struct {
         return error.Invalid;
     }
 
+    /// The test of the catalogue: `entry` gives each code its status, message and hint (and none for `unknown`), and
+    /// `decodeError` reads each code's error body back, and nothing from a text that is not one.
+    fn codesTest(g: *Gen, e: model.Enum, name: []const u8) !void {
+        try g.print("test \"{s}.entry is the catalogue, and decodeError reads each code back\" {{\n", .{name});
+        try g.print("    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);\n    defer arena_state.deinit();\n    const a = arena_state.allocator();\n", .{});
+        for (e.values) |v| {
+            const j = (try model.jsonValue(g.arena, e, v)) orelse continue;
+            const x = v.err orelse continue;
+            const id = std.zig.fmtId(j);
+            try g.print("    {{\n        const got = {s}.entry(.{}).?;\n", .{ name, id });
+            try g.print("        try std.testing.expectEqual(@as(u16, {d}), got.status);\n", .{x.status});
+            try g.print("        try std.testing.expectEqualStrings({s}, got.message);\n", .{try literal(g.arena, x.message)});
+            try g.print("        try std.testing.expectEqualStrings({s}, got.hint);\n", .{try literal(g.arena, x.hint)});
+            const body = try std.json.stringifyAlloc(g.arena, .{ .@"error" = .{ .code = j, .message = x.message, .hint = x.hint } }, .{});
+            try g.print("        const read = decodeError(a, {s}).?.@\"error\";\n", .{try literal(g.arena, body)});
+            try g.print("        try std.testing.expectEqual({s}.{}, read.code);\n", .{ name, id });
+            try g.print("        try std.testing.expectEqualStrings(got.message, read.message);\n        try std.testing.expectEqualStrings(got.hint, read.hint);\n    }}\n", .{});
+        }
+        try g.print("    try std.testing.expect({s}.entry(.unknown) == null);\n", .{name});
+        const unknown_code = try literal(g.arena, "{\"error\":{\"code\":\"not_a_code\",\"message\":\"m\",\"hint\":\"\"}}");
+        try g.print("    try std.testing.expectEqual({s}.unknown, decodeError(a, {s}).?.@\"error\".code);\n", .{ name, unknown_code });
+        try g.print("    try std.testing.expect(decodeError(a, \"not json\") == null);\n", .{});
+        const no_code = try literal(g.arena, "{\"error\":{\"message\":\"no code\",\"hint\":\"\"}}");
+        try g.print("    try std.testing.expect(decodeError(a, {s}) == null);\n", .{no_code});
+        try g.print("}}\n\n", .{});
+    }
+
     fn print(g: *Gen, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
         try g.out.writer().print(fmt, args);
     }
@@ -223,6 +250,7 @@ const Gen = struct {
             try g.print("            else => null,\n        }};\n    }}\n", .{});
         }
         try g.print("}};\n\n", .{});
+        if (is_codes) try g.codesTest(e, name);
     }
 
     const Kind = enum { string, array, object, integer, boolean };
@@ -768,6 +796,11 @@ test "the model of every shape has its enums, unions, structs and operations" {
         "        {\n            try w.writeByte(sep);\n            sep = '&';\n            try w.writeAll(\"subdir=\");\n",
         "        return try std.json.stringifyAlloc(arena, p.body, .{ .emit_null_optional_fields = false });\n",
         "pub const operations = [_]type{ GetHealth, GetThing, PutThing, DeleteThing };\n",
+        "test \"ErrorCode.entry is the catalogue, and decodeError reads each code back\" {\n",
+        "        const got = ErrorCode.entry(.not_found).?;\n        try std.testing.expectEqual(@as(u16, 404), got.status);\n",
+        "        try std.testing.expectEqual(ErrorCode.not_found, read.code);\n",
+        "    try std.testing.expect(ErrorCode.entry(.unknown) == null);\n",
+        "    try std.testing.expect(decodeError(a, \"not json\") == null);\n",
     };
     for (wanted) |w| {
         std.testing.expect(std.mem.indexOf(u8, text, w) != null) catch |e| {

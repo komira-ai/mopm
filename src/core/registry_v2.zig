@@ -284,6 +284,466 @@ pub const ErrorCode = enum {
     }
 };
 
+test "ErrorCode.entry is the catalogue, and decodeError reads each code back" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    {
+        const got = ErrorCode.entry(.invalid_request).?;
+        try std.testing.expectEqual(@as(u16, 400), got.status);
+        try std.testing.expectEqualStrings("The request is not valid: {detail}.", got.message);
+        try std.testing.expectEqualStrings("Check the request against the API documentation; update mopm if it is old.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: {detail}.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.invalid_request, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.invalid_name).?;
+        try std.testing.expectEqual(@as(u16, 400), got.status);
+        try std.testing.expectEqualStrings("'{name}' is not a valid package name.", got.message);
+        try std.testing.expectEqualStrings("Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"invalid_name\",\"message\":\"'{name}' is not a valid package name.\",\"hint\":\"Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.invalid_name, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.invalid_version).?;
+        try std.testing.expectEqual(@as(u16, 400), got.status);
+        try std.testing.expectEqualStrings("'{version}' is not a valid version.", got.message);
+        try std.testing.expectEqualStrings("A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"invalid_version\",\"message\":\"'{version}' is not a valid version.\",\"hint\":\"A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.invalid_version, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.upload_invalid).?;
+        try std.testing.expectEqual(@as(u16, 400), got.status);
+        try std.testing.expectEqualStrings("The upload does not match what was declared: {detail}.", got.message);
+        try std.testing.expectEqualStrings("Begin a new upload with the real file name, sha256 and size.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"upload_invalid\",\"message\":\"The upload does not match what was declared: {detail}.\",\"hint\":\"Begin a new upload with the real file name, sha256 and size.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.upload_invalid, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.token_missing).?;
+        try std.testing.expectEqual(@as(u16, 401), got.status);
+        try std.testing.expectEqualStrings("This request needs a token.", got.message);
+        try std.testing.expectEqualStrings("Run 'mopm login' or pass a token.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.token_missing, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.token_unknown).?;
+        try std.testing.expectEqual(@as(u16, 401), got.status);
+        try std.testing.expectEqualStrings("The token is not recognised.", got.message);
+        try std.testing.expectEqualStrings("Create a new token with 'mopm token create', or run 'mopm login'.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"token_unknown\",\"message\":\"The token is not recognised.\",\"hint\":\"Create a new token with 'mopm token create', or run 'mopm login'.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.token_unknown, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.token_expired).?;
+        try std.testing.expectEqual(@as(u16, 401), got.status);
+        try std.testing.expectEqualStrings("The token expired at {expires_at}.", got.message);
+        try std.testing.expectEqualStrings("Create a new token.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"token_expired\",\"message\":\"The token expired at {expires_at}.\",\"hint\":\"Create a new token.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.token_expired, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.token_revoked).?;
+        try std.testing.expectEqual(@as(u16, 401), got.status);
+        try std.testing.expectEqualStrings("The token was revoked.", got.message);
+        try std.testing.expectEqualStrings("Create a new token.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"token_revoked\",\"message\":\"The token was revoked.\",\"hint\":\"Create a new token.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.token_revoked, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.stale_session).?;
+        try std.testing.expectEqual(@as(u16, 401), got.status);
+        try std.testing.expectEqualStrings("This action needs a login from the last 15 minutes.", got.message);
+        try std.testing.expectEqualStrings("Run 'mopm login' again.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"stale_session\",\"message\":\"This action needs a login from the last 15 minutes.\",\"hint\":\"Run 'mopm login' again.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.stale_session, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.oidc_token_invalid).?;
+        try std.testing.expectEqual(@as(u16, 401), got.status);
+        try std.testing.expectEqualStrings("The CI identity token was rejected: {detail}.", got.message);
+        try std.testing.expectEqualStrings("Check the audience and that the job has permission to request an identity token.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: {detail}.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.oidc_token_invalid, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.scope_missing).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("The token does not have the '{scope}' scope for '{name}'.", got.message);
+        try std.testing.expectEqualStrings("Create a token with that scope and that package.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the '{scope}' scope for '{name}'.\",\"hint\":\"Create a token with that scope and that package.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.scope_missing, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.not_owner).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("You are not an owner of '{name}'.", got.message);
+        try std.testing.expectEqualStrings("Use a token of an account that can write the namespace.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"not_owner\",\"message\":\"You are not an owner of '{name}'.\",\"hint\":\"Use a token of an account that can write the namespace.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.not_owner, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.name_reserved).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("'{name}' is {what}.", got.message);
+        try std.testing.expectEqualStrings("Choose another name.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"name_reserved\",\"message\":\"'{name}' is {what}.\",\"hint\":\"Choose another name.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.name_reserved, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.oidc_not_trusted).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("No trusted publisher of '{name}' matches this CI identity.", got.message);
+        try std.testing.expectEqualStrings("Register the repository, workflow and environment as a trusted publisher of the package.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"oidc_not_trusted\",\"message\":\"No trusted publisher of '{name}' matches this CI identity.\",\"hint\":\"Register the repository, workflow and environment as a trusted publisher of the package.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.oidc_not_trusted, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.limit_exceeded).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("Adding this file would put '{name}' over its storage limit of {limit} bytes; {remaining} bytes are left.", got.message);
+        try std.testing.expectEqualStrings("Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"limit_exceeded\",\"message\":\"Adding this file would put '{name}' over its storage limit of {limit} bytes; {remaining} bytes are left.\",\"hint\":\"Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.limit_exceeded, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.package_not_found).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("There is no package '{name}'.", got.message);
+        try std.testing.expectEqualStrings("Check the spelling; a package is created by publishing it.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"package_not_found\",\"message\":\"There is no package '{name}'.\",\"hint\":\"Check the spelling; a package is created by publishing it.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.package_not_found, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.version_not_found).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("'{name}' has no version '{version}'.", got.message);
+        try std.testing.expectEqualStrings("List the versions with 'mopm info {name}'.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"version_not_found\",\"message\":\"'{name}' has no version '{version}'.\",\"hint\":\"List the versions with 'mopm info {name}'.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.version_not_found, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.device_code_unknown).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("The device code is not recognised.", got.message);
+        try std.testing.expectEqualStrings("Start the login again.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"device_code_unknown\",\"message\":\"The device code is not recognised.\",\"hint\":\"Start the login again.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.device_code_unknown, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.token_not_found).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("There is no such token.", got.message);
+        try std.testing.expectEqualStrings("List yours with 'mopm token list'.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"token_not_found\",\"message\":\"There is no such token.\",\"hint\":\"List yours with 'mopm token list'.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.token_not_found, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.publish_not_found).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("There is no such publish.", got.message);
+        try std.testing.expectEqualStrings("Publish ids are only valid for the caller who made them.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"publish_not_found\",\"message\":\"There is no such publish.\",\"hint\":\"Publish ids are only valid for the caller who made them.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.publish_not_found, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.group_not_found).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("There is no such group.", got.message);
+        try std.testing.expectEqualStrings("Group ids are only valid for the caller who made them, or for an owner of every package in the group.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"group_not_found\",\"message\":\"There is no such group.\",\"hint\":\"Group ids are only valid for the caller who made them, or for an owner of every package in the group.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.group_not_found, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.version_exists).?;
+        try std.testing.expectEqual(@as(u16, 409), got.status);
+        try std.testing.expectEqualStrings("'{name}' {version} already exists (sha256 {sha256}); versions are immutable.", got.message);
+        try std.testing.expectEqualStrings("Publish a new version.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"version_exists\",\"message\":\"'{name}' {version} already exists (sha256 {sha256}); versions are immutable.\",\"hint\":\"Publish a new version.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.version_exists, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.upload_used).?;
+        try std.testing.expectEqual(@as(u16, 409), got.status);
+        try std.testing.expectEqualStrings("The upload '{upload_id}' was already used.", got.message);
+        try std.testing.expectEqualStrings("Begin a new upload.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"upload_used\",\"message\":\"The upload '{upload_id}' was already used.\",\"hint\":\"Begin a new upload.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.upload_used, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.group_not_open).?;
+        try std.testing.expectEqual(@as(u16, 409), got.status);
+        try std.testing.expectEqualStrings("Group {group_id} is {status}; only an open group can be aborted.", got.message);
+        try std.testing.expectEqualStrings("Create the group again with the same request to open it again.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"group_not_open\",\"message\":\"Group {group_id} is {status}; only an open group can be aborted.\",\"hint\":\"Create the group again with the same request to open it again.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.group_not_open, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.group_conflict).?;
+        try std.testing.expectEqual(@as(u16, 409), got.status);
+        try std.testing.expectEqualStrings("The group cannot be created: {detail}.", got.message);
+        try std.testing.expectEqualStrings("Abort or finish your other groups, or publish a new version.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"group_conflict\",\"message\":\"The group cannot be created: {detail}.\",\"hint\":\"Abort or finish your other groups, or publish a new version.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.group_conflict, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.group_commit_refused).?;
+        try std.testing.expectEqual(@as(u16, 409), got.status);
+        try std.testing.expectEqualStrings("The group cannot be committed: {detail}.", got.message);
+        try std.testing.expectEqualStrings("Read the group with its status request; create it again with the same request to open it again.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"group_commit_refused\",\"message\":\"The group cannot be committed: {detail}.\",\"hint\":\"Read the group with its status request; create it again with the same request to open it again.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.group_commit_refused, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.group_not_settled).?;
+        try std.testing.expectEqual(@as(u16, 409), got.status);
+        try std.testing.expectEqualStrings("Group {group_id} cannot be yanked or unyanked now: {detail}.", got.message);
+        try std.testing.expectEqualStrings("A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"group_not_settled\",\"message\":\"Group {group_id} cannot be yanked or unyanked now: {detail}.\",\"hint\":\"A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.group_not_settled, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.invalid_transition).?;
+        try std.testing.expectEqual(@as(u16, 409), got.status);
+        try std.testing.expectEqualStrings("Cannot {action} '{name}' {version}: it is {state}.", got.message);
+        try std.testing.expectEqualStrings("Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"invalid_transition\",\"message\":\"Cannot {action} '{name}' {version}: it is {state}.\",\"hint\":\"Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.invalid_transition, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.payload_too_large).?;
+        try std.testing.expectEqual(@as(u16, 413), got.status);
+        try std.testing.expectEqualStrings("The file is larger than the limit of {limit} bytes.", got.message);
+        try std.testing.expectEqualStrings("Reduce the package size.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"The file is larger than the limit of {limit} bytes.\",\"hint\":\"Reduce the package size.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.payload_too_large, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.rate_limited).?;
+        try std.testing.expectEqual(@as(u16, 429), got.status);
+        try std.testing.expectEqualStrings("Too many requests.", got.message);
+        try std.testing.expectEqualStrings("Wait {retry_after} seconds; the Retry-After header says how long.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"rate_limited\",\"message\":\"Too many requests.\",\"hint\":\"Wait {retry_after} seconds; the Retry-After header says how long.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.rate_limited, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.internal_error).?;
+        try std.testing.expectEqual(@as(u16, 500), got.status);
+        try std.testing.expectEqualStrings("Something went wrong on our side.", got.message);
+        try std.testing.expectEqualStrings("Try again; report the request id if it persists.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"internal_error\",\"message\":\"Something went wrong on our side.\",\"hint\":\"Try again; report the request id if it persists.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.internal_error, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.read_only_mode).?;
+        try std.testing.expectEqual(@as(u16, 503), got.status);
+        try std.testing.expectEqualStrings("The registry is read-only right now; new uploads are refused.", got.message);
+        try std.testing.expectEqualStrings("Installs still work. Try again later.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"read_only_mode\",\"message\":\"The registry is read-only right now; new uploads are refused.\",\"hint\":\"Installs still work. Try again later.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.read_only_mode, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.unavailable).?;
+        try std.testing.expectEqual(@as(u16, 503), got.status);
+        try std.testing.expectEqualStrings("The registry is temporarily unavailable.", got.message);
+        try std.testing.expectEqualStrings("Try again shortly.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"unavailable\",\"message\":\"The registry is temporarily unavailable.\",\"hint\":\"Try again shortly.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.unavailable, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.route_not_found).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("There is no such operation.", got.message);
+        try std.testing.expectEqualStrings("Check the request against the API documentation; update mopm if it is old.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"route_not_found\",\"message\":\"There is no such operation.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.route_not_found, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.invalid_namespace).?;
+        try std.testing.expectEqual(@as(u16, 400), got.status);
+        try std.testing.expectEqualStrings("'{namespace}' is not a valid namespace.", got.message);
+        try std.testing.expectEqualStrings("A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"invalid_namespace\",\"message\":\"'{namespace}' is not a valid namespace.\",\"hint\":\"A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.invalid_namespace, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.not_namespace_member).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("You cannot write in '{namespace}'.", got.message);
+        try std.testing.expectEqualStrings("Ask an owner of '{namespace}' to run 'mopm org add {namespace} <your mopm username>'.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"not_namespace_member\",\"message\":\"You cannot write in '{namespace}'.\",\"hint\":\"Ask an owner of '{namespace}' to run 'mopm org add {namespace} <your mopm username>'.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.not_namespace_member, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.namespace_reserved).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("'{namespace}' is reserved.", got.message);
+        try std.testing.expectEqualStrings("Publish in an organization's namespace.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"namespace_reserved\",\"message\":\"'{namespace}' is reserved.\",\"hint\":\"Publish in an organization's namespace.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.namespace_reserved, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.namespace_not_found).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("There is no namespace '{namespace}'.", got.message);
+        try std.testing.expectEqualStrings("A user's namespace is made at their first 'mopm login'; an organization's by one of its admins.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"namespace_not_found\",\"message\":\"There is no namespace '{namespace}'.\",\"hint\":\"A user's namespace is made at their first 'mopm login'; an organization's by one of its admins.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.namespace_not_found, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.namespace_taken).?;
+        try std.testing.expectEqual(@as(u16, 409), got.status);
+        try std.testing.expectEqualStrings("'{namespace}' is taken.", got.message);
+        try std.testing.expectEqualStrings("Choose the namespace of another GitHub organization.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"namespace_taken\",\"message\":\"'{namespace}' is taken.\",\"hint\":\"Choose the namespace of another GitHub organization.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.namespace_taken, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.not_org_admin).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("You are not an active admin of the GitHub organization '{namespace}'.", got.message);
+        try std.testing.expectEqualStrings("An admin of the GitHub organization runs 'mopm org create {namespace}'; an organization that restricts OAuth apps approves the mopm registry first.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"not_org_admin\",\"message\":\"You are not an active admin of the GitHub organization '{namespace}'.\",\"hint\":\"An admin of the GitHub organization runs 'mopm org create {namespace}'; an organization that restricts OAuth apps approves the mopm registry first.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.not_org_admin, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.github_account_mismatch).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("The GitHub account that approved is not the one logged in to mopm.", got.message);
+        try std.testing.expectEqualStrings("Approve with the GitHub account you logged in with, or run 'mopm login' with the other one.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"github_account_mismatch\",\"message\":\"The GitHub account that approved is not the one logged in to mopm.\",\"hint\":\"Approve with the GitHub account you logged in with, or run 'mopm login' with the other one.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.github_account_mismatch, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.not_namespace_owner).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("You are not an owner of '{namespace}'.", got.message);
+        try std.testing.expectEqualStrings("Ask an owner of '{namespace}'; 'mopm org list {namespace}' shows them.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"not_namespace_owner\",\"message\":\"You are not an owner of '{namespace}'.\",\"hint\":\"Ask an owner of '{namespace}'; 'mopm org list {namespace}' shows them.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.not_namespace_owner, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.last_owner).?;
+        try std.testing.expectEqual(@as(u16, 409), got.status);
+        try std.testing.expectEqualStrings("'{user}' is the last owner of '{namespace}'.", got.message);
+        try std.testing.expectEqualStrings("Make another member an owner first.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"last_owner\",\"message\":\"'{user}' is the last owner of '{namespace}'.\",\"hint\":\"Make another member an owner first.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.last_owner, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.member_not_found).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("'{user}' is not a member of '{namespace}'.", got.message);
+        try std.testing.expectEqualStrings("List the members with 'mopm org list {namespace}'.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"member_not_found\",\"message\":\"'{user}' is not a member of '{namespace}'.\",\"hint\":\"List the members with 'mopm org list {namespace}'.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.member_not_found, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.user_not_found).?;
+        try std.testing.expectEqual(@as(u16, 404), got.status);
+        try std.testing.expectEqualStrings("There is no mopm user '{user}'.", got.message);
+        try std.testing.expectEqualStrings("A user gets their name at their first 'mopm login'.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"user_not_found\",\"message\":\"There is no mopm user '{user}'.\",\"hint\":\"A user gets their name at their first 'mopm login'.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.user_not_found, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    try std.testing.expect(ErrorCode.entry(.unknown) == null);
+    try std.testing.expectEqual(ErrorCode.unknown, decodeError(a, "{\"error\":{\"code\":\"not_a_code\",\"message\":\"m\",\"hint\":\"\"}}").?.@"error".code);
+    try std.testing.expect(decodeError(a, "not json") == null);
+    try std.testing.expect(decodeError(a, "{\"error\":{\"message\":\"no code\",\"hint\":\"\"}}") == null);
+}
+
 /// Why a publish was rejected after it was accepted (`PublishStatus`).
 /// Not an HTTP error. Clients treat an unknown value as a generic rejection.
 pub const RejectionCode = enum {

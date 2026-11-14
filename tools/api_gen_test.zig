@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const gen = @import("api_gen/gen.zig");
+const cli = @import("api_gen/cli.zig");
 
 test {
     _ = @import("api_gen/model.zig");
@@ -96,4 +97,65 @@ test "a proto that does not parse fails the generation, naming the file and line
     try tmp.dir.writeFile("spec/api/mopm/registry/v2/registry.proto", "syntax = \"proto3\";\npackage mopm.registry.v2;\nmessage A { string n = ; }\n");
     const why = (try gen.generate(a, tmp.dir)).bad;
     try std.testing.expectEqualStrings("mopm/registry/v2/registry.proto:3: expected a number but found ';'", why);
+}
+
+/// A scratch repository holding a copy of the real protos.
+fn scratchRepo(a: std.mem.Allocator, tmp: *std.testing.TmpDir) ![]const u8 {
+    const dir = "spec/api/mopm/registry/v2";
+    try tmp.dir.makePath(dir);
+    var src = try std.fs.cwd().openDir(dir, .{ .iterate = true });
+    defer src.close();
+    var it = src.iterate();
+    while (try it.next()) |e| {
+        if (e.kind != .file or !std.mem.endsWith(u8, e.name, ".proto")) continue;
+        try tmp.dir.writeFile(try std.fs.path.join(a, &.{ dir, e.name }), try src.readFileAlloc(a, e.name, 1 << 20));
+    }
+    return tmp.dir.realpathAlloc(a, ".");
+}
+
+test "the command writes the three outputs into the repository it is given and says so" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try scratchRepo(a, &tmp);
+    var out = std.ArrayList(u8).init(a);
+    var err = std.ArrayList(u8).init(a);
+    try std.testing.expectEqual(@as(u8, 0), try cli.run(a, &.{root}, out.writer(), err.writer()));
+    try std.testing.expectEqualStrings("wrote spec/api/openapi-v2.yaml\nwrote service/api/src/gen/registry-v2.ts\nwrote src/core/registry_v2.zig\n", out.items);
+    try std.testing.expectEqualStrings("", err.items);
+    // What it wrote is what is checked in (the protos are the same).
+    for (gen.outputs) |path| {
+        const written = try tmp.dir.readFileAlloc(a, path, 16 << 20);
+        const checked_in = try std.fs.cwd().readFileAlloc(a, path, 16 << 20);
+        try std.testing.expectEqualStrings(checked_in, written);
+    }
+}
+
+test "the command refuses extra arguments, a root it cannot open and protos that do not parse" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var out = std.ArrayList(u8).init(a);
+    var err = std.ArrayList(u8).init(a);
+    try std.testing.expectEqual(@as(u8, 2), try cli.run(a, &.{ "a", "b" }, out.writer(), err.writer()));
+    try std.testing.expectEqualStrings(cli.usage, err.items);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try scratchRepo(a, &tmp);
+    err.clearRetainingCapacity();
+    const missing = try std.fs.path.join(a, &.{ root, "no-such-dir" });
+    try std.testing.expectEqual(@as(u8, 1), try cli.run(a, &.{missing}, out.writer(), err.writer()));
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "mopm-api-gen: cannot open {s}: FileNotFound\n", .{missing}), err.items);
+
+    try tmp.dir.writeFile("spec/api/mopm/registry/v2/registry.proto", "syntax = \"proto3\";\npackage mopm.registry.v2;\nmessage A { string n = ; }\n");
+    err.clearRetainingCapacity();
+    out.clearRetainingCapacity();
+    try std.testing.expectEqual(@as(u8, 1), try cli.run(a, &.{root}, out.writer(), err.writer()));
+    try std.testing.expectEqualStrings("mopm-api-gen: mopm/registry/v2/registry.proto:3: expected a number but found ';'\n", err.items);
+    try std.testing.expectEqualStrings("", out.items);
+    // Nothing was written.
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(gen.outputs[0], .{}));
 }
