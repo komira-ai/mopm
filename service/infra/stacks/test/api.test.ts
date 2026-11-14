@@ -278,13 +278,21 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(AUTH_GRANTS.tokens!.indexes).toEqual(['by_github_id']);
   });
 
-  // A login creates the user namespace with a PutItem conditional on the key being absent; nothing in the handler updates
-  // or deletes a namespace, so the role cannot rebind one.
+  // A login creates the user namespace with a PutItem conditional on the key being absent; binding a new App installation
+  // is a PutItem conditional on the GitHub id it read. Nothing in the handler updates or deletes a namespace.
   test('namespaces: read, create and list by account only; never update or delete', () => {
     expect(AUTH_GRANTS.namespaces).toEqual({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_github_id'] });
     const st = statements().filter((s) => s.Sid === 'AuthNamespaces');
     expect(st).toHaveLength(1);
     expect(acts(st[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']);
+  });
+
+  // The membership check keeps a pass (PutItem) and reads it back (GetItem); nothing deletes one (TTL does).
+  test('membership_passes: read and put only', () => {
+    expect(AUTH_GRANTS.membership_passes).toEqual({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] });
+    const st = statements().filter((s) => s.Sid === 'AuthMembershipPasses');
+    expect(st).toHaveLength(1);
+    expect(acts(st[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem']);
   });
 
   // POST /api/v1/me/tokens asks which packages the account owns (ownedPackagesFrom: a Query on the owners table's

@@ -40,7 +40,7 @@ export interface NamespaceRecord {
 
 /**
  * Persistence for namespaces. The memory adapter defines the rules; the DynamoDB adapter keeps them
- * (test/auth-namespaces.test.ts runs one suite over both). No operation deletes or rebinds a namespace.
+ * (test/auth-namespaces.test.ts runs one suite over both). No operation deletes a namespace or changes its GitHub id.
  */
 export interface NamespaceStore {
   getNamespace(namespace: string): Promise<NamespaceRecord | undefined>;
@@ -51,6 +51,12 @@ export interface NamespaceStore {
   createNamespace(rec: NamespaceRecord): Promise<{ created: boolean; record: NamespaceRecord }>;
   /** Every namespace bound to the GitHub id, in namespace order. */
   listNamespaces(github_id: number): Promise<NamespaceRecord[]>;
+  /**
+   * Bind another installation of the registry's GitHub App to an organization namespace (section 2.2: the App installed
+   * again). Only `installation_id` changes, and only on an `org` row bound to `github_id`: the answer is the stored row,
+   * or undefined when there is no such row (absent, a user namespace, or bound to another id), and nothing is written.
+   */
+  bindInstallation(namespace: string, github_id: number, installation_id: number): Promise<NamespaceRecord | undefined>;
 }
 
 const copy = <T>(v: T): T => structuredClone(v);
@@ -73,6 +79,12 @@ export class MemoryNamespaceStore implements NamespaceStore {
       .filter((r) => r.github_id === github_id)
       .sort((a, b) => (a.namespace < b.namespace ? -1 : 1)) // keys are unique: never equal
       .map(copy);
+  }
+  async bindInstallation(namespace: string, github_id: number, installation_id: number) {
+    const r = this.rows.get(namespace);
+    if (!r || r.kind !== 'org' || r.github_id !== github_id) return undefined;
+    r.installation_id = installation_id;
+    return copy(r);
   }
 }
 

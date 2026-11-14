@@ -18,9 +18,11 @@ const fromItem = (i: Item): NamespaceRecord => {
 
 /**
  * NamespaceStore on DynamoDB, table `mopm-<stage>-namespaces` keyed by `namespace`. Create-once is a PutItem conditional
- * on the key being absent; the loser of a race reads the winner's row with a strongly consistent read. No path deletes
- * or overwrites a row (the table denies DeleteItem to this role, data-stack.ts). listNamespaces reads the by-GitHub-id
- * index, which is eventually consistent: a namespace created a moment ago may be missing from a list for a short time.
+ * on the key being absent; the loser of a race reads the winner's row with a strongly consistent read. No path deletes a
+ * row (the table denies DeleteItem to this role, data-stack.ts) or changes its GitHub id: bindInstallation writes the row
+ * back with a new installation id under a condition that the stored GitHub id and kind are the ones it read.
+ * listNamespaces reads the by-GitHub-id index, which is eventually consistent: a namespace created a moment ago may be
+ * missing from a list for a short time.
  */
 export class DynamoNamespaceStore implements NamespaceStore {
   constructor(
@@ -51,6 +53,29 @@ export class DynamoNamespaceStore implements NamespaceStore {
     // The condition failed, so a row existed; rows are never deleted, so it is still there.
     if (!held) throw new Error(`namespace ${rec.namespace}: the create was refused but no row is stored`);
     return { created: false, record: held };
+  }
+
+  async bindInstallation(namespace: string, github_id: number, installation_id: number): Promise<NamespaceRecord | undefined> {
+    const held = await this.getNamespace(namespace);
+    if (!held || held.kind !== 'org' || held.github_id !== github_id) return undefined;
+    const next: NamespaceRecord = { ...held, installation_id };
+    try {
+      await this.doc.send(
+        new PutCommand({
+          TableName: this.table,
+          Item: toItem(next),
+          // The PutItem grant covers this write; the condition keeps it to the row read above (rows are never deleted, and
+          // nothing changes a GitHub id or a kind, so it fails only on a malformed row).
+          ConditionExpression: '#g = :g AND #k = :k',
+          ExpressionAttributeNames: { '#g': 'github_id', '#k': 'kind' },
+          ExpressionAttributeValues: { ':g': String(github_id), ':k': 'org' },
+        }),
+      );
+    } catch (err) {
+      if (conditionFailed(err)) return undefined;
+      throw err;
+    }
+    return next;
   }
 
   async listNamespaces(github_id: number): Promise<NamespaceRecord[]> {

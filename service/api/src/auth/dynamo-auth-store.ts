@@ -9,6 +9,7 @@ export interface AuthTables {
   device_logins: string;
   trusted_publishers: string;
   namespaces: string;
+  membership_passes: string;
 }
 
 export const authTablesFor = (stage: string): AuthTables => ({
@@ -17,6 +18,7 @@ export const authTablesFor = (stage: string): AuthTables => ({
   device_logins: `mopm-${stage}-device_logins`,
   trusted_publishers: `mopm-${stage}-trusted_publishers`,
   namespaces: `mopm-${stage}-namespaces`,
+  membership_passes: `mopm-${stage}-membership_passes`,
 });
 
 /** The tokens table's index by account (service/infra/stacks/lib/data-stack.ts): partition github_id, sort id. */
