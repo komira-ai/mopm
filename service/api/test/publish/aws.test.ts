@@ -91,6 +91,37 @@ describe('S3Channel', () => {
 
   const listing = (...keys: string[]) => ({ status: 200, body: `<?xml version="1.0"?><ListBucketResult><KeyCount>${keys.length}</KeyCount>${keys.map((k) => `<Contents><Key>${k}</Key></Contents>`).join('')}</ListBucketResult>` });
 
+  const page = (entries: Array<[string, number]>, next?: string) => ({
+    status: 200,
+    body:
+      `<?xml version="1.0"?><ListBucketResult><IsTruncated>${next ? 'true' : 'false'}</IsTruncated>` +
+      entries.map(([k, n]) => `<Contents><Key>${k}</Key><LastModified>x</LastModified><Size>${n}</Size></Contents>`).join('') +
+      (next ? `<NextContinuationToken>${next}</NextContinuationToken>` : '') +
+      '</ListBucketResult>',
+  });
+
+  test('list: follows the continuation token to the last page, signed, and gives every key with its size in key order', async () => {
+    const t = fakeHttp(page([['linux-64/mojo-b-1.conda', 20]], 'tok&amp;1'), page([['linux-64/mojo-a&amp;b-1.conda', 10]]));
+    expect(await new S3Channel('bkt', opts(t.http)).list('linux-64/mojo-')).toEqual([
+      { key: 'linux-64/mojo-a&b-1.conda', size: 10 },
+      { key: 'linux-64/mojo-b-1.conda', size: 20 },
+    ]);
+    expect(t.seen.map((s) => s.url)).toEqual([
+      'https://bkt.s3.us-east-1.amazonaws.com/?list-type=2&prefix=linux-64%2Fmojo-',
+      'https://bkt.s3.us-east-1.amazonaws.com/?list-type=2&prefix=linux-64%2Fmojo-&continuation-token=tok%261',
+    ]);
+    expect(t.seen.every((s) => s.method === 'GET' && s.headers.authorization!.includes('AWS4-HMAC-SHA256'))).toBe(true);
+  });
+
+  test('list: an empty prefix listing is empty; a failure, an entry without a size and a truncated page without a token all throw', async () => {
+    expect(await new S3Channel('bkt', opts(fakeHttp(page([])).http)).list('index/')).toEqual([]);
+    await expect(new S3Channel('bkt', opts(fakeHttp({ status: 403, body: '<Error/>' }).http)).list('index/')).rejects.toThrow('s3 answered 403: list index/: <Error/>');
+    const noSize = { status: 200, body: '<ListBucketResult><Contents><Key>a</Key></Contents></ListBucketResult>' };
+    await expect(new S3Channel('bkt', opts(fakeHttp(noSize).http)).list('')).rejects.toThrow('s3 answered 200: list : an entry without a key or a size');
+    const noToken = { status: 200, body: '<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>' };
+    await expect(new S3Channel('bkt', opts(fakeHttp(noToken).http)).list('x')).rejects.toThrow('s3 answered 200: list x: truncated without a continuation token');
+  });
+
   test('getExact on 403 lists with the exact key as the prefix, one key at most, signed; an empty listing is absent', async () => {
     const t = fakeHttp({ status: 403, body: '<Error/>' }, listing());
     expect(await new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).toBeUndefined();

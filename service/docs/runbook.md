@@ -409,6 +409,40 @@ any revert is merged:
 
 A group that is stuck at step 2 is rolled forward (the sweeper, or a redrive) or ended with the group tool; it is not reverted around.
 
+## Deleting the global names (held)
+
+Once packages live in namespaces (docs/design/namespaces.md, section 12.4), the flat names are deleted by a held tool,
+`service/api/src/ops/delete-global-names/`, built by `npm run build` in `service/api` to `dist/ops/delete-global-names/bin.js`. It
+runs with the stage's takedown role (on beta and gamma, the takedown or the cleanup role): the only roles the tables and the channel
+bucket let delete. Every setting is a flag; the AWS credentials are the SDK's standard variables.
+
+```text
+node dist/ops/delete-global-names/bin.js --stage=<beta|gamma|prod> --bucket=<channel bucket> --distribution=<channel CloudFront id> \
+  --config-url=https://<api host>/index/config.json [--region=<region>] [--apply=<digest>]
+```
+
+- **Without `--apply` it is a dry run and changes nothing.** It lists the work from the stage: every package whose name has no
+  namespace, with its versions, owners and trusted publishers, its `.conda` files at the bucket's root (`<subdir>/mojo-<name>-*.conda`)
+  and its version 1 index file, plus any flat name that has such files or an index file but no package row. It prints one `name` line
+  per name, one `kept` line per `kci_` package (those are never touched), a `checks` line, a `totals` line and a `digest` line.
+- `--apply=<digest>` lists again and refuses (exit status 2, nothing deleted) unless the listing's digest is the dry run's: a version, a
+  package, an owner, a publisher or a root file that appeared or went since the dry run stops it. The digest covers the stage, so one
+  stage's digest never applies to another. It also refuses unless `config.json` lists index version 2 in `index_versions` and names
+  `api_v2_url`, and `<api_v2_url>/health` answers 200 (asked with no token): once `/api/v2` is served, `/api/v1` refuses to create a
+  flat name.
+- Per name it appends a `delete_global` audit record, deletes the version 1 index file, rewrites the root `repodata.json` and
+  `repodata.json.zst` of each subdir that lists the name without it, invalidates those paths on the CDN, deletes the `.conda` files,
+  deletes the version, owner and trusted publisher rows, and deletes the package row last. The deleted files leave the CDN in one
+  invalidation per run, `/<subdir>/mojo-*` for each subdir that lost a file (also when the run stops part way): a path per file would
+  pass the number of paths CloudFront lets be in progress. The wildcard also refreshes the kept `kci_` files, which only costs a fetch. If a version appears while it deletes the
+  rows, it stops before the package row (exit status 2).
+- It never retries: a step that fails stops the run (exit status 1) with the package row still there. Run the dry run again, read it,
+  and apply its new digest: it lists only what is left and finishes it. A run with nothing left does nothing.
+- The bucket is versioned with no expiry for package files, so a deleted `.conda` file stays restorable as a non-current version; the
+  tables have point-in-time recovery. API tokens that name a deleted package are left to expire. `index/takedowns.json` is not changed.
+
+The order is beta, then gamma, then prod, each applied only after its dry run has been read. The prod run is the owner's step.
+
 ## Cutting over to the Rust port
 
 Every route is TypeScript today (`/api/v1/health` reports `impl: ts` and `e2e.yml` asserts it). Before any route of a stage

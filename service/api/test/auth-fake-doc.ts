@@ -30,6 +30,7 @@ const DEFS: Record<string, TableDef> = {
   device_logins: { pk: 'id', ttl: 'expires_at' },
   trusted_publishers: { pk: 'name', sk: 'publisher' },
   owners: { pk: 'name', sk: 'github_id', gsis: { by_github_id: { pk: 'github_id', sk: 'name' } } },
+  namespaces: { pk: 'namespace', gsis: { by_github_id: { pk: 'github_id', sk: 'namespace' } } },
 };
 
 const KEYWORDS = new Set(['SET', 'REMOVE', 'AND', 'attribute_exists', 'attribute_not_exists']);

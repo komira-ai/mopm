@@ -278,6 +278,15 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(AUTH_GRANTS.tokens!.indexes).toEqual(['by_github_id']);
   });
 
+  // A login creates the user namespace with a PutItem conditional on the key being absent; nothing in the handler updates
+  // or deletes a namespace, so the role cannot rebind one.
+  test('namespaces: read, create and list by account only; never update or delete', () => {
+    expect(AUTH_GRANTS.namespaces).toEqual({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_github_id'] });
+    const st = statements().filter((s) => s.Sid === 'AuthNamespaces');
+    expect(st).toHaveLength(1);
+    expect(acts(st[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']);
+  });
+
   // POST /api/v1/me/tokens asks which packages the account owns (ownedPackagesFrom: a Query on the owners table's
   // by_github_id index). A table grant does not cover an index: the index is its own resource.
   test('the role may Query the owners index by_github_id, by its own ARN', () => {
