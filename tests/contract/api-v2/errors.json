@@ -1,0 +1,1402 @@
+{
+  "cases": [
+    {
+      "name": "error route_not_found",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "route_not_found",
+            "message": "There is no such operation.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      }
+    },
+    {
+      "name": "error device_code_unknown",
+      "operationId": "pollDeviceLogin",
+      "request": {
+        "body": {
+          "device_code": "dev_0000000000000000"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "device_code_unknown",
+            "message": "The device code is not recognised.",
+            "hint": "Start the login again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error oidc_token_invalid",
+      "operationId": "exchangeOidcToken",
+      "request": {
+        "body": {
+          "jwt": "not.a.jwt",
+          "name": "komira-ai/json",
+          "version": "1.0.0"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "oidc_token_invalid",
+            "message": "The CI identity token was rejected: malformed token.",
+            "hint": "Check the audience and that the job has permission to request an identity token."
+          }
+        }
+      }
+    },
+    {
+      "name": "error oidc_not_trusted",
+      "operationId": "exchangeOidcToken",
+      "request": {
+        "body": {
+          "jwt": "eyJhbGciOiJSUzI1NiJ9.e30.c2ln",
+          "name": "komira-ai/json",
+          "version": "1.0.0"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "oidc_not_trusted",
+            "message": "No trusted publisher of 'komira-ai/json' matches this CI identity.",
+            "hint": "Register the repository, workflow and environment as a trusted publisher of the package."
+          }
+        }
+      }
+    },
+    {
+      "name": "error stale_session",
+      "operationId": "createToken",
+      "request": {
+        "body": {
+          "name": "release",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alice/json"
+          ],
+          "expires_in_days": 30
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "stale_session",
+            "message": "This action needs a login from the last 15 minutes.",
+            "hint": "Run 'mopm login' again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error token_not_found",
+      "operationId": "revokeToken",
+      "request": {
+        "path": {
+          "token_id": "tok_0000000000000000"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_not_found",
+            "message": "There is no such token.",
+            "hint": "List yours with 'mopm token list'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error invalid_namespace",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "Komira-AI"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_namespace",
+            "message": "'Komira-AI' is not a valid namespace.",
+            "hint": "A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error namespace_not_found",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "ghost"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "namespace_not_found",
+            "message": "There is no namespace 'ghost'.",
+            "hint": "A user's namespace is made at their first 'mopm login'; an organization's by one of its admins."
+          }
+        }
+      }
+    },
+    {
+      "name": "error namespace_reserved",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "index"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "namespace_reserved",
+            "message": "'index' is reserved.",
+            "hint": "Publish in an organization's namespace."
+          }
+        }
+      }
+    },
+    {
+      "name": "error namespace_unverified",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "acme-labs"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "namespace_unverified",
+            "message": "'acme-labs' cannot be verified on GitHub: the mopm registry GitHub App is not installed on the organization.",
+            "hint": "An owner of the organization installs the mopm registry GitHub App, then an admin runs the namespace creation again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error not_namespace_member",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_namespace_member",
+            "message": "You cannot write in 'alice'.",
+            "hint": "Ask an owner of the GitHub organization for membership."
+          }
+        }
+      }
+    },
+    {
+      "name": "error unavailable",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "komira-ai"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "unavailable",
+            "message": "The registry is temporarily unavailable.",
+            "hint": "Try again shortly."
+          }
+        }
+      }
+    },
+    {
+      "name": "error invalid_request",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "cursor": "garbage"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "The request is not valid: cursor is not recognised.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      }
+    },
+    {
+      "name": "error invalid_name",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "Http-Client"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_name",
+            "message": "'Http-Client' is not a valid package name.",
+            "hint": "Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error invalid_version",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.0.0+local"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_version",
+            "message": "'1.0.0+local' is not a valid version.",
+            "hint": "A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error upload_invalid",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "9a2b200bdc2ec1bbc7de193bf5d36ca7210e74eef41a698fd76fcea5233ae1d5",
+          "size": 4096
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "upload_invalid",
+            "message": "The upload does not match what was declared: the file name must be mojo-komira-ai.json-1.0.0-<build>.conda.",
+            "hint": "Begin a new upload with the real file name, sha256 and size."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error token_missing",
+      "operationId": "getMe",
+      "request": {},
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_missing",
+            "message": "This request needs a token.",
+            "hint": "Run 'mopm login' or pass a token."
+          }
+        }
+      }
+    },
+    {
+      "name": "error token_unknown",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_unknown",
+            "message": "The token is not recognised.",
+            "hint": "Create a new token with 'mopm token create', or run 'mopm login'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error token_expired",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_expired",
+            "message": "The token expired at 2026-11-14T12:01:00.000Z.",
+            "hint": "Create a new token."
+          }
+        }
+      }
+    },
+    {
+      "name": "error token_revoked",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_revoked",
+            "message": "The token was revoked.",
+            "hint": "Create a new token."
+          }
+        }
+      }
+    },
+    {
+      "name": "error scope_missing",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        },
+        "body": {
+          "yanked": true,
+          "reason": "crashes on empty input"
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "scope_missing",
+            "message": "The token does not have the 'publish' scope for 'komira-ai/json'.",
+            "hint": "Create a token with that scope and that package."
+          }
+        }
+      }
+    },
+    {
+      "name": "error not_owner",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-komira-ai.json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "9a2b200bdc2ec1bbc7de193bf5d36ca7210e74eef41a698fd76fcea5233ae1d5",
+          "size": 4096
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_owner",
+            "message": "You are not an owner of 'komira-ai/json'.",
+            "hint": "Ask an owner to invite you."
+          }
+        }
+      }
+    },
+    {
+      "name": "error name_reserved: a module of the Mojo standard library",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "collections"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_reserved",
+            "message": "'collections' is a module of the Mojo standard library (std.collections).",
+            "hint": "Choose another name."
+          }
+        }
+      }
+    },
+    {
+      "name": "error name_reserved: a keyword",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "fn"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_reserved",
+            "message": "'fn' is reserved.",
+            "hint": "Choose another name."
+          }
+        }
+      }
+    },
+    {
+      "name": "error name_reserved: a name of the registry",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "mopm"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_reserved",
+            "message": "'mopm' is reserved.",
+            "hint": "Choose another name."
+          }
+        }
+      }
+    },
+    {
+      "name": "error limit_exceeded",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+          "size": 6000
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "limit_exceeded",
+            "message": "Adding this file would put 'alice/json' over its storage limit of 10000000000 bytes; 5000 bytes are left.",
+            "hint": "Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size."
+          }
+        }
+      }
+    },
+    {
+      "name": "error package_not_found",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "ghost"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "package_not_found",
+            "message": "There is no package 'komira-ai/ghost'.",
+            "hint": "Check the spelling, or claim the name."
+          }
+        }
+      }
+    },
+    {
+      "name": "error version_not_found",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "9.9.9"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "version_not_found",
+            "message": "'komira-ai/json' has no version '9.9.9'.",
+            "hint": "List the versions with 'mopm info komira-ai/json'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error publish_not_found",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_0123456789abcdef0123456789abcdef"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "publish_not_found",
+            "message": "There is no such publish.",
+            "hint": "Publish ids are only valid for the caller who made them."
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_not_found",
+      "operationId": "getGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "group_not_found",
+            "message": "There is no such group.",
+            "hint": "Group ids are only valid for the caller who made them, or for an owner of every package in the group."
+          }
+        }
+      }
+    },
+    {
+      "name": "error name_taken",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_taken",
+            "message": "'alice/json' is already taken.",
+            "hint": "Choose another name."
+          }
+        }
+      }
+    },
+    {
+      "name": "error name_too_similar",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_too_similar",
+            "message": "'alice/jsn' is too similar to 'alice/json'.",
+            "hint": "Choose another name, or claim again with confirm_similar if you are sure."
+          }
+        }
+      }
+    },
+    {
+      "name": "error version_exists",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-komira-ai.json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "9a2b200bdc2ec1bbc7de193bf5d36ca7210e74eef41a698fd76fcea5233ae1d5",
+          "size": 4096
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "version_exists",
+            "message": "'komira-ai/json' 1.0.0 already exists (sha256 9a2b200bdc2ec1bbc7de193bf5d36ca7210e74eef41a698fd76fcea5233ae1d5); versions are immutable.",
+            "hint": "Publish a new version."
+          }
+        }
+      }
+    },
+    {
+      "name": "error upload_used",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "upload_ids": [
+            "upl_00000000000000000000000000000002",
+            "upl_00000000000000000000000000000004"
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "upload_used",
+            "message": "The upload 'upl_00000000000000000000000000000002' was already used.",
+            "hint": "Begin a new upload."
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_not_open",
+      "operationId": "abortGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "auth": "stageToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "group_not_open",
+            "message": "Group grp_ea19d8fb9b49d79be1c61281f4344c83 is validating; only an open group can be aborted.",
+            "hint": "Create the group again with the same request to open it again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_conflict",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "group_conflict",
+            "message": "The group cannot be created: komira-ai/yaml 2.1.0 is held by group grp_18a2b03eb51229808eb41e3acce3e7cf, which is open.",
+            "hint": "Abort or finish your other groups, or publish a new version.",
+            "reason": "number_held"
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_conflict, overlap refused",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            }
+          ],
+          "on_overlap": "refuse"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "group_conflict",
+            "message": "The group cannot be created: it shares versions with your open group grp_ea19d8fb9b49d79be1c61281f4344c83, and on_overlap is refuse; abort it first, or send on_overlap supersede.",
+            "hint": "Abort or finish your other groups, or publish a new version.",
+            "reason": "overlap_refused"
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_commit_refused",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "alice/json",
+              "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            {
+              "name": "komira-ai/yaml"
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "group_commit_refused",
+            "message": "The group cannot be committed: group grp_ea19d8fb9b49d79be1c61281f4344c83 is aborted.",
+            "hint": "Read the group with its status request; create it again with the same request to open it again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_not_settled",
+      "operationId": "yankGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "body": {
+          "yanked": true,
+          "reason": "the release is broken"
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "group_not_settled",
+            "message": "Group grp_ea19d8fb9b49d79be1c61281f4344c83 cannot be yanked or unyanked now: it is validating; a group can be yanked once it is visible.",
+            "hint": "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request."
+          }
+        }
+      }
+    },
+    {
+      "name": "error invalid_transition",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        },
+        "body": {
+          "yanked": false
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_transition",
+            "message": "Cannot unyank 'komira-ai/json' 1.1.0: it is published.",
+            "hint": "Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes."
+          }
+        }
+      }
+    },
+    {
+      "name": "error payload_too_large",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+          "size": 100000001
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "payload_too_large",
+            "message": "The file is larger than the limit of 100000000 bytes.",
+            "hint": "Reduce the package size."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error rate_limited",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "second"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "retry-after": "43200"
+        },
+        "body": {
+          "error": {
+            "code": "rate_limited",
+            "message": "Too many requests.",
+            "hint": "Wait 43200 seconds; the Retry-After header says how long."
+          }
+        }
+      }
+    },
+    {
+      "name": "error internal_error",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json"
+        }
+      },
+      "response": {
+        "status": 500,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "internal_error",
+            "message": "Something went wrong on our side.",
+            "hint": "Try again; report the request id if it persists."
+          }
+        }
+      }
+    },
+    {
+      "name": "error read_only_mode",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+          "size": 4096
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "read_only_mode",
+            "message": "The registry is read-only right now; new uploads are refused.",
+            "hint": "Installs still work. Try again later."
+          }
+        }
+      }
+    },
+    {
+      "name": "name_reserved with the hint of v1 flat creation",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "fn"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_reserved",
+            "message": "'fn' is reserved.",
+            "hint": "package names are in namespaces now; update mopm"
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "name_reserved that says nothing of why",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "fn"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_reserved",
+            "message": "'fn' is.",
+            "hint": "Choose another name."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "invalid_namespace answered 404 instead of 400",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "Komira-AI"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_namespace",
+            "message": "'Komira-AI' is not a valid namespace.",
+            "hint": "A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters."
+          }
+        }
+      },
+      "expect": "invalid",
+      "malformed_request": true
+    },
+    {
+      "name": "namespace_reserved with the message of namespace_unverified",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "index"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "namespace_reserved",
+            "message": "'index' cannot be verified on GitHub: no App.",
+            "hint": "Publish in an organization's namespace."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "rate_limited without Retry-After",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "second"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "rate_limited",
+            "message": "Too many requests.",
+            "hint": "Wait 43200 seconds; the Retry-After header says how long."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a code that is not in the catalogue",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "ghost"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "package_gone",
+            "message": "There is no package 'komira-ai/ghost'.",
+            "hint": "Check the spelling, or claim the name."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "an error without a hint",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "ghost"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "package_not_found",
+            "message": "There is no package 'komira-ai/ghost'."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "group_conflict with a reason the contract does not list",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "group_conflict",
+            "message": "The group cannot be created: komira-ai/yaml 2.1.0 is held by group grp_18a2b03eb51229808eb41e3acce3e7cf, which is open.",
+            "hint": "Abort or finish your other groups, or publish a new version.",
+            "reason": "because"
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a reason on a code that lists none",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "ghost"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "package_not_found",
+            "message": "There is no package 'komira-ai/ghost'.",
+            "hint": "Check the spelling, or claim the name.",
+            "reason": "number_held"
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "route_not_found answered 400 instead of 404",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "route_not_found",
+            "message": "There is no such operation.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

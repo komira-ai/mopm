@@ -4,7 +4,9 @@ Examples of the registry contract (`spec/`), checked by the Buck2 target
 `//:contract` (`tests/drivers/contract_test.zig`). Both the CLI and the hosted
 registry are tested against the same contract; these files are the part that
 needs no running service. `//:contract_replay` (`tests/drivers/replay_test.zig`)
-replays the same API cases against the fake registry.
+replays the API cases of `/api/v1` against the fake registry. The cases of
+`/api/v2` are replayed against the hosted registry's router by `service/api`'s
+`test/http/replay-v2.test.ts` (jest, memory ports, a fixed clock).
 
 ```text
 ./buck2 build //:contract //:contract_replay
@@ -53,6 +55,29 @@ catalogue with that code's status, and its message and hint follow the
 catalogue template; `rate_limited` carries `Retry-After`. It also requires a passing success case
 for every operation, a case for every error code and for every rejection code.
 
+## API cases of v2: `api-v2/*.json`
+
+The same case format and the same checks, against `spec/api/openapi-v2.yaml`
+(`/api/v2`: package names are full names `<namespace>/<name>`, a package path is
+`/packages/{namespace}/{name}`, and there are namespaces, no owners and no
+claim) and its own error catalogue. `//:contract` checks `openapi-v2.yaml` the
+way it checks `openapi.yaml`, and the files here the way it checks `api/`: a
+passing success case for every operation of the v2 spec, a case for every error
+code of its `x-mopm-errors` and for every rejection code. The files are grouped
+by area: `meta`, `auth` (device login, CI exchange), `me`, `tokens`,
+`namespaces`, `packages` (reads and `createPackage`), `publish` (uploads,
+commit, status, yank), `groups` and `errors` (the catalogue, one case per
+code). Counter-examples (`expect: invalid`) carry one defect each, among them
+a flat name where a full name is required, a `name_reserved` hint of v1's flat
+creation under v2's template, a `MeV2` without `namespaces` and a
+`NamespaceInfo` without `frozen`.
+
+A few values a registry makes at random (a token secret, a token id, a device
+code, an upload id, a publish id, a cursor) are examples here; the replay
+compares them by shape (`OPAQUE` in `service/api/test/http/replay-v2.ts`).
+`name_taken` and `name_too_similar` are in the v2 catalogue but no operation of
+v2 answers them, so their cases are written by hand and are not replayed.
+
 ## Examples: `examples/<kind>/{valid,invalid}/`
 
 | kind | schema | file type |
@@ -67,7 +92,8 @@ Each invalid file has one defect, named by the file name.
 
 ## Adding to the contract
 
-A change to `spec/api/openapi.yaml` that adds an endpoint needs a success
-case for it; one that adds an error code needs the catalogue entry and a case.
-Removing or retyping anything already in the file breaks the additive-only
-rule in the OpenAPI description and is refused in review.
+A change to `spec/api/openapi.yaml` (cases in `api/`) or `spec/api/openapi-v2.yaml`
+(cases in `api-v2/`) that adds an endpoint needs a success case for it; one that
+adds an error code needs the catalogue entry and a case. Removing or retyping
+anything already in the file breaks the additive-only rule in the OpenAPI
+description and is refused in review.

@@ -1,0 +1,93 @@
+{
+  "cases": [
+    {
+      "name": "prod is up",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "prod",
+          "api_version": "v2",
+          "read_only": false
+        }
+      }
+    },
+    {
+      "name": "beta in read-only mode",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "beta",
+          "api_version": "v2",
+          "read_only": true
+        }
+      }
+    },
+    {
+      "name": "prod is up, names the implementation and lists its features",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "prod",
+          "api_version": "v2",
+          "read_only": false,
+          "impl": "ts",
+          "features": [
+            "group_readme_objects"
+          ]
+        }
+      }
+    },
+    {
+      "name": "health that says it is v3",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "prod",
+          "api_version": "v3",
+          "read_only": false
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "health without a request id",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "status": "ok",
+          "stage": "prod",
+          "api_version": "v2",
+          "read_only": false
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

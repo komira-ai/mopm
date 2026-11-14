@@ -1,0 +1,1206 @@
+{
+  "cases": [
+    {
+      "name": "create a group",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f301",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f301/mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "Bw2YIH+38atTeC2qWWbEq3hv1sdU5wQVEpqEbi8FnwU="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "create the same group again while it is open",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "action": "join",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "action": "join",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f301",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f301/mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "Bw2YIH+38atTeC2qWWbEq3hv1sdU5wQVEpqEbi8FnwU="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "create a group, declaring the readme of a member as an object",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ],
+              "readme": {
+                "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "size": 120
+              }
+            }
+          ]
+        },
+        "auth": "stageToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ],
+              "readme": {
+                "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "size": 120,
+                "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f301",
+                "uploaded": false,
+                "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f301/README.md?expires=300",
+                "put_headers": {
+                  "content-length": "120",
+                  "x-amz-checksum-sha256": "u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s="
+                },
+                "expires_at": "2026-11-14T12:05:00.000Z"
+              }
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f302",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f302/mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "Bw2YIH+38atTeC2qWWbEq3hv1sdU5wQVEpqEbi8FnwU="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status open",
+      "operationId": "getGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "open",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "member_count": 2,
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "reserved",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096,
+                  "uploaded": false
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "reserved",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096,
+                  "uploaded": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status open, with a file in storage",
+      "operationId": "getGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "open",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "member_count": 2,
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "reserved",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096,
+                  "uploaded": true
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "reserved",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096,
+                  "uploaded": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status visible",
+      "operationId": "getGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "committed_at": "2026-11-14T12:00:00.000Z",
+          "member_count": 2,
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "published",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "published",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status rejected, with why",
+      "operationId": "getGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "rejected",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "failure": {
+            "code": "filename_mismatch",
+            "message": "The file name does not match the package inside.",
+            "member": "alice/json"
+          },
+          "member_count": 2,
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "reserved",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "reserved",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status yanking",
+      "operationId": "getGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "committed_at": "2026-11-14T12:00:00.000Z",
+          "member_count": 2,
+          "yank": {
+            "state": "yanking",
+            "reason": "the release is broken",
+            "requested_at": "2026-11-14T12:00:00.000Z",
+            "yanked_members": 0
+          },
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "published",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "published",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "abort a group",
+      "operationId": "abortGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "auth": "stageToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "aborted",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "member_count": 2,
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "reserved"
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "reserved"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "commit a group",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "alice/json",
+              "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            {
+              "name": "komira-ai/yaml"
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v2/groups/grp_ea19d8fb9b49d79be1c61281f4344c83"
+        }
+      }
+    },
+    {
+      "name": "commit a group with the source_commit of a member",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "alice/json",
+              "source_commit": "9f2c4b7e1d0a83c5b6e7f8091a2b3c4d5e6f7081"
+            },
+            {
+              "name": "komira-ai/yaml"
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v2/groups/grp_ea19d8fb9b49d79be1c61281f4344c83"
+        }
+      }
+    },
+    {
+      "name": "commit a group that had already committed",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "alice/json",
+              "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            {
+              "name": "komira-ai/yaml"
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "visible",
+          "attempt": 1,
+          "status_url": "/api/v2/groups/grp_ea19d8fb9b49d79be1c61281f4344c83"
+        }
+      }
+    },
+    {
+      "name": "yank a group",
+      "operationId": "yankGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "body": {
+          "yanked": true,
+          "reason": "the release is broken"
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "committed_at": "2026-11-14T12:00:00.000Z",
+          "member_count": 2,
+          "yank": {
+            "state": "yanking",
+            "reason": "the release is broken",
+            "requested_at": "2026-11-14T12:00:00.000Z",
+            "yanked_members": 0
+          },
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "published"
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "published"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "unyank a group that was never yanked",
+      "operationId": "yankGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "body": {
+          "yanked": false
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "committed_at": "2026-11-14T12:00:00.000Z",
+          "member_count": 2,
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "published"
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "published"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a group created with a flat member name",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "yaml",
+              "version": "2.1.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f301",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f301/mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "Bw2YIH+38atTeC2qWWbEq3hv1sdU5wQVEpqEbi8FnwU="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a group created without members",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": []
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f301",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f301/mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "Bw2YIH+38atTeC2qWWbEq3hv1sdU5wQVEpqEbi8FnwU="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a group answered with a member action that is not one",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "action": "replace",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f301",
+                  "uploaded": false,
+                  "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f301/mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda?expires=300",
+                  "put_headers": {
+                    "content-length": "4096",
+                    "x-amz-checksum-sha256": "Bw2YIH+38atTeC2qWWbEq3hv1sdU5wQVEpqEbi8FnwU="
+                  },
+                  "expires_at": "2026-11-14T12:05:00.000Z"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a group commit without members",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "body": {
+          "members": []
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v2/groups/grp_ea19d8fb9b49d79be1c61281f4344c83"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a group status with a flat member name",
+      "operationId": "getGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "committed_at": "2026-11-14T12:00:00.000Z",
+          "member_count": 2,
+          "members": [
+            {
+              "name": "json",
+              "version": "1.0.0",
+              "state": "published",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "published",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a group status with a yank that has an unknown state",
+      "operationId": "getGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "committed_at": "2026-11-14T12:00:00.000Z",
+          "member_count": 2,
+          "yank": {
+            "state": "paused",
+            "reason": "the release is broken",
+            "requested_at": "2026-11-14T12:00:00.000Z",
+            "yanked_members": 0
+          },
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "published",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+                  "size": 4096
+                }
+              ]
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "published",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.yaml-2.1.0-mojo1.0.0_0.conda",
+                  "sha256": "070d98207fb7f1ab53782daa5966c4ab786fd6c754e70415129a846e2f059f05",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a group yank without a reason",
+      "operationId": "yankGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83"
+        },
+        "body": {
+          "yanked": true
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_ea19d8fb9b49d79be1c61281f4344c83",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "deadline_at": "2026-11-15T00:00:00.000Z",
+          "committed_at": "2026-11-14T12:00:00.000Z",
+          "member_count": 2,
+          "yank": {
+            "state": "yanking",
+            "reason": "the release is broken",
+            "requested_at": "2026-11-14T12:00:00.000Z",
+            "yanked_members": 0
+          },
+          "members": [
+            {
+              "name": "alice/json",
+              "version": "1.0.0",
+              "state": "published"
+            },
+            {
+              "name": "komira-ai/yaml",
+              "version": "2.1.0",
+              "state": "published"
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}
