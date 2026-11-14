@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 import { indexKey } from '../../src/index-files';
-import { Authenticator, MemoryAuthStore, mintToken } from '../../src/auth';
+import { Authenticator, MemoryAuthStore, mintToken, type NamespaceAccess } from '../../src/auth';
+import type { V2Deps } from '../../src/http/v2-routes';
 import type { PublishApi } from '../../src/http/publish-routes';
 import { route, type HttpResponse, type RouterDeps } from '../../src/http/router';
 import { MemoryStore } from '../../src/memory-store';
 import { Metrics } from '../../src/metrics';
+import { errorView } from '../../src/publish/catalogue';
 import { ClaimService } from '../../src/publish/claim';
+import { invalidRequest, PublishError } from '../../src/publish/errors';
 import { GroupService } from '../../src/publish/group-service';
 import { DEFAULT_PUBLISH_CONFIG, type PublishConfig } from '../../src/publish/config';
 import { parseIndexMessage, processIndexMessage, type IndexerDeps } from '../../src/publish/indexer';
@@ -89,6 +92,9 @@ export class Harness {
   mono = 0;
   private n = 0;
   private claimN = 0;
+  /** The namespace wiring of /api/v2 (set before `build()`): who may write in a namespace, and the router's v2 deps. */
+  namespaces?: NamespaceAccess;
+  v2?: V2Deps;
 
   service!: PublishService;
   groupService!: GroupService;
@@ -106,6 +112,7 @@ export class Harness {
   build() {
     const now = this.clock.now;
     this.groupService = new GroupService({
+      ...(this.namespaces ? { namespaces: this.namespaces } : {}),
       registry: this.registry,
       publishes: this.publishes,
       objects: this.objects,
@@ -116,6 +123,7 @@ export class Harness {
       metrics: new Metrics((l) => this.metricLines.push(l)),
     });
     this.service = new PublishService({
+      ...(this.namespaces ? { namespaces: this.namespaces } : {}),
       registry: this.registry,
       groups: this.registry,
       publishes: this.publishes,
@@ -129,7 +137,7 @@ export class Harness {
     });
     const claims = new ClaimService({ registry: this.registry, users: this.authStore, publishes: this.publishes, config: this.config, flags: this.flags, now, newId: () => `claim${String(++this.claimN).padStart(4, '0')}` });
     const api: PublishApi = { auth: new Authenticator({ store: this.authStore, now }), service: this.service, flags: this.flags, groups: this.groupService, claims };
-    this.deps = { store: this.registry, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: api };
+    this.deps = { store: this.registry, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: api, ...(this.v2 ? { v2: this.v2 } : {}) };
     this.validatorDeps = {
       registry: this.registry,
       publishes: this.publishes,
@@ -188,6 +196,38 @@ export class Harness {
       this.deps,
       'req-1',
     );
+  }
+
+  /**
+   * What `POST /api/v1/packages/{name}/claim` did before names moved into namespaces: read-only mode, then the token, then the
+   * ClaimService, answered with the publish catalogue. The route no longer reaches the service (it refuses the claim), but the
+   * service keeps its behaviour and its tests go through here.
+   */
+  async claimService(token: string | undefined, name: string, body?: unknown): Promise<HttpResponse> {
+    const reply = (statusCode: number, payload: unknown, extra: Record<string, string> = {}): HttpResponse => ({
+      statusCode,
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-mopm-request-id': 'req-1', ...extra },
+      body: JSON.stringify(payload),
+    });
+    try {
+      const readOnly = await this.flags.readOnly().catch(() => {
+        throw new PublishError('unavailable', 'The registry is temporarily unavailable.');
+      });
+      if (readOnly) throw new PublishError('read_only_mode', 'The registry is read-only right now; new uploads are refused.');
+      const api = this.deps.publish!;
+      const principal = await api.auth.authenticate(token ? `Bearer ${token}` : undefined);
+      const githubId = api.auth.claimToken(principal);
+      let parsed: unknown;
+      try {
+        parsed = body === undefined || body === '' ? undefined : typeof body === 'string' ? JSON.parse(body) : body;
+      } catch {
+        throw invalidRequest('the body is not valid JSON');
+      }
+      return reply(201, await api.claims!.claim({ githubId, tokenId: principal.token_id }, name, parsed));
+    } catch (e) {
+      const v = errorView(e);
+      return reply(v.status, v.body, v.retryAfter !== undefined ? { 'retry-after': String(v.retryAfter) } : {});
+    }
   }
 
   /** begin-upload for one package file, then the PUT to the (fake) S3, as the CLI does. */
