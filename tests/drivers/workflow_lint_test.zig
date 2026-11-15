@@ -580,6 +580,76 @@ test "a step does not name secrets.* or interpolate an expression" {
     try expectRun("echo $HOME $(date)", &.{});
 }
 
+// ---- the region of a cdk command --------------------------------------------------
+
+const cdk_no_region = "runs cdk with no AWS_REGION or AWS_DEFAULT_REGION in its env, its job's or the workflow's";
+
+/// A workflow whose one step runs `script`, with `top`, `job` and `step` added as the workflow's, the job's and the step's
+/// keys (each "" or YAML at its own indentation, with its trailing newline).
+fn cdkWorkflow(a: Allocator, top: []const u8, job: []const u8, step: []const u8, script: []const u8) ![]u8 {
+    return std.fmt.allocPrint(a, head ++ "{s}" ++ job_head ++ "{s}    steps:\n      - name: synth\n{s}        run: {s}\n", .{ top, job, step, script });
+}
+
+fn expectCdk(top: []const u8, job: []const u8, step: []const u8, script: []const u8, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try c.expectLines(script, try lint(a, "ci.yml", try cdkWorkflow(a, top, job, step, script)), want);
+}
+
+test "service-ci.yml as it was, with only CDK_DEFAULT_REGION set for the stacks synth, is refused" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tree = try c.loadTree(a);
+    const now = try tree.read(a, ".github/workflows/service-ci.yml");
+    const fixed =
+        \\        env:
+        \\          AWS_DEFAULT_REGION: us-east-1
+        \\          AWS_EC2_METADATA_DISABLED: 'true'
+        \\        run: |
+        \\          export CDK_DEFAULT_ACCOUNT=
+    ;
+    const before =
+        \\        env:
+        \\          CDK_DEFAULT_REGION: us-east-1
+        \\        run: |
+        \\          export CDK_DEFAULT_ACCOUNT=
+    ;
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, now, fixed));
+    const old = try std.mem.replaceOwned(u8, a, now, fixed, before);
+    try c.expectLines("service-ci.yml", try lint(a, "service-ci.yml", old), &.{"service-ci.yml: stacks step 7: " ++ cdk_no_region});
+}
+
+test "a step that runs cdk sets the region the AWS SDK reads, not CDK_DEFAULT_REGION" {
+    const region = "        env:\n          AWS_DEFAULT_REGION: us-east-1\n";
+    // CDK_DEFAULT_REGION alone, in the step's env or exported by the script, is replaced by cdk
+    try expectCdk("", "", "        env:\n          CDK_DEFAULT_REGION: us-east-1\n", "npx cdk synth", &.{"ci.yml: j step 0: " ++ cdk_no_region});
+    try expectCdk("", "", "", "export CDK_DEFAULT_REGION=us-east-1; npx cdk synth", &.{cdk_no_region});
+    try expectCdk("", "", "", "npx cdk deploy --all", &.{cdk_no_region});
+    // cdk at the start of the script, and after &&, | and (
+    try expectCdk("", "", "", "cdk synth", &.{cdk_no_region});
+    try expectCdk("", "", "", "true && cdk ls", &.{cdk_no_region});
+    try expectCdk("", "", "", "true | cdk ls", &.{cdk_no_region});
+    try expectCdk("", "", "", "(cdk ls)", &.{cdk_no_region});
+    // set but empty is unset to the SDK; null too
+    try expectCdk("", "", "        env:\n          AWS_DEFAULT_REGION: ''\n", "npx cdk synth", &.{cdk_no_region});
+    try expectCdk("", "", "        env:\n          AWS_REGION:\n", "npx cdk synth", &.{cdk_no_region});
+    // a near name is not the variable
+    try expectCdk("", "", "        env:\n          AWS_DEFAULT_REGIONS: us-east-1\n", "npx cdk synth", &.{cdk_no_region});
+    // either variable, in the step's, the job's or the workflow's env, from a value or a secret
+    try expectCdk("", "", region, "npx cdk synth", &.{});
+    try expectCdk("", "", "        env:\n          AWS_REGION: us-east-1\n", "npx cdk synth", &.{});
+    try expectCdk("", "", "        env:\n          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}\n", "npx cdk deploy --all", &.{});
+    try expectCdk("", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n", "", "npx cdk synth", &.{});
+    try expectCdk("env:\n  AWS_REGION: us-east-1\n", "", "", "npx cdk synth", &.{});
+    // not the cdk command line: other words ending in cdk, its output directory, a comment
+    try expectCdk("", "", "", "npm i aws-cdk lib", &.{});
+    try expectCdk("", "", "", "ls cdk.out/beta", &.{});
+    try expectCdk("", "", "", "echo mycdk synth", &.{});
+    try expectCdk("", "", "", "|\n          # npx cdk synth\n          true", &.{});
+}
+
 test "bash -n failed" {
     try expectRun("echo \"open", &.{"ci.yml: j step 0: bash -n failed"});
     try expectRun("if true; then echo a", &.{"bash -n failed"});
