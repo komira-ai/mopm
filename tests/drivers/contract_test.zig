@@ -298,3 +298,25 @@ test "lockProblems: import names, dependencies, path entries and channels across
     ;
     try expectLockProblems(a, .{ .channels = "[\"https://conda.mopm.dev/\",\"https://b.example/\"]", .extra = second_root }, &.{"komira-ai/http_core comes from more than one channel"});
 }
+
+fn expectIndexProblems(a: Allocator, stem: []const u8, record: []const u8, want: []const []const u8) !void {
+    const got = (try c.indexProblems(a, stem, record, try c.parseJson(a, "{}"))).items;
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "indexProblems: a version 1 file's url ends /<subdir>/<filename>, a version 2 file's /<namespace>/<subdir>/<filename>" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const v1 = "{\"name\":\"pkg1\",\"version\":\"0.1.0\",\"build\":\"mojo1.0.0_0\",\"files\":[{\"subdir\":\"linux-64\",\"filename\":\"mojo-pkg1-0.1.0-mojo1.0.0_0.conda\",\"url\":\"http://h/channel/linux-64/mojo-pkg1-0.1.0-mojo1.0.0_0.conda\"}]}\n";
+    try expectIndexProblems(a, "pkg1", v1, &.{});
+    try expectIndexProblems(a, "pkg1", try std.mem.replaceOwned(u8, a, v1, "channel/linux-64/", "channel/osx-arm64/"), &.{
+        "line 1: url http://h/channel/osx-arm64/mojo-pkg1-0.1.0-mojo1.0.0_0.conda does not end with /linux-64/mojo-pkg1-0.1.0-mojo1.0.0_0.conda",
+    });
+    const v2 = "{\"name\":\"example/pkg1\",\"version\":\"0.1.0\",\"build\":\"mojo1.0.0_0\",\"files\":[{\"subdir\":\"linux-64\",\"filename\":\"mojo-example.pkg1-0.1.0-mojo1.0.0_0.conda\",\"url\":\"http://h/channel/example/linux-64/mojo-example.pkg1-0.1.0-mojo1.0.0_0.conda\"}]}\n";
+    try expectIndexProblems(a, "example.pkg1", v2, &.{});
+    try expectIndexProblems(a, "example.pkg1", try std.mem.replaceOwned(u8, a, v2, "channel/example/", "channel/"), &.{
+        "line 1: url http://h/channel/linux-64/mojo-example.pkg1-0.1.0-mojo1.0.0_0.conda does not end with /example/linux-64/mojo-example.pkg1-0.1.0-mojo1.0.0_0.conda",
+    });
+}

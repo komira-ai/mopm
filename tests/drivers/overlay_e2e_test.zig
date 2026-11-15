@@ -400,24 +400,26 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
         // The stand-in toolchain closure sync installs beside the locked packages: served by the same fake registry.
         const toolchain = try cp.fakeToolchain(a, fake_dir, fake.base, "channel/toolchain", "linux-64", "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
         const tc_args = [_][]const u8{ "--toolchain", toolchain.closure, "--cache", try h.join(a, &.{ work, "toolchain-cache" }) };
+        // The stand-in's closure is not the one mopm pins, so sync installs it from a lock that records none.
+        const lock1_standin = try cp.unpinToolchain(a, try h.join(a, &.{ app1, "mopm.lock" }));
         r = try cx.run(app1, &[_][]const u8{ "sync", "--locked", "--overlay", set } ++ tc_args);
         const kept = cx.read(app1, ".mopm/pkgs/mojo-example.applib-0.2.0-mojo1.0.0_0.conda") orelse "";
         cx.ok("sync --locked --overlay installs libbase and applib from the set and regdep from the registry", r.code == 0 and has(r.stdout, "read 2 packages from the staged set") and
             has(r.stdout, "installed 3 packages for linux-64 (mojo 1.0.0, 2 toolchain files) into .mopm/env") and std.mem.eql(u8, kept, app_bytes) and
             std.mem.eql(u8, cx.read(app1, ".mopm/pkgs/mojo-example.libbase-0.1.0-mojo1.0.0_0.conda") orelse "", base_bytes) and
             std.mem.eql(u8, cx.read(app1, ".mopm/pkgs/mojo-example.regdep-1.0.0-mojo1.0.0_0.conda") orelse "", reg_bytes) and
-            std.mem.eql(u8, cx.read(app1, "mopm.lock") orelse "", lock1), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+            std.mem.eql(u8, cx.read(app1, "mopm.lock") orelse "", lock1_standin), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         cx.ok("the installed environment holds the staged packages and the archive of libbase", cx.read(app1, ".mopm/env/lib/libbase_sys.a") != null and
             cx.read(app1, ".mopm/env/lib/mojo/applib.mopm.json") != null, try cx.files(app1));
         cx.ok("the sync leaves .mopm holding env, pkgs and the project lock only", std.mem.eql(u8, try cx.dirNames(app1, ".mopm"), "env,pkgs,sync.lock"), try cx.dirNames(app1, ".mopm"));
         const app1c = try cx.project("app1c", "\"example/applib\" = \"=0.2.0\"\n");
-        try h.writeFile(try h.join(a, &.{ app1c, "mopm.lock" }), lock1);
+        try h.writeFile(try h.join(a, &.{ app1c, "mopm.lock" }), lock1_standin);
         r = try cx.run(app1c, &[_][]const u8{ "sync", "--locked" } ++ tc_args);
         const applib_url = try cx.fmt("{s}example/linux-64/mojo-example.applib-0.2.0-mojo1.0.0_0.conda", .{channel});
         const gone = try cx.fmt("mopm sync: {s} answered HTTP 404: example/applib 0.2.0 has been taken down or is unavailable\n", .{applib_url});
         cx.ok("the same sync without the set fails on the registry, which serves none of the staged files (HTTP 404 for the locked url)", r.code == 1 and std.mem.eql(u8, r.stderr, gone), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         const app1d = try cx.project("app1d", "\"example/applib\" = \"=0.2.0\"\n");
-        try h.writeFile(try h.join(a, &.{ app1d, "mopm.lock" }), lock1);
+        try h.writeFile(try h.join(a, &.{ app1d, "mopm.lock" }), lock1_standin);
         const other = try h.join(a, &.{ work, "set_other" });
         _ = try pack(&cx, .{ .name = "applib", .version = "0.2.0", .extra = "[dependencies]\n\"example/libbase\" = \"0.1\"\n" }, other);
         try writePlan(&cx, other, &.{.{ .name = "applib", .version = "0.2.0" }});

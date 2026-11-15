@@ -115,10 +115,10 @@ A registry still serves version 1 beside version 2 for released CLIs that
 read only it (`index_versions` lists both). This mopm does not read it. It
 has the same rules with these differences:
 
-| path | content |
-|---|---|
-| `/index/<aa>/<bb>/<name>` | one package, newline-delimited JSON, record `v` 1 |
-| `/index/takedowns.json` | public log of removed versions, `index_version` 1 |
+| path | content | schema |
+|---|---|---|
+| `/index/<aa>/<bb>/<name>` | one package, newline-delimited JSON, record `v` 1 | `index-record-1.schema.json` per line |
+| `/index/takedowns.json` | public log of removed versions, `index_version` 1 | `takedowns-1.schema.json` |
 
 - `<name>` is a name without a namespace; `aa` and `bb` are its first four
   characters, padded on the right with `_` (`http_client` is

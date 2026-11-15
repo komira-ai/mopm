@@ -125,7 +125,7 @@ pub const Writer = struct {
     }
 
     /// The description: `doc` replaces the entry `description` or is put first; an empty `doc` leaves the entries alone.
-    fn describe(self: *Writer, list: *Entries, doc: []const u8) Err!void {
+    pub fn describe(self: *Writer, list: *Entries, doc: []const u8) Err!void {
         if (doc.len == 0) return;
         if (find(list.*, "description")) |i| {
             list.items[i].value = str(doc);
@@ -791,7 +791,7 @@ pub const Writer = struct {
         }
     }
 
-    fn renderSeq(self: *Writer, out: *std.ArrayList(u8), items: []const Node, indent: usize) Err!void {
+    pub fn renderSeq(self: *Writer, out: *std.ArrayList(u8), items: []const Node, indent: usize) Err!void {
         for (items) |item| {
             try pad(out, indent);
             try out.appendSlice("- ");

@@ -100,6 +100,14 @@ export_file(
     visibility = ["//service/lambda/core:"],
 ) for subdir in ["linux-64", "osx-arm64", "noarch"]]
 
+# The TypeScript server types that tools/api_gen.zig writes from the v2 protos: //:api_gen_test checks the checked-in copy.
+export_file(
+    name = "registry-v2.ts",
+    src = "src/gen/registry-v2.ts",
+    mode = "reference",
+    visibility = ["//:"],
+)
+
 # The recorded storage wire goldens (test/fixtures/wire/*.json): the stacks' iam-wire-coverage test checks that the API
 # role's policy allows every DynamoDB call in them.
 filegroup(

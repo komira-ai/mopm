@@ -898,7 +898,10 @@ test "mopm lock, update and tree resolve against the fake registry" {
             const want_url = try cx.fmt("{s}example/linux-64/{s}", .{ channel, fname });
             var picked_ok = files.count() == 1;
             if (files.get("example/legacy")) |p| {
-                picked_ok = picked_ok and std.mem.eql(u8, c.getStr(p, "version") orelse "", case.want) and std.mem.eql(u8, c.getStr(p, "url") orelse "", want_url);
+                // Lock version 3 records the file under artifacts[<mojo version>], not on the package.
+                const art = if (c.get(p, "artifacts")) |arts| c.get(arts, "1.0.0") else null;
+                const got_url = if (art) |ar| (c.getStr(ar, "url") orelse "") else "";
+                picked_ok = picked_ok and std.mem.eql(u8, c.getStr(p, "version") orelse "", case.want) and std.mem.eql(u8, got_url, want_url);
             } else picked_ok = false;
             cx.ok(try cx.fmt("legacy {s} picks {s} and warns about each ignored version", .{ case.req, case.want }), r.code == 0 and std.mem.eql(u8, r.stderr, legacy_warnings) and picked_ok, try cx.fmt("exit {d}, stderr {s}", .{ r.code, r.stderr }));
             last_dir = d;

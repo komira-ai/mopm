@@ -67,6 +67,7 @@ _TEST_DATA = _DOCS | {
     "src/core/conda.zig": "//:site.src.core.conda.zig",
     "src/core/manifest.zig": "//:site.src.core.manifest.zig",
     "src/core/metadata.zig": "//:site.src.core.metadata.zig",
+    "src/core/names.zig": "//:site.src.core.names.zig",
     "src/core/registry.zig": "//:site.src.core.registry.zig",
     "src/core/toml.zig": "//:site.src.core.toml.zig",
     "src/core/unit_graph.zig": "//:site.src.core.unit_graph.zig",

@@ -400,7 +400,7 @@ fn treeHoldsNo(a: Allocator, dir: []const u8, token: []const u8) !bool {
 /// The compiler `mopm test` runs and the test binary it lists with `--skip-all` each get an environment without the token
 /// (`mopm run` is checked above). One stand-in plays both: `mojo build` leaves a copy of it as the test binary, so a single
 /// `mopm test` starts two programs, and each appends a line saying what it was given. `mopm sync` starts no program; it
-/// is given the token in its environment, and what it prints is compared whole against the text the fixture implies, and no file it writes (the environment, the kept
+/// is given the token in its environment, as is the `mopm lock` before it, and what each prints is compared whole against the text the fixture implies, and no file they write (the lock, the environment, the kept
 /// packages, the cache of the toolchain) holds it.
 fn theTokenIsInNoTestEnvironmentAndNoSyncFile(w: World, probe: []const u8) !void {
     const a = w.a;
@@ -423,7 +423,7 @@ fn theTokenIsInNoTestEnvironmentAndNoSyncFile(w: World, probe: []const u8) !void
     w.rep.check("mopm test starts the compiler and the test binary, and neither has MOPM_TOKEN in its environment", (try probeSawNoToken(seen, "build", a)) and
         (try probeSawNoToken(seen, "--skip-all", a)) and !h.contains(seen, w.token) and !h.contains(t.text, w.token), try std.fmt.allocPrint(a, "{s}\n{s}", .{ seen, t.text }));
 
-    // `mopm sync`: a project with no dependency is locked with no registry; the stand-in toolchain is served by the fake registry.
+    // `mopm lock`, then `mopm sync`: a project with no dependency is locked with no registry; the stand-in toolchain is served by the fake registry.
     const sync_dir = try w.dir("proj_sync");
     try std.fs.cwd().makePath(sync_dir);
     try h.writeFile(try h.join(a, &.{ sync_dir, "mopm.toml" }), "[package]\nname = \"example/probe_sync\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
@@ -431,18 +431,26 @@ fn theTokenIsInNoTestEnvironmentAndNoSyncFile(w: World, probe: []const u8) !void
     const cache = try h.join(a, &.{ w.work, "probe_cache" });
     var sync_env = try h.cloneEnv(a, &w.m.env);
     try sync_env.put("MOPM_TOKEN", w.token);
+    const lock_err = try h.join(a, &.{ w.work, "probe_lock_stderr.txt" });
+    const l = try h.run(a, &.{ w.m.exe, "lock" }, &sync_env, .{ .cwd = sync_dir, .capture = .stdout, .stderr_path = lock_err });
+    const l_err = try std.fs.cwd().readFileAlloc(a, lock_err, 1 << 20);
+    w.rep.check("mopm lock, with MOPM_TOKEN in its environment, locks the project and prints exactly the summary line and nothing on standard error", l.code == 0 and
+        std.mem.eql(u8, l.text, "locked 0 packages for mojo 1.0.0\n") and l_err.len == 0 and !h.contains(l.text, w.token), try std.fmt.allocPrint(a, "{d}\nstdout: {s}\nstderr: {s}", .{ l.code, l.text, l_err }));
+    // The stand-in's closure is not the one the lock pins, so the lock is written again with no closure recorded.
+    const lock_path = try h.join(a, &.{ sync_dir, "mopm.lock" });
+    _ = try cp.unpinToolchain(a, lock_path);
     const sync_err = try h.join(a, &.{ w.work, "probe_sync_stderr.txt" });
     const s = try h.run(a, &.{ w.m.exe, "sync", "--toolchain", tc.closure, "--cache", cache }, &sync_env, .{ .cwd = sync_dir, .capture = .stdout, .stderr_path = sync_err });
     const s_err = try std.fs.cwd().readFileAlloc(a, sync_err, 1 << 20);
-    // What sync prints, built from the fixture: the lock it writes first, one "downloading" line per toolchain file, in the closure's order, then the
-    // summary line of a project with no dependency.
+    // What sync prints, built from the fixture: one "downloading" line per toolchain file, in the closure's order, then the
+    // summary line of a project with no dependency. The lock is current, so sync does not print the "locked" line.
     var want_out = std.ArrayList(u8).init(a);
-    try want_out.writer().print("locked 0 packages for mojo 1.0.0\n", .{});
     for (tc.files) |f| try want_out.writer().print("downloading {s} ({d} bytes)\n", .{ f.file_name, f.bytes.len });
     try want_out.writer().print("installed 0 packages for {s} (mojo 1.0.0, {d} toolchain files) into .mopm/env\n", .{ cp.hostSubdir(), tc.files.len });
     w.rep.check("mopm sync, with MOPM_TOKEN in its environment, installs the environment", s.code == 0 and std.mem.eql(u8, s.text, want_out.items), s.text);
     w.rep.check("and it prints exactly that on standard output and nothing on standard error", std.mem.eql(u8, s.text, want_out.items) and s_err.len == 0, try std.fmt.allocPrint(a, "stdout: {s}\nstderr: {s}", .{ s.text, s_err }));
-    w.rep.check("and no file it writes (.mopm, the cache) holds the token", try treeHoldsNo(a, try h.join(a, &.{ sync_dir, ".mopm" }), w.token) and try treeHoldsNo(a, cache, w.token), "a file holds the token");
+    w.rep.check("and no file it writes (the lock, .mopm, the cache) holds the token", !h.contains(try std.fs.cwd().readFileAlloc(a, lock_path, 1 << 20), w.token) and
+        try treeHoldsNo(a, try h.join(a, &.{ sync_dir, ".mopm" }), w.token) and try treeHoldsNo(a, cache, w.token), "a file holds the token");
 }
 
 fn yankAndUnyank(w: World) !void {

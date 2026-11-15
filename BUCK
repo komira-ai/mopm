@@ -149,12 +149,12 @@ zig_test(
     name = "api_gen_test",
     src = "tools/api_gen_test.zig",
     imports = _API_GEN_SRCS,
-    data = glob(["spec/api/mopm/registry/v2/*.proto"]) + [
+    # service/api is its own package: its generated file comes from there, staged at its path in the repository.
+    data = {f: f for f in glob(["spec/api/mopm/registry/v2/*.proto"]) + [
         "spec/api/openapi-v2.yaml",
-        "service/api/src/gen/registry-v2.ts",
         "src/core/registry_v2.zig",
         "src/cli/registry_commands.zig",
-    ] + glob(["tests/golden/registry/**"]),
+    ] + glob(["tests/golden/registry/**"])} | {"service/api/src/gen/registry-v2.ts": "//service/api:registry-v2.ts"},
     **_TOOLS
 )
 
@@ -162,7 +162,7 @@ zig_test(
 zig_test(
     name = "registry_client_lint",
     src = "tests/drivers/registry_client_lint_test.zig",
-    imports = ["tests/drivers/registry_client_lint.zig"],
+    imports = ["tests/drivers/lint_common.zig", "tests/drivers/yaml.zig", "tests/drivers/registry_client_lint.zig"],
     data = glob(["src/cli/*.zig"]) + [
         "src/core/registry_v2.zig",
         "src/core/ci_oidc.zig",
@@ -319,7 +319,7 @@ tree(  # buck-only: the files of src/cli of v0.0.104 that its group publisher re
 zig_module(  # buck-only: the v0.0.104 client's group publisher and the files it needs, for :compat_v0_0_104
     name = "prev_cli",
     src = ":prev_cli_tree[group_publish.zig]",
-    imports = [":prev_cli_tree[{}.zig]".format(n) for n in _PREV_CLI_LIVE + ["registry_cmd", "group_plan", "group_publish_test"]],
+    imports = [":prev_cli_tree[{}.zig]".format(n) for n in _PREV_CLI_LIVE + ["group_stage_token", "publish_cmd", "registry_cmd", "group_plan", "group_publish_test"]],
     deps = [":mopm_core"],
 )
 
@@ -610,6 +610,7 @@ zig_test(  # buck-only: mopm lock, tree and sync refuse two packages of one impo
     name = "import_clash_cli",
     src = "tests/drivers/import_clash_cli_test.zig",
     imports = ["tests/drivers/harness.zig"],
+    data = ["tests/mojo_env/mopm.lock"],  # the lock the version 1 and 2 case expects `mopm lock` to write
     env_tools = {"MOPM": ":mopm"},
     **_TOOLS
 )
@@ -672,7 +673,11 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "tools/api_gen.zig",
         "tools/api_gen_test.zig",
         "registry/fake/main.zig",
+        "registry/fake/groups_test.zig",
         "tests/drivers/group_e2e.zig",
+        "tests/drivers/compat_namespaces_test.zig",
+        "tests/drivers/registry_client_lint_test.zig",
+        "tests/compat/prev_v0_0_108.zig",
     ],
     **_TOOLS
 )
@@ -894,6 +899,10 @@ filegroup(
         "index-record.schema.json": "spec/index-record.schema.json",
         "index-config.schema.json": "spec/index-config.schema.json",
         "takedowns.schema.json": "spec/takedowns.schema.json",
+    } | {
+        # The registry's v2 protos, at the path service/api's test/gen/registry-v2.test.ts hashes them from.
+        "api/" + f[len("spec/api/"):]: f
+        for f in glob(["spec/api/mopm/registry/v2/*.proto"])
     },
     visibility = ["//service/api:", "//service/infra/stacks:"],
 )
@@ -1148,6 +1157,12 @@ export_file(
 export_file(
     name = "site.src.core.metadata.zig",
     src = "src/core/metadata.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.names.zig",
+    src = "src/core/names.zig",
     visibility = ["//site:"],
 )
 
@@ -1473,8 +1488,8 @@ zig_coverage(
     blocks = False,
     floor = "coverage/cli.txt",
     test_targets = [":cli_test"],
-    # build_options.zig is a module of constants (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
-    expect = glob(["src/cli/*.zig"], exclude = ["src/cli/build_options.zig", "src/cli/test_cmd.zig"]),
+    # build_options.zig (constants) and api_spec.zig (types) are modules of declarations (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
+    expect = glob(["src/cli/*.zig"], exclude = ["src/cli/api_spec.zig", "src/cli/build_options.zig", "src/cli/test_cmd.zig"]),
 )
 
 zig_coverage(
@@ -1517,7 +1532,9 @@ zig_coverage(
     floor = "coverage/api_gen.txt",
     test_targets = [":api_gen_test"],
     # The generator's library; tools/api_gen.zig is its command line (arguments and file writes), run by `zig build gen-api`.
-    expect = glob(["tools/api_gen/*.zig"]),
+    # zig_client_tail.zig is one string literal, the text the generator appends to src/core/registry_v2.zig (a declaration has no
+    # line); the code in it runs as part of that generated file, which core_coverage measures.
+    expect = glob(["tools/api_gen/*.zig"], exclude = ["tools/api_gen/zig_client_tail.zig"]),
 )
 
 zig_coverage(

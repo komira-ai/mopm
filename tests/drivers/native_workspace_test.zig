@@ -516,6 +516,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     rep.check("the lock pins the sha256 of libshim.a, the archive the member's pack carries", h.contains(consumer_lock, try sha256Hex(a, archive_bytes)), consumer_lock);
     rep.check("the lock does not name the staged set's directory", !h.contains(consumer_lock, dist), consumer_lock);
     const toolchain = try cp.fakeToolchain(a, try h.join(a, &.{ work, "fake" }), fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
+    _ = try cp.unpinToolchain(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     r = try c.mopmRun(&env, consumer, &.{ "sync", "--locked", "--overlay", dist, "--registry", fake.base, "--toolchain", toolchain.closure, "--cache", try h.join(a, &.{ work, "toolchain-cache" }) });
     try c.must("mopm sync --locked --overlay installs the set (the registry holds none of it)", r);
     rep.check("sync read the packages from the staged set", h.contains(r.text, "from the staged set"), r.text);
@@ -730,6 +731,7 @@ fn runCxx(a: Allocator, rep: *h.Report) !void {
     const consumer_lock = try h.readFile(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     rep.check("the lock carries link = [\"c++\"] for the native", h.contains(consumer_lock, "\"link\": [\n            \"c++\"\n          ]"), consumer_lock);
     const toolchain = try cp.fakeToolchain(a, try h.join(a, &.{ work, "fake" }), fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
+    _ = try cp.unpinToolchain(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     r = try c.mopmRun(&env, consumer, &.{ "sync", "--locked", "--overlay", dist, "--registry", fake.base, "--toolchain", toolchain.closure, "--cache", try h.join(a, &.{ work, "toolchain-cache" }) });
     try c.must("mopm sync --locked --overlay installs the set", r);
     const env_dir = try h.join(a, &.{ consumer, ".mopm/env" });
