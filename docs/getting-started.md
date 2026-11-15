@@ -314,7 +314,8 @@ leaving the GitHub organization is not removed from it, and an owner runs `mopm 
 mopm username, which is their lower-case GitHub login and exists after their first `mopm login`. `add` sets the role
 (`--role owner|member`, `member` when not given), so `mopm org add <org> <user>` makes an owner a member. The last owner
 cannot be removed or demoted. `add`, `remove` and `list` are generated commands, one call of the registry's API each
-(`mopm org add --help`); every verb takes `--registry`, `--config-dir` and `--json`.
+(`mopm org add --help`) and take `--registry`, `--config-dir` and `--json`; `create` takes `--registry` and
+`--config-dir`.
 
 `mopm publish` first makes the package: it sends `PUT /packages/<namespace>/<name>` with no body, after reading the
 token and before any upload. A 201 prints `created <full name> on <registry>`; a 200 (the package exists) prints nothing;

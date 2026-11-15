@@ -67,6 +67,19 @@ pub fn wordsMatch(name: []const u8, args: []const []const u8) ?usize {
 /// Runs the generated command `args` names (the arguments after `mopm`): the one with the most words that `args` begins
 /// with. Null when no generated command has that name.
 pub fn run(arena: Allocator, args: []const []const u8, cli_version: []const u8) ?u8 {
+    var con = gp.Console.init(arena, null);
+    const code = dispatch(arena, gp.realNet(), &con, realEnv(cli_version), args) catch |e| blk: {
+        con.err.writer().print("mopm: {s}\n", .{@errorName(e)}) catch {};
+        break :blk 1;
+    };
+    gp.Console.stdStreams(con.out.items, con.err.items);
+    return code;
+}
+
+/// `run` with the network, the console and the environment given: finds the command (the longest name `args` begins
+/// with) and executes it with the arguments after its name. Null, with nothing said, when no generated command has that
+/// name.
+pub fn dispatch(arena: Allocator, net: gp.Net, con: *gp.Console, env: Env, args: []const []const u8) anyerror!?u8 {
     var best: ?usize = null;
     var best_words: usize = 0;
     inline for (registry_commands.commands, 0..) |c, i| {
@@ -79,19 +92,9 @@ pub fn run(arena: Allocator, args: []const []const u8, cli_version: []const u8) 
     }
     const index = best orelse return null;
     inline for (registry_commands.commands, 0..) |c, i| {
-        if (i == index) return runReal(c, arena, args[best_words..], cli_version);
+        if (i == index) return try execute(c, arena, net, con, env, args[best_words..]);
     }
     return null;
-}
-
-fn runReal(comptime c: spec.Command, arena: Allocator, args: []const []const u8, cli_version: []const u8) u8 {
-    var con = gp.Console.init(arena, null);
-    const code = execute(c, arena, gp.realNet(), &con, realEnv(cli_version), args) catch |e| blk: {
-        con.err.writer().print("mopm {s}: {s}\n", .{ c.name, @errorName(e) }) catch {};
-        break :blk 1;
-    };
-    gp.Console.stdStreams(con.out.items, con.err.items);
-    return code;
 }
 
 /// The lines of the list of commands for the commands whose name starts with the word `word` (`token`), under a line

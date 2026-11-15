@@ -6,7 +6,11 @@
 //!     exits 0; `mopm --help` lists the commands as tests/golden/registry/commands.txt;
 //!   - a usage error (a missing argument, a command group named alone) exits 2 and prints the usage, without a request;
 //!   - against the fake registry: `health` prints its answer as text and as JSON, a refusal prints the message, the
-//!     `code:` line and the hint and exits 1, and `whoami` without a login says so and exits 1.
+//!     `code:` line and the hint and exits 1, and `whoami` without a login says so and exits 1;
+//!   - the generated `token create`, `token list` and `token revoke`, after a `mopm login` approved on the fake: a token
+//!     created with the advertised flags (names and `all_current`) is answered with its id and secret, is listed without
+//!     its secret, leaves the list once revoked while the other stays, and a second revoke is the registry's refusal; a
+//!     missing required flag is a usage error and `token list` before the login sends nothing.
 //!
 //! Run by Buck2 (//:registry_cli) and by `zig build test`; MOPM is the built CLI, MOPM_FAKE_REGISTRY the fake registry.
 
@@ -159,5 +163,107 @@ test "registry commands against the fake registry" {
 
     r = try m.run(&.{ "whoami", "--registry", fake.base, "--config-dir", conf });
     rep.check("whoami without a login says so and exits 1", r.code == 1 and h.contains(r.stderr, "not logged in to beta; run 'mopm login'"), r.stderr);
+    try rep.finish();
+}
+
+/// `mopm login` on the fake, approved on its approval page: the session the token commands need (a fresh one).
+fn loginOnFake(a: Allocator, m: Mopm, fake: h.Fake, conf: []const u8) !bool {
+    const argv = [_][]const u8{ m.exe, "login", "--registry", fake.base, "--config-dir", conf };
+    var child = std.process.Child.init(&argv, a);
+    child.env_map = &m.env;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const first = try h.readLine(a, child.stdout.?);
+    const marker = "enter the code ";
+    if (std.mem.indexOf(u8, first, marker)) |at| {
+        const rest = first[at + marker.len ..];
+        const code = rest[0 .. std.mem.indexOfAny(u8, rest, " \r\n") orelse rest.len];
+        const body = try std.fmt.allocPrint(a, "{{\"user_code\":\"{s}\",\"decision\":\"approve\",\"handle\":\"cli-user\"}}", .{code});
+        _ = try fake.control(a, "/device", body);
+    }
+    _ = try child.stdout.?.reader().readAllAlloc(a, 1 << 20);
+    _ = try child.stderr.?.reader().readAllAlloc(a, 1 << 20);
+    const term = try child.wait();
+    return term == .Exited and term.Exited == 0;
+}
+
+/// The ids of the tokens of a `token list --json` answer.
+fn tokenIds(a: Allocator, json: []const u8) ![]const []const u8 {
+    const v = h.parseJson(a, json) catch return &.{};
+    const list = switch (v) {
+        .object => |o| o.get("tokens") orelse return &.{},
+        else => return &.{},
+    };
+    var ids = std.ArrayList([]const u8).init(a);
+    if (list != .array) return &.{};
+    for (list.array.items) |t| {
+        if (h.jsonString(t, "id")) |id| try ids.append(id);
+    }
+    return ids.items;
+}
+
+/// `args` followed by `at`.
+fn withAt(a: Allocator, args: []const []const u8, at: []const []const u8) ![]const []const u8 {
+    return std.mem.concat(a, []const u8, &.{ args, at });
+}
+
+fn holds(ids: []const []const u8, id: []const u8) bool {
+    for (ids) |x| if (std.mem.eql(u8, x, id)) return true;
+    return false;
+}
+
+test "the generated token commands create, list and revoke a token on the fake registry" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var rep = h.Report{};
+    const mopm_exe = try h.toolPath(a, "MOPM");
+    const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const work = try h.tmpPath(a, &tmp);
+    const conf = try h.join(a, &.{ work, "conf" });
+
+    h.stage = "starting the fake registry";
+    var fake = try h.Fake.start(a, fake_exe, try h.join(a, &.{ work, "fake" }));
+    defer fake.close();
+    const m = Mopm{ .a = a, .exe = mopm_exe, .env = try cleanEnv(a) };
+    const at = [_][]const u8{ "--registry", fake.base, "--config-dir", conf };
+
+    var r = try m.run(try withAt(a, &.{ "token", "list" }, &at));
+    rep.check("token list without a login says so, exits 1 and sends nothing", r.code == 1 and h.contains(r.stderr, "not logged in to beta; run 'mopm login'"), r.stderr);
+
+    rep.check("mopm login on the fake succeeds", try loginOnFake(a, m, fake, conf), "login failed");
+
+    // Create, with the flags the generated command advertises.
+    r = try m.run(try withAt(a, &.{ "token", "create", "ci", "--scopes", "publish", "--scopes", "yank", "--packages", "cli-user/a", "--packages", "cli-user/b", "--expires-in-days", "7", "--json" }, &at));
+    const created = h.parseJson(a, r.stdout) catch std.json.Value{ .null = {} };
+    const id = h.jsonString(created, "id") orelse "";
+    const secret = h.jsonString(created, "token") orelse "";
+    rep.check("token create answers the new token with its id and its secret", r.code == 0 and id.len > 0 and std.mem.startsWith(u8, secret, "mopm_") and
+        std.mem.eql(u8, h.jsonString(created, "name") orelse "", "ci"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+
+    r = try m.run(try withAt(a, &.{ "token", "create", "all", "--scopes", "stage", "--packages", "all_current", "--expires-in-days", "1" }, &at));
+    rep.check("token create with all_current prints the answer as text", r.code == 0 and h.hasLine(r.stdout, "name: all") and h.hasLine(r.stdout, "packages: all_current") and h.hasLine(r.stdout, "scopes: stage"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+
+    r = try m.run(try withAt(a, &.{ "token", "create", "bad", "--scopes", "publish", "--packages", "all_current" }, &at));
+    rep.check("token create without --expires-in-days is a usage error", r.code == 2 and h.contains(r.stderr, "missing required option --expires-in-days <n>"), r.stderr);
+
+    // List: the new token is there, and the list never holds a secret.
+    r = try m.run(try withAt(a, &.{ "token", "list", "--json" }, &at));
+    const before = try tokenIds(a, r.stdout);
+    rep.check("token list holds the created token, without its secret", r.code == 0 and holds(before, id) and before.len == 2 and
+        (secret.len == 0 or !h.contains(r.stdout, secret)), r.stdout);
+
+    // Revoke it: it leaves the list, the other stays.
+    r = try m.run(try withAt(a, &.{ "token", "revoke", id }, &at));
+    rep.check("token revoke says done", r.code == 0 and std.mem.eql(u8, r.stdout, "Done.\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    r = try m.run(try withAt(a, &.{ "token", "list", "--json" }, &at));
+    const after = try tokenIds(a, r.stdout);
+    rep.check("after the revoke the list no longer holds it, and holds the other", r.code == 0 and !holds(after, id) and after.len == 1, r.stdout);
+
+    r = try m.run(try withAt(a, &.{ "token", "revoke", id }, &at));
+    rep.check("revoking it again is the registry's refusal with its code", r.code == 1 and h.hasLinePrefix(r.stderr, "  code: "), r.stderr);
     try rep.finish();
 }
