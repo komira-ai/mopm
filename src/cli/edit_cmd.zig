@@ -667,7 +667,7 @@ test "a bare name is refused with the names the registry finds, and with today's
     try std.testing.expectEqual(@as(usize, 0), unasked.asked);
 }
 
-test "a refusal that runs out of memory fails with OutOfMemory, and one that completes is the plain or the full message" {
+test "a refusal that runs out of memory fails with OutOfMemory, and one that completes is the plain or the full message, the full one when nothing failed" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -685,8 +685,14 @@ test "a refusal that runs out of memory fails with OutOfMemory, and one that com
             try std.testing.expectEqual(error.OutOfMemory, e);
             continue;
         };
-        if (!failing.has_induced_failure) completed = true;
-        try std.testing.expect(std.mem.eql(u8, got, full) or std.mem.eql(u8, got, plain));
+        if (!failing.has_induced_failure) {
+            // No allocation failed: the registry was asked and its names are in the message.
+            completed = true;
+            try std.testing.expectEqualStrings(full, got);
+        } else {
+            // A failed allocation inside the registry lookup falls back to the message without names.
+            try std.testing.expect(std.mem.eql(u8, got, full) or std.mem.eql(u8, got, plain));
+        }
     }
     try std.testing.expect(completed);
 }

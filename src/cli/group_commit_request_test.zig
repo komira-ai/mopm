@@ -1,5 +1,6 @@
 //! A group whose commit request is not one the contract has, and the package create that is repeated after a busy answer
-//! (group_publish.zig, publish_cmd.zig). They share the scripted registry of group_publish_test.zig.
+//! (group_publish.zig, publish_cmd.zig), and the runaway guard of the scripted registry of group_publish_test.zig, which
+//! they share.
 
 const std = @import("std");
 const gp = @import("group_publish.zig");
@@ -40,4 +41,20 @@ test "a package create the registry answers 503 once is sent again after a wait,
     try std.testing.expect(script.slept > 0);
     try std.testing.expectEqualStrings("created example/x on beta\n", con.out.items);
     try std.testing.expectEqualStrings("", con.err.items);
+}
+
+test "the scripted registry stops a runaway: the request after max_requests fails and names the cause" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var script = gt.newScript(a, &.{.{ .method = .GET, .suffix = "/x", .status = 200 }});
+    const n = script.net();
+    var i: usize = 0;
+    while (i < gt.Script.max_requests) : (i += 1) {
+        const answer = try n.vtable.request(n.ptr, a, .GET, "http://registry.test/x", .{});
+        try std.testing.expectEqual(@as(u16, 200), answer.status);
+    }
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectError(error.ScriptRanAway, n.vtable.request(n.ptr, a, .GET, "http://registry.test/x", .{}));
+    try std.testing.expectEqualStrings("the script was asked for more than max_requests requests", script.mismatch.?);
 }

@@ -601,6 +601,7 @@ test "planned commands are recognised, working ones are not planned" {
 fn parseOk(a: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) !Opts {
     const parsed = try parseOpts(a, tool, args);
     try std.testing.expectEqualStrings("", if (parsed == .usage) parsed.usage else "");
+    try std.testing.expect(parsed == .ok);
     return parsed.ok;
 }
 

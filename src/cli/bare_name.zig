@@ -10,7 +10,8 @@ const core = @import("mopm_core");
 const registry = core.registry;
 
 /// The registry a manifest refusal may ask which namespace the user logged in with (`--registry` and the version of mopm),
-/// and the directory holding credentials.json (`config_dir`; null is the default config directory of the user).
+/// and the directory holding credentials.json (`config_dir`; null, what every command passes, is the user's default
+/// config directory; tests set it to a scratch directory).
 pub const Lookup = struct { registry: []const u8, cli_version: []const u8, config_dir: ?[]const u8 = null };
 
 /// `message`, the manifest's refusal, worded with the namespace stored for the registry of `l` when it refuses a bare

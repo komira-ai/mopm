@@ -1587,22 +1587,6 @@ test "the notes sink of an --oidc token run refuses any notice" {
     try std.testing.expectError(error.UnexpectedNotice, notes.writeAll("a notice"));
 }
 
-test "the scripted registry stops a runaway: the request after max_requests fails and names the cause" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    var script = newScript(a, &.{.{ .method = .GET, .suffix = "/x", .status = 200 }});
-    const n = script.net();
-    var i: usize = 0;
-    while (i < Script.max_requests) : (i += 1) {
-        const answer = try n.vtable.request(n.ptr, a, .GET, "http://registry.test/x", .{});
-        try std.testing.expectEqual(@as(u16, 200), answer.status);
-    }
-    try std.testing.expect(script.mismatch == null);
-    try std.testing.expectError(error.ScriptRanAway, n.vtable.request(n.ptr, a, .GET, "http://registry.test/x", .{}));
-    try std.testing.expectEqualStrings("the script was asked for more than max_requests requests", script.mismatch.?);
-}
-
 fn oidcToken(arena: Allocator, net: gp.Net, act: core.ci_oidc.Actions, api_url: []const u8, audience_stage: []const u8, uploads: []const plan_mod.Member) anyerror!core.ci_oidc.Result {
     var notes = NoNotes{};
     return stage_token.token(arena, net, act, api_url, audience_stage, uploads, .publish, &notes);

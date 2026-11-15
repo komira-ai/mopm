@@ -174,11 +174,13 @@ pub fn scaffoldCmd(arena: std.mem.Allocator, cmd: []const u8, args: []const []co
 
 fn expectNamed(want: []const u8, got: NameResult) !void {
     try std.testing.expectEqualStrings("", if (got == .refused) got.refused else "");
+    try std.testing.expect(got == .ok);
     try std.testing.expectEqualStrings(want, got.ok);
 }
 
 fn expectRefused(want: []const u8, got: NameResult) !void {
     try std.testing.expectEqualStrings("", if (got == .ok) got.ok else "");
+    try std.testing.expect(got == .refused);
     try std.testing.expectEqualStrings(want, got.refused);
 }
 
