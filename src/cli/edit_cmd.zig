@@ -426,6 +426,11 @@ const FakeNet = struct {
     url: []const u8 = "",
     token: ?[]const u8 = null,
     asked: usize = 0,
+    /// How often the retry policy paused between tries, and the seconds of the last pause.
+    paused: usize = 0,
+    last_pause: u64 = 0,
+    /// What the clock reads.
+    clock: i64 = 0,
 
     fn net(f: *FakeNet) Net {
         return .{ .ptr = f, .vtable = &.{ .request = request, .sleep = sleep, .now = now } };
@@ -441,12 +446,49 @@ const FakeNet = struct {
         return .{ .status = f.status, .body = f.body };
     }
 
-    fn sleep(_: *anyopaque, _: u64) void {}
+    fn sleep(ptr: *anyopaque, secs: u64) void {
+        const f: *FakeNet = @ptrCast(@alignCast(ptr));
+        f.paused += 1;
+        f.last_pause = secs;
+    }
 
-    fn now(_: *anyopaque) i64 {
-        return 0;
+    fn now(ptr: *anyopaque) i64 {
+        const f: *FakeNet = @ptrCast(@alignCast(ptr));
+        return f.clock;
     }
 };
+
+/// A loopback server that answers every GET with `status` and `body`, one connection at a time, until the process ends.
+const ConfigServer = struct {
+    server: std.net.Server,
+    status: std.http.Status,
+    body: []const u8,
+
+    fn serve(self: *ConfigServer) void {
+        while (true) {
+            const conn = self.server.accept() catch return;
+            defer conn.stream.close();
+            var buf: [8 * 1024]u8 = undefined;
+            var http_server = std.http.Server.init(conn, &buf);
+            var req = http_server.receiveHead() catch continue;
+            req.respond(self.body, .{ .status = self.status, .keep_alive = false }) catch continue;
+        }
+    }
+
+    /// Starts one on a free loopback port and returns its base URL. The serving thread is detached and outlives the
+    /// test, so the server lives in page memory that is never freed (the convention of the stubs in http.zig).
+    fn start(arena: Allocator, status: std.http.Status, body: []const u8) ![]const u8 {
+        const address = try std.net.Address.parseIp("127.0.0.1", 0);
+        const srv = try std.heap.page_allocator.create(ConfigServer);
+        srv.* = .{ .server = try address.listen(.{ .reuse_address = true }), .status = status, .body = body };
+        const t = try std.Thread.spawn(.{}, serve, .{srv});
+        t.detach();
+        return std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{srv.server.listen_address.getPort()});
+    }
+};
+
+const beta_config = "{\"index_version\":2,\"stage\":\"beta\",\"api_url\":\"https://api.example.test\",\"api_v2_url\":\"https://api.example.test/api/v2\",\"channel_url\":\"https://conda.example.test/\",\"min_cli_version\":\"0.0.1\"}";
+const one_hit = "{\"packages\":[{\"name\":\"alice/json\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T00:00:00Z\"}],\"next_cursor\":null}";
 
 fn searchOf(comptime l: []const []const u8) ?[]const []const u8 {
     return l;
@@ -569,4 +611,82 @@ test "the bare name is percent-encoded in the search, and an unresolvable regist
     try std.testing.expectEqualStrings(try bareProblem(a, "json"), try bareRefusal(a, never.net(), "nonsense", "0.0.1", "json"));
     try std.testing.expectEqualStrings(try bareProblem(a, ""), try bareRefusal(a, never.net(), "prod", "0.0.1", ""));
     try std.testing.expectEqual(@as(usize, 0), never.asked);
+}
+
+test "the fake registry's pause and clock are what the retry policy and a caller read" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // A 503 to an idempotent GET is repeated after a pause, and the last answer is the 503.
+    var down = FakeNet{ .status = 503 };
+    const answer = try down.net().request(a, .GET, "http://127.0.0.1:1/api/v2/packages", .{});
+    try std.testing.expectEqual(@as(u16, 503), answer.status);
+    try std.testing.expectEqual(@as(usize, core.http.default_retries) + 1, down.asked);
+    try std.testing.expectEqual(@as(usize, core.http.default_retries), down.paused);
+    var clocked = FakeNet{ .clock = 42 };
+    try std.testing.expectEqual(@as(i64, 42), clocked.net().now());
+    clocked.net().sleep(7);
+    try std.testing.expectEqual(@as(u64, 7), clocked.last_pause);
+}
+
+test "a search that runs out of memory fails with OutOfMemory at every allocation, and otherwise reads the names" {
+    var fake = FakeNet{ .body = one_hit };
+    var index: usize = 0;
+    var failures: usize = 0;
+    while (true) : (index += 1) {
+        var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena_state.deinit();
+        var failing = std.testing.FailingAllocator.init(arena_state.allocator(), .{ .fail_index = index });
+        const got = searchNames(failing.allocator(), fake.net(), "http://127.0.0.1:1/api/v2", "json") catch |e| {
+            try std.testing.expectEqual(error.OutOfMemory, e);
+            failures += 1;
+            continue;
+        };
+        try std.testing.expectEqual(@as(usize, 1), got.?.len);
+        try std.testing.expectEqualStrings("alice/json", got.?[0]);
+        break;
+    }
+    try std.testing.expect(failures > 2);
+}
+
+test "a bare name is refused with the names the registry finds, and with today's message when its config is not served" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const served = try ConfigServer.start(a, .ok, beta_config);
+    var fake = FakeNet{ .body = one_hit };
+    try std.testing.expectEqualStrings(
+        "dependency 'json' has no namespace: write it as <namespace>/json; packages named json on beta: alice/json (as in 'mopm add alice/json')",
+        try bareRefusal(a, fake.net(), served, "0.0.1", "json"),
+    );
+    try std.testing.expectEqualStrings("https://api.example.test/api/v2/packages?q=json&limit=100", fake.url);
+    // A registry that answers its config with an error leaves the plain message and is not searched.
+    const failing = try ConfigServer.start(a, .service_unavailable, "");
+    var unasked = FakeNet{ .body = one_hit };
+    try std.testing.expectEqualStrings(try bareProblem(a, "json"), try bareRefusal(a, unasked.net(), failing, "0.0.1", "json"));
+    try std.testing.expectEqual(@as(usize, 0), unasked.asked);
+}
+
+test "a refusal that runs out of memory fails with OutOfMemory, and one that completes is the plain or the full message" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const served = try ConfigServer.start(a, .ok, beta_config);
+    const full = "dependency 'json' has no namespace: write it as <namespace>/json; packages named json on beta: alice/json (as in 'mopm add alice/json')";
+    const plain = try bareProblem(a, "json");
+    var fake = FakeNet{ .body = one_hit };
+    var index: usize = 0;
+    var completed = false;
+    while (index < 400 and !completed) : (index += 1) {
+        var scratch = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer scratch.deinit();
+        var failing = std.testing.FailingAllocator.init(scratch.allocator(), .{ .fail_index = index });
+        const got = bareRefusal(failing.allocator(), fake.net(), served, "0.0.1", "json") catch |e| {
+            try std.testing.expectEqual(error.OutOfMemory, e);
+            continue;
+        };
+        if (!failing.has_induced_failure) completed = true;
+        try std.testing.expect(std.mem.eql(u8, got, full) or std.mem.eql(u8, got, plain));
+    }
+    try std.testing.expect(completed);
 }
