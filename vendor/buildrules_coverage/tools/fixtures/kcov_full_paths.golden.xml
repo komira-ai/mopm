@@ -1,0 +1,43 @@
+<?xml version="1.0" ?>
+<coverage timestamp="0">
+	<sources>
+		<source>.</source>
+	</sources>
+	<packages>
+		<package name="">
+			<classes>
+				<class name="src/widget_retry/budget.mojo" filename="src/widget_retry/budget.mojo">
+					<lines>
+						<line number="33" hits="1"/>
+						<line number="37" hits="1" branch="true" condition-coverage="50% (1/2)"/>
+						<line number="39" hits="0" branch="false"/>
+					</lines>
+				</class>
+				<class name="src/widget_retry/policy.mojo" filename="src/widget_retry/policy.mojo">
+					<lines>
+						<line number="55" hits="1"/>
+						<line number="56" hits="1"/>
+						<line number="143" hits="0" branch="true" condition-coverage="50% (1/2)"/>
+						<line number="200" hits="0"/>
+					</lines>
+				</class>
+				<class name="src/widget_retry/tests/a&amp;b &lt;c&gt; &quot;d&quot; &apos;e&apos;.mojo" filename="src/widget_retry/tests/a&amp;b &lt;c&gt; &quot;d&quot; &apos;e&apos;.mojo">
+					<lines>
+						<line number="7" hits="1"/>
+					</lines>
+				</class>
+				<class name="src/widget_retry/tests/test_empty.mojo" filename="src/widget_retry/tests/test_empty.mojo">
+					<lines>
+					</lines>
+				</class>
+				<class name="src/widget_retry/tests/test_refusals.mojo" filename="src/widget_retry/tests/test_refusals.mojo">
+					<lines>
+						<line number="19" hits="1"/>
+						<line number="21" hits="1"/>
+						<line number="22" hits="0"/>
+					</lines>
+				</class>
+			</classes>
+		</package>
+	</packages>
+</coverage>

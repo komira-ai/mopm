@@ -99,7 +99,7 @@ zig_coverage_rule = rule(
         "_cover": attrs.exec_dep(default = "mopm//:cov_zig_cover", providers = [RunInfo]),
         "_kcov": attrs.exec_dep(default = "buildrules//rules/coverage:kcov"),
         "_launcher": attrs.exec_dep(default = "mopm//:cov_launch", providers = [RunInfo]),
-        "_normalize": attrs.exec_dep(default = "buildrules//rules/coverage:cov_normalize", providers = [RunInfo]),
+        "_normalize": attrs.exec_dep(default = "mopm//:cov_normalize", providers = [RunInfo]),
         "_runner": attrs.source(default = "mopm//:cov_zig_cov_runner.zig"),
         "_summary": attrs.exec_dep(default = "mopm//:cov_summary", providers = [RunInfo]),
     },

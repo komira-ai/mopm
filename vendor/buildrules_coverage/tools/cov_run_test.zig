@@ -1,4 +1,4 @@
-// Vendored, unmodified, from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/cov_run_test.zig.
+// Vendored from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/cov_run_test.zig, with komira-ai/buildrules#153 (commit eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503) applied: cov_normalize is passed the working directory as --forbid-path.
 // A stopgap: delete this copy when the buildrules pin in .buckconfig includes that change (vendor/buildrules_coverage/README.md).
 //! Unit tests of cov_run.zig: its command line, and the two lines it builds for kcov and cov_normalize. The run itself (kcov tracing a test
 //! binary) is held by the examples' coverage targets.
@@ -88,7 +88,7 @@ test "cov_normalize's command line maps the tree's absolute names to repository 
     try t.expectEqualStrings("/real/share/base/=pkg/src/base/", n[6]);
     try t.expectEqualStrings("--must-contain", n[7]);
     try t.expectEqualStrings("pkg/tests/test_x.mojo", n[8]);
-    try t.expectEqualStrings("--forbid", n[9]);
+    try t.expectEqualStrings("--forbid-path", n[9]);
     try t.expectEqualStrings("/exec/root", n[10]);
 }
 

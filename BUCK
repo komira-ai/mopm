@@ -1345,7 +1345,7 @@ zig_exe(  # buck-only: tools/conda_measure.zig, built so the farm compiles it; i
 # ---- Coverage: the lines the unit tests reach, held to a floor per package ------------------------------------------------
 # (vendor/buildrules_coverage/README.md says what each figure is, what it leaves out, and how a floor is written.)
 
-# The tools of a coverage run (zig_cover, cov_floor, cov_summary, the launcher), built here until the buildrules pin has them.
+# The tools of a coverage run (zig_cover, cov_normalize, cov_floor, cov_summary, the launcher), built here until the buildrules pin has them.
 cov_tools()
 
 # Each package: the unit tests of its sources run again under kcov (the same compile and environment), and `<package>_coverage_floor`
