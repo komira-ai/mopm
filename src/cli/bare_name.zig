@@ -9,8 +9,9 @@ const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
 const registry = core.registry;
 
-/// The registry a manifest refusal may ask which namespace the user logged in with (`--registry` and the version of mopm).
-pub const Lookup = struct { registry: []const u8, cli_version: []const u8 };
+/// The registry a manifest refusal may ask which namespace the user logged in with (`--registry` and the version of mopm),
+/// and the directory holding credentials.json (`config_dir`; null is the default config directory of the user).
+pub const Lookup = struct { registry: []const u8, cli_version: []const u8, config_dir: ?[]const u8 = null };
 
 /// `message`, the manifest's refusal, worded with the namespace stored for the registry of `l` when it refuses a bare
 /// [package] name and a namespace is stored; otherwise `message` itself.
@@ -46,7 +47,7 @@ fn rewordBarePackage(arena: Allocator, message: []const u8, stored: ?[]const u8)
 /// to it fails (the one request a manifest error makes of the registry: config.json).
 fn storedNamespace(arena: Allocator, l: Lookup) ?[]const u8 {
     // With no namespace in credentials.json no registry could give one: ask none.
-    const dir = core.credentials.defaultDir(arena) catch return null;
+    const dir = l.config_dir orelse (core.credentials.defaultDir(arena) catch return null);
     if (!core.credentials.anyNamespace(arena, dir)) return null;
     const base = switch (registry.resolve(l.registry)) {
         .ok => |b| b,

@@ -329,7 +329,7 @@ pub fn readLockStale(arena: Allocator, cmd: Command, stale: *?[]const u8) !?lock
     return parseLock(arena, cmd, text, stale);
 }
 
-fn parseLock(arena: Allocator, cmd: Command, text: []const u8, stale: *?[]const u8) !?lock.Lock {
+pub fn parseLock(arena: Allocator, cmd: Command, text: []const u8, stale: *?[]const u8) !?lock.Lock {
     var why: []const u8 = "";
     const l = lock.parse(arena, text, &why) catch |e| switch (e) {
         error.Stale => {

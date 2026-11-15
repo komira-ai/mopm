@@ -571,6 +571,8 @@ test {
     _ = @import("bin_run.zig");
     _ = @import("scaffold_cmd.zig");
     _ = @import("bare_name.zig");
+    _ = @import("bare_name_test.zig");
+    _ = @import("install_cmd_project_test.zig");
     _ = build_cmd;
 }
 
