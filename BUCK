@@ -1126,6 +1126,7 @@ _LINT_DOTFILES = [
 ]
 
 _LINT_PACKAGES = [
+    "ci",
     "service/api",
     "service/config",
     "service/infra/access",

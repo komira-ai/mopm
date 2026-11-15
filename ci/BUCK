@@ -20,3 +20,11 @@ filegroup(
         "site": "//site:coverage_floor",
     },
 )
+
+# This package's files, for the hygiene scan of the root package (//:hygiene).
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"]),
+    copy = True,
+    visibility = ["//:"],
+)
