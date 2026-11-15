@@ -1,7 +1,8 @@
 """The tools of a Zig coverage run, built here until the buildrules pin has them (README.md in this directory).
 
 Vendored from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b: the targets of
-rules/coverage/BUCK that pull request adds (zig_cover, cov_floor, and the changed cov_run and cov_summary), and the `run` launcher of rules/zig.
+rules/coverage/BUCK that pull request adds (zig_cover, cov_floor, and the changed cov_run and cov_summary), and the `run` launcher of rules/zig;
+and cov_normalize, the pinned buildrules targets over the files of komira-ai/buildrules#153 (commit eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503).
 The cov tools are built by the pinned zig 0.15 (`zig_next`), as buildrules builds them; the packages they measure are built by the zig 0.12 mopm uses.
 Each is behind its unit tests, and `cov_zig_cover` behind its process tests. linux x86_64 only.
 """
@@ -23,6 +24,48 @@ def cov_tools():
         src = _D + "zig_launch.zig",
         test_src = _D + "zig_launch_test.zig",
         zig = "buildrules//rules/pins:zig",
+        visibility = ["PUBLIC"],
+    )
+
+    # cov_normalize: a kcov Cobertura report rewritten to repository paths. The pinned buildrules one predates --forbid-path
+    # (komira-ai/buildrules#153), which cov_run and zig_cover pass; these are the pin's targets of rules/coverage/BUCK, over the copied files.
+    zig_test(
+        name = "cov_normalize_unit",
+        exec_compatible_with = LINUX_X86_64,
+        imports = [
+            _D + "tools/cov_normalize.zig",
+            _D + "tools/fixtures/kcov_full_paths.golden.xml",
+            _D + "tools/fixtures/kcov_full_paths.xml",
+        ],
+        src = _D + "tools/cov_normalize_test.zig",
+        busybox = _BB,
+        zig = _ZIG,
+    )
+    zig_exe(
+        name = "cov_normalize_exe",
+        exec_compatible_with = LINUX_X86_64,
+        src = _D + "tools/cov_normalize.zig",
+        unit_tests = [":cov_normalize_unit", _ZIG_VERSION],
+        busybox = _BB,
+        zig = _ZIG,
+    )
+    zig_test(
+        name = "cov_normalize_exe_test",
+        exec_compatible_with = LINUX_X86_64,
+        env_tools = {"COV_NORMALIZE": ":cov_normalize_exe"},
+        imports = [
+            _D + "tools/fixtures/kcov_full_paths.golden.xml",
+            _D + "tools/fixtures/kcov_full_paths.xml",
+        ],
+        src = _D + "tools/cov_normalize_exe_test.zig",
+        busybox = _BB,
+        zig = _ZIG,
+    )
+    cov_tool(
+        name = "cov_normalize",
+        cases = [":cov_normalize_exe_test"],
+        exec_compatible_with = LINUX_X86_64,
+        exe = ":cov_normalize_exe",
         visibility = ["PUBLIC"],
     )
 
@@ -78,13 +121,13 @@ def cov_tools():
         busybox = _BB,
         zig = _ZIG,
     )
-    # The executable as a process over small packages of known coverage, with the pinned zig, kcov and cov_normalize. A validation of :cov_zig_cover.
+    # The executable as a process over small packages of known coverage, with the pinned zig and kcov and the cov_normalize above. A validation of :cov_zig_cover.
     zig_test(
         name = "cov_zig_cover_exe_test",
         exec_compatible_with = LINUX_X86_64,
         env_tools = {
             "KCOV": "buildrules//rules/coverage:kcov",
-            "NORMALIZE": "buildrules//rules/coverage:cov_normalize",
+            "NORMALIZE": ":cov_normalize",
             "PINNED_ZIG": _ZIG,
             "PINNED_ZIG_012": "buildrules//rules/pins:zig",
             "ZIG_COVER": ":cov_zig_cover_exe",
