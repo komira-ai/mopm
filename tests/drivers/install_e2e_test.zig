@@ -107,6 +107,17 @@ const Ctx = struct {
         return c.run(dir, args.items);
     }
 
+    /// `mopm lock --registry`, the lock rewritten with no toolchain closure recorded (a lock records mopm's pinned closure, and
+    /// `sync` refuses to install the stand-in toolchain against it), then `mopm sync`. The answer holds what both printed, so a
+    /// check of what a locking sync reports reads the same: the exit code is the first that failed.
+    fn syncLocking(c: *Ctx, dir: []const u8) !Out {
+        const l = try c.run(dir, &.{ "lock", "--registry", c.base });
+        if (l.code != 0) return l;
+        _ = try cp.unpinToolchain(c.a, try h.join(c.a, &.{ dir, "mopm.lock" }));
+        const s = try c.sync(dir, &.{});
+        return .{ .code = s.code, .signaled = s.signaled, .stdout = try std.mem.concat(c.a, u8, &.{ l.stdout, s.stdout }), .stderr = try std.mem.concat(c.a, u8, &.{ l.stderr, s.stderr }) };
+    }
+
     fn project(c: *Ctx, name: []const u8, deps: []const u8, mojo: []const u8) ![]u8 {
         const d = try h.join(c.a, &.{ c.work, "proj", name });
         try fs.cwd().makePath(d);
@@ -236,7 +247,6 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try publish(&c, good, soname);
     c.toolchain = (try cp.fakeToolchain(a, fake_dir, fake.base, "channel/toolchain", subdir, mojo_version, try h.join(a, &.{ work, "toolchain.json" }), "T")).closure;
     c.cache = try h.join(a, &.{ work, "cache" });
-    const reg = [_][]const u8{ "--registry", fake.base };
 
     const app = try c.project("app", "\"example/greet\" = \"1\"", mojo_version);
 
@@ -244,7 +254,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     rep.check("sync --locked without a lock fails and installs nothing", r.code == 1 and h.contains(r.stderr, "--locked: there is no mopm.lock") and !c.exists(app, ".mopm"), c.detail(r));
 
     // ------------------------------------------------ lock, install, build, run
-    r = try c.sync(app, &reg);
+    r = try c.syncLocking(app);
     const installed_msg = try h.fmt(a, "installed 1 packages for {s}", .{subdir});
     rep.check("sync locks and installs", r.code == 0 and h.contains(r.stdout, installed_msg), c.detail(r));
     const lock = c.read(app, "mopm.lock") orelse "";
@@ -338,7 +348,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     // would fail the sync).
     const withpath = try c.project("withpath", "\"example/greet\" = \"1\"\n\"example/local\" = { path = \"local\" }", mojo_version);
     try localVersion(&c, withpath, "0.2.0");
-    r = try c.sync(withpath, &reg);
+    r = try c.syncLocking(withpath);
     {
         const lock_text = c.read(withpath, "mopm.lock") orelse "{\"packages\": []}";
         const parsed = h.parseJson(a, lock_text) catch .null;
@@ -370,7 +380,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     rep.check("a path dependency's new version makes the lock stale for sync --locked", r.code == 1 and
         h.contains(r.stderr, "mopm.lock is out of date with mopm.toml: local/mopm.toml says example/local 0.2.1, but mopm.lock has example/local 0.2.0") and
         std.mem.eql(u8, c.read(withpath, "mopm.lock") orelse "", locked), c.detail(r));
-    r = try c.sync(withpath, &reg);
+    r = try c.syncLocking(withpath);
     rep.check("sync relocks the path dependency's new version and installs", r.code == 0 and h.contains(r.stdout, "updating example/local 0.2.0 -> 0.2.1\n") and h.contains(r.stdout, "using example/local 0.2.1 from local"), c.detail(r));
 }
 

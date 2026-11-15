@@ -319,7 +319,7 @@ tree(  # buck-only: the files of src/cli of v0.0.104 that its group publisher re
 zig_module(  # buck-only: the v0.0.104 client's group publisher and the files it needs, for :compat_v0_0_104
     name = "prev_cli",
     src = ":prev_cli_tree[group_publish.zig]",
-    imports = [":prev_cli_tree[{}.zig]".format(n) for n in _PREV_CLI_LIVE + ["registry_cmd", "group_plan", "group_publish_test"]],
+    imports = [":prev_cli_tree[{}.zig]".format(n) for n in _PREV_CLI_LIVE + ["group_stage_token", "publish_cmd", "registry_cmd", "group_plan", "group_publish_test"]],
     deps = [":mopm_core"],
 )
 
@@ -610,6 +610,7 @@ zig_test(  # buck-only: mopm lock, tree and sync refuse two packages of one impo
     name = "import_clash_cli",
     src = "tests/drivers/import_clash_cli_test.zig",
     imports = ["tests/drivers/harness.zig"],
+    data = ["tests/mojo_env/mopm.lock"],  # the lock the version 1 and 2 case expects `mopm lock` to write
     env_tools = {"MOPM": ":mopm"},
     **_TOOLS
 )
@@ -898,6 +899,10 @@ filegroup(
         "index-record.schema.json": "spec/index-record.schema.json",
         "index-config.schema.json": "spec/index-config.schema.json",
         "takedowns.schema.json": "spec/takedowns.schema.json",
+    } | {
+        # The registry's v2 protos, at the path service/api's test/gen/registry-v2.test.ts hashes them from.
+        "api/" + f[len("spec/api/"):]: f
+        for f in glob(["spec/api/mopm/registry/v2/*.proto"])
     },
     visibility = ["//service/api:", "//service/infra/stacks:"],
 )
@@ -1483,8 +1488,8 @@ zig_coverage(
     blocks = False,
     floor = "coverage/cli.txt",
     test_targets = [":cli_test"],
-    # build_options.zig is a module of constants (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
-    expect = glob(["src/cli/*.zig"], exclude = ["src/cli/build_options.zig", "src/cli/test_cmd.zig"]),
+    # build_options.zig (constants) and api_spec.zig (types) are modules of declarations (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
+    expect = glob(["src/cli/*.zig"], exclude = ["src/cli/api_spec.zig", "src/cli/build_options.zig", "src/cli/test_cmd.zig"]),
 )
 
 zig_coverage(

@@ -399,6 +399,8 @@ fn depend(c: *Ctx) !void {
     c.check("add of a package the registry does not have is refused and writes nothing", r.code != 0 and !h.contains(c.read(c.path(&.{ app, "mopm.toml" })), "no_such_package_beta"), r);
 
     h.stage = "sync";
+    // The lock records mopm's pinned toolchain closure, which the stand-in toolchain does not match: unpin it first.
+    if (c.sync_args.len > 0) _ = try cp.unpinToolchain(a, c.path(&.{ app, "mopm.lock" }));
     r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{"sync"}, c.sync_args, &reg }));
     const env = c.path(&.{ app, ".mopm/env" });
     const found = try h.findFiles(a, c.path(&.{ env, "lib" }), "beta_lib.mojoc");

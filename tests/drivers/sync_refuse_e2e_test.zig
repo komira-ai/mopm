@@ -61,6 +61,7 @@ test "a locked archive without its metadata, or with a native library the lock d
         const nometa = try cp.package(a, fx.conda_prefix ++ "nometa", "1.0.0", build_tag, c.subdir, &.{"mojo-compiler ==" ++ mojo}, &.{.{ .path = "lib/libnometa.so", .data = "the library of nometa\n", .mode = 0o755 }});
         try c.publish("nometa", nometa);
         _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/nometa\" = \"1\"");
+        try c.standInLock(b.app);
         const r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
         rep.same("an archive without lib/mojo/nometa.mopm.json: the refusal", "mopm sync: cannot install into .mopm/env: mojo-example.nometa 1.0.0 is installed without lib/mojo/nometa.mopm.json: a corrupt package; the environment is as it was\n", r.stderr);
         rep.check("an archive without its metadata: exit 1, the archive was downloaded and checked", r.code == 1 and h.contains(r.stdout, "downloading " ++ fx.conda_prefix ++ "nometa-1.0.0-" ++ build_tag ++ ".conda"), c.detail(r));
@@ -132,6 +133,7 @@ test "a locked package that ships a toolchain file with other contents is refuse
 
     for ([_][]const u8{ "clash", "linked" }) |name| {
         _ = try c.project("app", try c.fmt("\"example/greet\" = \"1\"\n\"example/{s}\" = \"1\"", .{name}));
+        try c.standInLock(b.app);
         const r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
         const want = try c.fmt("mopm sync: cannot install into .mopm/env: bin/mojo is installed by both mojo 1.0.0 and mojo-example.{s} 1.0.0 with different contents; refused; the environment is as it was\n", .{name});
         rep.same(try c.fmt("{s} ships bin/mojo with other contents: the refusal", .{name}), want, r.stderr);
@@ -140,18 +142,21 @@ test "a locked package that ships a toolchain file with other contents is refuse
     }
 
     _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/dotted\" = \"1\"");
+    try c.standInLock(b.app);
     var r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
     rep.same("dotted ships bin/./mojo: the refusal", try c.fmt("mopm sync: cannot install into .mopm/env: the package holds the path '{s}', which has a '.' component; a path is written one way only; the environment is as it was\n", .{dotted_path}), r.stderr);
     rep.check("dotted ships bin/./mojo: exit 1", r.code == 1, c.detail(r));
     untouched(c, b, "dotted");
 
     _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/plain\" = \"1\"");
+    try c.standInLock(b.app);
     r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
     rep.same("plain ships bin/mojo with the same bytes but not executable: the refusal", "mopm sync: cannot install into .mopm/env: bin/mojo is installed by both mojo 1.0.0 and mojo-example.plain 1.0.0 with different permissions; refused; the environment is as it was\n", r.stderr);
     rep.check("plain ships bin/mojo not executable: exit 1", r.code == 1, c.detail(r));
     untouched(c, b, "plain");
 
     _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/twin\" = \"1\"");
+    try c.standInLock(b.app);
     r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
     rep.check("twin ships bin/mojo with the toolchain's bytes: accepted, the file is the toolchain's", r.code == 0 and r.stderr.len == 0 and
         std.mem.eql(u8, c.read(b.env_dir, "bin/mojo") orelse "", mojo_bin.data) and c.exists(b.env_dir, "lib/libtwin.so"), c.detail(r));
@@ -223,6 +228,7 @@ test "a short body and an HTTP 404 of a locked file or a toolchain file are refu
     const late_url = try c.fmt("{s}/channel/{s}/{s}/{s}", .{ c.fake.base, fx.ns, c.subdir, late_file });
     _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/late\" = \"1\"");
     try c.serve("late", late[0 .. late.len / 2]);
+    try c.standInLock(b.app);
     var r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t }));
     rep.same("a locked file with a short body: the refusal", try c.fmt("mopm sync: {s} is {d} bytes; the pin says {d}; the download is short or broke off; refused\n", .{ late_url, late.len / 2, late.len }), r.stderr);
     rep.check("a locked file with a short body: exit 1 and the file is not kept", r.code == 1 and !c.exists(b.app, ".mopm/pkgs/" ++ late_file), c.detail(r));
@@ -240,6 +246,7 @@ test "a short body and an HTTP 404 of a locked file or a toolchain file are refu
     const t2_url = try c.fmt("{s}/{s}", .{ c.fake.base, t2_mojo.served });
     const served_path = c.path(&.{ c.fake_dir, t2_mojo.served });
     try h.writeFile(served_path, t2_mojo.bytes[0 .. t2_mojo.bytes.len / 3]);
+    try c.standInLock(b.app);
     r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
     rep.same("a toolchain file with a short body: the refusal", try c.fmt("mopm sync: {s} is {d} bytes; the pin says {d}; the download is short or broke off; refused\n", .{ t2_url, t2_mojo.bytes.len / 3, t2_mojo.bytes.len }), r.stderr);
     rep.check("a toolchain file with a short body: exit 1", r.code == 1, c.detail(r));

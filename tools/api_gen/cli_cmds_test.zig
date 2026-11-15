@@ -43,7 +43,8 @@ const none: model.Rules = .{};
 
 // Messages: 0 Error, 1 Namespace (a wrapper of a string), 2 Names (a wrapper of repeated strings), 3 Pkgs (names or the
 // constant `all_current`), 4 Detail, 5 MemberBody, 6 MemberReq, 7 FileBody (has a message field), 8 FileReq, 9 PkgReq,
-// 10 KindsBody, 11 KindsReq, 12 JsonReq, 13 ClashBody, 14 ClashReq, 15 ObjReq, 16 MapBody (has a map), 17 MapReq.
+// 10 KindsBody, 11 KindsReq, 12 JsonReq, 13 ClashBody, 14 ClashReq, 15 ObjReq, 16 MapBody (has a map), 17 MapReq, 18 StrBodyReq, 19 EnumBodyReq, 20 WrapBodyReq, 21 UnionBodyReq, 22 ListBodyReq,
+// 23 NothingBody (a field of the empty type), 24 NothingReq.
 const messages = [_]model.Message{
     plain("Error", &.{fld("message", "", .single, str, required)}),
     .{ .name = "Namespace", .path = "Namespace", .doc = "", .parent = null, .file = "t.proto", .wrapper = true, .fields = &.{fld("value", "", .single, str, required)} },
@@ -97,6 +98,13 @@ const messages = [_]model.Message{
     plain("ObjReq", &.{fld("detail", "", .optional, .{ .message = 4 }, none)}),
     plain("MapBody", &.{.{ .name = "m", .number = 1, .doc = "", .label = .single, .type = str, .map = true }}),
     plain("MapReq", &.{fld("body", "", .single, .{ .message = 16 }, required)}),
+    plain("StrBodyReq", &.{fld("body", "", .single, str, required)}),
+    plain("EnumBodyReq", &.{fld("body", "", .single, .{ .enumeration = 0 }, required)}),
+    plain("WrapBodyReq", &.{fld("body", "", .single, .{ .message = 1 }, required)}),
+    plain("UnionBodyReq", &.{fld("body", "", .single, .{ .message = 3 }, required)}),
+    plain("ListBodyReq", &.{fld("body", "", .repeated, .{ .message = 4 }, required)}),
+    plain("NothingBody", &.{fld("nothing", "", .single, .empty, none)}),
+    plain("NothingReq", &.{fld("body", "", .single, .{ .message = 23 }, required)}),
 };
 
 const enums = [_]model.Enum{.{ .name = "Role", .path = "Role", .doc = "", .parent = null, .file = "t.proto", .values = &.{
@@ -623,6 +631,28 @@ test "an argument must be a string field of the request, named once" {
         "argument 'name' is a field of the body, which is sent as --body <file> because its field 'detail' cannot be a flag",
     );
     try expectBad(&.{rpc("Health", .GET, "/api/v2/health", .empty, null, &.{.{ .name = "h", .args = &.{"x"}, .summary = "S." }})}, "rpc Health: command 'h': argument 'x' is not a field of the request (a path parameter, a query parameter or a field of its body)");
+}
+
+test "a body that is not an object of fields, or has a field of the empty type, is sent as --body <file> named by its type" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const cases = [_]struct { input: u32, body_type: []const u8 }{
+        .{ .input = 18, .body_type = "string" },
+        .{ .input = 19, .body_type = "Role" },
+        .{ .input = 20, .body_type = "Namespace" },
+        .{ .input = 21, .body_type = "Pkgs" },
+        .{ .input = 22, .body_type = "Detail" },
+        .{ .input = 24, .body_type = "NothingBody" },
+    };
+    for (cases) |c| {
+        const cmds = [_]model.Command{.{ .name = "send", .summary = "Send." }};
+        const files = try written(a, &.{rpc("Send", .POST, "/api/v2/send", .{ .message = c.input }, "body", &cmds)});
+        try expectContains(files[0].text, "        .body = .file,\n");
+        try std.testing.expect(std.mem.indexOf(u8, files[0].text, ".flags = ") == null);
+        const want = try std.fmt.allocPrint(a, "  --body <file>\n      the request body, JSON (`-`: standard input), as `{s}` of spec/api/openapi-v2.yaml\n", .{c.body_type});
+        try expectContains(files[2].text, want);
+    }
 }
 
 test "a set entry names a flag-able field of the body, once, with a value its type reads" {

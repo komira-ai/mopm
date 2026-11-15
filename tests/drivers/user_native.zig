@@ -23,6 +23,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const h = @import("harness.zig");
+const cp = @import("conda_pkg.zig");
 const Allocator = std.mem.Allocator;
 
 /// Whether this step runs on linux aarch64. Off: the native tests of that platform are disabled until Linux arm64 farm
@@ -269,6 +270,8 @@ fn walk(w: *Walk) !void {
     _ = try w.mopm("native: mopm add shimlib from the registry", app, &.{ "add", full, "--registry", o.registry }, o.env);
     const lock = try h.readFile(a, try h.join(a, &.{ app, "mopm.lock" }));
     rep.check("native: the lock names shimlib", h.contains(lock, "shimlib"), lock);
+    // The lock records mopm's pinned toolchain closure, which the stand-in toolchain does not match: unpin it first.
+    if (o.sync_args.len > 0) _ = try cp.unpinToolchain(a, try h.join(a, &.{ app, "mopm.lock" }));
     var sync_argv = std.ArrayList([]const u8).init(a);
     try sync_argv.append("sync");
     try sync_argv.appendSlice(o.sync_args);

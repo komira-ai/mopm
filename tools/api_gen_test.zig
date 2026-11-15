@@ -7,6 +7,10 @@
 const std = @import("std");
 const gen = @import("api_gen/gen.zig");
 const cli = @import("api_gen/cli.zig");
+const model = @import("api_gen/model.zig");
+const proto = @import("api_gen/proto.zig");
+const openapi = @import("api_gen/openapi.zig");
+const typescript = @import("api_gen/typescript.zig");
 
 test {
     _ = @import("api_gen/model.zig");
@@ -223,4 +227,121 @@ test "the command refuses extra arguments, a root it cannot open and protos that
     try std.testing.expectEqualStrings("", out.items);
     // Nothing was written.
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(gen.outputs[0], .{}));
+}
+
+/// The scratch repository of `scratchRepo` with the first `from` of the proto `file` replaced by `to`.
+fn editedRepo(a: std.mem.Allocator, tmp: *std.testing.TmpDir, file: []const u8, from: []const u8, to: []const u8) !void {
+    _ = try scratchRepo(a, tmp);
+    const path = try std.fs.path.join(a, &.{ "spec/api/mopm/registry/v2", file });
+    const text = try tmp.dir.readFileAlloc(a, path, 1 << 20);
+    const at = std.mem.indexOf(u8, text, from) orelse return error.TestUnexpectedResult;
+    try tmp.dir.writeFile(path, try std.mem.concat(a, u8, &.{ text[0..at], to, text[at + from.len ..] }));
+}
+
+fn expectGenerateRefuses(file: []const u8, from: []const u8, to: []const u8, want: []const u8) !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try editedRepo(a, &tmp, file, from, to);
+    try std.testing.expectEqualStrings(want, (try gen.generate(a, tmp.dir)).bad);
+}
+
+test "a proto that one generator cannot write fails the generation with that generator's reason" {
+    // The sources: the entry file imports a file that is not there.
+    try expectGenerateRefuses("registry.proto", "import \"mopm/registry/v2/auth.proto\";\n", "import \"mopm/registry/v2/gone.proto\";\n", "spec/api/mopm/registry/v2/gone.proto: cannot be read: FileNotFound");
+    // The OpenAPI file: a doc with a tab cannot be a literal block.
+    try expectGenerateRefuses("types.proto", "// A normalised package name; in a full name, the import name.\n", "// A normalised\n//\tname.\n", "the text \"A normalised\" cannot be written as a literal block: it holds a tab or a carriage return");
+    // The TypeScript types: two declarations flatten to one name.
+    try expectGenerateRefuses("types.proto", "message Name {\n", "message NameX {\n  message Y { string a = 1; }\n}\nmessage NameXY { string a = 1; }\nmessage Name {\n", "'NameX.Y' and 'NameXY' are both the TypeScript name 'NameXY'");
+    // The Zig client: the enum value 'unknown' is the tag of a value the client does not know.
+    try expectGenerateRefuses("namespaces.proto", "  MEMBER_ROLE_MEMBER = 2;\n", "  MEMBER_ROLE_MEMBER = 2;\n  MEMBER_ROLE_X = 3 [(json) = \"unknown\"];\n", "enum 'MemberRole' has the JSON value 'unknown', the tag of a value this client does not know");
+    // The command table: an operation needs a command.
+    try expectGenerateRefuses("registry.proto", "      commands { name: \"health\" summary: \"Show whether the registry is up and in which mode.\" }\n", "", "rpc GetHealth: has no `commands` in its (operation) option");
+}
+
+test "running out of memory is passed up by the parser and the generators, not reported as a refusal" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const srcs = (try gen.sources(a, std.fs.cwd())).ok;
+    const api = (try proto.parse(a, srcs)).ok;
+    var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, proto.parse(failing.allocator(), srcs));
+    failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, proto.imports(failing.allocator(), srcs[0].text));
+    failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, openapi.write(failing.allocator(), api));
+    failing = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, typescript.generate(failing.allocator(), api));
+}
+
+test "a path is relative to the base path, and one outside it is whole" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var api = (try proto.parse(a, (try gen.sources(a, std.fs.cwd())).ok)).ok;
+    const rpc = api.rpcs[0];
+    try std.testing.expectEqualStrings(rpc.path[api.base_path.len..], model.relativePath(api, rpc));
+    api.base_path = "/elsewhere";
+    try std.testing.expectEqualStrings(rpc.path, model.relativePath(api, rpc));
+}
+
+test "stray semicolons are skipped wherever a declaration may start, and a file option is read and dropped" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const text =
+        \\syntax = "proto3";
+        \\package t.v2;
+        \\;
+        \\option java_package = "x";
+        \\option optimize_for = SPEED;
+        \\message A {
+        \\  ;
+        \\  string a = 1;
+        \\  ;
+        \\  oneof o { ; string b = 2; ; }
+        \\  enum K { ; K_A = 0; ; }
+        \\}
+        \\enum E { ; E_A = 0; ; }
+        \\service S {
+        \\  ;
+        \\  option (api) = { base_path: "/api/v2" };
+        \\  ;
+        \\  rpc R(A) returns (A) { ; option (google.api.http) = { get: "/api/v2/r" }; ; }
+        \\}
+        \\
+    ;
+    const api = (try proto.parse(a, &.{.{ .path = "t.proto", .text = text }})).ok;
+    try std.testing.expectEqual(@as(usize, 1), api.messages.len);
+    try std.testing.expectEqual(@as(usize, 2), api.enums.len);
+    try std.testing.expectEqualStrings("A", api.messages[0].name);
+    try std.testing.expectEqual(@as(usize, 2), api.messages[0].fields.len);
+    try std.testing.expectEqualStrings("b", api.messages[0].fields[1].name);
+    try std.testing.expectEqualStrings("R", api.rpcs[0].name);
+}
+
+test "a description replaces the one an entry has, and a list holds integers, empty mappings and nothing nested" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var w = openapi.Writer{ .arena = a, .api = undefined };
+    var e = openapi.Entries.init(a);
+    try openapi.Writer.add(&e, "description", .{ .str = "old" });
+    try openapi.Writer.add(&e, "type", .{ .str = "string" });
+    try w.describe(&e, "new");
+    try std.testing.expectEqual(@as(usize, 2), e.items.len);
+    try std.testing.expectEqualStrings("new", e.items[0].value.str);
+    try w.describe(&e, "");
+    try std.testing.expectEqualStrings("new", e.items[0].value.str);
+
+    var out = std.ArrayList(u8).init(a);
+    try w.renderSeq(&out, &.{ .{ .raw = "7" }, .{ .map = &.{} }, .{ .str = "s" } }, 2);
+    try std.testing.expectEqualStrings("  - 7\n  - {}\n  - s\n", out.items);
+    try std.testing.expectError(error.Invalid, w.renderSeq(&out, &.{.{ .seq = &.{} }}, 0));
+    try std.testing.expectEqualStrings("a list inside a list", w.msg);
+    try std.testing.expectError(error.Invalid, w.renderSeq(&out, &.{.{ .flow = &.{} }}, 0));
+    try std.testing.expectEqualStrings("a flow mapping in a list", w.msg);
 }

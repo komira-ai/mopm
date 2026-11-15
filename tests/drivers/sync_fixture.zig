@@ -227,6 +227,18 @@ pub const Cx = struct {
         return h.parseJson(c.a, c.read(app, "mopm.lock") orelse return error.NoLock);
     }
 
+    /// Locks `app` against the fake registry, then removes the toolchain closure it records (cp.unpinToolchain), so
+    /// a `sync --toolchain <stand-in>` installs it. A plain `sync` after a manifest edit would lock again and record
+    /// mopm's pinned closure, so the tests call this before each one.
+    pub fn standInLock(c: *Cx, app: []const u8) !void {
+        const r = try c.run(app, &.{ "lock", "--registry", c.fake.base });
+        if (r.code != 0) {
+            std.debug.print("mopm lock in {s}: exit {d}\n{s}", .{ app, r.code, r.stderr });
+            return error.LockFailed;
+        }
+        _ = try cp.unpinToolchain(c.a, c.path(&.{ app, "mopm.lock" }));
+    }
+
     pub fn writeLockValue(c: *Cx, app: []const u8, v: std.json.Value) !void {
         var out = std.ArrayList(u8).init(c.a);
         try std.json.stringify(v, .{ .whitespace = .indent_2 }, out.writer());
@@ -309,6 +321,7 @@ pub fn baseline(c: *Cx) !Base {
     const with_t2 = try a.dupe([]const u8, &.{ "--toolchain", t2.closure, "--cache", cache });
     const app = try c.project("app", "\"example/greet\" = \"1\"");
     const env_dir = c.path(&.{ app, ".mopm/env" });
+    try c.standInLock(app);
     const r = try c.run(app, try c.cat(&.{ &.{"sync"}, reg, with_t }));
     c.rep.check("baseline: the first sync installs greet and T", r.code == 0 and h.contains(r.stdout, "installed 1 packages for"), c.detail(r));
     return .{

@@ -63,6 +63,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
 
     // ------------------------------------------------ the first sync
     const app = try c.project("app", "\"example/greet\" = \"1\"");
+    try c.standInLock(app);
     var before = try c.served();
     var r = try c.run(app, &(.{"sync"} ++ reg ++ with_t));
     const env_dir = c.path(&.{ app, ".mopm/env" });
@@ -186,6 +187,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
     // ------------------------------------------------ an unpack that fails in the middle
     try c.publish("broken", try fx.brokenPackage(a, c.subdir));
     _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/broken\" = \"1\"");
+    try c.standInLock(app);
     r = try c.run(app, &(.{"sync"} ++ reg ++ with_t2));
     rep.check("an unpack that fails in the middle fails the sync, saying the environment is as it was", r.code == 1 and h.contains(r.stderr, "mopm sync: cannot install into .mopm/env: " ++ fx.conda_prefix ++ "broken-1.0.0-" ++ build_tag ++ ".conda: ") and
         h.contains(r.stderr, "; the environment is as it was\n"), c.detail(r));
@@ -195,6 +197,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
 
     // A temporary directory a killed sync left behind goes with the next install.
     _ = try c.project("app", "\"example/greet\" = \"1\"");
+    try c.standInLock(app);
     try fs.cwd().makePath(c.path(&.{ app, ".mopm/.env.tmp-0123456789ab/lib" }));
     try h.writeFile(c.path(&.{ app, ".mopm/.env.tmp-0123456789ab/lib/half" }), "half");
     r = try c.run(app, &(.{"sync"} ++ reg ++ with_t));

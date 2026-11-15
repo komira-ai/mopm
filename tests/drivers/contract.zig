@@ -332,7 +332,9 @@ fn condaOf(a: Allocator, full: []const u8) ![]const u8 {
 /// An index package file: newline-delimited records. `stem` is the file name
 /// without its extension, `<namespace>.<name>` for the package `<namespace>/<name>`.
 /// Every record's `name` is that full name and each file is named
-/// `mojo-<namespace>.<name>-<version>-<build>.conda`.
+/// `mojo-<namespace>.<name>-<version>-<build>.conda`, with a url ending in
+/// `/<namespace>/<subdir>/<filename>`. A stem without a `.` is a version 1 file:
+/// the name is flat and the url ends in `/<subdir>/<filename>`.
 pub fn indexProblems(a: Allocator, stem: []const u8, text: []const u8, schema: Value) !Problems {
     var out = Problems.init(a);
     const full = try fullNameOfStem(a, stem);
@@ -363,8 +365,11 @@ pub fn indexProblems(a: Allocator, stem: []const u8, text: []const u8, schema: V
                 const fname = getStr(f, "filename") orelse continue;
                 if (!std.mem.eql(u8, fname, want)) try problem(a, &out, "line {d}: file {s} is not named {s}", .{ n, fname, want });
                 if (getStr(f, "url")) |url| {
-                    const ns = full[0 .. std.mem.indexOfScalar(u8, full, '/') orelse 0];
-                    const tail = try std.fmt.allocPrint(a, "/{s}/{s}/{s}", .{ ns, getStr(f, "subdir") orelse "", fname });
+                    const subdir = getStr(f, "subdir") orelse "";
+                    const tail = if (std.mem.indexOfScalar(u8, full, '/')) |slash|
+                        try std.fmt.allocPrint(a, "/{s}/{s}/{s}", .{ full[0..slash], subdir, fname })
+                    else
+                        try std.fmt.allocPrint(a, "/{s}/{s}", .{ subdir, fname });
                     if (!std.mem.endsWith(u8, url, tail)) try problem(a, &out, "line {d}: url {s} does not end with {s}", .{ n, url, tail });
                 }
             }

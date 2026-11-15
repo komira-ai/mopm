@@ -813,6 +813,18 @@ fn writeConsumer(cx: *Cx, dir: []const u8) !void {
     try h.writeFile(try cx.join(&.{ dir, "mopm.toml" }), "[package]\nname = \"example/consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"" ++ compiler ++ "\"\n\n[dependencies]\n");
 }
 
+/// Rewrites the lock at `path` with an empty `toolchain` object, so that no closure is recorded for a stand-in closure to disagree with.
+fn unpinToolchain(cx: *Cx, path: []const u8) !void {
+    const text = try h.readFile(cx.a, path);
+    var v = (try std.json.parseFromSlice(std.json.Value, cx.a, text, .{})).value;
+    if (v != .object or v.object.get("toolchain") == null) return error.NotALock;
+    try v.object.put("toolchain", .{ .object = std.json.ObjectMap.init(cx.a) });
+    var out = std.ArrayList(u8).init(cx.a);
+    try std.json.stringify(v, .{ .whitespace = .indent_2 }, out.writer());
+    try out.append('\n');
+    try h.writeFile(path, out.items);
+}
+
 /// Step 2b. A fresh project locks and installs the staged set (`--overlay`) before the registry holds any of it, and builds and
 /// runs the program of the app's README. Returns the lock the overlay made, "" when it made none.
 fn overlayStep(cx: *Cx, label: []const u8, staged: []const u8, pkgs: []const Pkg) ![]const u8 {
@@ -830,7 +842,14 @@ fn overlayStep(cx: *Cx, label: []const u8, staged: []const u8, pkgs: []const Pkg
     const mopm = cx.o.mopm orelse return lock_text;
     var sync_argv = std.ArrayList([]const u8).init(cx.a);
     try sync_argv.appendSlice(&.{ mopm, "sync", "--locked", "--overlay", staged, "--registry", cx.o.base });
-    if (cx.o.sync_toolchain) |f| try sync_argv.appendSlice(&.{ "--toolchain", f });
+    if (cx.o.sync_toolchain) |f| {
+        try sync_argv.appendSlice(&.{ "--toolchain", f });
+        // `mopm add` recorded mopm's pinned closure in the lock, which a stand-in closure disagrees with: sync it from a lock with none.
+        unpinToolchain(cx, try cx.join(&.{ dir, "mopm.lock" })) catch |e| {
+            cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the stand-in toolchain syncs from a lock that records no closure", .{label}), @errorName(e));
+            return lock_text;
+        };
+    }
     if (cx.o.sync_cache) |d| try sync_argv.appendSlice(&.{ "--cache", d });
     ran = try cx.toolRun(dir, sync_argv.items);
     const want = try std.fmt.allocPrint(cx.a, "read {d} packages from the staged set", .{pkgs.len});

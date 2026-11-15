@@ -42,6 +42,7 @@ test "a project moved to another path installs again for the new path, from the 
     const flags = [_][]const u8{ "--registry", c.fake.base, "--toolchain", t.closure, "--cache", cache };
     const app = try c.project("app", "\"example/phfile\" = \"1\"");
 
+    try c.standInLock(app);
     var r = try c.run(app, &(.{"sync"} ++ flags));
     const before_prefix = c.read(app, ".mopm/env/share/ph/prefix.txt") orelse "";
     rep.check("the first sync writes the environment's own path into the placeholder file", r.code == 0 and
@@ -201,6 +202,7 @@ test "the legacy pixi layout beside .mopm/env is never read, moved or deleted, w
     try h.writeFile(c.path(&.{ dot, "channel/noarch/repodata.json" }), "{\"packages\": {}}\n");
     const legacy = try legacySnapshot(c, app);
 
+    try c.standInLock(app);
     var r = try c.run(app, &.{ "sync", "--registry", c.fake.base, "--toolchain", t.closure, "--cache", cache });
     rep.check("sync installs the environment next to the legacy layout", r.code == 0 and h.contains(r.stdout, "installed 1 packages for") and c.exists(dot, "env/conda-meta/mopm-stamp"), c.detail(r));
     rep.check("after a successful sync the legacy files are byte for byte and mode for mode what they were", std.mem.eql(u8, legacy, try legacySnapshot(c, app)), try legacySnapshot(c, app));
