@@ -599,20 +599,13 @@ test "planned commands are recognised, working ones are not planned" {
 }
 
 fn parseOk(a: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) !Opts {
-    return switch (try parseOpts(a, tool, args)) {
-        .ok => |o| o,
-        .usage => |m| {
-            std.debug.print("unexpected usage error: {s}\n", .{m});
-            return error.TestUnexpectedResult;
-        },
-    };
+    const parsed = try parseOpts(a, tool, args);
+    try std.testing.expectEqualStrings("", if (parsed == .usage) parsed.usage else "");
+    return parsed.ok;
 }
 
 fn parseUsage(a: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) !void {
-    switch (try parseOpts(a, tool, args)) {
-        .ok => return error.TestUnexpectedResult,
-        .usage => {},
-    }
+    try std.testing.expect((try parseOpts(a, tool, args)) == .usage);
 }
 
 test "options: both spellings, any order" {

@@ -160,10 +160,7 @@ test "placementProblem: the environment, what is inside it and the directories o
         ".mopm/.env.tmp-later",
         try std.fs.path.join(a, &.{ root, ".mopm/env/lib" }),
     }) |path| {
-        const why = (try placement(a, &tmp, path)) orelse {
-            std.debug.print("accepted: {s}\n", .{path});
-            return error.TestUnexpectedResult;
-        };
+        const why = (try placement(a, &tmp, path)) orelse "(accepted)";
         const want = try std.fmt.allocPrint(a, "--cache {s} is inside .mopm/env, which mopm sync replaces; use a directory outside it", .{path});
         try std.testing.expectEqualStrings(want, why);
     }

@@ -283,9 +283,7 @@ test "a unit graph of another format is refused with its message; this format is
     try tmp.dir.writeFile("tc/mojo_compile", "not executable\n");
     var spawn = one;
     spawn.toolchain = try std.fs.path.join(a, &.{ root, "tc" });
-    if (run(a, spawn, null)) |_| {
-        return error.TestUnexpectedResult;
-    } else |e| try std.testing.expect(e != error.Refused);
+    try std.testing.expect(if (run(a, spawn, null)) |_| false else |e| e != error.Refused);
     // A graph that is not there, or is not a graph: exit 1.
     var gone = base;
     gone.graph = try std.fs.path.join(a, &.{ root, "gone.json" });
@@ -333,9 +331,7 @@ test "unit test refuses a unit that loads system libraries, before it looks at t
     try std.testing.expectEqual(exit_refused, try run(a, args, null));
     // The same unit as a build is not refused for its loads: the run goes on to the wrapper, which here cannot be executed.
     args.verb = .build;
-    if (run(a, args, null)) |_| {
-        return error.TestUnexpectedResult;
-    } else |e| try std.testing.expect(e != error.Refused);
+    try std.testing.expect(if (run(a, args, null)) |_| false else |e| e != error.Refused);
 }
 
 // Defect it catches: `mopm unit` putting any string from a graph file after -Xlinker as -l<string>.

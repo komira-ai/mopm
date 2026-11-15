@@ -173,23 +173,13 @@ pub fn scaffoldCmd(arena: std.mem.Allocator, cmd: []const u8, args: []const []co
 }
 
 fn expectNamed(want: []const u8, got: NameResult) !void {
-    switch (got) {
-        .ok => |full| try std.testing.expectEqualStrings(want, full),
-        .refused => |message| {
-            std.debug.print("refused: {s}\n", .{message});
-            return error.TestUnexpectedResult;
-        },
-    }
+    try std.testing.expectEqualStrings("", if (got == .refused) got.refused else "");
+    try std.testing.expectEqualStrings(want, got.ok);
 }
 
 fn expectRefused(want: []const u8, got: NameResult) !void {
-    switch (got) {
-        .ok => |full| {
-            std.debug.print("accepted: {s}\n", .{full});
-            return error.TestUnexpectedResult;
-        },
-        .refused => |message| try std.testing.expectEqualStrings(want, message),
-    }
+    try std.testing.expectEqualStrings("", if (got == .ok) got.ok else "");
+    try std.testing.expectEqualStrings(want, got.refused);
 }
 
 test "new and init take a full name as given, whatever namespace is stored" {

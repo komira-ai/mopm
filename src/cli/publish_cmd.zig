@@ -737,23 +737,15 @@ fn waitForPublish(s: registry_cmd.Session, net: group_publish.Net, con: *group_p
 // ---------------------------------------------------------------------------
 
 fn parseOk(a: Allocator, cmd: Cmd, args: []const []const u8) !Flags {
-    return switch (try parseFlags(a, cmd, args)) {
-        .ok => |f| f,
-        .bad => |why| {
-            std.debug.print("unexpected refusal: {s}\n", .{why});
-            return error.TestUnexpectedResult;
-        },
-    };
+    const parsed = try parseFlags(a, cmd, args);
+    try std.testing.expectEqualStrings("", if (parsed == .bad) parsed.bad else "");
+    return parsed.ok;
 }
 
 fn parseBad(a: Allocator, cmd: Cmd, args: []const []const u8, needle: []const u8) !void {
-    switch (try parseFlags(a, cmd, args)) {
-        .ok => return error.TestUnexpectedResult,
-        .bad => |why| if (std.mem.indexOf(u8, why, needle) == null) {
-            std.debug.print("refusal '{s}' lacks '{s}'\n", .{ why, needle });
-            return error.TestUnexpectedResult;
-        },
-    }
+    const parsed = try parseFlags(a, cmd, args);
+    try std.testing.expect(parsed == .bad);
+    try std.testing.expect(std.mem.indexOf(u8, parsed.bad, needle) != null);
 }
 
 test "--oidc is a flag of publish and takes no value; pack does not know it" {
@@ -990,10 +982,7 @@ test "version refusals" {
     try std.testing.expect((try versionProblem(a, "1.0.0")) == null);
     try std.testing.expect((try versionProblem(a, "0.0.0")) == null);
     for ([_][]const u8{ "1.0", "1", "1.0.0-rc.1", "1.0.0+7", "01.0.0", "1.0.0.0", "1.0.a" }) |v| {
-        const why = (try versionProblem(a, v)) orelse {
-            std.debug.print("accepted {s}\n", .{v});
-            return error.TestUnexpectedResult;
-        };
+        const why = (try versionProblem(a, v)) orelse "(accepted)";
         try std.testing.expect(std.mem.indexOf(u8, why, "exactly MAJOR.MINOR.PATCH") != null);
     }
 }
