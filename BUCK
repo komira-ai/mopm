@@ -890,6 +890,8 @@ zig_test(  # buck-only: mopm test --retries, --deny-flaky, --ignored, --exact; t
 # ---- The registry API's specification files, staged as `spec/` for service/api:test ----
 # (Not a spec/BUCK or tests/contract/api/BUCK package: a package there would cut
 # its files out of the globs of the contract checks above.)
+# The registry's v2 protos, at the path service/api's test/gen/registry-v2.test.ts hashes them from.
+_SPEC_V2_PROTOS = {"api/" + f[len("spec/api/"):]: f for f in glob(["spec/api/mopm/registry/v2/*.proto"])}
 filegroup(
     name = "spec",
     srcs = {
@@ -899,11 +901,7 @@ filegroup(
         "index-record.schema.json": "spec/index-record.schema.json",
         "index-config.schema.json": "spec/index-config.schema.json",
         "takedowns.schema.json": "spec/takedowns.schema.json",
-    } | {
-        # The registry's v2 protos, at the path service/api's test/gen/registry-v2.test.ts hashes them from.
-        "api/" + f[len("spec/api/"):]: f
-        for f in glob(["spec/api/mopm/registry/v2/*.proto"])
-    },
+    } | _SPEC_V2_PROTOS,
     visibility = ["//service/api:", "//service/infra/stacks:"],
 )
 

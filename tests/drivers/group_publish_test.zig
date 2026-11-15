@@ -462,6 +462,10 @@ fn yankAndUnyank(w: World) !void {
     w.rep.check("a member is yanked by hand", by_hand.status == 200, by_hand.body);
     const y = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build" }, w.token);
     w.rep.check("mopm group yank starts the yank of the group's versions", y.code == 0 and h.contains(y.stdout, "yank:\n  state: yanking\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ y.code, y.stdout, y.stderr }));
+    // The fake shows the stage a group is in and moves it one stage for the next read (as `getGroup` says), and `mopm group yank` no
+    // longer waits (the old `yank --group --wait` did): the first read shows the yank running, the second shows it at rest.
+    const running = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group status first shows the yank still running, with nothing changed yet", running.code == 0 and h.contains(running.stdout, "  state: yanking\n") and h.contains(running.stdout, "  yanked_members: 0\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ running.code, running.stdout, running.stderr }));
     const st = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
     w.rep.check("mopm group status shows the yank at rest with the two versions it changed", st.code == 0 and h.contains(st.stdout, "  state: yanked\n") and h.contains(st.stdout, "  yanked_members: 2\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ st.code, st.stdout, st.stderr }));
     w.rep.check("all three are yanked, and the group says so", try w.allIn("1.0.0", "yanked") and
@@ -471,6 +475,8 @@ fn yankAndUnyank(w: World) !void {
         std.mem.eql(u8, h.jsonString((try h.parseJson(a, repeat.stdout)).object.get("yank").?, "state") orelse "", "yanked"), repeat.stdout);
     const u = try w.m.run(&.{ "group", "unyank", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
     w.rep.check("mopm group unyank starts the restore", u.code == 0 and h.contains(u.stdout, "  state: unyanking\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ u.code, u.stdout, u.stderr }));
+    const restoring = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group status first shows the restore still running", restoring.code == 0 and h.contains(restoring.stdout, "  state: unyanking\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ restoring.code, restoring.stdout, restoring.stderr }));
     const restored = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
     w.rep.check("mopm group status shows the group restored", restored.code == 0 and h.contains(restored.stdout, "  state: restored\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ restored.code, restored.stdout, restored.stderr }));
     w.rep.check("the two the group yanked are published again, and the one yanked by hand stays yanked", std.mem.eql(u8, try w.stateOf("example/grp_a", "1.0.0"), "published") and
