@@ -256,7 +256,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     // ------------------------------------------------ lock, install, build, run
     r = try c.syncLocking(app);
     const installed_msg = try h.fmt(a, "installed 1 packages for {s}", .{subdir});
-    rep.check("sync locks and installs", r.code == 0 and h.contains(r.stdout, installed_msg), c.detail(r));
+    rep.check("lock, then sync of the lock with no closure recorded, installs", r.code == 0 and h.contains(r.stdout, installed_msg), c.detail(r));
     const lock = c.read(app, "mopm.lock") orelse "";
     rep.check("the lock pins the package's bytes", h.contains(lock, try h.fmt(a, "\"sha256\": \"{s}\"", .{good_sha})) and h.contains(lock, try h.fmt(a, "\"size\": {d}", .{good.len})), lock);
     rep.check("sync keeps exactly the locked bytes in .mopm/pkgs", std.mem.eql(u8, c.read(app, ".mopm/pkgs/" ++ filename) orelse "", good), "missing or other bytes");
@@ -381,7 +381,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
         h.contains(r.stderr, "mopm.lock is out of date with mopm.toml: local/mopm.toml says example/local 0.2.1, but mopm.lock has example/local 0.2.0") and
         std.mem.eql(u8, c.read(withpath, "mopm.lock") orelse "", locked), c.detail(r));
     r = try c.syncLocking(withpath);
-    rep.check("sync relocks the path dependency's new version and installs", r.code == 0 and h.contains(r.stdout, "updating example/local 0.2.0 -> 0.2.1\n") and h.contains(r.stdout, "using example/local 0.2.1 from local"), c.detail(r));
+    rep.check("lock picks the path dependency's new version, and sync installs it", r.code == 0 and h.contains(r.stdout, "updating example/local 0.2.0 -> 0.2.1\n") and h.contains(r.stdout, "using example/local 0.2.1 from local"), c.detail(r));
 }
 
 fn localVersion(c: *Ctx, withpath: []const u8, v: []const u8) !void {

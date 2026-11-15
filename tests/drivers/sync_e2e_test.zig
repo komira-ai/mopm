@@ -63,11 +63,20 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
 
     // ------------------------------------------------ the first sync
     const app = try c.project("app", "\"example/greet\" = \"1\"");
-    try c.standInLock(app);
+    const env_dir = c.path(&.{ app, ".mopm/env" });
+    // A sync with no lock locks first, recording mopm's pinned toolchain closure; the stand-in's closure is another one,
+    // so that sync refuses before any download and installs nothing.
     var before = try c.served();
     var r = try c.run(app, &(.{"sync"} ++ reg ++ with_t));
-    const env_dir = c.path(&.{ app, ".mopm/env" });
-    rep.check("sync locks, downloads and installs greet and the toolchain, with no pixi on PATH", r.code == 0 and
+    rep.check("a sync that locks records the pinned toolchain closure and refuses another toolchain before any download", r.code == 1 and
+        h.contains(r.stderr, "mopm sync: mopm.lock records toolchain closure ") and
+        h.contains(r.stderr, try c.fmt(" for mojo {s} on {s}; the toolchain to install has closure ", .{ mojo, c.subdir })) and
+        h.contains(r.stderr, "; run 'mopm lock' (or pass the --toolchain file it was locked with)\n") and
+        try c.served() - before == 0 and !c.exists(app, ".mopm/env"), c.detail(r));
+    try c.standInLock(app);
+    before = try c.served();
+    r = try c.run(app, &(.{"sync"} ++ reg ++ with_t));
+    rep.check("sync of a lock that records no closure downloads and installs greet and the stand-in toolchain, with no pixi on PATH", r.code == 0 and
         h.contains(r.stdout, try c.fmt("installed 1 packages for {s} (mojo {s}, 2 toolchain files) into .mopm/env\n", .{ c.subdir, mojo })), c.detail(r));
     rep.check("the first sync downloads the locked file and the two toolchain files, once each", try c.served() - before == 3, try c.fmt("{d} downloads", .{try c.served() - before}));
     for ([_][]const u8{ "lib/mojo/greet.mopm.json", "lib/libgreet.so", "share/mopm-fake-toolchain/mojo.txt", "share/mopm-fake-toolchain/mojo-compiler.txt" }) |p| {
