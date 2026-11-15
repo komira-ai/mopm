@@ -554,11 +554,13 @@ test {
     _ = unit_cmd;
     _ = api_cmd;
     _ = @import("api_cmd_test.zig");
+    _ = @import("registry_commands_test.zig");
     _ = @import("api_render.zig");
     _ = @import("api_spec.zig");
     _ = @import("group_plan.zig");
     _ = @import("group_publish.zig");
     _ = @import("group_publish_test.zig");
+    _ = @import("group_commit_request_test.zig");
     _ = @import("group_readmes_test.zig");
     _ = @import("group_readmes_resume_test.zig");
     _ = @import("stage_readmes_test.zig");
@@ -570,6 +572,8 @@ test {
     _ = @import("bin_run.zig");
     _ = @import("scaffold_cmd.zig");
     _ = @import("bare_name.zig");
+    _ = @import("bare_name_test.zig");
+    _ = @import("install_cmd_project_test.zig");
     _ = build_cmd;
 }
 
@@ -595,20 +599,14 @@ test "planned commands are recognised, working ones are not planned" {
 }
 
 fn parseOk(a: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) !Opts {
-    return switch (try parseOpts(a, tool, args)) {
-        .ok => |o| o,
-        .usage => |m| {
-            std.debug.print("unexpected usage error: {s}\n", .{m});
-            return error.TestUnexpectedResult;
-        },
-    };
+    const parsed = try parseOpts(a, tool, args);
+    try std.testing.expectEqualStrings("", if (parsed == .usage) parsed.usage else "");
+    try std.testing.expect(parsed == .ok);
+    return parsed.ok;
 }
 
 fn parseUsage(a: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) !void {
-    switch (try parseOpts(a, tool, args)) {
-        .ok => return error.TestUnexpectedResult,
-        .usage => {},
-    }
+    try std.testing.expect((try parseOpts(a, tool, args)) == .usage);
 }
 
 test "options: both spellings, any order" {

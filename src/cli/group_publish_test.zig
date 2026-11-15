@@ -118,7 +118,7 @@ const url_b = "http://127.0.0.1:1/put/b";
 const url_c = "http://127.0.0.1:1/put/c";
 
 /// A staged directory of three packages acme/pa, acme/pb, acme/pc (in that order) whose files have the bytes `a-bytes`, `b-bytes`, `c-bytes`.
-fn stage(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8) !plan_mod.Plan {
+pub fn stage(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8) !plan_mod.Plan {
     return stageWith(a, tmp, extra, false);
 }
 
@@ -1581,6 +1581,11 @@ const NoNotes = struct {
         return error.UnexpectedNotice;
     }
 };
+
+test "the notes sink of an --oidc token run refuses any notice" {
+    var notes = NoNotes{};
+    try std.testing.expectError(error.UnexpectedNotice, notes.writeAll("a notice"));
+}
 
 fn oidcToken(arena: Allocator, net: gp.Net, act: core.ci_oidc.Actions, api_url: []const u8, audience_stage: []const u8, uploads: []const plan_mod.Member) anyerror!core.ci_oidc.Result {
     var notes = NoNotes{};

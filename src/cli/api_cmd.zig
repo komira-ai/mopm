@@ -54,16 +54,6 @@ fn realStdin(_: *anyopaque, arena: Allocator) anyerror![]const u8 {
 
 const max_body_bytes: usize = 64 << 20;
 
-/// The number of words of `name` when `args` begins with them, else null.
-pub fn wordsMatch(name: []const u8, args: []const []const u8) ?usize {
-    var it = std.mem.splitScalar(u8, name, ' ');
-    var n: usize = 0;
-    while (it.next()) |word| : (n += 1) {
-        if (n >= args.len or !std.mem.eql(u8, word, args[n])) return null;
-    }
-    return n;
-}
-
 /// Runs the generated command `args` names (the arguments after `mopm`): the one with the most words that `args` begins
 /// with. Null when no generated command has that name.
 pub fn run(arena: Allocator, args: []const []const u8, cli_version: []const u8) ?u8 {
@@ -80,21 +70,26 @@ pub fn run(arena: Allocator, args: []const []const u8, cli_version: []const u8) 
 /// with) and executes it with the arguments after its name. Null, with nothing said, when no generated command has that
 /// name.
 pub fn dispatch(arena: Allocator, net: gp.Net, con: *gp.Console, env: Env, args: []const []const u8) anyerror!?u8 {
-    var best: ?usize = null;
-    var best_words: usize = 0;
-    inline for (registry_commands.commands, 0..) |c, i| {
-        if (wordsMatch(c.name, args)) |n| {
-            if (n > best_words) {
-                best = i;
-                best_words = n;
-            }
+    const found = registry_commands.find(args) orelse return null;
+    return try runners[found.index](arena, net, con, env, args[found.words..]);
+}
+
+/// `execute` of one command of the table.
+const Runner = *const fn (arena: Allocator, net: gp.Net, con: *gp.Console, env: Env, args: []const []const u8) anyerror!u8;
+
+/// The runner of each command of the table, in the table's order.
+const runners = blk: {
+    var r: [registry_commands.commands.len]Runner = undefined;
+    for (registry_commands.commands, 0..) |c, i| r[i] = runnerOf(c);
+    break :blk r;
+};
+
+fn runnerOf(comptime c: spec.Command) Runner {
+    return struct {
+        fn run(arena: Allocator, net: gp.Net, con: *gp.Console, env: Env, args: []const []const u8) anyerror!u8 {
+            return execute(c, arena, net, con, env, args);
         }
-    }
-    const index = best orelse return null;
-    inline for (registry_commands.commands, 0..) |c, i| {
-        if (i == index) return try execute(c, arena, net, con, env, args[best_words..]);
-    }
-    return null;
+    }.run;
 }
 
 /// The lines of the list of commands for the commands whose name starts with the word `word` (`token`), under a line
