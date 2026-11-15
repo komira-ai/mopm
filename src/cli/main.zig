@@ -560,6 +560,7 @@ test {
     _ = @import("group_plan.zig");
     _ = @import("group_publish.zig");
     _ = @import("group_publish_test.zig");
+    _ = @import("group_commit_request_test.zig");
     _ = @import("group_readmes_test.zig");
     _ = @import("group_readmes_resume_test.zig");
     _ = @import("stage_readmes_test.zig");

@@ -183,6 +183,15 @@ test "a flat object is one key: value line per key, strings raw and numbers and 
     );
 }
 
+test "a number too large for an integer is written with its digits as they came" {
+    try expectRender(
+        \\{"id":18446744073709551616}
+    ,
+        \\id: 18446744073709551616
+        \\
+    );
+}
+
 test "a nested object is its key and its lines indented two spaces" {
     try expectRender(
         \\{"a":{"b":{"c":"d"},"e":1},"f":2}

@@ -135,6 +135,24 @@ const yank_cmd = spec.Command{
     },
 };
 
+/// A command whose body holds a boolean flag, and so leaves out a field the body needs when the flag is not given.
+const yank_flag_cmd = spec.Command{
+    .name = "yank flag",
+    .Op = v2.SetYanked,
+    .summary = "Yank a version.",
+    .usage = "usage: mopm yank flag <namespace>/<name> <version> [--yanked]" ++ tail,
+    .help = "HELP OF yank flag\n",
+    .token = true,
+    .body = .flags,
+    .args = &.{
+        .{ .meta = "<namespace>/<name>", .key = "namespace/name", .full_name = true },
+        .{ .meta = "<version>", .key = "version" },
+    },
+    .flags = &.{
+        .{ .flag = "--yanked", .meta = "", .key = "yanked", .in = .body, .kind = .boolean },
+    },
+};
+
 const group_cmd = spec.Command{
     .name = "api create-group",
     .Op = v2.CreateGroup,
@@ -700,4 +718,30 @@ test "the words of a command name match the first words of the arguments" {
     try std.testing.expectEqual(@as(?usize, null), spec.wordsMatch("publish status", &.{ "publish", "--staged" }));
     try std.testing.expectEqual(@as(?usize, null), spec.wordsMatch("publish status", &.{"publish"}));
     try std.testing.expectEqual(@as(?usize, null), spec.wordsMatch("org add", &.{ "org", "list" }));
+}
+
+test "a boolean flag is sent as true, and given a value is a usage error" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const valued = try runCmd(yank_flag_cmd, a, &tmp, &.{}, .{}, &.{ "acme/foo", "1.0.0", "--yanked=false" });
+    try valued.expect(2, "", "mopm yank flag: --yanked takes no value\n" ++ yank_flag_cmd.usage);
+    try std.testing.expectEqual(@as(usize, 0), valued.requests());
+    const steps = [_]Script.Step{step(.PUT, "/yank", 200, "{}")};
+    const plain = try runCmd(yank_flag_cmd, a, &tmp, &steps, .{ .token_env = "t" }, &.{ "acme/foo", "1.0.0", "--yanked" });
+    try std.testing.expectEqual(@as(usize, 1), plain.requests());
+    try std.testing.expectEqualStrings("{\"yanked\":true}", plain.script.seen.items[0].body.?);
+}
+
+test "a request that is not valid for the operation is a usage error naming the error, with no request" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const r = try runCmd(yank_flag_cmd, a, &tmp, &.{}, .{}, &.{ "acme/foo", "1.0.0" });
+    try r.expect(2, "", "mopm yank flag: the request is not valid: MissingField\n" ++ yank_flag_cmd.usage);
+    try std.testing.expectEqual(@as(usize, 0), r.requests());
 }

@@ -118,7 +118,7 @@ const url_b = "http://127.0.0.1:1/put/b";
 const url_c = "http://127.0.0.1:1/put/c";
 
 /// A staged directory of three packages acme/pa, acme/pb, acme/pc (in that order) whose files have the bytes `a-bytes`, `b-bytes`, `c-bytes`.
-fn stage(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8) !plan_mod.Plan {
+pub fn stage(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8) !plan_mod.Plan {
     return stageWith(a, tmp, extra, false);
 }
 
