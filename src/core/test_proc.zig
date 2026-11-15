@@ -273,10 +273,37 @@ fn signal(pid: posix.pid_t, sig: u8) void {
     posix.kill(pid, sig) catch {};
 }
 
-/// Whether process group `pgid` has any process.
+/// Whether process group `pgid` has any process that is alive. A process
+/// that has died but is not yet reaped (a zombie) is not: where nothing
+/// reaps the orphans of a killed group (a container whose first process is
+/// not an init), a killed member stays a zombie for good, and `kill(2)` on
+/// the group still succeeds for it.
 fn groupAlive(pgid: posix.pid_t) bool {
     posix.kill(-pgid, 0) catch |e| return e != error.ProcessNotFound;
-    return true;
+    if (is_darwin) return true;
+    var dir = std.fs.openDirAbsolute("/proc", .{ .iterate = true }) catch return true;
+    defer dir.close();
+    var it = dir.iterate();
+    var path_buf: [64]u8 = undefined;
+    var buf: [1024]u8 = undefined;
+    while (it.next() catch null) |entry| {
+        const pid = std.fmt.parseInt(posix.pid_t, entry.name, 10) catch continue;
+        const path = std.fmt.bufPrint(&path_buf, "/proc/{d}/stat", .{pid}) catch continue;
+        const st = parseProcStatGroup(readSmall(path, &buf) orelse continue) orelse continue;
+        if (st.pgrp == pgid and st.state != 'Z') return true;
+    }
+    return false;
+}
+
+/// The state letter (R, S, Z, ...) and the process group of a /proc/<pid>/stat line.
+pub fn parseProcStatGroup(text: []const u8) ?struct { state: u8, pgrp: posix.pid_t } {
+    // The command name (field 2) is in parentheses and may hold spaces.
+    const close = std.mem.lastIndexOfScalar(u8, text, ')') orelse return null;
+    var it = std.mem.tokenizeScalar(u8, text[close + 1 ..], ' ');
+    const state = it.next() orelse return null;
+    _ = it.next() orelse return null; // ppid
+    const pgrp = std.fmt.parseInt(posix.pid_t, it.next() orelse return null, 10) catch return null;
+    return .{ .state = state[0], .pgrp = pgrp };
 }
 
 // ---------------------------------------------------------------- run
@@ -897,6 +924,35 @@ test "/proc parsing" {
     try std.testing.expectEqual(@as(?u64, null), parseProcStatCpu("42 (x) S 1"));
     try std.testing.expectEqual(@as(?u64, 2048 * 1024), parseVmRss("Name:\tx\nVmPeak:\t 9 kB\nVmRSS:\t    2048 kB\n"));
     try std.testing.expectEqual(@as(?u64, null), parseVmRss("Name:\tx\n"));
+}
+
+test "/proc stat: the state and the process group, the command name may hold spaces and parentheses" {
+    const z = parseProcStatGroup("42 (a b) c) Z 1 77 42 0 -1 4194560").?;
+    try std.testing.expectEqual(@as(u8, 'Z'), z.state);
+    try std.testing.expectEqual(@as(posix.pid_t, 77), z.pgrp);
+    try std.testing.expectEqual(@as(u8, 'S'), parseProcStatGroup("1 (init) S 0 1 1").?.state);
+    try std.testing.expect(parseProcStatGroup("42 x S 1 2") == null);
+    try std.testing.expect(parseProcStatGroup("42 (x)") == null);
+    try std.testing.expect(parseProcStatGroup("42 (x) S 1") == null);
+    try std.testing.expect(parseProcStatGroup("42 (x) S 1 two") == null);
+}
+
+test "a member that has died and is not reaped does not keep its group alive" {
+    // The member is a zombie until this process waits for it, as every killed member is in a
+    // container with no init to reap the orphans; the group has no live process.
+    if (is_darwin) return error.SkipZigTest; // groupAlive reads /proc, which macOS does not have
+    const pid = try posix.fork();
+    if (pid == 0) {
+        ownGroup();
+        childExit(0);
+    }
+    putInOwnGroup(pid);
+    // Wait for the exit without reaping it (waitid with WEXITED | WNOWAIT).
+    var info: [128]u8 align(8) = undefined;
+    try std.testing.expectEqual(@as(usize, 0), std.os.linux.syscall5(.waitid, 1, @as(usize, @intCast(pid)), @intFromPtr(&info), 0x4 | 0x01000000, 0));
+    const alive = groupAlive(pid);
+    _ = posix.waitpid(pid, 0);
+    try std.testing.expect(!alive);
 }
 
 test "signal names" {
