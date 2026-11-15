@@ -149,12 +149,12 @@ zig_test(
     name = "api_gen_test",
     src = "tools/api_gen_test.zig",
     imports = _API_GEN_SRCS,
-    data = glob(["spec/api/mopm/registry/v2/*.proto"]) + [
+    # service/api is its own package: its generated file comes from there, staged at its path in the repository.
+    data = {f: f for f in glob(["spec/api/mopm/registry/v2/*.proto"]) + [
         "spec/api/openapi-v2.yaml",
-        "service/api/src/gen/registry-v2.ts",
         "src/core/registry_v2.zig",
         "src/cli/registry_commands.zig",
-    ] + glob(["tests/golden/registry/**"]),
+    ] + glob(["tests/golden/registry/**"])} | {"service/api/src/gen/registry-v2.ts": "//service/api:registry-v2.ts"},
     **_TOOLS
 )
 
@@ -162,7 +162,7 @@ zig_test(
 zig_test(
     name = "registry_client_lint",
     src = "tests/drivers/registry_client_lint_test.zig",
-    imports = ["tests/drivers/registry_client_lint.zig"],
+    imports = ["tests/drivers/lint_common.zig", "tests/drivers/yaml.zig", "tests/drivers/registry_client_lint.zig"],
     data = glob(["src/cli/*.zig"]) + [
         "src/core/registry_v2.zig",
         "src/core/ci_oidc.zig",
@@ -672,7 +672,11 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "tools/api_gen.zig",
         "tools/api_gen_test.zig",
         "registry/fake/main.zig",
+        "registry/fake/groups_test.zig",
         "tests/drivers/group_e2e.zig",
+        "tests/drivers/compat_namespaces_test.zig",
+        "tests/drivers/registry_client_lint_test.zig",
+        "tests/compat/prev_v0_0_108.zig",
     ],
     **_TOOLS
 )
@@ -1152,6 +1156,12 @@ export_file(
 )
 
 export_file(
+    name = "site.src.core.names.zig",
+    src = "src/core/names.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.src.core.registry.zig",
     src = "src/core/registry.zig",
     visibility = ["//site:"],
@@ -1517,7 +1527,9 @@ zig_coverage(
     floor = "coverage/api_gen.txt",
     test_targets = [":api_gen_test"],
     # The generator's library; tools/api_gen.zig is its command line (arguments and file writes), run by `zig build gen-api`.
-    expect = glob(["tools/api_gen/*.zig"]),
+    # zig_client_tail.zig is one string literal, the text the generator appends to src/core/registry_v2.zig (a declaration has no
+    # line); the code in it runs as part of that generated file, which core_coverage measures.
+    expect = glob(["tools/api_gen/*.zig"], exclude = ["tools/api_gen/zig_client_tail.zig"]),
 )
 
 zig_coverage(
