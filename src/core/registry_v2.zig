@@ -4,7 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const http = @import("http.zig");
 
-pub const sources_sha256 = "69479a746fc5bc96b9b09349e37d1947f487855c4ad33cb4191263953a74069b";
+pub const sources_sha256 = "0274d1c9958a036d209291857a36d468935e45a2a002f710071c09200a4cd14d";
 
 pub const base_path = "/api/v2";
 
@@ -1559,12 +1559,12 @@ pub const ReadmeRef = struct {
 pub const GroupMemberRequest = struct {
     name: FullName,
     version: Version,
+    files: []const GroupFile,
     /// Optional, and taken only by a registry that lists `group_readme_objects` in the `features` of `getHealth`; any
     /// other ignores it. The readme of the member as an object to upload (see `ReadmeRef`). It is not part of the group
     /// id, so the same set with or without it is the same group. When it is given the answer's member carries `readme`
     /// (`GroupUploadReadme`) unless the answer is `reserving`.
     readme: ?ReadmeRef = null,
-    files: []const GroupFile,
 };
 
 pub const CreateGroupRequest = struct {

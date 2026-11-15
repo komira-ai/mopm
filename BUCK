@@ -890,6 +890,8 @@ zig_test(  # buck-only: mopm test --retries, --deny-flaky, --ignored, --exact; t
 # ---- The registry API's specification files, staged as `spec/` for service/api:test ----
 # (Not a spec/BUCK or tests/contract/api/BUCK package: a package there would cut
 # its files out of the globs of the contract checks above.)
+# The registry's v2 protos, at the path service/api's test/gen/registry-v2.test.ts hashes them from.
+_SPEC_V2_PROTOS = {"api/" + f[len("spec/api/"):]: f for f in glob(["spec/api/mopm/registry/v2/*.proto"])}
 filegroup(
     name = "spec",
     srcs = {
@@ -899,11 +901,7 @@ filegroup(
         "index-record.schema.json": "spec/index-record.schema.json",
         "index-config.schema.json": "spec/index-config.schema.json",
         "takedowns.schema.json": "spec/takedowns.schema.json",
-    } | {
-        # The registry's v2 protos, at the path service/api's test/gen/registry-v2.test.ts hashes them from.
-        "api/" + f[len("spec/api/"):]: f
-        for f in glob(["spec/api/mopm/registry/v2/*.proto"])
-    },
+    } | _SPEC_V2_PROTOS,
     visibility = ["//service/api:", "//service/infra/stacks:"],
 )
 
@@ -1467,7 +1465,7 @@ zig_exe(  # buck-only: tools/conda_measure.zig, built so the farm compiles it; i
 # ---- Coverage: the lines the unit tests reach, held to a floor per package ------------------------------------------------
 # (vendor/buildrules_coverage/README.md says what each figure is, what it leaves out, and how a floor is written.)
 
-# The tools of a coverage run (zig_cover, cov_floor, cov_summary, the launcher), built here until the buildrules pin has them.
+# The tools of a coverage run (zig_cover, cov_normalize, cov_floor, cov_summary, the launcher), built here until the buildrules pin has them.
 cov_tools()
 
 # Each package: the unit tests of its sources run again under kcov (the same compile and environment), and `<package>_coverage_floor`

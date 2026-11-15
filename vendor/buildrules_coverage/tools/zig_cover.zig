@@ -1,4 +1,4 @@
-// Vendored, unmodified, from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/zig_cover.zig.
+// Vendored from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/zig_cover.zig, with komira-ai/buildrules#153 (commit eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503) applied: cov_normalize is passed the working directory as --forbid-path.
 // A stopgap: delete this copy when the buildrules pin in .buckconfig includes that change (vendor/buildrules_coverage/README.md).
 //! zig_cover: the coverage of one Zig test target, in one action: build its test executable with instrumentation, run it under kcov,
 //! and write two reports in repository paths.
@@ -160,7 +160,7 @@ pub fn normalizeArgv(a: std.mem.Allocator, r: Args, raw: []const u8, out: []cons
         try std.fmt.allocPrint(a, "{s}/=", .{cwd}),
         "--must-contain",
         r.must_contain,
-        "--forbid",
+        "--forbid-path",
         cwd,
     });
 }

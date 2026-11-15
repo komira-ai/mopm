@@ -1,4 +1,4 @@
-// Vendored, unmodified, from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/cov_run.zig.
+// Vendored from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/cov_run.zig, with komira-ai/buildrules#153 (commit eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503) applied: cov_normalize is passed the working directory as --forbid-path.
 // A stopgap: delete this copy when the buildrules pin in .buckconfig includes that change (vendor/buildrules_coverage/README.md).
 //! cov_run: runs one Mojo test's coverage binary under kcov in a build action and writes its Cobertura report in repository paths.
 //!
@@ -149,7 +149,7 @@ pub fn normalizeArgv(a: std.mem.Allocator, r: Args, share: []const u8, raw: []co
         try out.append(a, "--map");
         try out.append(a, try std.fmt.allocPrint(a, "{s}/{s}={s}", .{ share, m.share_rel, m.repo }));
     }
-    try out.appendSlice(a, &.{ "--must-contain", r.must_contain, "--forbid", cwd });
+    try out.appendSlice(a, &.{ "--must-contain", r.must_contain, "--forbid-path", cwd });
     return out.toOwnedSlice(a);
 }
 

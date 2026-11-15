@@ -104,12 +104,12 @@ message ReadmeRef {
 message GroupMemberRequest {
   FullName name = 1 [(field) = {required: true}];
   Version version = 2 [(field) = {required: true}];
+  repeated GroupFile files = 4 [(field) = {required: true, min_items: 1, max_items: 20}];
   // Optional, and taken only by a registry that lists `group_readme_objects` in the `features` of `getHealth`; any
   // other ignores it. The readme of the member as an object to upload (see `ReadmeRef`). It is not part of the group
   // id, so the same set with or without it is the same group. When it is given the answer's member carries `readme`
   // (`GroupUploadReadme`) unless the answer is `reserving`.
   ReadmeRef readme = 3;
-  repeated GroupFile files = 4 [(field) = {required: true, min_items: 1, max_items: 20}];
 }
 
 message CreateGroupRequest {
