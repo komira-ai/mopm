@@ -6,10 +6,17 @@ pull request #19 (branch `coverage/floors`), which the pin does not contain. The
 delete this directory, load `zig_test`, `zig_coverage`, `jest_test(coverage = True)` and `jest_coverage_floor` from `@buildrules//...` in `BUCK` and
 the five `site/` and `service/` BUCK files, and the targets `cov_tools()` defines (`//:cov_*`) go with it.
 
+`cov_normalize` (and its tests and the `kcov_full_paths` fixtures) is copied from buildrules main instead, commit `eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503`, the merge of
+pull request #153: it refuses the action's working directory in a report only as a whole path (`--forbid-path`), so a repository path that merely holds
+the same bytes as part of a longer name passes (the farm runs actions at `/work`, and `tests/drivers/workflow_lint.zig` holds `/workflow`). The pinned `buildrules//rules/coverage:cov_normalize` has only `--forbid`,
+a plain substring search. The same pull request's one-line changes to `cov_run.zig`, `zig_cover.zig` and their tests (pass `--forbid-path`, not `--forbid`) are applied
+to the copies here, and each of those files' headers says so. The copy goes when the pin includes buildrules pull request #153; to take a later change of these files before then, copy it here the same way.
+
 | file | what | changed from the source |
 |---|---|---|
-| `tools/*.zig`, `zig_launch*.zig` | `zig_cover` (builds a test with the coverage options and runs it under kcov), `cov_floor` (the floor check), `cov_summary`, `cov_run`, the block runner, and the launcher's `run` subcommand, with their unit tests | no (a two line header) |
-| `tools.bzl` | the BUCK targets of those tools, behind their tests | the targets of the pull request's `rules/coverage/BUCK`, as a macro of the root package |
+| `tools/*.zig`, `zig_launch*.zig` | `zig_cover` (builds a test with the coverage options and runs it under kcov), `cov_floor` (the floor check), `cov_summary`, `cov_run`, the block runner, and the launcher's `run` subcommand, with their unit tests | no (a two line header), except buildrules pull request #153's `--forbid-path` in `cov_run.zig`, `zig_cover.zig` and their tests |
+| `tools/cov_normalize*.zig`, `tools/fixtures/kcov_full_paths*.xml` | `cov_normalize` (a kcov report rewritten to repository paths), its unit and process tests and their fixtures, from buildrules commit `eec7f9f` | no (a two line header on the `.zig` files; the fixtures are byte copies) |
+| `tools.bzl` | the BUCK targets of those tools, behind their tests | the targets of the pull request's `rules/coverage/BUCK` and the pin's `cov_normalize` targets, as a macro of the root package; `cov_zig_cover_exe_test` runs `//:cov_normalize` |
 | `zig_test.bzl` | the pinned `zig_test` rule plus the `ZigTestInfo` provider the coverage rule reads | the rule is the pinned one, same command line |
 | `zig_cover.bzl` | `zig_coverage(...)`: the package's coverage and its floor check | tool targets are `//:cov_*`; the floor's label is the target's name |
 | `jest_cover.bzl` | `jest_test` (jest with `--coverage`) and `jest_coverage_floor` | `jest_test` is written over buildrules' public `node_tree_build` |

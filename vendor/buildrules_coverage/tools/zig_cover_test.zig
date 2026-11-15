@@ -1,4 +1,4 @@
-// Vendored, unmodified, from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/zig_cover_test.zig.
+// Vendored from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/zig_cover_test.zig, with komira-ai/buildrules#153 (commit eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503) applied: cov_normalize is passed the working directory as --forbid-path.
 // A stopgap: delete this copy when the buildrules pin in .buckconfig includes that change (vendor/buildrules_coverage/README.md).
 //! Unit tests of zig_cover.zig: its command line, the commands it builds, and the reduction of the runner's block rows to the report.
 //! The run itself (zig, kcov, the runner) is held by zig_cover_exe_test.zig.
@@ -121,7 +121,7 @@ test "normalizeArgv: the tree is mapped to repository paths and its directory fo
     var d: []const u8 = "";
     const r = try parseWith(a, &.{}, &d);
     const v = try Z.normalizeArgv(a, r, "/w/cov.xml", "/exec/o.xml", "/exec");
-    const want = [_][]const u8{ "/n", "--in", "/w/cov.xml", "--out", "/exec/o.xml", "--map", "/exec/=", "--must-contain", "pkg/a.zig", "--forbid", "/exec" };
+    const want = [_][]const u8{ "/n", "--in", "/w/cov.xml", "--out", "/exec/o.xml", "--map", "/exec/=", "--must-contain", "pkg/a.zig", "--forbid-path", "/exec" };
     try t.expectEqual(want.len, v.len);
     for (want, v) |w, g| try t.expectEqualStrings(w, g);
 }
