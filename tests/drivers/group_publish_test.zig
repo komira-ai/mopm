@@ -462,7 +462,7 @@ fn yankAndUnyank(w: World) !void {
     w.rep.check("a member is yanked by hand", by_hand.status == 200, by_hand.body);
     const y = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build" }, w.token);
     w.rep.check("mopm group yank starts the yank of the group's versions", y.code == 0 and h.contains(y.stdout, "yank:\n  state: yanking\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ y.code, y.stdout, y.stderr }));
-    // The fake shows the stage a group is in and moves it one stage for the next read (as `getGroup` says), and `mopm group yank` no
+    // The fake registry answers the stage a group is in, then moves it one stage (its getGroup, registry/fake/groups.zig); `mopm group yank` no
     // longer waits (the old `yank --group --wait` did): the first read shows the yank running, the second shows it at rest.
     const running = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
     w.rep.check("mopm group status first shows the yank still running, with nothing changed yet", running.code == 0 and h.contains(running.stdout, "  state: yanking\n") and h.contains(running.stdout, "  yanked_members: 0\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ running.code, running.stdout, running.stderr }));
