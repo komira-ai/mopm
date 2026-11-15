@@ -1,8 +1,7 @@
-//! `mopm login`, `mopm logout` and `mopm whoami`: an account on a registry.
+//! `mopm login` and `mopm logout`: an account on a registry (`mopm whoami` is generated from GET /me, see api_cmd.zig).
 //!
 //!   mopm login  [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
 //!   mopm logout [--registry ...] [--config-dir <dir>]
-//!   mopm whoami [--registry ...] [--config-dir <dir>]
 //!
 //! Login is GitHub's device flow through the registry: mopm prints a code and
 //! a page to enter it on, and polls until the person decides. Once approved it
@@ -14,10 +13,6 @@
 //! not a namespace has none, and the registry says why in `unavailable_namespace`).
 //! A /me that fails does not fail the login: the token is stored without a
 //! namespace and mopm says so.
-//!
-//! `whoami` asks `GET <api_v2_url>/me` and prints the handle, the GitHub id and
-//! the stage, then every namespace in the order the registry sent it with its
-//! kind, its role and its packages, then `unavailable_namespace` when there is one.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -31,7 +26,6 @@ const gp = @import("group_publish.zig");
 const usage =
     \\usage: mopm login  [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
     \\       mopm logout [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-    \\       mopm whoami [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
     \\
 ;
 
@@ -62,10 +56,6 @@ pub const Session = struct {
     arena: Allocator,
     config: registry.Config,
     config_dir: []const u8,
-
-    pub fn api(s: Session, path: []const u8) Allocator.Error![]const u8 {
-        return std.fmt.allocPrint(s.arena, "{s}{s}", .{ s.config.api_url, path });
-    }
 };
 
 fn err(comptime fmt: []const u8, args: anytype) void {
@@ -107,10 +97,8 @@ pub fn main(arena: Allocator, cmd: []const u8, args: []const []const u8, cli_ver
     var con = gp.Console.init(arena, gp.Console.stdStreams);
     const result = if (std.mem.eql(u8, cmd, "login"))
         login(s, gp.realNet(), &con, cli_version)
-    else if (std.mem.eql(u8, cmd, "logout"))
-        logout(s)
     else
-        whoami(s, gp.realNet(), &con);
+        logout(s);
     return result catch |e| {
         err("{s}\n", .{@errorName(e)});
         return 1;
@@ -130,7 +118,7 @@ pub fn reportFailure(con: *gp.Console, a: http.Answer) void {
 
 /// `GET /me` with `token`; the answer, or the failed answer for the caller to report.
 fn getMe(s: Session, net: gp.Net, token: []const u8) anyerror!http.Answer {
-    return net.request(s.arena, v2.GetMe.method, try v2.url(v2.GetMe, s.arena, s.config.api_v2_url, .{}), .{ .token = token });
+    return v2.send(v2.GetMe, s.arena, net, net.policy, s.config.api_v2_url, token, .{});
 }
 
 /// The account's user namespace: the one of kind "user" equal to `handle` in lower case, else the first of kind "user".
@@ -155,42 +143,30 @@ fn readMe(s: Session, net: gp.Net, token: []const u8) ?v2.MeV2 {
 /// The device flow. The clock, the pauses between polls and the requests are `net`'s, and everything it says goes through
 /// `con`, so a test drives it without waiting and without touching the real standard streams.
 fn login(s: Session, net: gp.Net, con: *gp.Console, cli_version: []const u8) anyerror!u8 {
-    const client = try std.fmt.allocPrint(s.arena, "{{\"client\":\"mopm {s}\"}}", .{cli_version});
-    const started = try net.once(s.arena, .POST, try s.api("/auth/device"), .{ .body = client });
+    const client = try std.fmt.allocPrint(s.arena, "mopm {s}", .{cli_version});
+    const started = try v2.sendOnce(v2.StartDeviceLogin, s.arena, net, s.config.api_url, null, .{ .body = .{ .client = client } });
     if (!started.ok()) {
         reportFailure(con, started);
         return 1;
     }
-    const start = try std.json.parseFromSliceLeaky(struct {
-        device_code: []const u8,
-        user_code: []const u8,
-        verification_uri: []const u8,
-        expires_in: i64,
-        interval: i64,
-    }, s.arena, started.body, .{ .ignore_unknown_fields = true });
+    const start = try v2.decode(v2.StartDeviceLogin, s.arena, started.body);
     con.say("To log in to {s}, open {s} and enter the code {s}\n", .{ s.config.stage, start.verification_uri, start.user_code });
 
     var interval = @max(start.interval, 1);
-    const body = try std.fmt.allocPrint(s.arena, "{{\"device_code\":\"{s}\"}}", .{start.device_code});
     const deadline = net.now() + start.expires_in + 30;
     while (net.now() < deadline) {
         net.pause(@intCast(interval));
-        const polled = try net.once(s.arena, .POST, try s.api("/auth/device/poll"), .{ .body = body });
+        const polled = try v2.sendOnce(v2.PollDeviceLogin, s.arena, net, s.config.api_url, null, .{ .body = .{ .device_code = start.device_code } });
         if (!polled.ok()) {
             reportFailure(con, polled);
             return 1;
         }
-        const state = try std.json.parseFromSliceLeaky(struct {
-            status: []const u8,
-            interval: ?i64 = null,
-            token: ?[]const u8 = null,
-            handle: ?[]const u8 = null,
-        }, s.arena, polled.body, .{ .ignore_unknown_fields = true });
-        if (std.mem.eql(u8, state.status, "pending")) {
+        const state = try v2.decode(v2.PollDeviceLogin, s.arena, polled.body);
+        if (state.status == .pending) {
             if (state.interval) |n| interval = @max(n, 1);
             continue;
         }
-        if (std.mem.eql(u8, state.status, "approved")) {
+        if (state.status == .approved) {
             const handle = state.handle orelse "";
             const token = state.token orelse return error.ApprovedWithoutToken;
             if (s.config.api_v2_url.len == 0) {
@@ -215,7 +191,7 @@ fn login(s: Session, net: gp.Net, con: *gp.Console, cli_version: []const u8) any
             }
             return 0;
         }
-        if (std.mem.eql(u8, state.status, "denied")) {
+        if (state.status == .denied) {
             con.fail("the login was denied\n", .{});
             return 1;
         }
@@ -236,35 +212,6 @@ fn logout(s: Session) anyerror!u8 {
     return 0;
 }
 
-fn whoami(s: Session, net: gp.Net, con: *gp.Console) anyerror!u8 {
-    const entry = (try credentials.load(s.arena, s.config_dir, s.config.api_url)) orelse {
-        con.fail("not logged in to {s}; run 'mopm login'\n", .{s.config.stage});
-        return 1;
-    };
-    const answer = try getMe(s, net, entry.token);
-    if (!answer.ok()) {
-        reportFailure(con, answer);
-        return 1;
-    }
-    const me = try v2.decode(v2.GetMe, s.arena, answer.body);
-    con.say("{s} (GitHub id {d}) on {s}\n", .{ me.handle, me.github_id, s.config.stage });
-    if (me.namespaces.len > 0) {
-        con.say("namespaces:\n", .{});
-        for (me.namespaces) |n| {
-            con.say("  {s} ({s}, {s})", .{ n.namespace, @tagName(n.kind), @tagName(n.role) });
-            if (n.packages.len > 0) {
-                con.say(":", .{});
-                for (n.packages) |p| con.say(" {s}", .{p});
-            }
-            con.say("\n", .{});
-        }
-    }
-    if (me.unavailable_namespace) |login_name| {
-        con.say("your GitHub login '{s}' is not a namespace on {s} (another account holds it, it is reserved, or it is not a valid namespace)\n", .{ login_name, s.config.stage });
-    }
-    return 0;
-}
-
 test "account command flags" {
     const f = parseFlags(&.{ "--registry", "beta", "--config-dir", "/tmp/x" }).?;
     try std.testing.expectEqualStrings("beta", f.registry);
@@ -277,15 +224,15 @@ test "account command flags" {
 const gt = @import("group_publish_test.zig");
 
 fn begun(comptime expires_in: []const u8, comptime interval: []const u8) gt.Script.Step {
-    return .{ .method = .POST, .suffix = "/auth/device", .status = 200, .body = "{\"device_code\":\"dc\",\"user_code\":\"AB-12\",\"verification_uri\":\"https://example.test/device\",\"expires_in\":" ++ expires_in ++ ",\"interval\":" ++ interval ++ "}" };
+    return .{ .method = .POST, .suffix = v2.StartDeviceLogin.path_template, .status = 200, .body = "{\"device_code\":\"dc\",\"user_code\":\"AB-12\",\"verification_uri\":\"https://example.test/device\",\"expires_in\":" ++ expires_in ++ ",\"interval\":" ++ interval ++ "}" };
 }
 
 fn poll(comptime body: []const u8) gt.Script.Step {
-    return .{ .method = .POST, .suffix = "/auth/device/poll", .status = 200, .body = body };
+    return .{ .method = .POST, .suffix = v2.PollDeviceLogin.path_template, .status = 200, .body = body };
 }
 
 fn me_step(comptime body: []const u8) gt.Script.Step {
-    return .{ .method = .GET, .suffix = "/me", .status = 200, .body = body };
+    return .{ .method = .GET, .suffix = v2.GetMe.path_template, .status = 200, .body = body };
 }
 
 const me_ada = "{\"github_id\":7,\"handle\":\"ada\",\"namespaces\":[{\"namespace\":\"ada\",\"kind\":\"user\",\"role\":\"owner\",\"packages\":[]}]}";
@@ -506,77 +453,4 @@ test "login asks for no /me when the config names no API version 2" {
     try std.testing.expectEqual(@as(usize, 2), script.seen.items.len);
     try std.testing.expect(std.mem.endsWith(u8, con.out.items, "Logged in to beta as ada.\n"));
     try std.testing.expectEqualStrings("", con.err.items);
-}
-
-fn loggedIn(a: Allocator, dir: []const u8) !void {
-    try credentials.store(a, dir, "http://127.0.0.1:1/api/v1", .{ .token = "mopm_tok", .handle = "ada" });
-}
-
-test "whoami lists each namespace with its kind, role and packages in the order sent, and none for a namespace without packages" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    var con = gp.Console.init(a, null);
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(a, ".");
-    try loggedIn(a, dir);
-    var script = gt.Script{ .steps = &.{me_step(
-        \\{"github_id":7,"handle":"ada","namespaces":[{"namespace":"ada","kind":"user","role":"owner","packages":["ada/one","ada/two"]},{"namespace":"acme","kind":"org","role":"owner","packages":[]},{"namespace":"zeta","kind":"org","role":"member","packages":["zeta/z"]}]}
-    )}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 0), try whoami(loginSession(a, dir), script.net(), &con));
-    try std.testing.expect(script.mismatch == null);
-    try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
-    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/me", script.seen.items[0].url);
-    try std.testing.expectEqualStrings("mopm_tok", script.seen.items[0].token.?);
-    try std.testing.expectEqualStrings("ada (GitHub id 7) on beta\nnamespaces:\n  ada (user, owner): ada/one ada/two\n  acme (org, owner)\n  zeta (org, member): zeta/z\n", con.out.items);
-    try std.testing.expectEqualStrings("", con.err.items);
-}
-
-test "whoami prints no namespaces section for an account with none, and says its GitHub login is unavailable when the registry says so" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    var con = gp.Console.init(a, null);
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(a, ".");
-    try loggedIn(a, dir);
-    var script = gt.Script{ .steps = &.{me_step(
-        \\{"github_id":9,"handle":"ada","namespaces":[],"unavailable_namespace":"Ada"}
-    )}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 0), try whoami(loginSession(a, dir), script.net(), &con));
-    try std.testing.expectEqualStrings("ada (GitHub id 9) on beta\nyour GitHub login 'Ada' is not a namespace on beta (another account holds it, it is reserved, or it is not a valid namespace)\n", con.out.items);
-}
-
-test "whoami when not logged in refuses with exit 1 and makes no request" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    var con = gp.Console.init(a, null);
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(a, ".");
-    var script = gt.Script{ .steps = &.{me_step(me_ada)}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 1), try whoami(loginSession(a, dir), script.net(), &con));
-    try std.testing.expectEqual(@as(usize, 0), script.seen.items.len);
-    try std.testing.expectEqualStrings("mopm: not logged in to beta; run 'mopm login'\n", con.err.items);
-    try std.testing.expectEqualStrings("", con.out.items);
-}
-
-test "whoami on a 401 answer prints the failure the registry gave, exits 1 and prints nothing on standard output" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    var con = gp.Console.init(a, null);
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = try tmp.dir.realpathAlloc(a, ".");
-    try loggedIn(a, dir);
-    var script = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "/me", .status = 401, .body = "{\"code\":\"token_expired\",\"message\":\"The token expired.\"}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 1), try whoami(loginSession(a, dir), script.net(), &con));
-    const text = try http.describe(a, .{ .status = 401, .body = "{\"code\":\"token_expired\",\"message\":\"The token expired.\"}", .request_id = "req-test" });
-    const want = try std.fmt.allocPrint(a, "mopm: {s}", .{text});
-    try std.testing.expectEqualStrings(want, con.err.items);
-    try std.testing.expectEqualStrings("", con.out.items);
 }

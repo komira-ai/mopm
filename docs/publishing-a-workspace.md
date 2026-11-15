@@ -1,6 +1,6 @@
 # Publishing a workspace as one group
 
-`mopm stage` packs the members of a workspace and checks them against a registry, and `mopm publish --staged` publishes the result through one group: the registry validates every member before anything is visible, and either all the members appear in its API at the same moment or none does. `mopm yank --group` takes a group back. This page is the reference for the three commands; the file formats are in [the staged set](../spec/staged-set.md), and publishing one package is in [getting started](getting-started.md).
+`mopm stage` packs the members of a workspace and checks them against a registry, and `mopm publish --staged` publishes the result through one group: the registry validates every member before anything is visible, and either all the members appear in its API at the same moment or none does. `mopm group yank` takes a group back. This page is the reference for `stage`, `publish --staged` and the group yank commands; the file formats are in [the staged set](../spec/staged-set.md), and publishing one package is in [getting started](getting-started.md).
 
 ## Group publish is off on the hosted registries
 
@@ -10,7 +10,7 @@ Group publish is deployed, and it is switched off. On `prod`, `gamma` and `beta`
 
 1. `mopm stage` finds the members of the workspace, puts them in dependency order, packs each one from its built artifacts, and checks each version against the registry. It reads no token and writes nothing to the registry.
 2. `mopm publish --staged` sends the staged set to the registry as one group, uploads the files, commits the group and waits until it is visible.
-3. If the release has to be taken back, `mopm yank --group` yanks every version the group published.
+3. If the release has to be taken back, `mopm group yank` yanks every version the group published.
 
 ### mopm stage
 
@@ -97,7 +97,7 @@ Before it asks for the group, a run that resumes a staged group reads it. If the
 
 `--no-commit` on a group that is already past open (validating, committed, visible) is refused: it stages a group before its commit.
 
-`--abort` ends the group `state.json` names (`DELETE /groups/{id}`), which frees the actor's place at once; its version numbers stay free, since nothing was published. It reads `plan.json` and `state.json` but none of the set's files, so the job that runs after a failure does not need the bytes; with `--oidc` it makes its own exchange for the packages of the plan. The outcome is `aborted` in `report.json`, the members are `not_published`, and `state.json` is left with no group. It ends 0 when the group is aborted, when it had already ended without being published (the registry expired it), and when `state.json` names no group; it ends 1 for a directory with no `state.json`, a `state.json` of another registry or plan, and a group that was committed (the message says to use `mopm yank --group` if it becomes visible).
+`--abort` ends the group `state.json` names (`DELETE /groups/{id}`), which frees the actor's place at once; its version numbers stay free, since nothing was published. It reads `plan.json` and `state.json` but none of the set's files, so the job that runs after a failure does not need the bytes; with `--oidc` it makes its own exchange for the packages of the plan. The outcome is `aborted` in `report.json`, the members are `not_published`, and `state.json` is left with no group. It ends 0 when the group is aborted, when it had already ended without being published (the registry expired it), and when `state.json` names no group; it ends 1 for a directory with no `state.json`, a `state.json` of another registry or plan, and a group that was committed (the message says to use `mopm group yank` if it becomes visible).
 
 #### report.json
 
@@ -147,15 +147,16 @@ The command line does not read the API. `mopm add`, `mopm lock` and `mopm sync` 
 ## Yanking a group
 
 ```text
-mopm yank --group <id> --registry <prod|gamma|beta|url> --reason <text> [--config-dir <dir>] [--wait <seconds>]
-mopm yank --group <id> --registry <prod|gamma|beta|url> --unyank [--config-dir <dir>] [--wait <seconds>]
+mopm group yank <group_id> --reason <text> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+mopm group unyank <group_id> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+mopm group status <group_id> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
 ```
 
-The group id is the one `mopm publish --staged` printed and wrote into `report.json`. `--reason` is required for a yank, 1 to 280 characters, and is refused with `--unyank`. `--registry` is required, with no default. `--wait` is as for `publish --staged`.
+These are generated commands: each makes one call of the registry's API (`PUT /groups/{group_id}/yank`, `GET /groups/{group_id}`), and `mopm group yank --help` prints the flags and the registry's description of the operation. The group id is the one `mopm publish --staged` printed and wrote into `report.json`. `--reason` says why the versions are yanked, and is shown to people who locked one of them. The registry is `prod` unless `--registry` names another.
 
-A group yank is not one flip, and it is not the inverse of a publish. The registry records the request and answers at once; then it yanks the members one by one, and then it rebuilds the repodata and the index. The command waits until the group says the yank is `yanked` (or, after `--unyank`, `restored`). While it runs, some members are yanked and others are not. An unyank restores only the versions that this group's yank changed: a version somebody yanked by hand before stays yanked.
+A group yank is not one flip, and it is not the inverse of a publish. The registry records the request and answers at once with the group; then it yanks the members one by one, and then it rebuilds the repodata and the index. `mopm group yank` and `mopm group unyank` print that answer and do not wait: `mopm group status <group_id>` shows the group's yank, which is `yanked` when it is done (or, after `mopm group unyank`, `restored`). While it runs, some members are yanked and others are not. An unyank restores only the versions that this group's yank changed: a version somebody yanked by hand before stays yanked.
 
-Only a group that is `visible` can be yanked. Before that the registry answers 409 with the code `group_not_settled`, and mopm prints its hint. A single version can still be yanked on its own through the registry's API at any time.
+Only a group that is `visible` can be yanked. Before that the registry answers 409 with the code `group_not_settled`, and mopm prints its hint. A single version is yanked on its own with `mopm yank <namespace>/<name> <version>` and restored with `mopm unyank`.
 
 ## Exit status
 
@@ -163,4 +164,4 @@ Only a group that is `visible` can be yanked. Before that the registry answers 4
 |---|---|---|---|
 | `mopm stage` | staged | refused or failed | usage error |
 | `mopm publish --staged` | the group is visible, or `--dry-run` checked the set, or every member was skipped, or `--no-commit` staged the group, or `--abort` ended it (or found nothing to end) | the plan or a file is wrong, the registry refused, or the run stopped | usage error |
-| `mopm yank --group` | the yank is `yanked` (or `restored`) | refused, failed or gave up waiting | usage error |
+| `mopm group yank`, `unyank`, `status` | the registry answered | refused or failed | usage error |

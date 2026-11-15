@@ -1,0 +1,28 @@
+usage: mopm package create <namespace>/<name> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Create a package in a namespace you can write in.
+
+The only way to create a package; it takes no body. The right to write the namespace is checked before anything
+else (see "Who may write" above): a caller that cannot write it gets `not_namespace_member`, or
+`namespace_not_found` when there is no such namespace. The name must be a possible import name: a Mojo keyword
+or builtin, `mopm`, `mojo`, `max`, `modular`, `std`, `stdlib` or a top-level module of the Mojo standard library
+is `name_reserved`, and its message says which. A package has no claim and no expiry. Creation is rate limited per
+account and per token: 50 a UTC day each, unless the operator of the registry has set a higher daily limit for the
+account; over it the call is `rate_limited` and `Retry-After` says when the day ends. An API token that has only
+the `stage` scope is refused (`scope_missing`).
+
+Answers 201 with the package it made, or 200 with the package as it is when it already exists.
+
+arguments:
+  <namespace>/<name>
+      The namespace of the package, a GitHub login in lower case.
+      Normalised package name, the part of the full name after the `/`.
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends PUT /api/v2/packages/{namespace}/{name} (createPackage) with the token 'mopm login' stored, or $MOPM_TOKEN.

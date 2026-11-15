@@ -108,6 +108,14 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(api_gen_tests).step);
 
+    // The hand-written commands reach the registry through the generated client, and every operation has a command.
+    const registry_client_lint = b.addTest(.{
+        .root_source_file = b.path("tests/drivers/registry_client_lint_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_step.dependOn(&b.addRunArtifact(registry_client_lint).step);
+
     const fake_tests = b.addTest(.{
         .root_source_file = b.path("registry/fake/main.zig"),
         .target = target,
@@ -146,6 +154,20 @@ pub fn build(b: *std.Build) void {
     run_import_clash_cli.has_side_effects = true;
     run_import_clash_cli.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
     test_step.dependOn(&run_import_clash_cli.step);
+
+    // The registry commands generated from the v2 protos, run as commands: their help goldens, their usage errors and a few
+    // calls against the fake registry; the farm runs the same file as //:registry_cli.
+    const registry_cli = b.addTest(.{ // native-only
+        .root_source_file = b.path("tests/drivers/registry_cli_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_registry_cli = b.addRunArtifact(registry_cli);
+    run_registry_cli.step.dependOn(b.getInstallStep());
+    run_registry_cli.has_side_effects = true;
+    run_registry_cli.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
+    run_registry_cli.setEnvironmentVariable("MOPM_FAKE_REGISTRY", b.getInstallPath(.bin, "mopm-fake-registry"));
+    test_step.dependOn(&run_registry_cli.step);
 
     // `zig build test-pixi -Dpixi=<pixi binary>`: pixi installs packages `mopm pack` wrote from one conda channel per
     // namespace, served on loopback by the test (tests/drivers/pixi_channels_test.zig). The farm has no pixi, so no

@@ -29,7 +29,7 @@ Two builds describe the same program, and both stay.
   (`//:mopm` is not built unless `//:core_test` and `//:cli_test` passed).
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
   golden files; it replaced `tests/run_golden.sh`), `//:registry_login` and
-  `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:group_publish` (`mopm publish --staged` and `mopm yank --group` against the fake registry), `//:stage` (`mopm stage` against the fake registry, and `publish --staged` on its output), `//:install_e2e`
+  `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:group_publish` (`mopm publish --staged` and `mopm group yank` against the fake registry), `//:stage` (`mopm stage` against the fake registry, and `publish --staged` on its output), `//:install_e2e`
   (`mopm sync`, then `mopm build` and `run` with the real Mojo; the former `tests/install_e2e/run.py`), `//:sync_e2e` (`mopm sync`
   installing the environment itself with no pixi on `PATH`: pinned bytes only, a current environment downloads nothing, a mirror
   closure, a failed install leaves the old environment; on every pull request), `//:sync_state_e2e`, `//:sync_refuse_e2e`

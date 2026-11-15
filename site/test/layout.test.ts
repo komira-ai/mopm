@@ -398,7 +398,11 @@ describe('the home page says what the repository says', () => {
   // dispatch (or removed from its usage) without the README and this page following.
   test("the working commands are the ones main.zig's usage lists and its dispatch handles", () => {
     const zig = readFileSync(join(REPO_ROOT, 'src', 'cli', 'main.zig'), 'utf8');
-    const usage = zig.slice(zig.indexOf('working today:'), zig.indexOf('planned (not implemented yet)'));
+    // `mopm --help` is main.zig's hand-written part and the list of the generated registry commands (src/cli/registry_commands.zig).
+    const generated = readFileSync(join(REPO_ROOT, 'src', 'cli', 'registry_commands.zig'), 'utf8');
+    const list = (/^pub const list = "(.*)";$/m.exec(generated)?.[1] ?? '').replace(/\\n/g, '\n');
+    expect(list).toContain('whoami');
+    const usage = zig.slice(zig.indexOf('working today:'), zig.indexOf('planned (not implemented yet)')) + list;
     expect(usage.length).toBeGreaterThan(500);
     for (const c of WORKING_TODAY) expect(usage).toMatch(new RegExp(`(?:^|[^a-z-])${c}(?![a-z-])`, 'm'));
     const help = new Set(['-h', '--help', 'help']);

@@ -1,5 +1,7 @@
-//! The checked-in outputs of the registry API's protos are what tools/api_gen.zig makes of them (tools/api_gen/gen.zig),
-//! and the check goes red when one is not, or when a proto does not parse. Run from the repository root: `zig build test`,
+//! The checked-in outputs of the registry API's protos (the API files, the command table and the help goldens of
+//! tests/golden/registry) are what tools/api_gen.zig makes of them (tools/api_gen/gen.zig), and the check goes red when one
+//! is not, when a golden is there that no command writes, or when a proto does not parse. A stale file is printed whole, so a
+//! run on CI shows what to check in. Run from the repository root: `zig build test`,
 //! `zig test tools/api_gen_test.zig` (lint.yml) and the Buck2 target //:api_gen_test.
 
 const std = @import("std");
@@ -14,6 +16,13 @@ test {
     _ = @import("api_gen/openapi_test.zig");
     _ = @import("api_gen/typescript.zig");
     _ = @import("api_gen/zig_client.zig");
+    _ = @import("api_gen/cli_cmds.zig");
+    _ = @import("api_gen/cli_cmds_test.zig");
+}
+
+/// What a run on CI shows of a stale file: the text the generator makes of it.
+fn printGenerated(path: []const u8, text: []const u8) void {
+    std.debug.print("----- generated {s} -----\n{s}\n----- end {s} -----\n", .{ path, text, path });
 }
 
 test "the checked-in outputs are what the protos make" {
@@ -31,15 +40,42 @@ test "the checked-in outputs are what the protos make" {
     for (files) |f| {
         const have = std.fs.cwd().readFileAlloc(a, f.path, 16 << 20) catch |e| {
             std.debug.print("{s}: cannot be read ({s}); run 'zig build gen-api'\n", .{ f.path, @errorName(e) });
+            printGenerated(f.path, f.text);
             stale = true;
             continue;
         };
         if (try gen.drift(a, f.path, f.text, have)) |why| {
             std.debug.print("{s}\n", .{why});
+            printGenerated(f.path, f.text);
             stale = true;
         }
     }
+    for (try gen.staleGoldens(a, std.fs.cwd(), files)) |path| {
+        std.debug.print("{s}: is not written by tools/api_gen.zig (the command it was the help of was removed); run 'zig build gen-api'\n", .{path});
+        stale = true;
+    }
     if (stale) return error.TestUnexpectedResult;
+}
+
+test "goldens that no command writes are found, and only *.txt files below the golden directory" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const written = [_]gen.Output{
+        .{ .path = "tests/golden/registry/commands.txt", .text = "" },
+        .{ .path = "tests/golden/registry/org-add.txt", .text = "" },
+    };
+    try std.testing.expectEqual(@as(usize, 0), (try gen.staleGoldens(a, tmp.dir, &written)).len);
+    try tmp.dir.makePath("tests/golden/registry/sub");
+    for ([_][]const u8{ "commands.txt", "org-add.txt", "org-remove.txt", "a-old.txt", "notes.md" }) |name| {
+        try tmp.dir.writeFile(try std.fs.path.join(a, &.{ "tests/golden/registry", name }), "x");
+    }
+    const stale = try gen.staleGoldens(a, tmp.dir, &written);
+    try std.testing.expectEqual(@as(usize, 2), stale.len);
+    try std.testing.expectEqualStrings("tests/golden/registry/a-old.txt", stale[0]);
+    try std.testing.expectEqualStrings("tests/golden/registry/org-remove.txt", stale[1]);
 }
 
 test "an output that differs is named with its first differing line" {
@@ -113,7 +149,7 @@ fn scratchRepo(a: std.mem.Allocator, tmp: *std.testing.TmpDir) ![]const u8 {
     return tmp.dir.realpathAlloc(a, ".");
 }
 
-test "the command writes the three outputs into the repository it is given and says so" {
+test "the command writes every output into the repository it is given and says so" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -123,14 +159,43 @@ test "the command writes the three outputs into the repository it is given and s
     var out = std.ArrayList(u8).init(a);
     var err = std.ArrayList(u8).init(a);
     try std.testing.expectEqual(@as(u8, 0), try cli.run(a, &.{root}, out.writer(), err.writer()));
-    try std.testing.expectEqualStrings("wrote spec/api/openapi-v2.yaml\nwrote service/api/src/gen/registry-v2.ts\nwrote src/core/registry_v2.zig\n", out.items);
+    const files = (try gen.generate(a, tmp.dir)).ok;
+    var said = std.ArrayList(u8).init(a);
+    for (files) |f| try said.writer().print("wrote {s}\n", .{f.path});
+    try std.testing.expectEqualStrings(said.items, out.items);
+    try std.testing.expect(std.mem.startsWith(u8, out.items, "wrote spec/api/openapi-v2.yaml\nwrote service/api/src/gen/registry-v2.ts\nwrote src/core/registry_v2.zig\nwrote src/cli/registry_commands.zig\nwrote tests/golden/registry/commands.txt\n"));
     try std.testing.expectEqualStrings("", err.items);
-    // What it wrote is what is checked in (the protos are the same).
+    // Every output is on disk, the golden directory was made, and the API files are what is checked in (the protos are the same).
+    for (files) |f| try std.testing.expectEqualStrings(f.text, try tmp.dir.readFileAlloc(a, f.path, 16 << 20));
     for (gen.outputs) |path| {
         const written = try tmp.dir.readFileAlloc(a, path, 16 << 20);
         const checked_in = try std.fs.cwd().readFileAlloc(a, path, 16 << 20);
         try std.testing.expectEqualStrings(checked_in, written);
     }
+}
+
+test "the command deletes the goldens of removed commands and nothing else" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try scratchRepo(a, &tmp);
+    try tmp.dir.makePath(gen.golden_dir);
+    try tmp.dir.writeFile(gen.golden_dir ++ "/removed-command.txt", "old help\n");
+    try tmp.dir.writeFile(gen.golden_dir ++ "/README.md", "kept\n");
+    var out = std.ArrayList(u8).init(a);
+    var err = std.ArrayList(u8).init(a);
+    try std.testing.expectEqual(@as(u8, 0), try cli.run(a, &.{root}, out.writer(), err.writer()));
+    try std.testing.expect(std.mem.endsWith(u8, out.items, "deleted tests/golden/registry/removed-command.txt\n"));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(gen.golden_dir ++ "/removed-command.txt", .{}));
+    try tmp.dir.access(gen.golden_dir ++ "/README.md", .{});
+    try tmp.dir.access(gen.golden_dir ++ "/commands.txt", .{});
+
+    // A second run has nothing to delete.
+    out.clearRetainingCapacity();
+    try std.testing.expectEqual(@as(u8, 0), try cli.run(a, &.{root}, out.writer(), err.writer()));
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "deleted") == null);
 }
 
 test "the command refuses extra arguments, a root it cannot open and protos that do not parse" {

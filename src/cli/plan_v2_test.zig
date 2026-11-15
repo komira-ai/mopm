@@ -8,26 +8,8 @@ const core = @import("mopm_core");
 const gp = @import("group_publish.zig");
 const plan_mod = @import("group_plan.zig");
 const publish_cmd = @import("publish_cmd.zig");
-const yank_cmd = @import("yank_cmd.zig");
 const st = @import("stage_test.zig");
 const gt = @import("group_publish_test.zig");
-
-test "the status URL resolves against the API host, under /api/v2 or /api/v1, and nothing else does" {
-    var arena = st.arenaTest();
-    defer arena.deinit();
-    const a = arena.allocator();
-    try std.testing.expectEqualStrings(
-        "http://127.0.0.1:5000/api/v2/publishes/pub_1",
-        (try publish_cmd.resolveStatusUrl(a, "http://127.0.0.1:5000/api/v2", "/api/v2/publishes/pub_1")).?,
-    );
-    try std.testing.expectEqualStrings(
-        "https://mopm.dev/api/v1/publishes/x",
-        (try publish_cmd.resolveStatusUrl(a, "https://mopm.dev/api/v1", "/api/v1/publishes/x")).?,
-    );
-    for ([_][]const u8{ "https://evil.example/api/v2/publishes/x", "//evil.example/api/v2/publishes/x", "/api/v2/publishes/", "/api/v1/publishes/", "/api/v3/publishes/x", "/other" }) |bad| {
-        try std.testing.expect((try publish_cmd.resolveStatusUrl(a, "https://mopm.dev/api/v2", bad)) == null);
-    }
-}
 
 test "stage writes plan.json version 2: members by full name, files named for the conda package, a readme under the namespace, and the registry asked at the version 2 path" {
     var arena = st.arenaTest();
@@ -104,28 +86,4 @@ test "publish --staged sends every request to the version 2 API root with full n
     const report = try tmp.dir.readFileAlloc(a, plan_mod.report_name, 1 << 16);
     try st.expectContainsText(report, "\"registry\": \"http://127.0.0.1:1/api/v1\"");
     try st.expectContainsText(report, "\"name\": \"acme/pa\"");
-}
-
-test "yanking a group goes to the version 2 API root" {
-    var arena = st.arenaTest();
-    defer arena.deinit();
-    const a = arena.allocator();
-    // A Group as the contract has it: every required field, and the yank's `requested_at`.
-    const yanked = "{\"group_id\":\"" ++ gt.gid ++ "\",\"attempt\":1,\"created_at\":\"2026-10-22T00:00:00Z\",\"deadline_at\":\"2026-10-23T00:00:00Z\",\"member_count\":2,\"members\":[]," ++
-        "\"status\":\"visible\",\"yank\":{\"state\":\"yanked\",\"reason\":\"r\",\"requested_at\":\"2026-10-22T00:00:00Z\",\"yanked_members\":2}}";
-    var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/yank", .status = 200, .body = yanked }});
-    var console = gp.Console.init(a, null);
-    var y = yank_cmd.Yanker{
-        .arena = a,
-        .net = script.net(),
-        .console = &console,
-        .api_v2_url = "http://127.0.0.1:1/api/v2",
-        .token = "mopm_test_token",
-        .group = gt.gid,
-        .unyank = false,
-        .reason = "broken",
-        .wait_secs = 10,
-    };
-    try std.testing.expectEqual(yank_cmd.Result.done, y.run());
-    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/groups/" ++ gt.gid ++ "/yank", script.seen.items[0].url);
 }

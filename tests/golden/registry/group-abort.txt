@@ -1,0 +1,19 @@
+usage: mopm group abort <group_id> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+End an open publish group without publishing it.
+
+Ends a group that is `open`. Its reserved version numbers are free again: another group, or a single publish,
+may take them. Repeating the call on an aborted group is a no-op and returns 200. A group in any other state
+(`validating`, `committed`, `expired`, ...) is `group_not_open`. Allowed for the same callers as `getGroup`: a token with `stage` or `publish`.
+
+arguments:
+  <group_id>
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends DELETE /api/v2/groups/{group_id} (abortGroup) with the token 'mopm login' stored, or $MOPM_TOKEN.

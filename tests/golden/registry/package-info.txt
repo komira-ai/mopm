@@ -1,0 +1,17 @@
+usage: mopm package info <namespace>/<name> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Show a package and its versions.
+
+arguments:
+  <namespace>/<name>
+      The namespace of the package, a GitHub login in lower case.
+      Normalised package name, the part of the full name after the `/`.
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends GET /api/v2/packages/{namespace}/{name} (getPackage).

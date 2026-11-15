@@ -55,6 +55,9 @@ jobs:
       - name: registry API outputs (openapi-v2.yaml, the service's types and the CLI's client are what the v2 protos make)
         if: ${{ !cancelled() }}
         run: zig test tools/api_gen_test.zig
+      - name: registry client lint (every API operation has a generated command; hand-written commands call the registry only through the generated client)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/registry_client_lint_test.zig
       - name: actionlint (strict YAML parse and workflow check of every workflow; the pinned release, sha256-verified)
         if: ${{ !cancelled() }}
         run: |

@@ -1,0 +1,19 @@
+usage: mopm publish status <publish_id> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Show how a publish is going.
+
+`pending`, `validating` and `indexing` are in progress; `published` and
+`rejected` are final. A rejected publish burns the version number.
+A publish that passed can still carry `warnings`.
+
+arguments:
+  <publish_id>
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends GET /api/v2/publishes/{publish_id} (getPublishStatus) with the token 'mopm login' stored, or $MOPM_TOKEN.

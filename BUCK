@@ -140,7 +140,7 @@ zig_exe(
     name = "mopm-api-gen",
     src = "tools/api_gen.zig",
     imports = _API_GEN_SRCS,
-    unit_tests = [":api_gen_test"],
+    unit_tests = [":api_gen_test", ":registry_client_lint"],
     visibility = ["PUBLIC"],
     **_TOOLS
 )
@@ -153,6 +153,19 @@ zig_test(
         "spec/api/openapi-v2.yaml",
         "service/api/src/gen/registry-v2.ts",
         "src/core/registry_v2.zig",
+        "src/cli/registry_commands.zig",
+    ] + glob(["tests/golden/registry/**"]),
+    **_TOOLS
+)
+
+# The hand-written files of src/cli reach the registry through the generated client, and every operation of it has a command.
+zig_test(
+    name = "registry_client_lint",
+    src = "tests/drivers/registry_client_lint_test.zig",
+    imports = ["tests/drivers/registry_client_lint.zig"],
+    data = glob(["src/cli/*.zig"]) + [
+        "src/core/registry_v2.zig",
+        "src/core/ci_oidc.zig",
     ],
     **_TOOLS
 )
@@ -242,7 +255,7 @@ zig_exe(  # buck-only: stands in for mojo and the test binary in :group_publish;
     **_TOOLS
 )
 
-zig_test(  # buck-only: mopm publish --staged and mopm yank --group against the fake registry
+zig_test(  # buck-only: mopm publish --staged and mopm group yank|unyank|status against the fake registry
     name = "group_publish",
     src = "tests/drivers/group_publish_test.zig",
     imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig"],
@@ -578,6 +591,18 @@ zig_test(  # buck-only: tests/contract/replay.py: the fake registry answers the 
         "tests/contract/api/**",
     ]),
     env_tools = {"MOPM_FAKE_REGISTRY": ":mopm-fake-registry"},
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the registry commands generated from the v2 protos, run as commands: help goldens, usage errors, the fake registry (needs the built mopm)
+    name = "registry_cli",
+    src = "tests/drivers/registry_cli_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    data = glob(["tests/golden/registry/**"]),
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
     **_TOOLS
 )
 
@@ -1025,8 +1050,8 @@ export_file(
 )
 
 export_file(
-    name = "site.src.cli.yank_cmd.zig",
-    src = "src/cli/yank_cmd.zig",
+    name = "site.src.cli.registry_commands.zig",
+    src = "src/cli/registry_commands.zig",
     visibility = ["//site:"],
 )
 

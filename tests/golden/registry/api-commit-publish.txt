@@ -1,0 +1,72 @@
+usage: mopm api commit-publish <namespace>/<name> <version> --upload-ids <upload_ids>... [--manifest-sha256 <manifest_sha256>] [--source-commit <source_commit>] [--description <description>] [--license <license>] [--repository <repository>] [--homepage <homepage>] [--keywords <keywords>...] [--readme <readme>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Commit the uploads of a version (one step of 'mopm publish').
+
+Asynchronous. The registry answers 202 with a status URL; the CLI
+polls it. Each upload id is single use and must belong to the caller
+and to this name and version. Committing the same upload ids again
+while the version is still `pending` resumes the same publish. A
+version that exists in any other state is refused with
+`version_exists`, whose message carries the sha256 already published;
+a client that wants "succeed if these exact bytes are already
+published" compares that sha256 with its own (or reads `getVersion`).
+The file set of a version is fixed at commit.
+
+The optional display fields (`description`, `license`, `repository`,
+`homepage`, `keywords`, `readme`) are checked here, stored on the
+version when it is published and served back by `getVersion`. A value
+that breaks its rule is `invalid_request`. A client that sends none gets
+a version without them, as before.
+
+The optional `source_commit` is the git commit id the version was built
+from (40 or 64 lowercase hex digits). It is stored once with the version,
+returned by `getVersion` as `source_commit`, and left out for a version
+committed without one. The registry only checks its form: it is not verified
+against the archives or the caller, and versions are never compared or
+ordered by it.
+
+arguments:
+  <namespace>/<name>
+      The namespace of the package, a GitHub login in lower case.
+      Normalised package name, the part of the full name after the `/`.
+  <version>
+options:
+  --upload-ids <upload_ids>...
+      required.
+  --manifest-sha256 <manifest_sha256>
+      Optional. The SHA-256 of the bytes of `lib/mojo/<import name>.mopm.json` in the archives (what `mopm pack` prints). When given
+      it is checked: a value that is not 64 lowercase hex digits is `invalid_request`, and an archive whose manifest hashes
+      to something else is rejected `sha256_mismatch`. When absent, nothing is checked and the version holds the hash the
+      registry computes from the archives; then every file of the version must carry the same manifest bytes, or the publish is
+      rejected `manifest_invalid`. When given, a file whose manifest hashes to something else is `sha256_mismatch`, so at
+      most the files that carry the given manifest bytes pass.
+  --source-commit <source_commit>
+      Optional. The git commit the version was built from (see `SourceCommit`). Stored once with the version and served by
+      `getVersion`; the registry does not verify it. Committing the same upload ids again must repeat it (or its absence): a
+      repeat that states another value is refused `version_exists`, and the stored value does not change.
+  --description <description>
+      `[package] description` of this version's mopm.toml: one line, no line breaks. Stored on the version and served back by `getVersion`.
+  --license <license>
+      `[package] license`, an SPDX expression.
+  --repository <repository>
+      An https URL.
+  --homepage <homepage>
+      An https URL.
+  --keywords <keywords>...
+  --readme <readme>
+      Untrusted Markdown, stored verbatim: the registry does not sanitize it, so a consumer must sanitize it,
+      disable raw HTML and treat links as untrusted. Same for `description` and `license` (plain text).
+      At most 64 KiB: 65,536 bytes of UTF-8 (the registry counts
+      bytes, not characters, so non-ASCII text uses more of it). This is
+      the cap the read API serves, so a larger readme is refused with
+      `invalid_request` rather than stored and never shown. `maxLength`
+      below is in characters and can only bound the byte count from
+      above.
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends POST /api/v2/packages/{namespace}/{name}/{version}/publish (commitPublish) with the token 'mopm login' stored, or $MOPM_TOKEN.

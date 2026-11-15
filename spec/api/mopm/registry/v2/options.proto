@@ -86,6 +86,23 @@ message Response {
   bool error = 3;
 }
 
+// A command of the command line that makes one call of the operation: `mopm <name>`. tools/api_gen.zig writes it into
+// src/cli/registry_commands.zig with its flags, its help text and its help golden (tests/golden/registry).
+message Command {
+  // The words after `mopm`, separated by one space: `org add`.
+  string name = 1;
+  // The fields of the request that are positional arguments, in order: a path or query parameter's name, or a field of
+  // the body. `namespace/name` is the two path parameters `namespace` and `name` written as one `<namespace>/<name>`.
+  repeated string args = 2;
+  // A field of the body this command sends with a fixed value, `field=value`, the value as text the field's type reads
+  // (`yanked=true`). `{cli_version}` in a value is the version of the mopm that sends it.
+  repeated string set = 3;
+  // The value a flag has when it is not given, `field=value` as in `set`.
+  repeated string defaults = 4;
+  // One line for the list of commands.
+  string summary = 5;
+}
+
 // The OpenAPI facts of one rpc. Its `operationId` is its name with the first letter in lower case.
 message Operation {
   repeated string tags = 1;
@@ -93,6 +110,7 @@ message Operation {
   // The security schemes the operation accepts, any one of them; none: it needs no token.
   repeated string security = 3;
   repeated Response responses = 4;
+  repeated Command commands = 5;
 }
 
 // An entry of the error catalogue (`x-mopm-errors`), on a value of `ErrorCode`.

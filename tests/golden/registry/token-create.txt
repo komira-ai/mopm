@@ -1,0 +1,26 @@
+usage: mopm token create <name> --scopes <publish|yank|stage>... --packages <full name>...|all_current --expires-in-days <n> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Create an API token; its secret is printed once.
+
+Needs a fresh session. The secret is shown once and stored hashed.
+`packages` is mandatory: an explicit list of full names, or `all_current`, a snapshot
+of the packages of the namespaces the caller can write in at creation time (not future packages). A listed
+full name may be a package that does not exist yet, in a namespace the caller can write in.
+
+arguments:
+  <name>
+options:
+  --scopes <publish|yank|stage>...
+      required.
+  --packages <full name>...|all_current
+      required.
+  --expires-in-days <n>
+      required.
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends POST /api/v2/me/tokens (createToken) with the token 'mopm login' stored, or $MOPM_TOKEN.

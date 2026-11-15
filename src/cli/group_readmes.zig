@@ -38,8 +38,7 @@ pub fn hasReadme(entries: []const plan_mod.CommitEntry) bool {
 /// Whether `GET <api_v2_url>/health` lists `feature`. An answer that is not a success, is not JSON or has no list of names is
 /// "no"; a request that fails is an error (the GET is repeated by the policy first).
 pub fn takesObjects(arena: Allocator, net: io.Net, api_url: []const u8) anyerror!bool {
-    const url = try v2.url(v2.GetHealth, arena, api_url, .{});
-    const answer = try net.request(arena, v2.GetHealth.method, url, .{});
+    const answer = try v2.send(v2.GetHealth, arena, net, net.policy, api_url, null, .{});
     if (!answer.ok()) return false;
     const health = v2.decode(v2.GetHealth, arena, answer.body) catch return false;
     for (health.features orelse &.{}) |name| {

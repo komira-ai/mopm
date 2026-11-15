@@ -334,7 +334,7 @@ reasons: the addendum in `service/docs/adr-ci-publisher-identity.md`.
   `ci:gh-repo:<id>` actors). Gamma and prod keep the human flip of `groups_enabled`.
 - **What the identity can do with it.** Create a group whose every member is a package that the identity owns and that its token was
   minted for, at that version. A member outside the token, a package an account or another identity owns, or a caller that is not on
-  the list is refused and nothing is created. Everything afterwards (commit, the validator and the chain, abort, `yank --group`) works for
+  the list is refused and nothing is created. Everything afterwards (commit, the validator and the chain, abort, `mopm group yank`) works for
   that identity's own groups and for no other caller. The actor in audit rows, group headers and uploads is `ci:gh-repo:<repository_id>`
   (the identity, not a token), and the group budget per day is counted per identity.
 

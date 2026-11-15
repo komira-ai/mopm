@@ -1,5 +1,7 @@
 //! mopm-api-gen: writes what the registry API's protos (spec/api/mopm/registry/v2/*.proto) make: spec/api/openapi-v2.yaml,
-//! service/api/src/gen/registry-v2.ts and src/core/registry_v2.zig (tools/api_gen/gen.zig says how the files are read).
+//! service/api/src/gen/registry-v2.ts and src/core/registry_v2.zig, and from the `commands` of the operations the command
+//! table src/cli/registry_commands.zig with the help goldens tests/golden/registry/*.txt (tools/api_gen/cli_cmds.zig; goldens
+//! of removed commands are deleted). tools/api_gen/gen.zig says how the files are read.
 //!
 //!   zig build gen-api                 (the repository root is build.zig's directory)
 //!   mopm-api-gen [<repository root>]  (default: the working directory)

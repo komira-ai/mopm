@@ -1,4 +1,4 @@
-//! End-to-end tests of `mopm publish --staged` and `mopm yank --group` against the fake registry (spec/staged-set.md).
+//! End-to-end tests of `mopm publish --staged` and `mopm group yank|unyank|status` against the fake registry (spec/staged-set.md).
 //!
 //! Run by Buck2 (//:group_publish): MOPM, MOPM_FAKE_REGISTRY and MOPM_ENV_PROBE are the built programs. Each check prints
 //! `ok` or `FAIL`. Every scenario is a staged set of three packages of the namespace `example`, grp_a, grp_b and grp_c (b needs a,
@@ -344,7 +344,7 @@ fn rateLimited(w: World) !void {
         std.mem.eql(u8, World.memberOutcome(try w.reportJson(staged), "example/grp_a"), "pending"), group.body);
 
     // A group that is not visible cannot be yanked.
-    const yank = try w.m.run(&.{ "yank", "--group", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "too early" }, w.token);
+    const yank = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "too early" }, w.token);
     w.rep.check("a yank of a group that is not visible is refused with the registry's reason", yank.code == 1 and h.contains(yank.stderr, "cannot be yanked or unyanked now"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ yank.code, yank.stdout, yank.stderr }));
 
     const again = try w.publish(staged, &.{});
@@ -452,22 +452,27 @@ fn yankAndUnyank(w: World) !void {
     // One member is yanked by hand first.
     const by_hand = try w.api("PUT", "/api/v2/packages/example/grp_b/1.0.0/yank", "{\"yanked\":true,\"reason\":\"by hand\"}");
     w.rep.check("a member is yanked by hand", by_hand.status == 200, by_hand.body);
-    const y = try w.m.run(&.{ "yank", "--group", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build", "--wait", "60" }, w.token);
-    w.rep.check("mopm yank --group yanks the group's versions and waits for the registry", y.code == 0 and h.contains(y.stdout, "is yanked (2 versions)"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ y.code, y.stdout, y.stderr }));
+    const y = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build" }, w.token);
+    w.rep.check("mopm group yank starts the yank of the group's versions", y.code == 0 and h.contains(y.stdout, "yank:\n  state: yanking\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ y.code, y.stdout, y.stderr }));
+    const st = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group status shows the yank at rest with the two versions it changed", st.code == 0 and h.contains(st.stdout, "  state: yanked\n") and h.contains(st.stdout, "  yanked_members: 2\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ st.code, st.stdout, st.stderr }));
     w.rep.check("all three are yanked, and the group says so", try w.allIn("1.0.0", "yanked") and
         std.mem.eql(u8, h.jsonString((try h.parseJson(a, (try w.api("GET", try std.fmt.allocPrint(a, "/api/v2/groups/{s}", .{id}), null)).body)).object.get("yank").?, "state") orelse "", "yanked"), "not all yanked");
-    const repeat = try w.m.run(&.{ "yank", "--group", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build" }, w.token);
-    w.rep.check("a yank of a group already yanked is done at once", repeat.code == 0 and h.contains(repeat.stdout, "is already yanked"), repeat.stdout);
-    const u = try w.m.run(&.{ "yank", "--group", id, "--registry", w.fake.base, "--config-dir", w.conf, "--unyank", "--wait", "60" }, w.token);
-    w.rep.check("mopm yank --group --unyank restores the group's versions", u.code == 0 and h.contains(u.stdout, "is restored (2 versions it had yanked)"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ u.code, u.stdout, u.stderr }));
+    const repeat = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build", "--json" }, w.token);
+    w.rep.check("a yank of a group already yanked answers the group as it is, as JSON with --json", repeat.code == 0 and
+        std.mem.eql(u8, h.jsonString((try h.parseJson(a, repeat.stdout)).object.get("yank").?, "state") orelse "", "yanked"), repeat.stdout);
+    const u = try w.m.run(&.{ "group", "unyank", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group unyank starts the restore", u.code == 0 and h.contains(u.stdout, "  state: unyanking\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ u.code, u.stdout, u.stderr }));
+    const restored = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group status shows the group restored", restored.code == 0 and h.contains(restored.stdout, "  state: restored\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ restored.code, restored.stdout, restored.stderr }));
     w.rep.check("the two the group yanked are published again, and the one yanked by hand stays yanked", std.mem.eql(u8, try w.stateOf("example/grp_a", "1.0.0"), "published") and
         std.mem.eql(u8, try w.stateOf("example/grp_c", "1.0.0"), "published") and std.mem.eql(u8, try w.stateOf("example/grp_b", "1.0.0"), "yanked"), "the states are not as expected");
-    const none = try w.m.run(&.{ "yank", "--group", "grp_00000000000000000000000000000000", "--registry", w.fake.base, "--config-dir", w.conf, "--unyank" }, w.token);
-    w.rep.check("a group that does not exist is the registry's error", none.code == 1 and h.contains(none.stderr, "There is no such group"), none.stderr);
-    const bare = try w.m.run(&.{ "yank", "--group", id, "--registry", dead, "--config-dir", w.conf }, w.token);
-    w.rep.check("a yank with no reason is refused before any request", bare.code == 2 and h.contains(bare.stderr, "needs --reason") and !h.contains(bare.stderr, "cannot reach"), bare.stderr);
-    const unplaced = try w.m.run(&.{ "yank", "--group", id, "--reason", "x" }, w.token);
-    w.rep.check("a yank with no --registry is refused: there is no default", unplaced.code == 2 and h.contains(unplaced.stderr, "--registry is required"), unplaced.stderr);
+    const none = try w.m.run(&.{ "group", "unyank", "grp_00000000000000000000000000000000", "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("a group that does not exist is the registry's error, with its code", none.code == 1 and h.contains(none.stderr, "There is no such group") and h.contains(none.stderr, "  code: "), none.stderr);
+    const bare = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("a yank with no reason is the registry's refusal", bare.code == 1 and h.contains(bare.stderr, "reason"), bare.stderr);
+    const usage = try w.m.run(&.{ "group", "yank", "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "x" }, w.token);
+    w.rep.check("a yank with no group id is a usage error before any request", usage.code == 2 and h.contains(usage.stderr, "usage: mopm group yank <group_id>"), usage.stderr);
 }
 
 fn refusalsBeforeAnyRequest(w: World) !void {
@@ -786,7 +791,7 @@ fn refusalsOfStaging(w: World) !void {
     w.rep.check("--no-commit on a published set is refused and publishes nothing new", r.code == 1 and h.contains(r.stderr, "not open: --no-commit stages a group before its commit"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     r = try w.publish(staged, &.{"--abort"});
     w.rep.check("--abort on a published group is refused, points at yank, and the set stays published", r.code == 1 and h.contains(r.stderr, "it was committed, so it cannot be aborted") and
-        h.contains(r.stderr, "mopm yank --group") and try w.allIn("6.0.0", "published") and std.mem.eql(u8, try w.groupId(staged), id), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        h.contains(r.stderr, "mopm group yank") and try w.allIn("6.0.0", "published") and std.mem.eql(u8, try w.groupId(staged), id), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
 
     // A state of another plan is refused by --abort as by every other run.
     const other = try w.dir("staged_other_plan");
@@ -803,7 +808,7 @@ fn exists(path: []const u8) bool {
 
 // ------------------------------------------------------------------- the test
 
-test "mopm publish --staged and mopm yank --group against the fake registry" {
+test "mopm publish --staged and mopm group yank against the fake registry" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();

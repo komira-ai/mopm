@@ -194,12 +194,21 @@ pub const SchemaOpt = struct {
 
 const OpResponse = struct { status: u16 = 0, description: []const u8 = "", @"error": bool = false };
 
+const CommandOpt = struct {
+    name: []const u8 = "",
+    args: []const []const u8 = &.{},
+    set: []const []const u8 = &.{},
+    defaults: []const []const u8 = &.{},
+    summary: []const u8 = "",
+};
+
 /// The `(operation)` option as written.
 pub const OperationOpt = struct {
     tags: []const []const u8 = &.{},
     summary: []const u8 = "",
     security: []const []const u8 = &.{},
     responses: []const OpResponse = &.{},
+    commands: []const CommandOpt = &.{},
 };
 
 /// The `(api)` option as written.
@@ -396,6 +405,8 @@ pub const Builder = struct {
             try b.checkRpc(sv, api, r, in_t);
             var responses = std.ArrayList(model.Response).init(b.arena);
             for (r.op.responses) |o| try responses.append(.{ .status = o.status, .description = o.description, .is_error = o.@"error" });
+            var commands = std.ArrayList(model.Command).init(b.arena);
+            for (r.op.commands) |c| try commands.append(.{ .name = c.name, .args = c.args, .set = c.set, .defaults = c.defaults, .summary = c.summary });
             try rpcs.append(.{
                 .name = r.name,
                 .doc = r.doc,
@@ -408,6 +419,7 @@ pub const Builder = struct {
                 .summary = r.op.summary,
                 .security = r.op.security,
                 .responses = responses.items,
+                .commands = commands.items,
             });
         }
 

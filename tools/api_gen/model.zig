@@ -147,6 +147,15 @@ pub const Response = struct {
     is_error: bool = false,
 };
 
+/// A command of the command line that makes one call of an rpc (`Command` of options.proto).
+pub const Command = struct {
+    name: []const u8,
+    args: []const []const u8 = &.{},
+    set: []const []const u8 = &.{},
+    defaults: []const []const u8 = &.{},
+    summary: []const u8 = "",
+};
+
 pub const Rpc = struct {
     /// `GetHealth`; the operationId is `getHealth` (`operationId`).
     name: []const u8,
@@ -162,6 +171,7 @@ pub const Rpc = struct {
     summary: []const u8,
     security: []const []const u8,
     responses: []const Response,
+    commands: []const Command = &.{},
 };
 
 pub const Server = struct {

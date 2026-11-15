@@ -1,0 +1,17 @@
+usage: mopm api start-device-login [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Start a device login and print its codes (one step of 'mopm login').
+
+Returns a user code to show the person and a device code to poll with.
+The approval page shows the requesting client and expires in ten
+minutes. Throttled per IP and per device code.
+
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends POST /api/v2/auth/device (startDeviceLogin).

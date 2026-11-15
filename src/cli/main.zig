@@ -10,11 +10,12 @@ const mojo_cmd = core.mojo_cmd;
 const test_cmd = @import("test_cmd.zig");
 const registry_cmd = @import("registry_cmd.zig");
 const org_cmd = @import("org_cmd.zig");
+const api_cmd = @import("api_cmd.zig");
+const registry_commands = @import("registry_commands.zig");
 const publish_cmd = @import("publish_cmd.zig");
 const install_cmd = @import("install_cmd.zig");
 const plan_cmd = @import("plan_cmd.zig");
 const unit_cmd = @import("unit_cmd.zig");
-const yank_cmd = @import("yank_cmd.zig");
 const stage_cmd = @import("stage_cmd.zig");
 const build_cmd = @import("build_cmd.zig");
 const bin_run = @import("bin_run.zig");
@@ -34,7 +35,7 @@ pub fn isPlanned(cmd: []const u8) bool {
     return false;
 }
 
-const usage =
+const hand_usage =
     \\usage: mopm <command> [args]
     \\
     \\working today:
@@ -73,18 +74,16 @@ const usage =
     \\  test --list [<path>...] list them; --check also builds each file and
     \\                          compares the list with the binary's `--skip-all`
     \\                          listing (--strict-discovery, --prefix <dir>)
-    \\  login | logout | whoami [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\  login | logout [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
     \\                          an account on a registry (device login through
     \\                          GitHub; the token is kept in credentials.json,
     \\                          mode 0600, and never printed)
-    \\  org create <org> | add <org> <user> [--owner] | remove <org> <user> | list <org>
-    \\                          [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-    \\                          an organization's namespace and its members: create
-    \\                          registers the namespace of a GitHub organization
+    \\  org create <org> [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                          register the namespace of a GitHub organization
     \\                          you are an admin of (a device approval on GitHub
     \\                          that reads your membership once; you become its
-    \\                          owner); add, remove and list manage who may write
-    \\                          in it by mopm username, with no GitHub involved
+    \\                          owner); its members are managed with 'org add',
+    \\                          'org remove' and 'org list' (listed below)
     \\  pack --compiler <mojo version> --mojoc [<subdir>=]<file>... [-o <dir>]
     \\                          write the package as a .conda per subdir
     \\                          (noarch, linux-64, linux-aarch64, osx-arm64) and
@@ -125,10 +124,6 @@ const usage =
     \\                          other bytes: refused; same bytes: skipped); write
     \\                          the staged set for 'publish --staged'. Reads no
     \\                          token; --registry is required
-    \\  yank --group <id> --registry <prod|gamma|beta|url> --reason <text>
-    \\       --group <id> --registry <...> --unyank
-    \\                          yank every version a group published, or restore
-    \\                          the ones its yank changed
     \\  lock [--registry <prod|gamma|beta|url>] [--overlay <staged set>]
     \\                          resolve mopm.toml's dependencies against the
     \\                          registry's index and write mopm.lock (keeping
@@ -182,6 +177,9 @@ const usage =
     \\  cov check export launch
     \\
 ;
+
+/// The hand-written commands, then the list of the generated registry commands.
+const usage = hand_usage ++ "\n" ++ registry_commands.list;
 
 fn linkPlan(arena: std.mem.Allocator, paths: []const []const u8) u8 {
     if (paths.len == 0) {
@@ -499,6 +497,7 @@ fn run(arena: std.mem.Allocator) u8 {
         return 2;
     }
     const cmd = args[1];
+    if (api_cmd.run(arena, args[1..], version)) |code| return code;
     if (std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "-V")) {
         std.io.getStdOut().writeAll("mopm " ++ version ++ "\n") catch return 1;
         return 0;
@@ -511,14 +510,13 @@ fn run(arena: std.mem.Allocator) u8 {
     if (std.mem.eql(u8, cmd, "metadata")) return metadataCmd(arena, args[2..]);
     if (std.mem.eql(u8, cmd, "new") or std.mem.eql(u8, cmd, "init")) return scaffold_cmd.scaffoldCmd(arena, cmd, args[2..], version);
     if (std.mem.eql(u8, cmd, "test")) return test_cmd.main(arena, args[2..]);
-    if (std.mem.eql(u8, cmd, "login") or std.mem.eql(u8, cmd, "logout") or std.mem.eql(u8, cmd, "whoami")) {
+    if (std.mem.eql(u8, cmd, "login") or std.mem.eql(u8, cmd, "logout")) {
         return registry_cmd.main(arena, cmd, args[2..], version);
     }
     if (std.mem.eql(u8, cmd, "org")) return org_cmd.main(arena, args[2..], version);
     if (std.mem.eql(u8, cmd, "pack") or std.mem.eql(u8, cmd, "publish")) {
         return publish_cmd.main(arena, cmd, args[2..], version);
     }
-    if (std.mem.eql(u8, cmd, "yank")) return yank_cmd.main(arena, args[2..], version);
     if (std.mem.eql(u8, cmd, "stage")) return stage_cmd.main(arena, args[2..], version);
     if (std.mem.eql(u8, cmd, "lock")) return install_cmd.main(arena, .lock, args[2..], version);
     if (std.mem.eql(u8, cmd, "update")) return install_cmd.main(arena, .update, args[2..], version);
@@ -532,6 +530,10 @@ fn run(arena: std.mem.Allocator) u8 {
     if (isPlanned(cmd)) {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});
         return 1;
+    }
+    if (api_cmd.groupUsage(arena, cmd)) |text| {
+        std.debug.print("{s}", .{text});
+        return 2;
     }
     std.debug.print("mopm: unknown command '{s}'\n\n{s}", .{ cmd, usage });
     return 2;
@@ -550,7 +552,10 @@ test {
     _ = install_cmd;
     _ = plan_cmd;
     _ = unit_cmd;
-    _ = yank_cmd;
+    _ = api_cmd;
+    _ = @import("api_cmd_test.zig");
+    _ = @import("api_render.zig");
+    _ = @import("api_spec.zig");
     _ = @import("group_plan.zig");
     _ = @import("group_publish.zig");
     _ = @import("group_publish_test.zig");
@@ -588,7 +593,6 @@ test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(!isPlanned("--version"));
     try std.testing.expect(!isPlanned("frobnicate"));
 }
-
 
 fn parseOk(a: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) !Opts {
     return switch (try parseOpts(a, tool, args)) {

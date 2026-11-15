@@ -466,6 +466,51 @@ test "refused: the service and its rpcs" {
     try bad(rpcCase("put: \"/api/v2/x\" body: \"b\" }; option (google.api.http) = { get: \"/api/v2/y\""), "t.proto:7: option '(google.api.http)' is set twice");
 }
 
+/// A message `Req { id, b }` and an rpc whose `(operation)` option holds `op` (line 8; the rpc is on line 6).
+fn opCase(comptime op: []const u8) []const u8 {
+    return head ++ "message Req { string id = 1; string b = 2; }\nservice S {\n  option (api) = { base_path: \"/api/v2\" };\n" ++
+        "  rpc R(Req) returns (google.protobuf.Empty) {\n    option (google.api.http) = { get: \"/api/v2/x/{id}\" };\n" ++
+        "    option (operation) = { " ++ op ++ " };\n  }\n}\n";
+}
+
+test "the commands of an rpc are read in order with their name, args, set, defaults and summary" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const text = comptime opCase("commands { name: \"x one\" args: \"id\" args: \"b\" set: \"k=v\" set: \"j=w\" defaults: \"d=e\" summary: \"One.\" } " ++
+        "commands: [{name: \"x two\" summary: \"Two.\"}]");
+    const api = try parseOk(arena.allocator(), &.{.{ .path = "t.proto", .text = text }});
+    const cmds = api.rpcs[0].commands;
+    try testing.expectEqual(@as(usize, 2), cmds.len);
+    try testing.expectEqualStrings("x one", cmds[0].name);
+    try testing.expectEqual(@as(usize, 2), cmds[0].args.len);
+    try testing.expectEqualStrings("id", cmds[0].args[0]);
+    try testing.expectEqualStrings("b", cmds[0].args[1]);
+    try testing.expectEqual(@as(usize, 2), cmds[0].set.len);
+    try testing.expectEqualStrings("k=v", cmds[0].set[0]);
+    try testing.expectEqualStrings("j=w", cmds[0].set[1]);
+    try testing.expectEqual(@as(usize, 1), cmds[0].defaults.len);
+    try testing.expectEqualStrings("d=e", cmds[0].defaults[0]);
+    try testing.expectEqualStrings("One.", cmds[0].summary);
+    try testing.expectEqualStrings("x two", cmds[1].name);
+    try testing.expectEqual(@as(usize, 0), cmds[1].args.len);
+    try testing.expectEqual(@as(usize, 0), cmds[1].set.len);
+    try testing.expectEqual(@as(usize, 0), cmds[1].defaults.len);
+    try testing.expectEqualStrings("Two.", cmds[1].summary);
+}
+
+test "an rpc with no commands has none" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const api = try parseOk(arena.allocator(), &.{.{ .path = "t.proto", .text = comptime opCase("summary: \"S\"") }});
+    try testing.expectEqual(@as(usize, 0), api.rpcs[0].commands.len);
+}
+
+test "refused: a command's keys and values" {
+    try bad(opCase("commands { name: \"x\" nope: \"a\" }"), "t.proto:8: unknown key 'nope' in option (operation)");
+    try bad(opCase("commands { name: \"x\" name: \"y\" }"), "t.proto:8: option (operation): 'name' is set twice");
+    try bad(opCase("commands { name: 3 }"), "t.proto:8: option (operation): 'name' must be a string");
+}
+
 test "refused: rpc declarations" {
     const pre = head ++ "message Req { string id = 1; }\nenum E { E_A = 0; }\nservice S {\n  option (api) = {};\n";
     try bad(pre ++ "  rpc R(Req) returns (Req);\n}\n", "t.proto:7: rpc 'R' has no option (google.api.http)");

@@ -95,6 +95,7 @@ pub fn tokenUrl(arena: Allocator, url: []const u8, audience: []const u8) Allocat
 pub fn identityToken(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, audience: []const u8) anyerror!Result {
     if (!registry.allowedUrl(job.url)) return .{ .bad = url_var ++ " is not an https URL; the identity token is not requested" };
     const url = try tokenUrl(arena, job.url, audience);
+    // not the registry API: GitHub Actions' own endpoint that issues the job's identity token
     const answer = http.retrying(arena, io, .GET, url, .{
         .token = job.token,
         .extra_headers = &.{.{ .name = "accept", .value = "application/json; api-version=2.0" }},
@@ -175,10 +176,8 @@ pub fn exchangePackagesFor(arena: Allocator, io: anytype, policy: http.Policy, a
 /// run cannot use is not one to go on with; a `stage` request that is answered `publish` (or with no kind) is a registry from
 /// before `purpose`, and the caller decides what to say about it.
 fn post(arena: Allocator, io: anytype, policy: http.Policy, api_v2_url: []const u8, params: v2.ExchangeOidcTokenParams, subject: []const u8, purpose: Purpose) anyerror!Outcome {
-    const url = try v2.url(v2.ExchangeOidcToken, arena, api_v2_url, params);
-    const body = (try v2.ExchangeOidcToken.body(arena, params)).?;
     // A POST is sent once: a rerun of the command is its retry.
-    const answer = http.retrying(arena, io, .POST, url, .{ .body = body }, policy) catch |e| {
+    const answer = v2.send(v2.ExchangeOidcToken, arena, io, policy, api_v2_url, null, params) catch |e| {
         return .{ .bad = try std.fmt.allocPrint(arena, "POST /auth/oidc/exchange: {s}", .{@errorName(e)}) };
     };
     if (!answer.ok()) {
@@ -267,7 +266,7 @@ const Scripted = struct {
     exchange_bearer: ?[]const u8 = null,
 
     pub fn once(s: *Scripted, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
-        if (std.mem.indexOf(u8, url, "/auth/oidc/exchange") != null) {
+        if (std.mem.indexOf(u8, url, v2.ExchangeOidcToken.path_template) != null) {
             try std.testing.expectEqual(std.http.Method.POST, method);
             s.exchange_calls += 1;
             s.exchange_url = try arena.dupe(u8, url);
