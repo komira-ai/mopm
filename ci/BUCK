@@ -1,0 +1,22 @@
+# Every package's floor, in one target: buildrules' `zig_coverage` and `jest_coverage_floor` make each floor target visible to this
+# package only (`//ci:`), so the collection lives here. `//:coverage_floors` is an alias of it.
+filegroup(
+    name = "coverage_floors",
+    visibility = ["//:"],
+    srcs = {
+        "agents": "//:agents_coverage_floor",
+        "apt_publish": "//:apt_publish_coverage_floor",
+        "build_parity": "//:build_parity_coverage_floor",
+        "channels": "//:channels_coverage_floor",
+        "cli": "//:cli_coverage_floor",
+        "core": "//:core_coverage_floor",
+        "drivers": "//:drivers_coverage_floor",
+        "fake_registry": "//:fake_registry_coverage_floor",
+        "group_e2e": "//:group_e2e_coverage_floor",
+        "service_api": "//service/api:coverage_floor",
+        "service_infra_access": "//service/infra/access:coverage_floor",
+        "service_infra_dns": "//service/infra/dns:coverage_floor",
+        "service_infra_stacks": "//service/infra/stacks:coverage_floor",
+        "site": "//site:coverage_floor",
+    },
+)

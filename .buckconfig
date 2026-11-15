@@ -51,10 +51,11 @@
   commit_hash = 9504a2daf88754de25d93f62a76ea2955ebc38c8
 
 [external_cell_buildrules]
-  # buildrules: its Rust (cargo_unit, the cargo_package front door), Zig, node, cxx and AWS-LC rules and the CLI. Bump commit_hash
-  # to take a newer commit.
+  # buildrules: its Rust (cargo_unit, the cargo_package front door), Zig, node, cxx, coverage and AWS-LC rules and the CLI.
+  # Bump commit_hash to take a newer commit. eec7f9f4c: buildrules main at the merge of komira-ai/buildrules#153 (cov_normalize
+  # refuses the action directory in a report only as a whole path).
   git_origin = https://github.com/komira-ai/buildrules.git
-  commit_hash = 93a3136321e97e387a5b95da3780ddb9bf7c7a08
+  commit_hash = eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503
 
 [buildfile]
   name = BUCK
