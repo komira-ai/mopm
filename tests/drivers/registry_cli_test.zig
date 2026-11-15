@@ -237,7 +237,7 @@ test "the generated token commands create, list and revoke a token on the fake r
     rep.check("mopm login on the fake succeeds", try loginOnFake(a, m, fake, conf), "login failed");
 
     // Create, with the flags the generated command advertises.
-    r = try m.run(try withAt(a, &.{ "token", "create", "ci", "--scopes", "publish", "--scopes", "yank", "--packages", "cli-user/a", "--packages", "cli-user/b", "--expires-in-days", "7", "--json" }, &at));
+    r = try m.run(try withAt(a, &.{ "token", "create", "ci", "--scopes", "publish", "--scopes", "yank", "--packages", "cli-user/alpha", "--packages", "cli-user/beta", "--expires-in-days", "7", "--json" }, &at));
     const created = h.parseJson(a, r.stdout) catch std.json.Value{ .null = {} };
     const id = h.jsonString(created, "id") orelse "";
     const secret = h.jsonString(created, "token") orelse "";
