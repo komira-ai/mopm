@@ -1,7 +1,7 @@
 //! Tests of the engine that runs generated registry commands (api_cmd.zig), by behaviour. The commands here are small
 //! tables of the same shape as the generated `registry_commands.zig`, pointing at real operations of the generated client;
 //! the registry is the scripted stand-in of group_publish_test.zig, so a test reads the request a command made and the
-//! text it printed.
+//! text it printed. `runDispatch` runs arguments through the generated table itself, for registry_commands_test.zig.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -16,7 +16,7 @@ const spec = @import("api_spec.zig");
 const Script = gt.Script;
 
 const api_v1 = "http://127.0.0.1:1/api/v1";
-const api_v2 = "http://127.0.0.1:1/api/v2";
+pub const api_v2 = "http://127.0.0.1:1/api/v2";
 
 const tail = " [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]\n";
 
@@ -145,7 +145,7 @@ const group_cmd = spec.Command{
     .body = .file,
 };
 
-const Opts = struct {
+pub const Opts = struct {
     /// What `$MOPM_TOKEN` holds.
     token_env: ?[]const u8 = null,
     /// The token `mopm login` stored.
@@ -157,7 +157,7 @@ const Opts = struct {
     no_session: bool = false,
 };
 
-const TestEnv = struct {
+pub const TestEnv = struct {
     session: ?registry_cmd.Session,
     token: ?[]const u8,
     stdin: []const u8,
@@ -184,52 +184,90 @@ const TestEnv = struct {
     }
 };
 
-const Run = struct {
+pub const Run = struct {
     code: u8,
     out: []const u8,
     err: []const u8,
     script: Script,
     flags: registry_cmd.Flags,
 
-    fn expect(r: Run, code: u8, out: []const u8, err: []const u8) !void {
+    pub fn expect(r: Run, code: u8, out: []const u8, err: []const u8) !void {
         try std.testing.expectEqualStrings(out, r.out);
         try std.testing.expectEqualStrings(err, r.err);
         try std.testing.expectEqual(code, r.code);
     }
 
-    fn requests(r: Run) usize {
+    pub fn requests(r: Run) usize {
         return r.script.seen.items.len;
     }
 };
 
 fn runCmd(comptime c: spec.Command, a: Allocator, tmp: *std.testing.TmpDir, steps: []const Script.Step, opts: Opts, args: []const []const u8) !Run {
-    const dir = try tmp.dir.realpathAlloc(a, ".");
-    if (opts.stored) |t| try credentials.store(a, dir, api_v1, .{ .token = t, .handle = "ada" });
-    var state = TestEnv{
-        .session = if (opts.no_session) null else .{
-            .arena = a,
-            .config = .{
-                .stage = "beta",
-                .api_url = api_v1,
-                .api_v2_url = if (opts.no_v2) "" else api_v2,
-                .channel_url = "http://127.0.0.1:1/",
-                .min_cli_version = "0.0.0",
-                .read_only = false,
-            },
-            .config_dir = dir,
-        },
-        .token = opts.token_env,
-        .stdin = opts.stdin,
-    };
-    var script = gt.newScript(a, steps);
-    var net = script.net();
-    net.policy = .{ .retries = 0 };
-    var con = gp.Console.init(a, null);
-    const code = try api_cmd.execute(c, a, net, &con, state.env(), args);
-    return .{ .code = code, .out = con.out.items, .err = con.err.items, .script = script, .flags = state.flags };
+    var h = try Harness.init(a, tmp, steps, opts);
+    const code = try api_cmd.execute(c, a, h.net(), &h.con, h.state.env(), args);
+    return h.finish(code);
 }
 
-fn step(method: std.http.Method, suffix: []const u8, status: u16, body: []const u8) Script.Step {
+/// What `api_cmd.dispatch` did with `args`: `code` is null when no generated command has that name.
+pub const Dispatched = struct {
+    code: ?u8,
+    out: []const u8,
+    err: []const u8,
+    script: Script,
+};
+
+/// Runs `args` (the arguments after `mopm`) through `api_cmd.dispatch`, that is through the generated table
+/// `registry_commands.zig` as built, against the scripted registry.
+pub fn runDispatch(a: Allocator, tmp: *std.testing.TmpDir, steps: []const Script.Step, opts: Opts, args: []const []const u8) !Dispatched {
+    var h = try Harness.init(a, tmp, steps, opts);
+    const code = try api_cmd.dispatch(a, h.net(), &h.con, h.state.env(), args);
+    return .{ .code = code, .out = h.con.out.items, .err = h.con.err.items, .script = h.script };
+}
+
+/// The session, the environment, the scripted registry and the console of one run of a command.
+const Harness = struct {
+    state: TestEnv,
+    script: Script,
+    con: gp.Console,
+
+    fn init(a: Allocator, tmp: *std.testing.TmpDir, steps: []const Script.Step, opts: Opts) !Harness {
+        const dir = try tmp.dir.realpathAlloc(a, ".");
+        if (opts.stored) |t| try credentials.store(a, dir, api_v1, .{ .token = t, .handle = "ada" });
+        return .{
+            .state = .{
+                .session = if (opts.no_session) null else .{
+                    .arena = a,
+                    .config = .{
+                        .stage = "beta",
+                        .api_url = api_v1,
+                        .api_v2_url = if (opts.no_v2) "" else api_v2,
+                        .channel_url = "http://127.0.0.1:1/",
+                        .min_cli_version = "0.0.0",
+                        .read_only = false,
+                    },
+                    .config_dir = dir,
+                },
+                .token = opts.token_env,
+                .stdin = opts.stdin,
+            },
+            .script = gt.newScript(a, steps),
+            .con = gp.Console.init(a, null),
+        };
+    }
+
+    /// The scripted registry as the network, with no retries; called once the harness is in its final place.
+    fn net(h: *Harness) gp.Net {
+        var n = h.script.net();
+        n.policy = .{ .retries = 0 };
+        return n;
+    }
+
+    fn finish(h: *Harness, code: u8) Run {
+        return .{ .code = code, .out = h.con.out.items, .err = h.con.err.items, .script = h.script, .flags = h.state.flags };
+    }
+};
+
+pub fn step(method: std.http.Method, suffix: []const u8, status: u16, body: []const u8) Script.Step {
     return .{ .method = method, .suffix = suffix, .status = status, .body = body };
 }
 
@@ -657,9 +695,9 @@ test "an operation with no response prints Done. as text and nothing with --json
 }
 
 test "the words of a command name match the first words of the arguments" {
-    try std.testing.expectEqual(@as(?usize, 2), api_cmd.wordsMatch("publish status", &.{ "publish", "status", "pub_1" }));
-    try std.testing.expectEqual(@as(?usize, 1), api_cmd.wordsMatch("yank", &.{ "yank", "acme/foo", "1.0.0" }));
-    try std.testing.expectEqual(@as(?usize, null), api_cmd.wordsMatch("publish status", &.{ "publish", "--staged" }));
-    try std.testing.expectEqual(@as(?usize, null), api_cmd.wordsMatch("publish status", &.{"publish"}));
-    try std.testing.expectEqual(@as(?usize, null), api_cmd.wordsMatch("org add", &.{ "org", "list" }));
+    try std.testing.expectEqual(@as(?usize, 2), spec.wordsMatch("publish status", &.{ "publish", "status", "pub_1" }));
+    try std.testing.expectEqual(@as(?usize, 1), spec.wordsMatch("yank", &.{ "yank", "acme/foo", "1.0.0" }));
+    try std.testing.expectEqual(@as(?usize, null), spec.wordsMatch("publish status", &.{ "publish", "--staged" }));
+    try std.testing.expectEqual(@as(?usize, null), spec.wordsMatch("publish status", &.{"publish"}));
+    try std.testing.expectEqual(@as(?usize, null), spec.wordsMatch("org add", &.{ "org", "list" }));
 }

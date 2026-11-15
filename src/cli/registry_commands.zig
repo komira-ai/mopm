@@ -418,5 +418,17 @@ pub const commands = [_]spec.Command{
     },
 };
 
+/// The command `args` (the arguments after `mopm`) names: of the commands whose words `args` begins with, the one with
+/// the most words, as its index in `commands` and its number of words. Null when there is none.
+pub fn find(args: []const []const u8) ?spec.Found {
+    var best: ?spec.Found = null;
+    inline for (commands, 0..) |c, i| {
+        if (spec.wordsMatch(c.name, args)) |n| {
+            if (best == null or n > best.?.words) best = .{ .index = i, .words = n };
+        }
+    }
+    return best;
+}
+
 /// The list of commands `mopm --help` prints, equal to tests/golden/registry/commands.txt.
 pub const list = "registry commands (one call of the registry API each; mopm <command> --help):\n  health                   Show whether the registry is up and in which mode.\n  api start-device-login   Start a device login and print its codes (one step of 'mopm login').\n  api poll-device-login    Ask once whether a device login was approved (one step of 'mopm login').\n  api exchange-oidc-token  Exchange a CI identity token for a registry token (one step of 'mopm publish --oidc').\n  whoami                   Show the account the token belongs to and its namespaces.\n  token create             Create an API token; its secret is printed once.\n  token list               List the API tokens of the account.\n  token revoke             Revoke an API token.\n  api create-namespace     Start registering an organization's namespace (one step of 'mopm org create').\n  api poll-namespace       Ask once whether a namespace registration was approved (one step of 'mopm org create').\n  namespace info           Show a namespace: its kind and its GitHub account.\n  org list                 List the members of a namespace and their roles.\n  org add                  Add a member to a namespace, or change a member's role.\n  org remove               Remove a member from a namespace.\n  search                   Search the packages by name.\n  package info             Show a package and its versions.\n  package create           Create a package in a namespace you can write in.\n  package versions         List the versions of a package.\n  package version          Show one version of a package: its state, files and dependencies.\n  api begin-upload         Begin the upload of one file of a version (one step of 'mopm publish').\n  api commit-publish       Commit the uploads of a version (one step of 'mopm publish').\n  publish status           Show how a publish is going.\n  api create-group         Create or continue a publish group (one step of 'mopm publish --staged').\n  group status             Show a publish group: its state, its members and its yank.\n  group abort              End an open publish group without publishing it.\n  api commit-group         Commit a publish group (one step of 'mopm publish --staged').\n  group yank               Yank every version a publish group published.\n  group unyank             Restore the versions a group's yank changed.\n  yank                     Yank a version: new resolutions no longer pick it.\n  unyank                   Restore a yanked version.\n";

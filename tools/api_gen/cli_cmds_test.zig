@@ -314,6 +314,18 @@ test "the table entry of a command with every part is exactly this" {
         \\    },
         \\};
         \\
+        \\/// The command `args` (the arguments after `mopm`) names: of the commands whose words `args` begins with, the one with
+        \\/// the most words, as its index in `commands` and its number of words. Null when there is none.
+        \\pub fn find(args: []const []const u8) ?spec.Found {
+        \\    var best: ?spec.Found = null;
+        \\    inline for (commands, 0..) |c, i| {
+        \\        if (spec.wordsMatch(c.name, args)) |n| {
+        \\            if (best == null or n > best.?.words) best = .{ .index = i, .words = n };
+        \\        }
+        \\    }
+        \\    return best;
+        \\}
+        \\
         \\/// The list of commands `mopm --help` prints, equal to tests/golden/registry/commands.txt.
         \\pub const list = "registry commands (one call of the registry API each; mopm <command> --help):\n  member set  Add a member.\n";
         \\

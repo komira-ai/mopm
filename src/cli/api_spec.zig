@@ -1,6 +1,8 @@
 //! The types of the table of registry commands (`registry_commands.zig`, written by tools/api_gen.zig) that
 //! `api_cmd.zig` runs: what a command is called, which operation of the generated client it calls, and how its
-//! arguments and flags fill that operation's request.
+//! arguments and flags fill that operation's request; and `wordsMatch`, how the table's `find` matches a name.
+
+const std = @import("std");
 
 /// How a flag's text is read.
 pub const Kind = enum { string, integer, boolean, enumeration, names_or_const };
@@ -69,3 +71,21 @@ pub const Command = struct {
     flags: []const Flag = &.{},
     set: []const Set = &.{},
 };
+
+/// The command the arguments name, as the table's `find` answers it.
+pub const Found = struct {
+    /// Its index in the table's `commands`.
+    index: usize,
+    /// The number of words of its name: the arguments after them are the command's own.
+    words: usize,
+};
+
+/// The number of words of `name` when `args` begins with them, else null.
+pub fn wordsMatch(name: []const u8, args: []const []const u8) ?usize {
+    var it = std.mem.splitScalar(u8, name, ' ');
+    var n: usize = 0;
+    while (it.next()) |word| : (n += 1) {
+        if (n >= args.len or !std.mem.eql(u8, word, args[n])) return null;
+    }
+    return n;
+}

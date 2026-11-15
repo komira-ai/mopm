@@ -1486,8 +1486,8 @@ zig_coverage(
     blocks = False,
     floor = "coverage/cli.txt",
     test_targets = [":cli_test"],
-    # build_options.zig (constants) and api_spec.zig (types) are modules of declarations (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
-    expect = glob(["src/cli/*.zig"], exclude = ["src/cli/api_spec.zig", "src/cli/build_options.zig", "src/cli/test_cmd.zig"]),
+    # build_options.zig (constants) is a module of declarations (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
+    expect = glob(["src/cli/*.zig"], exclude = ["src/cli/build_options.zig", "src/cli/test_cmd.zig"]),
 )
 
 zig_coverage(

@@ -554,6 +554,7 @@ test {
     _ = unit_cmd;
     _ = api_cmd;
     _ = @import("api_cmd_test.zig");
+    _ = @import("registry_commands_test.zig");
     _ = @import("api_render.zig");
     _ = @import("api_spec.zig");
     _ = @import("group_plan.zig");

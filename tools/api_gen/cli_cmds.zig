@@ -611,6 +611,23 @@ const Gen = struct {
 
     // ---- the table -----------------------------------------------------------------------------------------------
 
+    /// The lookup the table carries after its entries: which command the arguments name (api_cmd.zig's `dispatch`).
+    const find_fn =
+        \\/// The command `args` (the arguments after `mopm`) names: of the commands whose words `args` begins with, the one with
+        \\/// the most words, as its index in `commands` and its number of words. Null when there is none.
+        \\pub fn find(args: []const []const u8) ?spec.Found {
+        \\    var best: ?spec.Found = null;
+        \\    inline for (commands, 0..) |c, i| {
+        \\        if (spec.wordsMatch(c.name, args)) |n| {
+        \\            if (best == null or n > best.?.words) best = .{ .index = i, .words = n };
+        \\        }
+        \\    }
+        \\    return best;
+        \\}
+        \\
+        \\
+    ;
+
     fn tableText(g: *Gen, cmds: []const Cmd, list: []const u8) Allocator.Error![]const u8 {
         var out = std.ArrayList(u8).init(g.arena);
         const w = out.writer();
@@ -627,6 +644,7 @@ const Gen = struct {
         );
         for (cmds) |c| try g.writeEntry(w, c);
         try w.writeAll("};\n\n");
+        try w.writeAll(find_fn);
         try w.print("/// The list of commands `mopm --help` prints, equal to {s}.\n", .{list_path});
         try w.print("pub const list = {s};\n", .{try literal(g.arena, list)});
         return out.items;
