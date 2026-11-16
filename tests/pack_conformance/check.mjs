@@ -52,8 +52,9 @@ const packed = [...out.matchAll(/packed (\S+)\n  sha256 ([0-9a-f]{64})\n  size (
 }));
 check('pack printed two files', packed.length === 2, out);
 
-const filename = 'mojo-confdemo-1.2.3-mojo1.0.0_0.conda';
-const expectation = (subdir, extra = {}) => ({ name: 'confdemo', version: '1.2.3', subdir, filename, ...extra });
+// The package is example/confdemo: its conda name is mojo-example.confdemo, its import name (the file names inside) confdemo.
+const filename = 'mojo-example.confdemo-1.2.3-mojo1.0.0_0.conda';
+const expectation = (subdir, extra = {}) => ({ name: 'example/confdemo', version: '1.2.3', subdir, filename, ...extra });
 
 for (const p of packed) {
   const subdir = p.path.split('/').slice(-2)[0];
@@ -64,7 +65,7 @@ for (const p of packed) {
   if (v.ok) {
     check(`${subdir}: facts agree`,
       v.facts.compiler === '1.0.0' && v.facts.build === 'mojo1.0.0_0' && v.facts.subdir === subdir &&
-        JSON.stringify(v.facts.mojoDeps) === JSON.stringify(['mojo-confdep', 'mojo-other_dep']) &&
+        JSON.stringify(v.facts.mojoDeps) === JSON.stringify(['mojo-example.confdep', 'mojo-example.other_dep']) &&
         v.facts.manifestSha256 === p.manifestSha256 &&
         JSON.stringify(v.facts.files.map((f) => f.path).sort()) ===
           JSON.stringify(['info/index.json', 'info/paths.json', 'lib/mojo/confdemo.mojoc', 'lib/mojo/confdemo.mopm.json']) &&
@@ -82,8 +83,9 @@ const refused = (name, archive, expected, rule, rejection) => {
 };
 refused('a version that is not the metadata\'s', bytes, expectation('noarch', { version: '1.2.4' }), 'version_mismatch', 'manifest_invalid');
 refused('a subdir that is not the index\'s', bytes, expectation('linux-64'), 'subdir_mismatch', 'manifest_invalid');
-refused('another package name', bytes, { ...expectation('noarch'), name: 'otherdemo', filename: 'mojo-otherdemo-1.2.3-mojo1.0.0_0.conda' }, 'layout_not_allowed', 'path_not_allowed');
-refused('a file name with another compiler', bytes, expectation('noarch', { filename: 'mojo-confdemo-1.2.3-mojo1.0.1_0.conda' }), 'filename_mismatch', 'filename_mismatch');
+refused('another package name', bytes, { ...expectation('noarch'), name: 'example/otherdemo', filename: 'mojo-example.otherdemo-1.2.3-mojo1.0.0_0.conda' }, 'layout_not_allowed', 'path_not_allowed');
+refused('the flat name of a namespaced package', bytes, { ...expectation('noarch'), name: 'confdemo', filename: 'mojo-confdemo-1.2.3-mojo1.0.0_0.conda' }, 'manifest_schema', 'manifest_invalid');
+refused('a file name with another compiler', bytes, expectation('noarch', { filename: 'mojo-example.confdemo-1.2.3-mojo1.0.1_0.conda' }), 'filename_mismatch', 'filename_mismatch');
 refused('a wrong manifest_sha256', bytes, expectation('noarch', { manifestSha256: '0'.repeat(64) }), 'manifest_sha256_mismatch', 'sha256_mismatch');
 refused('a wrong sha256', bytes, expectation('noarch', { sha256: '0'.repeat(64) }), 'sha256_mismatch', 'sha256_mismatch');
 const flipped = Buffer.from(bytes);
@@ -115,11 +117,11 @@ const natPacked = [...natOut.matchAll(/packed (\S+)\n  sha256 ([0-9a-f]{64})\n  
 }));
 check('native: pack printed two files', natPacked.length === 2, natOut);
 check('native: both files carry the same metadata (one manifest_sha256)', natPacked.length === 2 && natPacked[0].manifestSha256 === natPacked[1].manifestSha256);
-const natFile = 'mojo-natdemo-2.4.0-mojo1.0.0_0.conda';
+const natFile = 'mojo-example.natdemo-2.4.0-mojo1.0.0_0.conda';
 for (const p of natPacked) {
   const subdir = p.path.split('/').slice(-2)[0];
   const nbytes = readFileSync(p.path);
-  const v = validatePackage(nbytes, { name: 'natdemo', version: '2.4.0', subdir, filename: natFile, sha256: p.sha256, manifestSha256: p.manifestSha256 });
+  const v = validatePackage(nbytes, { name: 'example/natdemo', version: '2.4.0', subdir, filename: natFile, sha256: p.sha256, manifestSha256: p.manifestSha256 });
   check(`native ${subdir}: the validator accepts the package`, v.ok === true, JSON.stringify(v));
   if (v.ok) {
     check(`native ${subdir}: the archive is a file of the package, and no native id is a dependency`,
@@ -132,7 +134,7 @@ for (const p of natPacked) {
 if (natPacked.length === 2) {
   // Faulty: a version that is not the metadata's is refused for a package with an archive as for any other.
   const nbytes = readFileSync(natPacked[0].path);
-  refused('native: a version that is not the metadata\'s', nbytes, { name: 'natdemo', version: '2.4.1', subdir: natPacked[0].path.split('/').slice(-2)[0], filename: 'mojo-natdemo-2.4.1-mojo1.0.0_0.conda' }, 'version_mismatch', 'manifest_invalid');
+  refused('native: a version that is not the metadata\'s', nbytes, { name: 'example/natdemo', version: '2.4.1', subdir: natPacked[0].path.split('/').slice(-2)[0], filename: 'mojo-example.natdemo-2.4.1-mojo1.0.0_0.conda' }, 'version_mismatch', 'manifest_invalid');
 }
 
 console.log(failures === 0 ? 'pack conformance OK' : `${failures} failure(s)`);

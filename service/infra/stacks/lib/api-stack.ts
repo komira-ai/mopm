@@ -423,7 +423,9 @@ export class ApiStack extends Stack {
         maxAge: CORS_MAX_AGE,
       },
     });
-    const integration = new integrations.HttpLambdaIntegration('ApiIntegration', this.handler);
+    // One invoke permission for the whole API, not one per route: each per-route statement is a few hundred bytes of the
+    // function's resource policy, which Lambda caps at 20480 bytes, and the v1 and v2 routes together pass that cap.
+    const integration = new integrations.HttpLambdaIntegration('ApiIntegration', this.handler, { scopePermissionToRoute: false });
     for (const route of READ_ROUTES) {
       this.api.addRoutes({ path: route, methods: [apigw.HttpMethod.GET], integration });
     }

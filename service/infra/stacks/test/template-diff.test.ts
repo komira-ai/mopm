@@ -21,6 +21,9 @@ function normalise(stage: Stage, json: unknown): unknown {
     // ... and ends them with an 8-character hash of that path, which therefore differs per stage. A BucketDeployment
     // with a key prefix (the site's assets/) tags the bucket with the prefix before the hash.
     .replace(/aws-cdk:cr-owned:((?:[^:"]+:)?)[0-9a-f]{8}/g, 'aws-cdk:cr-owned:$1<hash>')
+    // The API function's one invoke permission (HttpLambdaIntegration with scopePermissionToRoute: false) is named
+    // from the unique ids of the function and the API, each of which ends in a hash of its stage's construct path.
+    .replace(/(ApiPermissionApiScoped)mopm<stage>apiHandler[0-9A-F]{8}mopm<stage>apiApi[0-9A-F]{8}/g, '$1HandlerApi')
     .replace(/(?<=[A-Za-z0-9])[0-9A-F]{8}(?=")/g, '');
   return JSON.parse(text);
 }
