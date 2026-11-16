@@ -52,7 +52,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - name: Synth every stage with a dummy account and zone id
+        # The cdk CLI sets CDK_DEFAULT_REGION for the app from the region it resolves (the AWS_REGION variable, else the
+        # region of the AWS-hosted runner), so the stacks' own check of the region failed on a runner in us-west-2.
         env:
+          AWS_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
           CDK_DEFAULT_REGION: us-east-1
         run: |
           export CDK_DEFAULT_ACCOUNT="$(printf '1%.0s' $(seq 12))"
