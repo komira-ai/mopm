@@ -296,6 +296,56 @@ fn jobIf(a: Allocator, job: Value) ![]const u8 {
     return c.toS(a, c.get(job, "if"));
 }
 
+/// A hosted Linux x86_64 runner: `ubuntu-*`, not an `-arm` one. The owner's rule: the pull request checks run on Linux x86_64 only; every
+/// other platform is a beta stage of the release (release.yml), after the merge.
+fn isLinuxX64Runner(r: []const u8) bool {
+    return std.mem.startsWith(u8, r, "ubuntu-") and std.mem.indexOf(u8, r, "arm") == null;
+}
+
+/// The runners a pull request can reach in a job whose `runs-on` is `${{ matrix.os }}`: the list of `matrix.os`, the `os` of each `include`, and
+/// for a `fromJSON(github.event_name == 'pull_request' && '[...]' || '[...]')` expression the first list, the one a pull request gets.
+fn matrixRunners(a: Allocator, f: []const u8, job: Job, out: *Out) ![]const []const u8 {
+    var found = std.ArrayList([]const u8).init(a);
+    const matrix = c.get(c.get(job.node, "strategy"), "matrix") orelse return found.items;
+    if (c.get(matrix, "os")) |os| {
+        if (c.str(os)) |expr| {
+            const key = "github.event_name == 'pull_request' && '[";
+            const at = std.mem.indexOf(u8, expr, key);
+            const end = if (at) |i| std.mem.indexOfPos(u8, expr, i + key.len, "]'") else null;
+            if (at == null or end == null) {
+                try c.problem(a, out, prefix ++ "{s}: job {s}: matrix.os is an expression the lint cannot read; write it as fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\"]' || '[...]') so the runners of a pull request are visible", .{ f, job.name });
+            } else {
+                var parts = std.mem.splitScalar(u8, expr[at.? + key.len .. end.?], '"');
+                var in_quotes = false;
+                while (parts.next()) |part| : (in_quotes = !in_quotes) {
+                    if (in_quotes) try found.append(part);
+                }
+            }
+        } else {
+            for (try c.arrayOf(a, os)) |r| try found.append(r);
+        }
+    }
+    if (c.get(matrix, "include")) |inc| {
+        if (inc == .array) for (inc.array.items) |e| if (c.str(c.get(e, "os"))) |r| try found.append(r);
+    }
+    return found.items;
+}
+
+/// The runners of every job a pull request runs (a job guarded by `github.event_name != 'pull_request'` never does) must be hosted Linux x86_64.
+fn prRunnerProblems(a: Allocator, f: []const u8, jobs: []const Job, out: *Out) !void {
+    for (jobs) |j| {
+        if (isBetaGuard(try jobIf(a, j.node))) continue;
+        const runs_on = c.str(c.get(j.node, "runs-on")) orelse continue;
+        if (std.mem.eql(u8, runs_on, "${{ matrix.os }}")) {
+            for (try matrixRunners(a, f, j, out)) |r| {
+                if (!isLinuxX64Runner(r)) try c.problem(a, out, prefix ++ "{s}: job {s} runs on {s} for a pull request; a pull request runs on Linux x86_64 (ubuntu-*, not -arm) only, and the other platforms are the beta stage of release.yml", .{ f, j.name, r });
+            }
+        } else if (!isLinuxX64Runner(runs_on)) {
+            try c.problem(a, out, prefix ++ "{s}: job {s} runs on {s} for a pull request; a pull request runs on Linux x86_64 (ubuntu-*, not -arm) only, and the other platforms are the beta stage of release.yml", .{ f, j.name, runs_on });
+        }
+    }
+}
+
 /// The id-token and trigger rules for one workflow file. `f` is the path as
 /// the messages show it; its base name picks the rules, as in the Ruby.
 pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !void {
@@ -423,6 +473,7 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     if (c.containsStr(on, "pull_request") and !c.containsStr(&pr_files, base) and !isOidcFile(base)) {
         try c.problem(a, out, prefix ++ "{s}: a pull request runs build and unit tests only, so only ci.yml, lint.yml, farm.yml and service-ci.yml may run on pull_request", .{f});
     }
+    if (c.containsStr(on, "pull_request")) try prRunnerProblems(a, f, jobs, out);
     if (std.mem.eql(u8, base, "ci.yml") and c.containsStr(on, "pull_request")) {
         for (jobs) |j| {
             if (c.containsStr(&ci_unit_jobs, j.name)) continue;
@@ -433,7 +484,7 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
     if ((std.mem.eql(u8, base, "lint.yml") or std.mem.eql(u8, base, "ci.yml")) and c.containsStr(on, "pull_request")) {
         // A filter makes the check skip for some pull requests (a docs-only change, another base branch, a label event), and a
-        // skipped check is a check that did not run. `types` may only add to the defaults (ci.yml adds `labeled` for the macOS opt-in).
+        // skipped check is a check that did not run. `types` may only add to the defaults.
         const pr = c.get(c.onValue(doc), "pull_request");
         for (c.keys(pr)) |k| {
             if (std.mem.eql(u8, k, "types")) {

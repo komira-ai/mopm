@@ -112,7 +112,7 @@ zig build test       # unit tests and golden tests; run from the repository root
 ./buck2 build //:golden  # runs the built CLI against tests/golden (on the build farm)
 ```
 
-A pull request runs the unit tier (`zig build` and `zig build test` on Linux x86_64 and Linux aarch64, and the farm build without the beta targets). After the merge (a push to main, which is also the beta stage of the release) CI also runs macOS arm64 and the Mojo end-to-end drivers (`tests/drivers/test_*_test.zig`) natively, in the
+A pull request runs the unit tier (`zig build` and `zig build test` on Linux x86_64 only, and the farm build without the beta targets). After the merge (a push to main, which is also the beta stage of the release) CI also runs Linux aarch64 and macOS arm64 and the Mojo end-to-end drivers (`tests/drivers/test_*_test.zig`) natively, in the
 environment `mopm sync --locked` makes in `tests/mojo_env` (the pinned Mojo toolchain, no packages):
 
 ```sh
