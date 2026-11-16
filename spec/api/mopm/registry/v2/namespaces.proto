@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package mopm.registry.v2;
+
+import "mopm/registry/v2/types.proto";
+import "mopm/registry/v2/packages.proto";
+import "mopm/registry/v2/options.proto";
+
+message CreateNamespaceRequest {
+  Namespace namespace = 1 [(field) = {required: true}];
+}
+
+message NamespaceInfo {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_USER = 1;
+    KIND_ORG = 2;
+  }
+  Namespace namespace = 1 [(field) = {required: true}];
+  Kind kind = 2 [(field) = {required: true}];
+  int64 github_id = 3 [(field) = {required: true, minimum: 1}];
+  // A user namespace: the GitHub login of the account as of its last login, which differs from namespace after a rename. An organization namespace: the namespace.
+  string login = 4 [(field) = {required: true, min_length: 1}];
+}
+
+message NamespacePollResponse {
+  option (schema) = {when: {field: "status", equals: "created", required: ["namespace"]}};
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_PENDING = 1;
+    STATUS_CREATED = 2;
+    STATUS_DENIED = 3;
+    STATUS_EXPIRED = 4;
+  }
+  Status status = 1 [(field) = {required: true}];
+  int64 interval = 2 [(field) = {minimum: 1}];
+  NamespaceInfo namespace = 3;
+}
+
+enum MemberRole {
+  MEMBER_ROLE_UNSPECIFIED = 0;
+  MEMBER_ROLE_OWNER = 1;
+  MEMBER_ROLE_MEMBER = 2;
+}
+
+message Member {
+  Namespace user = 1 [(field) = {required: true}];
+  // The GitHub login of the account at its last mopm login.
+  string handle = 2 [(field) = {required: true, min_length: 1}];
+  int64 github_id = 3 [(field) = {required: true, minimum: 1}];
+  MemberRole role = 4 [(field) = {required: true}];
+  // When the account was added or its role last changed.
+  Timestamp added_at = 5 [(field) = {required: true}];
+}
+
+message MemberList {
+  Namespace namespace = 1 [(field) = {required: true}];
+  repeated Member members = 2 [(field) = {required: true}];
+}
+
+message SetMemberRequest {
+  MemberRole role = 1 [(field) = {required: true}];
+}
+
+message MeV2 {
+  message Entry {
+    enum Kind {
+      KIND_UNSPECIFIED = 0;
+      KIND_USER = 1;
+      KIND_ORG = 2;
+    }
+    enum Role {
+      ROLE_UNSPECIFIED = 0;
+      ROLE_OWNER = 1;
+      ROLE_MEMBER = 2;
+    }
+    Namespace namespace = 1 [(field) = {required: true}];
+    Kind kind = 2 [(field) = {required: true}];
+    // owner for a user namespace of the caller and for an organization namespace the caller owns; member for an organization namespace the caller is a member of.
+    Role role = 3 [(field) = {required: true}];
+    repeated FullName packages = 4 [(field) = {required: true}];
+  }
+  int64 github_id = 1 [(field) = {required: true, minimum: 1}];
+  string handle = 2 [(field) = {required: true, min_length: 1}];
+  repeated Entry namespaces = 3 [(field) = {required: true}];
+  // The caller's GitHub login when it cannot be the caller's namespace (another account holds it, it is reserved, or it is outside the grammar). Absent otherwise.
+  string unavailable_namespace = 4;
+}
+
+message PackageInfoV2 {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_CLAIMED = 1;
+    STATE_ACTIVE = 2;
+  }
+  FullName name = 1 [(field) = {required: true}];
+  string display_name = 2;
+  // `claimed` until the first version is published, `active` from then on. A package with no version does not expire.
+  State state = 3 [(field) = {required: true}];
+  // The namespace the package belongs to. It is the package's owner; there are no package owners.
+  NamespaceInfo namespace = 4 [(field) = {required: true}];
+  Version latest = 5 [(field) = {required: true, nullable: true}];
+  // An https URL. Untrusted input.
+  string repository = 6 [(field) = {required: true, nullable: true}];
+  string license = 7 [(field) = {required: true, nullable: true}];
+  string description = 8 [(field) = {required: true, nullable: true}];
+  // An https URL, from mopm.toml. Absent when not set. Untrusted input, so check the scheme before linking it.
+  string homepage = 9 [(field) = {max_length: 2048, format: "uri"}];
+  Keywords keywords = 10;
+  // Markdown of the latest version's readme (see VersionDetail.readme). Untrusted Markdown, sanitize before rendering. Absent when it has none.
+  string readme = 11 [(field) = {max_length: 65536}];
+  Timestamp created_at = 12 [(field) = {required: true}];
+  repeated VersionSummary versions = 13 [(field) = {required: true}];
+}

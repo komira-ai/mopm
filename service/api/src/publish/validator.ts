@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { channelFileKey, channelFileUrl, repodataDirsOf } from '../channel-paths';
 import type { PublishFill } from '../state';
 import type { Store } from '../store';
 import type { AuditEntry, Dep, FileRef, NativeRef } from '../types';
@@ -47,7 +48,7 @@ export class Rejected extends Error {
  *  2. the files are copied into the channel from a second read, checked against the declared sha256 again, with
  *     create-only writes (what is validated is what is published, even if a quarantine object were replaced);
  *  3. the version goes pending -> published (conditional on its revision) carrying what the archives said;
- *  4. the publish moves to `indexing` with the subdirs to rewrite, and one index message per subdir is sent;
+ *  4. the publish moves to `indexing` with the repodata directories to rewrite, and one index message per directory is sent;
  *  5. the quarantine objects are deleted (also done on rejection). A failure here is only logged: the bucket's
  *     lifecycle rule expires quarantine/ after a day.
  *
@@ -183,7 +184,7 @@ async function copyToChannel(d: ValidatorDeps, rec: PublishRecord): Promise<void
     if (!bytes) throw new Error(`quarantine object ${f.key} vanished after validation`);
     if (sha256Hex(bytes) !== f.sha256) throw new Rejected('sha256_mismatch', `${f.filename}: the upload changed after it was validated`);
     // 'exists' is a repeat of this very step (the key belongs to this version alone), so it is fine.
-    await d.objects.put(`${f.subdir}/${f.filename}`, bytes, {
+    await d.objects.put(channelFileKey(rec.name, f.subdir, f.filename), bytes, {
       contentType: 'application/octet-stream',
       cacheControl: 'public, max-age=31536000, immutable',
       createOnly: true,
@@ -195,16 +196,18 @@ const depsOf = (f: PackageFacts): Dep[] => f.metadata.deps.map((x) => (x.range =
 const nativeOf = (f: PackageFacts): NativeRef[] => f.metadata.native.map((n) => ({ id: n.id, soname: n.soname }));
 
 function buildFill(d: ValidatorDeps, rec: PublishRecord, facts: PackageFacts[]): PublishFill {
-  return fillFrom(d.channelUrl, (d.now ?? (() => new Date()))(), rec, rec.files, facts);
+  return fillFrom(d.channelUrl, (d.now ?? (() => new Date()))(), rec.name, rec, rec.files, facts);
 }
 
 /**
  * What a version row holds once its archives are validated: the facts the archives stated, the files with their public
- * URLs, the display fields of the request and who published it. Pure. The single publish and the group's staging write this.
+ * URLs (in the package's channel: its namespace's for a full name, the root for a flat one), the display fields of the
+ * request and who published it. Pure. The single publish and the group's staging write this.
  */
 export function fillFrom(
   channelUrl: string,
   now: Date,
+  name: string,
   version: { version: string; display?: DisplayMeta; source_commit?: string; published_by: string },
   declared: ReadonlyArray<Pick<PublishFile, 'subdir' | 'filename' | 'sha256' | 'size'>>,
   facts: PackageFacts[],
@@ -215,7 +218,7 @@ export function fillFrom(
     filename: f.filename,
     sha256: f.sha256,
     size: f.size,
-    url: `${channelUrl.replace(/\/+$/, '')}/${f.subdir}/${f.filename}`,
+    url: channelFileUrl(channelUrl, name, f.subdir, f.filename),
   }));
   return {
     version: version.version,
@@ -233,9 +236,9 @@ export function fillFrom(
   };
 }
 
-/** The version is published: record which subdirs still have to list it, and ask for each to be rewritten. */
+/** The version is published: record which repodata directories still have to list it, and ask for each to be rewritten. */
 async function moveToIndexing(d: ValidatorDeps, rec: PublishRecord): Promise<void> {
-  const subdirs = [...new Set(rec.files.map((f) => f.subdir))].sort();
+  const subdirs = repodataDirsOf(rec.name, rec.files.map((f) => f.subdir));
   const cur = await d.publishes.updatePublish(rec.publish_id, (c) =>
     c.status === 'validating' ? touch(d, { ...c, status: 'indexing', remaining_subdirs: subdirs }) : undefined,
   );
@@ -251,7 +254,7 @@ async function sendIndex(d: ValidatorDeps, rec: PublishRecord): Promise<void> {
   }
   for (const subdir of rec.remaining_subdirs) {
     const msg: IndexMessage = { type: 'index', subdir, publish_id: rec.publish_id };
-    // One group per subdir: its repodata is rewritten by one job at a time.
+    // One group per repodata directory: its repodata is rewritten by one job at a time.
     await d.indexQueue.send({ body: JSON.stringify(msg), groupId: subdir, dedupId: `${rec.publish_id}:${subdir}` });
   }
 }

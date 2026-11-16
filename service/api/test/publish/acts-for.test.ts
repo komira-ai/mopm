@@ -372,14 +372,16 @@ describe.each(RIGS)('a CI identity that acts for an account: %s', (_label, make)
       await expect(oidc.exchange({ jwt: jwt(), packages: [{ name: 'widgets', version: '1.0.0' }] })).rejects.toMatchObject({ code: 'oidc_not_trusted' });
     });
 
-    test('a row without acts_for still creates and owns the package itself (beta is unchanged), and an account-owned package is still refused to it', async () => {
+    test('a row without acts_for publishes the package it owns itself (beta is unchanged), is refused an account-owned one, and creates none', async () => {
       const { acts_for: _a, ...beta } = PUBLISHER;
       build([{ ...beta, environment: 'prod' }]);
       await env.own(ACCOUNT, HANDLE, ['widgets']);
       await expect(oidc.exchange({ jwt: jwt(), packages: [{ name: 'widgets', version: '1.0.0' }] })).rejects.toMatchObject({ code: 'not_owner' });
+      await expect(oidc.exchange({ jwt: jwt(), packages: [{ name: 'fresh', version: '1.0.0' }] })).rejects.toMatchObject({ code: 'name_reserved' });
+      expect(await rig.store.getPackage('fresh')).toBeUndefined();
+      await rig.store.createPackage({ name: 'fresh', state: 'claimed', created_at: 't', ci_owner: 'gh-repo:1376408823' });
       const ok = await oidc.exchange({ jwt: jwt(), packages: [{ name: 'fresh', version: '1.0.0' }] });
       expect(ok.packages).toEqual([{ name: 'fresh', version: '1.0.0' }]);
-      expect(await rig.store.getPackage('fresh')).toMatchObject({ ci_owner: 'gh-repo:1376408823' });
       const row = env.authStore.dumpTokens().find((t) => t.kind === 'oidc');
       expect(row).toMatchObject({ ci_owner: 'gh-repo:1376408823' });
       expect(row?.github_id).toBeUndefined();

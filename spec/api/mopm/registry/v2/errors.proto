@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package mopm.registry.v2;
+
+import "mopm/registry/v2/options.proto";
+
+message Error {
+  message Body {
+    ErrorCode code = 1 [(field) = {required: true}];
+    string message = 2 [(field) = {required: true, min_length: 1}];
+    string hint = 3 [(field) = {required: true}];
+    // Why the request was refused, for a code that lists reasons (`x-mopm-error-reasons`; today only
+    // `group_conflict`). Absent for every other code and may be absent for a listed one. A client MUST treat a
+    // reason it does not know like an absent one, and must not parse `message` to learn it. It never holds an id
+    // or anything of another account, and it is not part of the message.
+    Reason reason = 4;
+
+    enum Reason {
+      REASON_UNSPECIFIED = 0;
+      REASON_NUMBER_HELD = 1;
+      REASON_GROUP_FAILED = 2;
+      REASON_OPEN_CAP = 3;
+      REASON_SUPERSEDE_CAP = 4;
+      REASON_TAKEOVER_BLOCKED = 5;
+      REASON_NUMBER_TAKEN = 6;
+      REASON_OVERLAP_REFUSED = 7;
+    }
+  }
+
+  Body error = 1 [(field) = {required: true}];
+}
+
+// Stable machine-readable error codes. A client MUST treat a code it does
+// not know as the generic failure of the HTTP status class.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_REQUEST = 1 [(error) = {status: 400, message: "The request is not valid: {detail}.", hint: "Check the request against the API documentation; update mopm if it is old."}];
+  ERROR_CODE_INVALID_NAME = 2 [(error) = {status: 400, message: "'{name}' is not a valid package name.", hint: "Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter."}];
+  ERROR_CODE_INVALID_VERSION = 3 [(error) = {status: 400, message: "'{version}' is not a valid version.", hint: "A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported."}];
+  ERROR_CODE_UPLOAD_INVALID = 4 [(error) = {status: 400, message: "The upload does not match what was declared: {detail}.", hint: "Begin a new upload with the real file name, sha256 and size."}];
+  ERROR_CODE_TOKEN_MISSING = 5 [(error) = {status: 401, message: "This request needs a token.", hint: "Run 'mopm login' or pass a token."}];
+  ERROR_CODE_TOKEN_UNKNOWN = 6 [(error) = {status: 401, message: "The token is not recognised.", hint: "Create a new token with 'mopm token create', or run 'mopm login'."}];
+  ERROR_CODE_TOKEN_EXPIRED = 7 [(error) = {status: 401, message: "The token expired at {expires_at}.", hint: "Create a new token."}];
+  ERROR_CODE_TOKEN_REVOKED = 8 [(error) = {status: 401, message: "The token was revoked.", hint: "Create a new token."}];
+  ERROR_CODE_STALE_SESSION = 9 [(error) = {status: 401, message: "This action needs a login from the last 15 minutes.", hint: "Run 'mopm login' again."}];
+  ERROR_CODE_OIDC_TOKEN_INVALID = 10 [(error) = {status: 401, message: "The CI identity token was rejected: {detail}.", hint: "Check the audience and that the job has permission to request an identity token."}];
+  ERROR_CODE_SCOPE_MISSING = 11 [(error) = {status: 403, message: "The token does not have the '{scope}' scope for '{name}'.", hint: "Create a token with that scope and that package."}];
+  ERROR_CODE_NOT_OWNER = 12 [(error) = {status: 403, message: "You are not an owner of '{name}'.", hint: "Use a token of an account that can write the namespace."}];
+  ERROR_CODE_NAME_RESERVED = 13 [(error) = {status: 403, message: "'{name}' is {what}.", hint: "Choose another name."}];
+  ERROR_CODE_OIDC_NOT_TRUSTED = 14 [(error) = {status: 403, message: "No trusted publisher of '{name}' matches this CI identity.", hint: "Register the repository, workflow and environment as a trusted publisher of the package."}];
+  ERROR_CODE_LIMIT_EXCEEDED = 15 [(error) = {status: 403, message: "Adding this file would put '{name}' over its storage limit of {limit} bytes; {remaining} bytes are left.", hint: "Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size."}];
+  ERROR_CODE_PACKAGE_NOT_FOUND = 16 [(error) = {status: 404, message: "There is no package '{name}'.", hint: "Check the spelling; a package is created by publishing it."}];
+  ERROR_CODE_VERSION_NOT_FOUND = 17 [(error) = {status: 404, message: "'{name}' has no version '{version}'.", hint: "List the versions with 'mopm info {name}'."}];
+  ERROR_CODE_DEVICE_CODE_UNKNOWN = 18 [(error) = {status: 404, message: "The device code is not recognised.", hint: "Start the login again."}];
+  ERROR_CODE_TOKEN_NOT_FOUND = 19 [(error) = {status: 404, message: "There is no such token.", hint: "List yours with 'mopm token list'."}];
+  ERROR_CODE_PUBLISH_NOT_FOUND = 20 [(error) = {status: 404, message: "There is no such publish.", hint: "Publish ids are only valid for the caller who made them."}];
+  ERROR_CODE_GROUP_NOT_FOUND = 21 [(error) = {status: 404, message: "There is no such group.", hint: "Group ids are only valid for the caller who made them, or for an owner of every package in the group."}];
+  ERROR_CODE_VERSION_EXISTS = 22 [(error) = {status: 409, message: "'{name}' {version} already exists (sha256 {sha256}); versions are immutable.", hint: "Publish a new version."}];
+  ERROR_CODE_UPLOAD_USED = 23 [(error) = {status: 409, message: "The upload '{upload_id}' was already used.", hint: "Begin a new upload."}];
+  ERROR_CODE_GROUP_NOT_OPEN = 24 [(error) = {status: 409, message: "Group {group_id} is {status}; only an open group can be aborted.", hint: "Create the group again with the same request to open it again."}];
+  ERROR_CODE_GROUP_CONFLICT = 25 [(error) = {status: 409, message: "The group cannot be created: {detail}.", hint: "Abort or finish your other groups, or publish a new version.", reasons: ["number_held", "group_failed", "open_cap", "supersede_cap", "takeover_blocked", "number_taken", "overlap_refused"]}];
+  ERROR_CODE_GROUP_COMMIT_REFUSED = 26 [(error) = {status: 409, message: "The group cannot be committed: {detail}.", hint: "Read the group with its status request; create it again with the same request to open it again."}];
+  ERROR_CODE_GROUP_NOT_SETTLED = 27 [(error) = {status: 409, message: "Group {group_id} cannot be yanked or unyanked now: {detail}.", hint: "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request."}];
+  ERROR_CODE_INVALID_TRANSITION = 28 [(error) = {status: 409, message: "Cannot {action} '{name}' {version}: it is {state}.", hint: "Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes."}];
+  ERROR_CODE_PAYLOAD_TOO_LARGE = 29 [(error) = {status: 413, message: "The file is larger than the limit of {limit} bytes.", hint: "Reduce the package size."}];
+  ERROR_CODE_RATE_LIMITED = 30 [(error) = {status: 429, message: "Too many requests.", hint: "Wait {retry_after} seconds; the Retry-After header says how long."}];
+  ERROR_CODE_INTERNAL_ERROR = 31 [(error) = {status: 500, message: "Something went wrong on our side.", hint: "Try again; report the request id if it persists."}];
+  ERROR_CODE_READ_ONLY_MODE = 32 [(error) = {status: 503, message: "The registry is read-only right now; new uploads are refused.", hint: "Installs still work. Try again later."}];
+  ERROR_CODE_UNAVAILABLE = 33 [(error) = {status: 503, message: "The registry is temporarily unavailable.", hint: "Try again shortly."}];
+  ERROR_CODE_ROUTE_NOT_FOUND = 34 [(error) = {status: 404, message: "There is no such operation.", hint: "Check the request against the API documentation; update mopm if it is old."}];
+  ERROR_CODE_INVALID_NAMESPACE = 35 [(error) = {status: 400, message: "'{namespace}' is not a valid namespace.", hint: "A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters."}];
+  ERROR_CODE_NOT_NAMESPACE_MEMBER = 36 [(error) = {status: 403, message: "You cannot write in '{namespace}'.", hint: "Ask an owner of '{namespace}' to run 'mopm org add {namespace} <your mopm username>'."}];
+  ERROR_CODE_NAMESPACE_RESERVED = 37 [(error) = {status: 403, message: "'{namespace}' is reserved.", hint: "Publish in an organization's namespace."}];
+  ERROR_CODE_NAMESPACE_NOT_FOUND = 38 [(error) = {status: 404, message: "There is no namespace '{namespace}'.", hint: "A user's namespace is made at their first 'mopm login'; an organization's by one of its admins."}];
+  ERROR_CODE_NAMESPACE_TAKEN = 39 [(error) = {status: 409, message: "'{namespace}' is taken.", hint: "Choose the namespace of another GitHub organization."}];
+  ERROR_CODE_NOT_ORG_ADMIN = 40 [(error) = {status: 403, message: "You are not an active admin of the GitHub organization '{namespace}'.", hint: "An admin of the GitHub organization runs 'mopm org create {namespace}'; an organization that restricts OAuth apps approves the mopm registry first."}];
+  ERROR_CODE_GITHUB_ACCOUNT_MISMATCH = 41 [(error) = {status: 403, message: "The GitHub account that approved is not the one logged in to mopm.", hint: "Approve with the GitHub account you logged in with, or run 'mopm login' with the other one."}];
+  ERROR_CODE_NOT_NAMESPACE_OWNER = 42 [(error) = {status: 403, message: "You are not an owner of '{namespace}'.", hint: "Ask an owner of '{namespace}'; 'mopm org list {namespace}' shows them."}];
+  ERROR_CODE_LAST_OWNER = 43 [(error) = {status: 409, message: "'{user}' is the last owner of '{namespace}'.", hint: "Make another member an owner first."}];
+  ERROR_CODE_MEMBER_NOT_FOUND = 44 [(error) = {status: 404, message: "'{user}' is not a member of '{namespace}'.", hint: "List the members with 'mopm org list {namespace}'."}];
+  ERROR_CODE_USER_NOT_FOUND = 45 [(error) = {status: 404, message: "There is no mopm user '{user}'.", hint: "A user gets their name at their first 'mopm login'."}];
+}
+
+// Why a publish was rejected after it was accepted (`PublishStatus`).
+// Not an HTTP error. Clients treat an unknown value as a generic rejection.
+enum RejectionCode {
+  REJECTION_CODE_UNSPECIFIED = 0;
+  REJECTION_CODE_ARCHIVE_INVALID = 1;
+  REJECTION_CODE_PATH_NOT_ALLOWED = 2;
+  REJECTION_CODE_LIMIT_EXCEEDED = 3;
+  REJECTION_CODE_MANIFEST_INVALID = 4;
+  REJECTION_CODE_FILENAME_MISMATCH = 5;
+  REJECTION_CODE_SHA256_MISMATCH = 6;
+  REJECTION_CODE_DEPENDENCY_NOT_ALLOWED = 7;
+}

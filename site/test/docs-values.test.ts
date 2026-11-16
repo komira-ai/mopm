@@ -177,7 +177,9 @@ describe('allowed values and defaults', () => {
   });
 
   test('the reserved package names the page gives as examples are reserved', () => {
-    const words = (name: string) => [...found(manifest, new RegExp(`const ${name} = \\[_\\]\\[\\]const u8\\{([\\s\\S]*?)\\};`), name).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    // The lists live in src/core/names.zig, which the manifest's checks call.
+    const names = read('src/core/names.zig');
+    const words = (name: string) => [...found(names, new RegExp(`const ${name} = \\[_\\]\\[\\]const u8\\{([\\s\\S]*?)\\};`), name).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
     const name = row(section('`[package]`'), 'name')[3];
     const fromPage = (kind: string) => found(name, new RegExp(`${kind} \\(([^)]*)\\)`), kind);
     const keywordsOnPage = fromPage('a Mojo keyword');
@@ -193,13 +195,14 @@ describe('allowed values and defaults', () => {
     expect([...cell.matchAll(/`([a-z0-9-]+)`/g)].map((m) => m[1])).toEqual(['noarch', ...subdirs]);
   });
 
-  test('the lock versions the page writes are the ones lock.zig writes and reads', () => {
+  test('the lock version the page writes is the one lock.zig writes and reads', () => {
     const lock = read('src/core/lock.zig');
-    const v1 = found(lock, /pub const lock_version: i64 = (\d+);/, 'lock_version');
-    const v2 = found(lock, /pub const lock_version_2: i64 = (\d+);/, 'lock_version_2');
-    expect(row(section('The top level'), 'lock_version')[3]).toBe(`\`${v1}\` or \`${v2}\``);
+    const v = found(lock, /pub const lock_version: i64 = (\d+);/, 'lock_version');
+    expect(row(section('The top level'), 'lock_version')[3]).toBe(`\`${v}\``);
     expect(lock).toContain('this mopm reads {d}. Update mopm.');
-    expect(section('mopm.lock')).toContain(`\`lock_version\` ${v1} is written for a project with \`[toolchain] mojo\`, and ${v2} for \`[package] mojo\``);
+    expect(lock).toContain("mopm.lock predates namespaces (lock_version {d}); run 'mopm lock'");
+    expect(section('mopm.lock')).toContain(`mopm writes \`lock_version\` ${v}, for every project`);
+    expect(section('mopm.lock')).toContain("`mopm.lock predates namespaces (lock_version <n>); run 'mopm lock'`");
   });
 });
 

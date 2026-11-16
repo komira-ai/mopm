@@ -20,7 +20,8 @@ const publishZig = read('src/cli/group_publish.zig');
 // The flag parser, the usage string and the wait defaults of `mopm publish --staged` live in group_flags.zig.
 const flagsZig = read('src/cli/group_flags.zig');
 const readmesZig = read('src/cli/group_readmes.zig');
-const yankZig = read('src/cli/yank_cmd.zig');
+// The generated command table: `group yank`, `group unyank` and `group status` are its entries.
+const commandsZig = read('src/cli/registry_commands.zig');
 const flagsTs = read('service/api/src/publish/flags.ts');
 const opsTs = read('service/api/src/ops/group-ops.ts');
 const opsMainTs = read('service/api/src/ops/group-ops-main.ts');
@@ -112,37 +113,25 @@ describe.each([
   });
 });
 
-describe('docs: mopm yank --group', () => {
+describe('docs: mopm group yank', () => {
   const sec = section(doc, 'Yanking a group');
   const block = fences(sec)[0];
-  const source = flagsOf(yankZig, ['--unyank']);
+  const names = ['group yank', 'group unyank', 'group status'];
 
-  test('the synopsis is the two usage lines of the command', () => {
-    expect(block.trim().split('\n').map(squash)).toEqual(usageCommands(yankZig));
-  });
-
-  test('the synopsis names every flag the parser takes, and no other', () => {
-    expect(flagTokens(block)).toEqual(source);
-  });
-
-  test('the reason is at most as long as the CLI takes, and a yank needs one', () => {
-    const max = /max_reason: usize = (\d+)/.exec(yankZig)![1];
-    expect(yankZig).toContain(`--reason is 1 to ${max} characters`);
-    expect(sec).toContain(`1 to ${max} characters`);
-    expect(yankZig).toContain('--reason is for a yank');
-    expect(sec).toContain('is refused with `--unyank`');
+  test('the synopsis has one line for each generated command, in the table', () => {
+    const lines = block.trim().split('\n').map(squash);
+    expect(lines.map((l) => /^mopm ([a-z]+ [a-z]+) /.exec(l)![1])).toEqual(names);
+    for (const n of names) expect([n, commandsZig.includes(`.name = "${n}",`)]).toEqual([n, true]);
   });
 
   test('a group that is not visible is refused with group_not_settled (409)', () => {
-    expect(yankZig).toContain('group_not_settled');
     expect(sec).toContain('409');
     expect(sec).toContain('`group_not_settled`');
     expect(sec).toContain('Only a group that is `visible` can be yanked');
   });
 
-  test('the command waits for the states the registry reports, and says a group yank is not one flip', () => {
-    expect(yankZig).toContain('"restored"');
-    expect(yankZig).toContain('"yanked"');
+  test('the commands do not wait, the states are the registry\'s, and a group yank is not one flip', () => {
+    expect(sec).toContain('do not wait');
     expect(sec).toContain('`yanked`');
     expect(sec).toContain('`restored`');
     expect(sec).toContain('is not one flip');
@@ -188,9 +177,9 @@ describe('docs: values and outcomes', () => {
     }
   });
 
-  test('--registry has no default on the three commands', () => {
-    for (const z of [stageZig, flagsZig, yankZig]) expect(z).toContain('there is no default');
-    expect(doc.match(/no default/gi)!.length).toBeGreaterThanOrEqual(3);
+  test('--registry has no default on stage and publish --staged', () => {
+    for (const z of [stageZig, flagsZig]) expect(z).toContain('there is no default');
+    expect(doc.match(/no default/gi)!.length).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -227,13 +216,12 @@ describe('docs: errors and exit status', () => {
     expect(doc).toContain(`| \`mopm stage\` | ${m[1]} | ${m[2]} | ${m[3]} |`);
   });
 
-  test('publish --staged and yank --group answer a usage error with 2, and the table says so', () => {
-    for (const z of [publishZig, yankZig]) expect(z).toMatch(/writeAll\(usage\) catch \{\};\s*return 2;/);
-    expect(yankZig).toContain('return if (y.run() == .done) 0 else 1;');
+  test('publish --staged answers a usage error with 2, and the table says so', () => {
+    expect(publishZig).toMatch(/writeAll\(usage\) catch \{\};\s*return 2;/);
     expect(publishZig).toContain('nothing to publish: every member of the plan is skipped');
     const exit = section(doc, 'Exit status');
     expect(exit).toMatch(/\| `mopm publish --staged` \|[^|]+\|[^|]+\| usage error \|/);
-    expect(exit).toMatch(/\| `mopm yank --group` \|[^|]+\|[^|]+\| usage error \|/);
+    expect(exit).toMatch(/\| `mopm group yank`, `unyank`, `status` \|[^|]+\|[^|]+\| usage error \|/);
   });
 });
 
@@ -379,7 +367,6 @@ describe('CHANGELOG.md: group publish', () => {
   test('names the three commands as their usage strings give them', () => {
     expect(text).toContain(usageCommands(stageZig)[0]);
     expect(text).toContain(usageCommands(flagsZig)[0]);
-    expect(text).toContain(usageCommands(yankZig)[0]);
     expect(text).toContain('`--unyank`');
   });
 

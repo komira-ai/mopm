@@ -4,7 +4,8 @@
 //! fixtures): read-only token, no `write` outside
 //! the id-token grants, secrets reach a step only through env, only
 //! GitHub-owned actions pinned by SHA, no step that prints a secret-bearing
-//! variable, and a syntax check of every `run:` script. `repoProblems` is the
+//! variable, a step that runs cdk sets AWS_REGION or AWS_DEFAULT_REGION, and a
+//! syntax check of every `run:` script. `repoProblems` is the
 //! whole-repository half: the promotion chain, the guard jobs of deploy.yml and
 //! e2e.yml, and oidc-subject-check.yml.
 //!
@@ -23,9 +24,9 @@ const Out = c.Out;
 pub const prefix = "workflow-lint: ";
 
 const oidc_files = [_][]const u8{ "deploy.yml", "e2e.yml", "promote.yml", "oidc-subject-check.yml" };
-/// farm.yml may also hold the id-token grant, and one action outside GitHub's own
-/// (komira's farm-connect, pinned by commit); hygiene.zig holds it to its conditions.
-const farm_file = "farm.yml";
+/// farm.yml (the linux farm build) and farm-macos.yml (the macOS checks on the farm's Mac workers) may also hold the id-token grant,
+/// and one action outside GitHub's own (komira's farm-connect, pinned by commit); hygiene.zig holds each to its conditions.
+const farm_files = [_][]const u8{ "farm.yml", "farm-macos.yml" };
 /// kpin-update.yml (the weekly pin update) holds the two write grants it needs to push its branch
 /// and open its pull request with the default token, nothing else, and only on a schedule or a
 /// manual run: checked below.
@@ -174,7 +175,7 @@ fn checkPerm(a: Allocator, f: []const u8, base: []const u8, path: []const []cons
                 if (std.mem.eql(u8, base, kpin_file) and c.containsStr(&kpin_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
                 if (std.mem.eql(u8, base, release_file) and c.containsStr(&release_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
                 if (std.mem.eql(u8, base, advisories_file) and std.mem.eql(u8, k, "issues") and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
-                if (!(std.mem.eql(u8, k, "id-token") and (isOidc(base) or std.mem.eql(u8, base, farm_file)))) {
+                if (!(std.mem.eql(u8, k, "id-token") and (isOidc(base) or c.containsStr(&farm_files, base)))) {
                     try c.problem(a, out, prefix ++ "{s}: {s}.{s}: write is not allowed", .{ f, try joinPath(a, path), k });
                 }
             }
@@ -387,7 +388,7 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
         if (steps != .array) continue;
         for (steps.array.items, 0..) |st, i| {
             const uses = c.str(c.get(st, "uses"));
-            const farm_connect = std.mem.eql(u8, base, farm_file) and uses != null and pinned(uses.?, "komira-ai/komira/.github/actions/farm-connect");
+            const farm_connect = c.containsStr(&farm_files, base) and uses != null and pinned(uses.?, "komira-ai/komira/.github/actions/farm-connect");
             if (uses) |u| {
                 // release.yml signs with Sigstore's installer (not GitHub-owned), pinned by commit like the rest.
                 const cosign_installer = std.mem.eql(u8, base, release_file) and pinned(u, "sigstore/cosign-installer");
@@ -400,6 +401,9 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
             const run = c.str(c.get(st, "run")) orelse continue;
             for (try leakyLines(a, run)) |l| {
                 try c.problem(a, out, prefix ++ "{s}: {s} step {d}: prints a secret-bearing variable: {s}", .{ f, jn, i, l });
+            }
+            if (try runsCdk(a, run) and !setsRegion(&.{ c.get(st, "env"), c.get(job, "env"), c.get(doc, "env") })) {
+                try c.problem(a, out, prefix ++ "{s}: {s} step {d}: runs cdk with no AWS_REGION or AWS_DEFAULT_REGION in its env, its job's or the workflow's (cdk replaces CDK_DEFAULT_REGION with the region it resolves, on a hosted runner in AWS the runner's own)", .{ f, jn, i });
             }
             if (c.refsSecrets(run)) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: run script references secrets.*", .{ f, jn, i });
             // Event fields and inputs reach scripts through env:, never by interpolation.
@@ -417,10 +421,40 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
     }
 }
 
+// ---- the region of a cdk command ------------------------------------------------
+//
+// The cdk command line gives the app CDK_DEFAULT_REGION itself, from the region the AWS SDK resolves: AWS_REGION,
+// AWS_DEFAULT_REGION, ~/.aws/config, then the host's instance metadata. A CDK_DEFAULT_REGION a step sets is replaced, so on
+// a hosted runner in AWS the app sees the runner's region. A step that runs cdk names the region in one of the two
+// variables the SDK reads first.
+
+const cdk_region_keys = [_][]const u8{ "AWS_REGION", "AWS_DEFAULT_REGION" };
+
+/// Whether `script` runs the cdk command line: the word `cdk` then a space, at the start of a command (the start of a
+/// line, or after a space, a tab, `;`, `&`, `|` or `(`), on a line that is not a comment.
+fn runsCdk(a: Allocator, script: []const u8) !bool {
+    const live = try c.nonCommentLines(a, script);
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, live, i, "cdk ")) |p| : (i = p + 1) {
+        if (p == 0 or std.mem.indexOfScalar(u8, " \t\n;&|(", live[p - 1]) != null) return true;
+    }
+    return false;
+}
+
+/// Whether one of the env mappings sets AWS_REGION or AWS_DEFAULT_REGION to a non-empty string (the SDK reads an empty
+/// one as unset).
+fn setsRegion(envs: []const ?Value) bool {
+    for (envs) |e| {
+        for (cdk_region_keys) |k| {
+            if (c.str(c.get(e, k))) |v| if (v.len != 0) return true;
+        }
+    }
+    return false;
+}
+
 fn lessThan(_: void, x: []const u8, y: []const u8) bool {
     return std.mem.lessThan(u8, x, y);
 }
-
 
 // ---- advisories.yml: the daily scan, report only ---------------------------------------
 

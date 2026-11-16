@@ -29,7 +29,7 @@ import {
 } from './group-store';
 import type { RawVersionPort } from './raw-port';
 import { applyEvent, IllegalTransition, publishesVersion, type GroupEvent, type UserEvent, type VersionEvent } from './state';
-import { auditSortKey, type Store } from './store';
+import { auditSortKey, type RowDeleter, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
 
@@ -134,7 +134,7 @@ class DynamoGroupReader implements GroupReader {
   }
 }
 
-export class DynamoStore implements Store, GroupStore {
+export class DynamoStore implements Store, GroupStore, RowDeleter {
   private readonly funnel: VersionFunnel;
   /** The rows as stored (src/raw-port.ts): for the group module and for tests that must see the stored form. */
   readonly raw: RawVersionPort;
@@ -610,6 +610,15 @@ export class DynamoStore implements Store, GroupStore {
     return items
       .map((i): OwnerRecord => ({ name: i.name, github_id: i.github_id_num, handle: i.handle, added_at: i.added_at }))
       .sort((a, b) => a.github_id - b.github_id);
+  }
+
+  // The held deletion tool's deletes (RowDeleter, src/store.ts): unconditional, so a row already gone is no error. The tables
+  // refuse DeleteItem to every role but the ones that may delete (service/infra/stacks/lib/data-stack.ts).
+  async deleteVersionRow(name: string, canonical: string): Promise<void> {
+    await this.doc.send(new DeleteCommand({ TableName: this.tables.versions, Key: { name, version: canonical } }));
+  }
+  async deletePackageRow(name: string): Promise<void> {
+    await this.doc.send(new DeleteCommand({ TableName: this.tables.packages, Key: { name } }));
   }
 
   async appendAudit(entry: AuditEntry): Promise<void> {

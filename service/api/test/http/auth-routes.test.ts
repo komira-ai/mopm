@@ -4,13 +4,17 @@ import {
   authTablesFor,
   DeviceLogin,
   DynamoAuthStore,
+  DynamoNamespaceStore,
   GithubJwtVerifier,
   HttpGitHubApi,
   MemoryAuthStore,
+  MemoryNamespaceStore,
   OidcExchange,
+  OrgRegistration,
   ownedPackagesFrom,
   TokenService,
   type AuthStore,
+  type NamespaceStore,
 } from '../../src/auth';
 import type { AuthServices } from '../../src/http/auth-routes';
 import { route, type HttpRequest, type HttpResponse, type RouterDeps } from '../../src/http/router';
@@ -45,12 +49,15 @@ function world(backing: Backing, over: { services?: Partial<AuthServices> | null
   let doc: FakeAuthDoc | undefined;
   let store: AuthStore;
   let owned: (id: number) => Promise<string[]>;
+  let namespaces: NamespaceStore;
   if (backing === 'memory') {
     store = new MemoryAuthStore();
+    namespaces = new MemoryNamespaceStore();
     owned = async (id) => (id === 4242 ? ['alpha', 'beta_pkg'] : []);
   } else {
     doc = new FakeAuthDoc({ pageSize: 2, grants: LAMBDA_GRANTS });
     store = new DynamoAuthStore(doc, authTablesFor('t'));
+    namespaces = new DynamoNamespaceStore(doc, authTablesFor('t').namespaces, authTablesFor('t').namespace_members);
     for (const n of ['alpha', 'beta_pkg']) doc.seed('owners', { name: n, github_id: '4242', github_id_num: 4242 });
     owned = ownedPackagesFrom(doc, 'mopm-t-owners');
   }
@@ -64,7 +71,8 @@ function world(backing: Backing, over: { services?: Partial<AuthServices> | null
       verifier: new GithubJwtVerifier({ audiences: ['mopm.dev'], now: clock.now, jwks: async () => ({ keys: [key.jwk] }) }),
     }),
     devices: async () =>
-      new DeviceLogin({ store, github: new HttpGitHubApi('Iv1.testclientid', github.fetchFn), now: clock.now, require2fa: over.require2fa }),
+      new DeviceLogin({ store, namespaces, github: new HttpGitHubApi('Iv1.testclientid', github.fetchFn), now: clock.now, require2fa: over.require2fa }),
+    registration: async () => new OrgRegistration({ store, namespaces, github: new HttpGitHubApi('Iv1.testclientid', github.fetchFn), now: clock.now }),
     ...over.services,
   };
   const deps: RouterDeps = { store: registry, stage: 'beta', version: 'v', commit: 'c', readOnly: false, ...(over.services === null ? {} : { auth: services }) };

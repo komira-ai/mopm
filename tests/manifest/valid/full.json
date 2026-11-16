@@ -1,6 +1,6 @@
 {
   "package": {
-    "name": "http_client",
+    "name": "example/http_client",
     "version": "0.4.0",
     "description": "HTTP/1.1 client",
     "license": "Apache-2.0",
@@ -11,12 +11,12 @@
     "mojo": ["1.0.0"]
   },
   "dependencies": [
-    {"name": "http_core", "version": "1.2"},
-    {"name": "tls", "version": "0.9"},
-    {"name": "local_util", "path": "../local_util"}
+    {"name": "example/http_core", "version": "1.2"},
+    {"name": "example/tls", "version": "0.9"},
+    {"name": "example/local_util", "path": "../local_util"}
   ],
   "dev-dependencies": [
-    {"name": "mopm_test", "version": "0.1"}
+    {"name": "example/mopm_test", "version": "0.1"}
   ],
   "native-dependencies": [
     {"name": "zlib", "version": ">=1.2", "kind": "shared", "mode": "link"}

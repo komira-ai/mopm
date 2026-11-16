@@ -1,0 +1,9 @@
+[package]
+name = "example/app"
+version = "0.1.0"
+
+[dependencies]
+"alice/json" = "1"
+
+[dev-dependencies]
+"komira-ai/json" = "0.1"

@@ -12,7 +12,7 @@ import type { Result, SearchQuery } from '../api.js';
 import { type Doc, h } from '../doc.js';
 import { formatDate } from '../format.js';
 import { internalHref } from '../links.js';
-import { isCanonicalName, packagePath, searchPath } from '../routes.js';
+import { packagePath, splitFullName, searchPath } from '../routes.js';
 import type { PackageList, PackageSummary } from '../types.js';
 
 export const RECENT_LIMIT = 8;
@@ -41,14 +41,15 @@ function browseLink<N>(doc: Doc<N>, text: string): N {
 }
 
 function item<N>(doc: Doc<N>, p: PackageSummary & { latest: string }): N {
-  const name = isCanonicalName(p.name)
-    ? h(doc, 'a', { href: internalHref(packagePath(p.name)), class: 'recent-name' }, p.name)
+  const full = splitFullName(p.name);
+  const name = full !== null
+    ? h(doc, 'a', { href: internalHref(packagePath(full)), class: 'recent-name' }, p.name)
     : h(doc, 'span', { class: 'recent-name' }, p.name);
   return h(
     doc,
     'li',
     null,
-    h(doc, 'span', { class: glyphClass(p.name), 'aria-hidden': 'true' }, initials(p.name)),
+    h(doc, 'span', { class: glyphClass(p.name), 'aria-hidden': 'true' }, initials(full?.name ?? p.name)),
     h(doc, 'p', { class: 'recent-head' }, name, ' ', h(doc, 'span', { class: 'recent-ver' }, h(doc, 'span', { class: 'visually-hidden' }, 'version '), p.latest)),
     p.description ? h(doc, 'p', { class: 'recent-sum' }, p.description) : null,
     h(doc, 'p', { class: 'recent-when' }, 'updated ', h(doc, 'time', { datetime: p.updated_at }, formatDate(p.updated_at))),

@@ -3,6 +3,7 @@ import { deflateRawSync } from 'node:zlib';
 import { crc32 } from '../../src/validate/zip';
 import { zstdFrame } from '../../src/zstd';
 import type { PublishExpectation } from '../../src/validate';
+import { condaNameOf, splitFullName } from '../../src/names';
 
 /** Test-side archive writers. Nothing here is a committed binary: every archive is generated per test. */
 
@@ -130,7 +131,11 @@ export function zip(items: ZipItem[]): Buffer {
   return Buffer.concat([...locals, cd, eocd]);
 }
 
+/** The import name of a package name: the part after `/` of a full name `<namespace>/<name>`, else the name itself. */
+export const importNameOf = (name: string): string => splitFullName(name)?.name ?? name;
+
 export interface Spec {
+  /** A flat name (`demo`) or a full name (`acme/demo`): a full name gets schema 2 metadata, the conda name `mojo-acme.demo` and the import name's paths by default. */
   name: string;
   version: string;
   subdir: string;
@@ -175,12 +180,12 @@ export function defaults(over: Partial<Spec> = {}): Spec {
 }
 
 export function mopmDefault(s: Spec): Record<string, unknown> {
-  return { schema: 1, name: s.name, version: s.version, deps: [], native: [] };
+  return { schema: splitFullName(s.name) === undefined ? 1 : 2, name: s.name, version: s.version, deps: [], native: [] };
 }
 
 export function indexDefault(s: Spec): Record<string, unknown> {
   return {
-    name: `mojo-${s.name}`,
+    name: condaNameOf(s.name),
     version: s.version,
     build: `mojo${s.compiler}_0`,
     build_number: 0,
@@ -195,8 +200,8 @@ export function files(s: Spec): [TarItem[], TarItem[]] {
   const mopm = typeof s.mopm === 'string' ? s.mopm : JSON.stringify({ ...mopmDefault(s), ...s.mopm });
   const index = typeof s.index === 'string' ? s.index : JSON.stringify({ ...indexDefault(s), ...s.index });
   const pkg: TarItem[] = [
-    { path: `lib/mojo/${s.name}.mojoc`, data: MOJOC },
-    { path: `lib/mojo/${s.name}.mopm.json`, data: mopm },
+    { path: `lib/mojo/${importNameOf(s.name)}.mojoc`, data: MOJOC },
+    { path: `lib/mojo/${importNameOf(s.name)}.mopm.json`, data: mopm },
   ];
   const info: TarItem[] = [
     { path: 'info/index.json', data: index },
@@ -216,11 +221,11 @@ export function buildConda(over: Partial<Spec> = {}): Built {
   const s = defaults(over);
   const [pkg, info] = files(s);
   const build = `mojo${s.compiler}_0`;
-  const filename = s.filename || `mojo-${s.name}-${s.version}-${build}.conda`;
+  const filename = s.filename || `${condaNameOf(s.name)}-${s.version}-${build}.conda`;
   const bytes = zip([
     { name: 'metadata.json', data: Buffer.from(s.condaMeta) },
-    { name: `info-${s.name}-${s.version}-${build}.tar.zst`, data: s.compress(s.infoTar(tar(info))) },
-    { name: `pkg-${s.name}-${s.version}-${build}.tar.zst`, data: s.compress(s.pkgTar(tar(pkg))) },
+    { name: `info-${condaNameOf(s.name)}-${s.version}-${build}.tar.zst`, data: s.compress(s.infoTar(tar(info))) },
+    { name: `pkg-${condaNameOf(s.name)}-${s.version}-${build}.tar.zst`, data: s.compress(s.pkgTar(tar(pkg))) },
   ]);
   return { bytes, req: { name: s.name, version: s.version, subdir: s.subdir, filename } };
 }
@@ -230,7 +235,7 @@ export function buildTarBz2(over: Partial<Spec> = {}): Built {
   const s = defaults(over);
   const [pkg, info] = files(s);
   const build = `mojo${s.compiler}_0`;
-  const filename = s.filename || `mojo-${s.name}-${s.version}-${build}.tar.bz2`;
+  const filename = s.filename || `${condaNameOf(s.name)}-${s.version}-${build}.tar.bz2`;
   return { bytes: bzip2(tar([...info, ...pkg])), req: { name: s.name, version: s.version, subdir: s.subdir, filename } };
 }
 

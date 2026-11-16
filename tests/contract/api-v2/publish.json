@@ -1,0 +1,720 @@
+{
+  "cases": [
+    {
+      "name": "begin an upload",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+          "size": 4096
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+          "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+          "put_headers": {
+            "content-length": "4096",
+            "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+          },
+          "expires_at": "2026-11-14T12:05:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "commit",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "upload_ids": [
+            "upl_4f1d9c27b8a5e3604d7c1b92a8e5f3d6"
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "status_url": "/api/v2/publishes/pub_64a675c4d38aa322a79abeb12d75a025"
+        }
+      }
+    },
+    {
+      "name": "commit with the display fields and a source_commit",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "upload_ids": [
+            "upl_4f1d9c27b8a5e3604d7c1b92a8e5f3d6"
+          ],
+          "description": "A JSON parser for Mojo.",
+          "license": "Apache-2.0",
+          "repository": "https://github.com/alice/json",
+          "homepage": "https://alice.example/json",
+          "keywords": [
+            "json",
+            "parser"
+          ],
+          "readme": "# json\n\nParse JSON.\n",
+          "source_commit": "9f2c4b7e1d0a83c5b6e7f8091a2b3c4d5e6f7081"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "status_url": "/api/v2/publishes/pub_64a675c4d38aa322a79abeb12d75a025"
+        }
+      }
+    },
+    {
+      "name": "status pending",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "pending"
+        }
+      }
+    },
+    {
+      "name": "status validating",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "validating"
+        }
+      }
+    },
+    {
+      "name": "status indexing",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "indexing"
+        }
+      }
+    },
+    {
+      "name": "status published",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "published"
+        }
+      }
+    },
+    {
+      "name": "status published with a warning",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "published",
+          "warnings": [
+            "native dependency 'zlib-ng' is not in the copy of conda-forge's package names"
+          ]
+        }
+      }
+    },
+    {
+      "name": "rejected: archive_invalid",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "rejected",
+          "rejection_code": "archive_invalid",
+          "message": "The archive is not a valid .conda file."
+        }
+      }
+    },
+    {
+      "name": "rejected: path_not_allowed",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "rejected",
+          "rejection_code": "path_not_allowed",
+          "message": "The archive holds 'etc/passwd', outside the allowed paths."
+        }
+      }
+    },
+    {
+      "name": "rejected: limit_exceeded",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "rejected",
+          "rejection_code": "limit_exceeded",
+          "message": "The archive expands to more than the limit."
+        }
+      }
+    },
+    {
+      "name": "rejected: manifest_invalid",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "rejected",
+          "rejection_code": "manifest_invalid",
+          "message": "The manifest in the archive names another package."
+        }
+      }
+    },
+    {
+      "name": "rejected: filename_mismatch",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "rejected",
+          "rejection_code": "filename_mismatch",
+          "message": "The file name does not match the package inside."
+        }
+      }
+    },
+    {
+      "name": "rejected: sha256_mismatch",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "rejected",
+          "rejection_code": "sha256_mismatch",
+          "message": "The sha256 of the archive differs from the one declared."
+        }
+      }
+    },
+    {
+      "name": "rejected: dependency_not_allowed",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "rejected",
+          "rejection_code": "dependency_not_allowed",
+          "message": "The dependency 'flat_pkg' is not a full name."
+        }
+      }
+    },
+    {
+      "name": "yank",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        },
+        "body": {
+          "yanked": true,
+          "reason": "crashes on empty input"
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "version": "1.1.0",
+          "state": "yanked",
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "yank_reason": "crashes on empty input"
+        }
+      }
+    },
+    {
+      "name": "yank with a publish token",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        },
+        "body": {
+          "yanked": true,
+          "reason": "crashes on empty input"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "version": "1.1.0",
+          "state": "yanked",
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "yank_reason": "crashes on empty input"
+        }
+      }
+    },
+    {
+      "name": "unyank",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        },
+        "body": {
+          "yanked": false
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "version": "1.1.0",
+          "state": "published",
+          "published_at": "2026-11-10T08:30:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "an upload begun with the flat file name",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+          "size": 4096
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+          "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+          "put_headers": {
+            "content-length": "4096",
+            "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+          },
+          "expires_at": "2026-11-14T12:05:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "an upload begun for a file over 100 MB",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+          "size": 100000001
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+          "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+          "put_headers": {
+            "content-length": "4096",
+            "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+          },
+          "expires_at": "2026-11-14T12:05:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "an upload begun with a yank-only token",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "subdir": "noarch",
+          "filename": "mojo-alice.json-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "891c6e40b9d83d660931c54afd657a2eb62212dcae23797a88e708b3a3a8c447",
+          "size": 4096
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "upload_id": "upl_4f1d9c27b8a5e3604d7c1b92a8e5f300",
+          "put_url": "https://bucket.invalid/quarantine/upl_4f1d9c27b8a5e3604d7c1b92a8e5f300/mojo-alice.json-1.0.0-mojo1.0.0_0.conda?expires=300",
+          "put_headers": {
+            "content-length": "4096",
+            "x-amz-checksum-sha256": "iRxuQLnYPWYJMcVK/WV6LrYiEtyuI3l6iOcIs6OoxEc="
+          },
+          "expires_at": "2026-11-14T12:05:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a commit with no uploads",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "upload_ids": []
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "status_url": "/api/v2/publishes/pub_64a675c4d38aa322a79abeb12d75a025"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a commit answered with a status url of v1",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json",
+          "version": "1.0.0"
+        },
+        "body": {
+          "upload_ids": [
+            "upl_4f1d9c27b8a5e3604d7c1b92a8e5f3d6"
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "status_url": "/api/v1/publishes/pub_64a675c4d38aa322a79abeb12d75a025"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a rejected status without a rejection code",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "rejected",
+          "message": "The archive is not a valid .conda file."
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a rejected status with a rejection code that is not one",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "alice/json",
+          "version": "1.0.0",
+          "status": "rejected",
+          "rejection_code": "virus_found",
+          "message": "The archive is not a valid .conda file."
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a status of a package with a flat name",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub_64a675c4d38aa322a79abeb12d75a025",
+          "name": "json",
+          "version": "1.0.0",
+          "status": "pending"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a yank without a reason",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        },
+        "body": {
+          "yanked": true
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "version": "1.1.0",
+          "state": "yanked",
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "yank_reason": "crashes on empty input"
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

@@ -2,9 +2,9 @@
 import { apiBase, condaBase } from '../src/host';
 
 test.each([
-  ['mopm.dev', 'https://api.mopm.dev/api/v1', 'https://conda.mopm.dev/'],
-  ['beta.mopm.dev', 'https://api.beta.mopm.dev/api/v1', 'https://conda.beta.mopm.dev/'],
-  ['gamma.mopm.dev', 'https://api.gamma.mopm.dev/api/v1', 'https://conda.gamma.mopm.dev/'],
+  ['mopm.dev', 'https://api.mopm.dev/api/v2', 'https://conda.mopm.dev/'],
+  ['beta.mopm.dev', 'https://api.beta.mopm.dev/api/v2', 'https://conda.beta.mopm.dev/'],
+  ['gamma.mopm.dev', 'https://api.gamma.mopm.dev/api/v2', 'https://conda.gamma.mopm.dev/'],
 ])('%s maps to its own API and channel', (host, api, conda) => {
   expect(apiBase(host)).toBe(api);
   expect(condaBase(host)).toBe(conda);
@@ -32,4 +32,9 @@ test.each([
 ])('%j has no API', (host) => {
   expect(apiBase(host)).toBeNull();
   expect(condaBase(host)).toBeNull();
+});
+
+test.each(['mopm.dev', 'beta.mopm.dev', 'gamma.mopm.dev'])('%s: the API base is version 2, the one with full names', (host) => {
+  expect(apiBase(host)).toMatch(/\/api\/v2$/);
+  expect(apiBase(host)).not.toContain('/api/v1');
 });

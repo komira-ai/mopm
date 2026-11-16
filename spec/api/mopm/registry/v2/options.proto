@@ -1,0 +1,193 @@
+// The options the protos of the registry API, version 2, carry for what proto3 alone cannot say: the JSON Schema keywords of
+// the contract, the statuses and security of each operation, and the error catalogue. tools/api_gen.zig reads them and writes
+// spec/api/openapi-v2.yaml, the TypeScript types and route table of service/api, and the Zig client of the command line.
+//
+// The JSON of the API is proto3's JSON mapping with these rules, the ones the registry has always served:
+//   - A field's JSON name is its proto name as written (protoc's `preserving_proto_field_name`), never lowerCamelCase.
+//   - Integers (int32, int64, uint32, uint64) are JSON numbers.
+//   - An enum value is the string its `json` option names or, without one, its name with the enum's prefix (the enum's name in
+//     UPPER_SNAKE_CASE and `_`) removed, in lower case: `VERSION_STATE_PUBLISHED` of `VersionState` is `published`. The zero
+//     value, `<PREFIX>_UNSPECIFIED`, is not part of the contract and is never sent.
+//   - A message whose `schema` option says `wrapper: true` has one field, `value`, and its JSON is that field's, as
+//     google.protobuf.StringValue's is a string: `Namespace` is a JSON string, `Keywords` a JSON array.
+//   - A message whose `schema` option says `union: true` has one `oneof`, and its JSON is the JSON of the member that is set,
+//     as google.protobuf.Value's is: `TokenPackages` is an array of full names or the string `all_current`. The members are
+//     told apart by their JSON type, or by a `const`.
+//   - google.protobuf.Empty as a response is an answer with no body.
+//   - A field is absent when it is not set; `nullable` says when it may also be `null`.
+//
+// The HTTP mapping is google.api.http: the path, with `{field}` for a path parameter of the request message; `body: "body"`
+// names the request message's field `body`, which is the JSON body. Every other field of the request message is a query
+// parameter. Each path starts with the `base_path` of the service's `api` option.
+//
+// A message nested in another, or an enum nested in a message, is written inline where it is used in the OpenAPI document; a
+// top-level one is a schema of `components` and is referred to by `$ref`. A leading comment is the description of what it
+// precedes: a message, enum, field, value, rpc or the service.
+syntax = "proto3";
+
+package mopm.registry.v2;
+
+import "google/protobuf/descriptor.proto";
+
+// JSON Schema keywords of a field (or, through `items`, of each item of a repeated field), and what the field is.
+message Field {
+  // In the object's `required` list.
+  bool required = 1;
+  // May be JSON `null` as well as its type.
+  bool nullable = 2;
+  // A path or query parameter: the name of its entry in `components/parameters`.
+  string param = 3;
+  optional string pattern = 4;
+  optional uint64 min_length = 5;
+  optional uint64 max_length = 6;
+  optional int64 minimum = 7;
+  optional int64 maximum = 8;
+  optional string format = 9;
+  optional uint64 min_items = 10;
+  optional uint64 max_items = 11;
+  bool unique_items = 12;
+  // The default, as text the field's type reads: `name` for a string or an enum, `20` for an integer, `true` for a bool.
+  optional string default = 13;
+  // The one value allowed, as text the field's type reads (as `default`).
+  optional string const = 14;
+  // The keywords of each item of a repeated field.
+  Field items = 15;
+}
+
+// One alternative of an object's `oneOf`: the fields it requires.
+message RequiredSet {
+  repeated string required = 1;
+}
+
+// `if` the field `field` is the value `equals` (text its type reads, as `default`), `then` the fields `required` are
+// required.
+message Condition {
+  string field = 1;
+  string equals = 2;
+  repeated string required = 3;
+}
+
+// What a message is in JSON, and the keywords of its object.
+message Schema {
+  // The JSON of the message is that of its one field `value`.
+  bool wrapper = 1;
+  // The JSON of the message is that of the member of its one `oneof` that is set.
+  bool union = 2;
+  // The object is valid when it holds the fields of one of these sets (`oneOf` of `required`).
+  repeated RequiredSet one_of = 3;
+  Condition when = 4;
+}
+
+// One answer of an operation: a success with the rpc's response message, or (`error: true`) an `Error` it names apart from the
+// catalogue's `default`.
+message Response {
+  int32 status = 1;
+  string description = 2;
+  bool error = 3;
+}
+
+// A command of the command line that makes one call of the operation: `mopm <name>`. tools/api_gen.zig writes it into
+// src/cli/registry_commands.zig with its flags, its help text and its help golden (tests/golden/registry).
+message Command {
+  // The words after `mopm`, separated by one space: `org add`.
+  string name = 1;
+  // The fields of the request that are positional arguments, in order: a path or query parameter's name, or a field of
+  // the body. `namespace/name` is the two path parameters `namespace` and `name` written as one `<namespace>/<name>`.
+  repeated string args = 2;
+  // A field of the body this command sends with a fixed value, `field=value`, the value as text the field's type reads
+  // (`yanked=true`). `{cli_version}` in a value is the version of the mopm that sends it.
+  repeated string set = 3;
+  // The value a flag has when it is not given, `field=value` as in `set`.
+  repeated string defaults = 4;
+  // One line for the list of commands.
+  string summary = 5;
+}
+
+// The OpenAPI facts of one rpc. Its `operationId` is its name with the first letter in lower case.
+message Operation {
+  repeated string tags = 1;
+  string summary = 2;
+  // The security schemes the operation accepts, any one of them; none: it needs no token.
+  repeated string security = 3;
+  repeated Response responses = 4;
+  repeated Command commands = 5;
+}
+
+// An entry of the error catalogue (`x-mopm-errors`), on a value of `ErrorCode`.
+message ErrorEntry {
+  int32 status = 1;
+  // The template of the message; `{name}` is a parameter.
+  string message = 2;
+  string hint = 3;
+  // The values `error.reason` may hold for this code (`x-mopm-error-reasons`).
+  repeated string reasons = 4;
+}
+
+// A server of the API: `url` with one variable `variable`, its default and the values it may take.
+message Server {
+  string url = 1;
+  string description = 2;
+  string variable = 3;
+  string default = 4;
+  repeated string values = 5;
+}
+
+// A bearer token scheme (`type: http`, `scheme: bearer`).
+message SecurityScheme {
+  string name = 1;
+  string bearer_format = 2;
+  string description = 3;
+}
+
+// A response header of `components/headers`. `wire` is its name on the wire; `on_success` puts it on every success answer as
+// well as on the `Error` response.
+message Header {
+  string name = 1;
+  string wire = 2;
+  string description = 3;
+  bool required = 4;
+  // `string` or `integer`.
+  string type = 5;
+  optional uint64 min_length = 6;
+  optional int64 minimum = 7;
+  bool on_success = 8;
+}
+
+// The document-level facts of the API, on its service. The service's leading comment is `info.description`.
+message Api {
+  string title = 1;
+  string version = 2;
+  string summary = 3;
+  string license_name = 4;
+  string license_identifier = 5;
+  // The path every route starts with; the OpenAPI paths are relative to it.
+  string base_path = 6;
+  repeated Server servers = 7;
+  repeated string tags = 8;
+  repeated SecurityScheme security_schemes = 9;
+  repeated Header headers = 10;
+  // The description of `components/responses/Error`, the `default` answer of every operation.
+  string error_response = 11;
+}
+
+extend google.protobuf.FieldOptions {
+  Field field = 51701;
+}
+
+extend google.protobuf.MessageOptions {
+  Schema schema = 51702;
+}
+
+extend google.protobuf.EnumValueOptions {
+  // The value's JSON string, when it is not the name without the prefix in lower case (`linux-64`).
+  string json = 51703;
+  ErrorEntry error = 51704;
+}
+
+extend google.protobuf.MethodOptions {
+  Operation operation = 51705;
+}
+
+extend google.protobuf.ServiceOptions {
+  Api api = 51706;
+}

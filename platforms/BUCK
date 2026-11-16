@@ -14,8 +14,41 @@ platform(
     visibility = ["PUBLIC"],
 )
 
+# The farm's macOS arm64 workers, in both vocabularies like linux_x86_64. It is the configuration of the macOS
+# execution platform, which buildrules registers only while `[buildrules_re] macos_aarch64_properties` is set (.buckconfig
+# takes it from the farm's `[komira_re] darwin_arm64_properties`). A tool an action on a Mac runs (an `exec_dep`, such as
+# buildrules' `check_for_host`) is configured with it, so buildrules' host selects pick the macOS build of the tool.
+# platforms/macos.bzl runs the macOS checks on it.
+platform(
+    name = "macos_aarch64",
+    constraint_values = [
+        "buildrules//platforms:macos",
+        "buildrules//platforms:aarch64",
+        "prelude//os/constraints:macos",
+        "prelude//cpu/constraints:arm64",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+# No platform has this value. Every macOS target requires it while no macOS worker set is configured
+# (platforms/macos.bzl, `macos_gate`), so it is incompatible: `buck2 build //...` skips it, and a build that names it
+# says why ("waiting_on_macos_workers"). The farm's pull request and push builds (farm.yml) configure no macOS
+# workers, so they never build a macOS target.
+constraint_setting(name = "macos_workers")
+
+constraint_value(
+    name = "waiting_on_macos_workers",
+    constraint_setting = ":macos_workers",
+    visibility = ["PUBLIC"],
+)
+
 buildrules_execution_platforms(
     name = "default",
     linux_x86_64 = ":linux_x86_64",
+    # The platform of each other host a farm may add (buildrules' default for linux aarch64, this package's for macOS arm64).
+    host_platforms = {
+        "linux-aarch64": "buildrules//platforms:linux_aarch64",
+        "macos-aarch64": ":macos_aarch64",
+    },
     visibility = ["PUBLIC"],
 )

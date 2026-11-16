@@ -1,0 +1,29 @@
+usage: mopm api poll-namespace <device_code> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Ask once whether a namespace registration was approved (one step of 'mopm org create').
+
+Poll no faster than `interval` seconds, with a session or a user token of the account that started the
+registration (another account's `device_code` is `device_code_unknown`). While the person has not decided,
+`status` is `pending`; `denied` and `expired` end the flow.
+
+When GitHub approves, the registry reads, with the one-time token, the account that approved (its id must be
+the caller's: otherwise `github_account_mismatch`) and that account's membership of the organization. The
+namespace is created only when the membership is `active`, its role is `admin` and the organization's current
+login in lower case is the namespace; any other answer of GitHub (no membership, a pending invitation, the
+role `member` or `billing_manager`, an organization that restricts OAuth apps, another current login) is
+`not_org_admin`. The organization's GitHub id is stored on the namespace and the caller becomes its first
+`owner`. The token is discarded and nothing about the organization is asked of GitHub afterwards.
+
+`created` answers once; the string taken in the meantime is `namespace_taken`.
+
+arguments:
+  <device_code>
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends POST /api/v2/namespaces/poll (pollNamespace) with the token 'mopm login' stored, or $MOPM_TOKEN.

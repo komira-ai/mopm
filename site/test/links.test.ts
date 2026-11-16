@@ -2,7 +2,7 @@
 // stay on the site (also when named by file name or repo path from the other doc), any other repo path goes to
 // GitHub, and anything resolving outside the repo is text. Schemes are matched case-insensitively.
 // In a readme, only absolute links and in-page fragments survive.
-import { internalHref, safeHref, webHref } from '../src/links';
+import { channelFileHref, internalHref, safeHref, webHref } from '../src/links';
 
 const blob = (p: string) => `https://github.com/komira-ai/mopm/blob/main/${p}`;
 const docs = (source: string) => ({ mode: 'docs', idPrefix: '', source }) as const;
@@ -93,4 +93,54 @@ describe('webHref (repository and homepage values from the API)', () => {
       expect(webHref(raw)).toBeNull();
     },
   );
+});
+
+describe('channelFileHref (a file link inside the package namespace channel)', () => {
+  const CH = 'https://conda.mopm.dev/komira-ai/';
+  const file = 'linux-64/mojo-komira-ai.json-1.1.0-0.conda';
+
+  test('a URL inside the namespace channel is a link, normalised', () => {
+    expect(channelFileHref(`${CH}${file}`, CH)).toBe(`${CH}${file}`);
+    expect(channelFileHref('HTTPS://CONDA.MOPM.DEV/komira-ai/noarch/x.conda', CH)).toBe('https://conda.mopm.dev/komira-ai/noarch/x.conda');
+  });
+
+  test('a URL in another namespace channel is not', () => {
+    expect(channelFileHref('https://conda.mopm.dev/alice/linux-64/x.conda', CH)).toBeNull();
+  });
+
+  test('a namespace that only starts with the channel namespace is not inside it', () => {
+    expect(channelFileHref('https://conda.mopm.dev/komira-ai2/linux-64/x.conda', CH)).toBeNull();
+  });
+
+  test('a URL at the channel root, or at the channel path without a file, is not inside the namespace channel', () => {
+    expect(channelFileHref('https://conda.mopm.dev/linux-64/x.conda', CH)).toBeNull();
+    expect(channelFileHref('https://conda.mopm.dev/', CH)).toBeNull();
+    expect(channelFileHref('https://conda.mopm.dev/komira-ai', CH)).toBeNull();
+  });
+
+  test('a path escaping the channel with .. is normalised by the URL parser and then refused', () => {
+    expect(channelFileHref('https://conda.mopm.dev/komira-ai/../alice/x.conda', CH)).toBeNull();
+    expect(channelFileHref('https://conda.mopm.dev/komira-ai/%2e%2e/alice/x.conda', CH)).toBeNull();
+    expect(channelFileHref('https://conda.mopm.dev/komira-ai/../x.conda', CH)).toBeNull();
+  });
+
+  test('a path that goes up and back down into the channel is kept, as the normalised URL', () => {
+    expect(channelFileHref('https://conda.mopm.dev/alice/../komira-ai/x.conda', CH)).toBe('https://conda.mopm.dev/komira-ai/x.conda');
+  });
+
+  test('another stage, a plain-http URL, credentials or a port are refused', () => {
+    expect(channelFileHref('https://conda.beta.mopm.dev/komira-ai/x.conda', CH)).toBeNull();
+    expect(channelFileHref('http://conda.mopm.dev/komira-ai/x.conda', CH)).toBeNull();
+    expect(channelFileHref('https://u:p@conda.mopm.dev/komira-ai/x.conda', CH)).toBeNull();
+    expect(channelFileHref('https://u@conda.mopm.dev/komira-ai/x.conda', CH)).toBeNull();
+    expect(channelFileHref('https://conda.mopm.dev:8443/komira-ai/x.conda', CH)).toBeNull();
+  });
+
+  test('no channel (an unknown host), a relative URL, or a URL with an invisible character is refused', () => {
+    expect(channelFileHref(`${CH}${file}`, null)).toBeNull();
+    expect(channelFileHref('/komira-ai/x.conda', CH)).toBeNull();
+    expect(channelFileHref('', CH)).toBeNull();
+    expect(channelFileHref(`${CH}x .conda`, CH)).toBeNull();
+    expect(channelFileHref(`${CH}\tx.conda`, CH)).toBeNull();
+  });
 });

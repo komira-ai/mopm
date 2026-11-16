@@ -1,5 +1,6 @@
 /**
- * GitHub, as far as login needs it: the OAuth device flow and the authenticated-user lookup.
+ * GitHub, as far as the registry needs it: the OAuth device flow, the authenticated-user lookup, and the caller's membership of
+ * one organization (scope `read:org`), read once when an organization namespace is registered with a token that is then dropped.
  *
  * What GitHub exposes (documented here because the 2FA rule depends on it):
  * - `GET /user` returns the numeric `id` and `login` for any token.
@@ -8,10 +9,11 @@
  *   enough to see it must be confirmed against live GitHub before the requirement is switched on in prod.
  *   When the field is absent we cannot know, and the login layer treats absent as "not satisfied" while the
  *   requirement is on (fail closed).
+ *   The login asks for `read:user`; that confirmation is of the field under that scope.
  * - The device flow needs the OAuth app's client id only; the client secret is not used and not read.
  *   The client id comes from Secrets Manager at runtime and is passed to the constructor.
  */
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{
+export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
@@ -39,15 +41,35 @@ export interface GitHubUser {
   two_factor?: boolean;
 }
 
+/** The caller's membership of one organization, as `GET /user/memberships/orgs/{org}` shows it. */
+export interface GitHubOrgMembership {
+  /** GitHub's `state`: `active` or `pending`. */
+  state: string;
+  /** GitHub's `role`: `admin`, `member` or `billing_manager`. */
+  role: string;
+  organization: { id: number; login: string };
+  /** The numeric id of the account the membership is of, when GitHub shows it. */
+  user_id?: number;
+}
+
 export interface GitHubApi {
   startDeviceFlow(scope: string): Promise<GitHubDeviceStart>;
   pollDeviceFlow(deviceCode: string): Promise<GitHubPoll>;
   getUser(accessToken: string): Promise<GitHubUser>;
+  /**
+   * `GET /user/memberships/orgs/{org}` with the token's own account. `null` when GitHub answers 404 (not a member) or 403 (the
+   * organization restricts OAuth apps and has not approved this one); any other failure is GitHubUnavailable.
+   */
+  getOrgMembership(accessToken: string, org: string): Promise<GitHubOrgMembership | null>;
 }
 
 /** GitHub could not be reached or answered something unusable. The router maps it to `unavailable`. */
 export class GitHubUnavailable extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** GitHub's HTTP status, when it answered one. */
+    readonly status?: number,
+  ) {
     super(message);
     this.name = 'GitHubUnavailable';
   }
@@ -108,18 +130,44 @@ export class HttpGitHubApi implements GitHubApi {
     }
   }
 
-  async getUser(accessToken: string): Promise<GitHubUser> {
-    const res = await this.fetchFn(`${this.hosts.api}/user`, {
+  private async get(path: string, accessToken: string, what: string): Promise<unknown> {
+    const res = await this.fetchFn(`${this.hosts.api}${path}`, {
       method: 'GET',
       headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${accessToken}`, 'user-agent': UA, 'x-github-api-version': '2022-11-28' },
     });
-    if (!res.ok) throw new GitHubUnavailable(`GitHub answered ${res.status} for the user lookup`);
-    const b = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) throw new GitHubUnavailable(`GitHub answered ${res.status} for the ${what}`, res.status);
+    return res.json();
+  }
+
+  async getUser(accessToken: string): Promise<GitHubUser> {
+    const b = (await this.get('/user', accessToken, 'user lookup')) as Record<string, unknown>;
     if (!b || !Number.isInteger(b.id) || (b.id as number) < 1 || typeof b.login !== 'string' || !b.login) {
       throw new GitHubUnavailable('GitHub answered an unusable user');
     }
     const u: GitHubUser = { id: b.id as number, login: b.login };
     if (typeof b.two_factor_authentication === 'boolean') u.two_factor = b.two_factor_authentication;
     return u;
+  }
+
+  async getOrgMembership(accessToken: string, org: string): Promise<GitHubOrgMembership | null> {
+    let b: unknown;
+    try {
+      b = await this.get(`/user/memberships/orgs/${encodeURIComponent(org)}`, accessToken, 'organization membership');
+    } catch (e) {
+      // GitHub shows no such membership: not a member, or the organization restricts OAuth apps.
+      if (e instanceof GitHubUnavailable && (e.status === 404 || e.status === 403)) return null;
+      if (e instanceof GitHubUnavailable) throw e;
+      // Unreachable (a rejected fetch) or a body that is not JSON: GitHub unavailable, as an error status is.
+      throw new GitHubUnavailable(`GitHub could not be read for the organization membership: ${(e as Error)?.name}`);
+    }
+    const m = b as Record<string, unknown> | null;
+    const o = (m && typeof m === 'object' ? m.organization : undefined) as Record<string, unknown> | undefined;
+    const u = (m && typeof m === 'object' ? m.user : undefined) as Record<string, unknown> | null | undefined;
+    if (!o || !Number.isInteger(o.id) || (o.id as number) < 1 || typeof o.login !== 'string' || !o.login || typeof m!.state !== 'string' || typeof m!.role !== 'string') {
+      throw new GitHubUnavailable('GitHub answered an unusable membership');
+    }
+    const out: GitHubOrgMembership = { state: m!.state as string, role: m!.role as string, organization: { id: o.id as number, login: o.login } };
+    if (u && Number.isInteger(u.id)) out.user_id = u.id as number;
+    return out;
   }
 }

@@ -5,6 +5,7 @@ filegroup(
     visibility = ["//:"],
     srcs = {
         "agents": "//:agents_coverage_floor",
+        "api_gen": "//:api_gen_coverage_floor",
         "apt_publish": "//:apt_publish_coverage_floor",
         "build_parity": "//:build_parity_coverage_floor",
         "channels": "//:channels_coverage_floor",

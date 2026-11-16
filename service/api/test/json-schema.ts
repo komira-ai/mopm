@@ -5,7 +5,7 @@
  */
 type Schema = Record<string, any>;
 
-const ANNOTATIONS = new Set(['$schema', '$id', 'title', 'description']);
+const ANNOTATIONS = new Set(['$schema', '$id', 'title', 'description', '$defs']);
 
 const FORMATS: Record<string, (s: string) => boolean> = {
   date: (s) => {
@@ -44,11 +44,18 @@ const typeOk = (t: string, v: unknown): boolean => {
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** The list of violations of `schema` by `value`, each prefixed with its JSON path; empty when valid. */
-export function validate(schema: Schema, value: unknown, path = '$'): string[] {
+export function validate(schema: Schema, value: unknown, path = '$', root: Schema = schema): string[] {
   const errs: string[] = [];
   for (const [k, s] of Object.entries(schema)) {
     if (ANNOTATIONS.has(k)) continue;
     switch (k) {
+      case '$ref': {
+        const m = /^#\/\$defs\/([A-Za-z0-9_]+)$/.exec(s);
+        const target = m ? root.$defs?.[m[1]!] : undefined;
+        if (!target) throw new Error(`json-schema: unresolvable $ref ${s}`);
+        errs.push(...validate(target, value, path, root));
+        break;
+      }
       case 'type':
         if (!typeOk(s, value)) errs.push(`${path}: not of type ${s}`);
         break;
@@ -64,15 +71,18 @@ export function validate(schema: Schema, value: unknown, path = '$'): string[] {
       case 'properties':
         if (typeOk('object', value)) {
           for (const [p, sub] of Object.entries(s as Record<string, Schema>)) {
-            if (p in (value as object)) errs.push(...validate(sub, (value as any)[p], `${path}.${p}`));
+            if (p in (value as object)) errs.push(...validate(sub, (value as any)[p], `${path}.${p}`, root));
           }
         }
         break;
       case 'items':
-        if (Array.isArray(value)) value.forEach((v, i) => errs.push(...validate(s, v, `${path}[${i}]`)));
+        if (Array.isArray(value)) value.forEach((v, i) => errs.push(...validate(s, v, `${path}[${i}]`, root)));
         break;
       case 'minItems':
         if (Array.isArray(value) && value.length < s) errs.push(`${path}: fewer than ${s} items`);
+        break;
+      case 'uniqueItems':
+        if (s === true && Array.isArray(value) && new Set(value.map((v) => JSON.stringify(v))).size !== value.length) errs.push(`${path}: items are not unique`);
         break;
       case 'minLength':
         if (typeof value === 'string' && value.length < s) errs.push(`${path}: shorter than ${s}`);
@@ -94,18 +104,18 @@ export function validate(schema: Schema, value: unknown, path = '$'): string[] {
         }
         break;
       case 'allOf':
-        for (const sub of s as Schema[]) errs.push(...validate(sub, value, path));
+        for (const sub of s as Schema[]) errs.push(...validate(sub, value, path, root));
         break;
       case 'anyOf':
-        if (!(s as Schema[]).some((sub) => validate(sub, value, path).length === 0)) errs.push(`${path}: matches none of anyOf`);
+        if (!(s as Schema[]).some((sub) => validate(sub, value, path, root).length === 0)) errs.push(`${path}: matches none of anyOf`);
         break;
       case 'if':
       case 'then':
       case 'else':
         if (k === 'if') {
-          const ok = validate(s, value, path).length === 0;
+          const ok = validate(s, value, path, root).length === 0;
           const branch = ok ? schema.then : schema.else;
-          if (branch) errs.push(...validate(branch, value, path));
+          if (branch) errs.push(...validate(branch, value, path, root));
         }
         break;
       default:

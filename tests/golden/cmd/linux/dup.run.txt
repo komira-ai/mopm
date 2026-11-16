@@ -1,1 +1,1 @@
-mopm run: refused (duplicate_owner): libdup.so.1 is provided by both pkg_a and pkg_b; one owner per native library
+mopm run: refused (duplicate_owner): libdup.so.1 is provided by both example/pkg_a and example/pkg_b; one owner per native library

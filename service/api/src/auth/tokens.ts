@@ -57,6 +57,8 @@ export interface Principal {
   ci_owner?: string;
   /** A CI publisher's token that acts for an account: the CI identity it came through, `gh-repo:<repository_id>`. `github_id` is then the account. */
   acts_via?: string;
+  /** A token `/api/v2`'s exchange minted for a publisher of this namespace: it writes only its full names in it. */
+  ci_namespace?: string;
   fresh_until?: string;
 }
 
@@ -234,6 +236,7 @@ export class Authenticator {
       versions: rec.versions,
       ci_owner: rec.ci_owner,
       acts_via: rec.acts_via,
+      ...(rec.ci_namespace === undefined ? {} : { ci_namespace: rec.ci_namespace }),
       fresh_until: rec.fresh_until,
     };
   }

@@ -24,7 +24,7 @@ export const OPENING_SENTENCE =
 /** README.md's "Status: early." list of commands that work today, in its order. */
 export const WORKING_TODAY = [
   '--version', 'link-plan', 'metadata', 'new', 'init', 'build', 'run', 'repl', 'test',
-  'login', 'logout', 'whoami', 'pack', 'publish', 'lock', 'update', 'tree', 'sync', 'add', 'remove', 'plan', 'unit', 'yank', 'stage',
+  'login', 'logout', 'whoami', 'pack', 'publish', 'lock', 'update', 'tree', 'sync', 'add', 'remove', 'plan', 'unit', 'yank', 'stage', 'org',
 ];
 
 /** The command that installs mopm: README.md's, and the first line of site/static/install.sh's header. */
@@ -239,8 +239,8 @@ export function homePage(): PageSpec {
       null,
       h(doc, 'span', { class: 'num', 'aria-hidden': 'true' }, '3'),
       h(doc, 'h3', null, 'Add a package'),
-      h(doc, 'p', null, 'In a pixi project that lists the registry’s conda channel. In a mopm project, ', code('mopm add <name>'), ' adds it to mopm.toml and writes mopm.lock.'),
-      plainBlock('pixi add mojo-<name>', 'pixi command'),
+      h(doc, 'p', null, 'In a pixi project that lists the conda channel of the package’s namespace. In a mopm project, ', code('mopm add <namespace>/<name>'), ' adds it to mopm.toml and writes mopm.lock.'),
+      plainBlock('pixi add mojo-<namespace>.<name>', 'pixi command'),
     ),
   );
   const quickstart = band('quickstart', 'band-steps', 'Quickstart', 'Three steps to your first package', steps);
@@ -279,19 +279,21 @@ export function homePage(): PageSpec {
           doc,
           'p',
           null,
-          'Every published package is served as a conda channel at ',
+          'Every published package is served from a conda channel, one per namespace, under ',
           h(doc, 'code', { id: 'conda-channel' }, 'https://conda.mopm.dev/'),
           ', so pixi and other conda clients install it today. The conda package of ',
-          code('<name>'),
+          code('<namespace>/<name>'),
           ' is ',
-          code('mojo-<name>'),
-          '; in a pixi project that lists the channel, ',
-          code('pixi add mojo-<name>'),
+          code('mojo-<namespace>.<name>'),
+          ' in the channel ',
+          code('<namespace>/'),
+          ' there; in a pixi project that lists that channel, ',
+          code('pixi add mojo-<namespace>.<name>'),
           ' installs it (',
           link(`${REPO_URL}/blob/main/spec/channel.md`, 'the channel spec'),
           ').',
         ),
-        h(doc, 'p', null, 'In a mopm project, ', code('mopm add <name>'), ' resolves it against the registry’s index and writes mopm.toml and mopm.lock.'),
+        h(doc, 'p', null, 'In a mopm project, ', code('mopm add <namespace>/<name>'), ' resolves it against the registry’s index and writes mopm.toml and mopm.lock.'),
       ),
     ),
   );
@@ -449,7 +451,7 @@ export function notFoundPage(): PageSpec {
   };
 }
 
-/** The shell for /search, /packages/<name> and /packages/<name>/<version>: main.ts fills <main>. */
+/** The shell for /search, /packages/<namespace>/<name> and /packages/<namespace>/<name>/<version>: main.ts fills <main>. */
 export function appShell(): PageSpec {
   const loading = loadingView(doc).nodes;
   return {

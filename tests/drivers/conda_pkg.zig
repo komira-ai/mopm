@@ -146,7 +146,7 @@ pub fn zip(a: Allocator, members: []const Entry) ![]u8 {
     return out.items;
 }
 
-/// The bytes of `<name>-<version>-<build>.conda` holding `files`, with `depends` in its index.
+/// The bytes of `<name>-<version>-<build>.conda` (`name` is the conda name, `mojo-<namespace>.<name>` for a mopm package) holding `files`, with `depends` in its index.
 pub fn package(a: Allocator, name: []const u8, version: []const u8, build: []const u8, subdir: []const u8, depends: []const []const u8, files: []const Entry) ![]u8 {
     const stem = try std.fmt.allocPrint(a, "{s}-{s}-{s}", .{ name, version, build });
     var index = std.ArrayList(u8).init(a);
@@ -191,6 +191,22 @@ pub const Toolchain = struct {
     closure: []const u8,
     files: [2]ToolchainFile,
 };
+
+/// Rewrites the lock at `lock_path` with an empty `toolchain` (no closure recorded; spec/lock.md: a Mojo version with no
+/// entry is not an error) and returns the bytes written. A lock records mopm's pinned closure, and `mopm sync` refuses
+/// to install a toolchain whose closure differs, so a test that installs a stand-in toolchain (`fakeToolchain`) syncs
+/// this lock. Every plain `sync` locks again when the manifest changed, so call it after each `mopm lock`.
+pub fn unpinToolchain(a: Allocator, lock_path: []const u8) ![]u8 {
+    const text = try std.fs.cwd().readFileAlloc(a, lock_path, 1 << 24);
+    var v = (try std.json.parseFromSlice(std.json.Value, a, text, .{})).value;
+    if (v != .object or v.object.get("toolchain") == null) return error.NotALock;
+    try v.object.put("toolchain", .{ .object = std.json.ObjectMap.init(a) });
+    var out = std.ArrayList(u8).init(a);
+    try std.json.stringify(v, .{ .whitespace = .indent_2 }, out.writer());
+    try out.append('\n');
+    try std.fs.cwd().writeFile(lock_path, out.items);
+    return out.items;
+}
 
 /// The build string of the stand-in toolchain's packages.
 pub const fake_build = "fake_0";

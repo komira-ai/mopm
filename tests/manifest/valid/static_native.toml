@@ -1,13 +1,13 @@
 # A package that ships a static archive (spec/mopm-toml.md, [native.<id>]).
 [package]
-name = "tls_sys"
+name = "example/tls_sys"
 version = "2.4.0"
 
 [toolchain]
 mojo = "1.0.0"
 
 [dependencies]
-crypto_sys = "1.39"
+"example/crypto_sys" = "1.39"
 
 [native.tls_sys]
 kind = "static"

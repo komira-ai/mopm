@@ -32,6 +32,8 @@ const publish = @import("publish.zig");
 const channel = @import("files.zig");
 const gr = @import("group_readmes.zig");
 const group_ids = @import("group_ids.zig");
+const keys = @import("keys.zig");
+const names = @import("names.zig");
 const ReqFile = group_ids.ReqFile;
 const ReqMember = group_ids.ReqMember;
 const isSha = group_ids.isSha;
@@ -87,7 +89,7 @@ fn parseRequest(ctx: *Ctx) Allocator.Error!Parsed {
         };
         const name = util.getStr(m, "name") orelse return .{ .fail = try resp.invalid(a, "a member needs a 'name' and a 'version', both strings") };
         const version = util.getStr(m, "version") orelse return .{ .fail = try resp.invalid(a, "a member needs a 'name' and a 'version', both strings") };
-        if (!util.isName(name)) return .{ .fail = try resp.fail(a, .invalid_name, &.{.{ "name", name }}) };
+        if (try keys.problem(ctx, name)) |r| return .{ .fail = r };
         if (!util.isVersion(version)) return .{ .fail = try resp.fail(a, .invalid_version, &.{.{ "version", version }}) };
         for (out.items) |seen| {
             if (std.mem.eql(u8, seen.name, name)) {
@@ -415,8 +417,11 @@ pub fn createGroup(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     }
     var packages = std.ArrayList(*st.Package).init(ctx.arena);
     for (members) |m| {
-        const p = s.packageByName(m.name) orelse return resp.fail(ctx.arena, .package_not_found, &.{.{ "name", m.name }});
-        if (!p.isOwner(t.user)) return resp.fail(ctx.arena, .not_owner, &.{.{ "name", m.name }});
+        const p = switch (try keys.find(ctx, m.name)) {
+            .ok => |p| p,
+            .fail => |r| return r,
+        };
+        if (try keys.ownerRefusal(ctx, p, t.user)) |r| return r;
         try packages.append(p);
     }
     const gid = try groupId(ctx.arena, t.user.handle, members);
@@ -650,7 +655,7 @@ pub fn abortGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
 /// The rejection the fake finds in a member's files, or null: a file name that does not name the package and version,
 /// or bytes that start with `REJECT:<code>` (as for a single publish).
 fn rejectionOf(ctx: *Ctx, m: st.GroupMember) anyerror!?[]const u8 {
-    const want = try std.fmt.allocPrint(ctx.arena, "mojo-{s}-{s}-", .{ m.package.name, m.version });
+    const want = try std.fmt.allocPrint(ctx.arena, "{s}-{s}-", .{ try names.condaName(ctx.arena, m.package.name), m.version });
     var dir = try std.fs.cwd().openDir(ctx.state.dir, .{});
     defer dir.close();
     for (m.files) |f| {
@@ -864,7 +869,7 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .group_id = g.id,
         .status = @tagName(g.status),
         .attempt = g.attempt,
-        .status_url = try std.fmt.allocPrint(ctx.arena, "/api/v1/groups/{s}", .{g.id}),
+        .status_url = try std.fmt.allocPrint(ctx.arena, "{s}/groups/{s}", .{ ctx.prefix(), g.id }),
     };
     switch (g.status) {
         .validating, .committed, .visible => {
@@ -932,7 +937,7 @@ pub fn yankGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         }
     }
     for (g.members) |m| {
-        if (!m.package.isOwner(t.user)) return resp.fail(ctx.arena, .not_owner, &.{.{ "name", m.package.name }});
+        if (try keys.ownerRefusal(ctx, m.package, t.user)) |r| return r;
     }
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
     const yanked = util.getBool(obj, "yanked") orelse return resp.invalid(ctx.arena, "'yanked' must be a boolean");

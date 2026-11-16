@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package mopm.registry.v2;
+
+import "mopm/registry/v2/types.proto";
+import "mopm/registry/v2/options.proto";
+
+message PackageSummary {
+  FullName name = 1 [(field) = {required: true}];
+  // Newest published (not yanked) version, or null.
+  Version latest = 2 [(field) = {required: true, nullable: true}];
+  string description = 3 [(field) = {required: true, nullable: true}];
+  Timestamp updated_at = 4 [(field) = {required: true}];
+}
+
+message PackageList {
+  repeated PackageSummary packages = 1 [(field) = {required: true}];
+  string next_cursor = 2 [(field) = {required: true, nullable: true}];
+}
+
+message VersionSummary {
+  Version version = 1 [(field) = {required: true}];
+  VersionState state = 2 [(field) = {required: true}];
+  Timestamp published_at = 3 [(field) = {required: true}];
+  string yank_reason = 4 [(field) = {nullable: true}];
+}
+
+message VersionList {
+  repeated VersionSummary versions = 1 [(field) = {required: true}];
+  string next_cursor = 2 [(field) = {required: true, nullable: true}];
+}
+
+message Provenance {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_NONE = 1;
+    KIND_OIDC = 2;
+  }
+  Kind kind = 1 [(field) = {required: true}];
+  string repository = 2;
+  string workflow_ref = 3;
+}
+
+message Tombstone {
+  string reason_code = 1 [(field) = {required: true, min_length: 1}];
+  string date = 2 [(field) = {required: true, format: "date"}];
+}
+
+message VersionDetail {
+  FullName name = 1 [(field) = {required: true}];
+  Version version = 2 [(field) = {required: true}];
+  VersionState state = 3 [(field) = {required: true}];
+  string yank_reason = 4 [(field) = {nullable: true}];
+  Tombstone tombstone = 5;
+  Timestamp published_at = 6 [(field) = {required: true}];
+  string published_by = 7;
+  // The conda requirement on the compiler, e.g. `==1.0.0`.
+  string requires_mojo = 8 [(field) = {required: true, min_length: 1}];
+  repeated Dep deps = 9 [(field) = {required: true}];
+  repeated NativeRef native = 10 [(field) = {required: true}];
+  repeated FileRef files = 11 [(field) = {required: true, min_items: 1}];
+  Sha256 manifest_sha256 = 12 [(field) = {required: true}];
+  // The group (`createGroup`) that published this version. Absent for a version a single publish made, and for a version
+  // published before the registry recorded it. It can be used with `getGroup` and `yankGroup`, which keep their own
+  // ownership and scope rules: knowing it grants nothing. A version that is still `pending` is not found, whatever its group.
+  GroupId group_id = 13;
+  // The git commit the publisher said the version was built from, as sent when it was committed. Absent for a version
+  // committed without one, including every version published before the registry recorded it. Informational and unverified:
+  // the registry checks its form only, so it is not proof of where the files came from.
+  SourceCommit source_commit = 14;
+  // `[package] description` of this version's mopm.toml. Absent when not set.
+  string description = 15 [(field) = {max_length: 512}];
+  // `[package] license`, an SPDX expression. Absent when not set.
+  string license = 16 [(field) = {max_length: 128}];
+  // An https URL. Absent when not set.
+  string repository = 17 [(field) = {max_length: 2048, format: "uri"}];
+  // An https URL. Absent when not set. Untrusted input, so check the scheme before linking it.
+  string homepage = 18 [(field) = {max_length: 2048, format: "uri"}];
+  Keywords keywords = 19;
+  // Markdown, at most 64 KiB (65,536 bytes of UTF-8), from the file `[package] readme` names. Untrusted Markdown written by the
+  // publisher: a consumer must sanitize it, disable raw HTML and treat every link as untrusted. `description`
+  // and `license` are untrusted plain text: escape them, never render them as markup. Render it as untrusted text. Absent when the version has none. The five fields above and this one are copied from
+  // mopm.toml by the publish pipeline when it publishes a version; versions published before that carry none
+  // of them. All are additive and optional, so older clients ignore them.
+  string readme = 20 [(field) = {max_length: 65536}];
+  // Sanitised HTML. Never trust it on a cookie-authenticated origin.
+  string readme_html = 21 [(field) = {nullable: true}];
+  Provenance provenance = 22 [(field) = {required: true}];
+}

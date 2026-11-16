@@ -1,0 +1,93 @@
+# Runs mopm's macOS arm64 checks on the build farm's Mac workers, from a Linux runner: the `macos-farm` targets of BUCK (the unit
+# tests compiled for aarch64-macos and run on a Mac, the CLI for the release's macOS target started there, and its Mach-O minimum;
+# platforms/macos.bzl). Every action runs on the farm (`local: 0`): the Mac ones on a macOS worker, the compiles on a linux one.
+#
+# It runs after the merge only, never on a pull request (a pull request runs on Linux x86_64 only, RELEASING.md): on a push to main,
+# and as the `beta-macos` stage of release.yml (a red build stops the release).
+#
+# The farm is connected by komira's farm-connect action, pinned by commit like farm.yml's, with the macOS worker set and the
+# identities of those workers on top of the linux one. All of it is repository variables (FARM_DARWIN_ARM64_PROPERTIES,
+# FARM_DARWIN_MACOS_HOSTS, and farm.yml's); this repository holds no endpoint and no worker property set. .buckconfig hands the
+# macOS keys to buildrules, which registers the macOS execution platform (platforms/BUCK).
+#
+# Until the macOS variables are set the job does nothing and says so, and it is green: the macOS legs of ci.yml,
+# release-build.yml and release-beta-user.yml (GitHub's macos-15 runners) still run the same checks, so no merge goes unbuilt on
+# macOS. Setting the variables turns this build on; once it has passed through a release, those macos-15 legs are removed and a
+# push with no macOS workers fails here instead, as farm.yml's does.
+# The hygiene and workflow lints allow the id-token grant and farm-connect in this file and farm.yml only, and release.yml's
+# beta-macos job (the one job there that calls a workflow with an id-token grant) to call this file alone.
+name: farm-macos
+
+on:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      # for farm-connect only: the token the farm's network trusts
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The condition reads the variables without putting their values in a step's environment, which GitHub prints in the log.
+      - name: the macOS workers are not configured
+        if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_DARWIN_ARM64_PROPERTIES == '' || vars.FARM_DARWIN_MACOS_HOSTS == '' }}
+        run: |
+          echo "::notice title=farm-macos::the repository variables FARM_ADDRESS, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set, so there are no macOS workers to run on. Skipping; nothing was built. The macos-15 legs of ci.yml, release-build.yml and release-beta-user.yml run the macOS checks."
+      # The same komira commit as commit_hash in .buckconfig and farm.yml's; bump them together.
+      - name: connect to the farm (linux and macOS workers)
+        if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}
+        uses: komira-ai/komira/.github/actions/farm-connect@9504a2daf88754de25d93f62a76ea2955ebc38c8
+        with:
+          ts-client-id: ${{ vars.TS_CLIENT_ID }}
+          ts-audience: ${{ vars.TS_AUDIENCE }}
+          farm-address: ${{ vars.FARM_ADDRESS }}
+          farm-instance: ${{ vars.FARM_INSTANCE }}
+          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
+          darwin-properties: ${{ vars.FARM_DARWIN_ARM64_PROPERTIES }}
+          darwin-macos-hosts: ${{ vars.FARM_DARWIN_MACOS_HOSTS }}
+          tls: ${{ vars.FARM_TLS || 'false' }}
+      # farm-connect writes the worker property sets under [komira_re]; buildrules reads the linux one from [buildrules_re] of this
+      # checkout's .buckconfig.local (farm.yml's step, unchanged), and .buckconfig maps the macOS ones itself.
+      - name: hand the worker properties to buildrules
+        if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}
+        run: |
+          set -eu
+          src="$HOME/.buckconfig.d/farm.buckconfig"
+          {
+            echo "[buildrules_re]"
+            awk '/^\[/ { keep = ($0 == "[komira_re]"); next } keep' "$src"
+          } >> .buckconfig.local
+      # With no worker set buck2 would run on the runner (linux) or register no Mac (macOS): refuse both.
+      - name: the buckconfig names the linux and the macOS workers
+        if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}
+        run: |
+          for key in linux_x86_64_properties macos_aarch64_properties; do
+            ./buck2 audit config "buildrules_re.$key" --style json | grep -q '": *"[^"]' ||
+              { echo "the buckconfig sets no [buildrules_re] $key: this job would not run on the farm's workers"; exit 1; }
+          done
+      # Every `macos-farm` target, and nothing skipped: with the workers configured none is incompatible, and one that is fails here.
+      - name: buck2 build of the macos-farm targets
+        if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}
+        run: |
+          set -o pipefail
+          ./buck2 uquery 'attrfilter(labels, macos-farm, //...)' > "$RUNNER_TEMP/targets"
+          ./buck2 build "@$RUNNER_TEMP/targets" 2>&1 | tee "$RUNNER_TEMP/build.log"
+      # The summary line counts the actions run on this machine: all must have run on the farm or come from its cache.
+      - name: no action ran on the runner
+        if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}
+        run: |
+          grep -Eq 'Commands: [0-9]+ \(.*local: 0\)' "$RUNNER_TEMP/build.log" ||
+            { echo "::error::the build's summary line does not say local: 0"; exit 1; }
+      - name: Stop buck2
+        if: ${{ always() && vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}
+        run: ./buck2 kill || true

@@ -1,5 +1,5 @@
 [package]
-name = "util"
+name = "example/util"
 version = "0.1.0"
 
 [toolchain]

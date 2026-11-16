@@ -8,7 +8,10 @@ name: release
 #
 #   beta       the whole of ci.yml on the pushed commit (a workflow_call of it).
 #   lint       the whole of lint.yml (hygiene, workflow lint, the release lint) on the pushed commit.
-#              Gamma and bake time are a slot for later stages between these and plan.
+#   beta-macos farm-macos.yml on the pushed commit: the macOS arm64 checks as farm actions on the Mac workers (the unit tests, the CLI
+#              for the pinned macOS target, its Mach-O minimum). Green with a notice, building nothing, while the macOS workers are not
+#              configured; the macos-15 legs below run the same checks until it has passed through a release.
+#              Gamma and bake time are a slot for later stages between these three (beta, lint, beta-macos) and plan.
 #   plan       the version the release will have (cut_release plan --sha): the VERSION file's MAJOR.MINOR
 #              and the next PATCH. It refuses a commit that a newer release supersedes, and a base below
 #              an existing tag. Nothing is written. For a commit whose tag exists (a re-run, or a second push run) it also says whether that release is complete
@@ -56,7 +59,7 @@ name: release
 # A manual run (workflow_dispatch) of main is a dry run: everything up to and including verify, then nothing:
 # tag, publish, tap and bump do not run. From any other branch it builds and tests the candidate and stops before attest.
 # The only write to this repository by the job token is publish (contents), under a push to main; the tag is
-# written through the release bot App's token (above). Both tag and publish run only under a push to main (bump writes to komira-internal, through the App token, and holds contents: read here), and attest (id-token, attestations) by tests/drivers/release_lint.zig, which
+# written through the release bot App's token (above). Both tag and publish run only under a push to main (bump writes to komira-internal, through the App token, and holds contents: read here), and attest (id-token, attestations), beta-macos (id-token, for farm-connect in farm-macos.yml) and the apt jobs that hold the cloud role (id-token) by tests/drivers/release_lint.zig, which
 # also holds the order of the stages, the data flow between them and the path filter; hygiene.zig holds the
 # triggers. A re-run of failed jobs only rebuilds what failed and what depends on it: a changed build
 # always re-runs beta-user. install.sh (site/static/install.sh) reads these assets.
@@ -92,8 +95,16 @@ jobs:
       contents: read
     uses: ./.github/workflows/lint.yml
 
+  # The macOS arm64 checks on the farm's Mac workers (farm-macos.yml). id-token is farm-connect's, as in farm.yml; until the macOS
+  # workers are configured the called job is green with a notice, and the macos-15 legs of beta, build and beta-user run as before.
+  beta-macos:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/farm-macos.yml
+
   plan:
-    needs: [beta, lint]
+    needs: [beta, lint, beta-macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

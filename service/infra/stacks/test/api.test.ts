@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, V2_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
@@ -11,11 +11,11 @@ const flat = (v: any): string => (typeof v === 'string' ? v : JSON.stringify(v))
 
 /**
  * Everything the handler's role may do, checked as rules. Allowed: GetItem/Query on the four read tables; per WRITE_GRANTS on the publish tables; per AUTH_GRANTS
- * on the four auth tables (indexes by name only); GetSecretValue on the one OAuth secret. Returns what breaks them.
+ * on the four auth tables (indexes by name only); GetSecretValue on the OAuth secret. Returns what breaks them.
  */
 function policyViolations(stage: string, statements: any[]): string[] {
   const out: string[] = [];
-  const secret = `secret:mopm/${stage}/github-oauth-??????`;
+  const secrets = [`secret:mopm/${stage}/github-oauth-??????`];
   for (const s of statements) {
     if (s.Effect !== 'Allow') continue;
     const res = ([] as any[]).concat(s.Resource).map(flat);
@@ -23,7 +23,7 @@ function policyViolations(stage: string, statements: any[]): string[] {
       if (a === '*' || a.endsWith(':*')) out.push(`wildcard action ${a}`);
       if (a.startsWith('secretsmanager:')) {
         if (a !== 'secretsmanager:GetSecretValue') out.push(`secret action ${a}`);
-        for (const r of res) if (!r.endsWith(secret) && !r.includes(`${secret}"`)) out.push(`secret resource ${r}`);
+        for (const r of res) if (!secrets.some((secret) => r.endsWith(secret) || r.includes(`${secret}"`))) out.push(`secret resource ${r}`);
       }
       if (!a.startsWith('dynamodb:')) continue;
       for (const r of res) {
@@ -102,6 +102,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       [
         ...READ_ROUTES.map((r) => `GET ${r}`),
         ...PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`),
+        ...V2_ROUTES.map((r) => `${r.method} ${r.path}`),
         'POST /api/v1/packages/{name}/claim',
         'POST /api/v1/auth/device',
         'POST /api/v1/auth/device/poll',
@@ -116,7 +117,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     );
     expect(AUTH_ROUTES).toHaveLength(7);
     expect(CLAIM_ROUTES.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /api/v1/packages/{name}/claim']);
-    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + CLAIM_ROUTES.length + 2);
+    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + CLAIM_ROUTES.length + V2_ROUTES.length + 2);
     // Claim is POST only (a GET of `.../claim` is the version route's, which the handler refuses); yank (PUT) is routed too.
     expect(keys.filter((k) => /\/claim/.test(k))).toEqual(['POST /api/v1/packages/{name}/claim']);
     expect(keys).toContain('PUT /api/v1/packages/{name}/{version}/yank');
@@ -278,6 +279,30 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(AUTH_GRANTS.tokens!.indexes).toEqual(['by_github_id']);
   });
 
+  // A login creates the user namespace with a PutItem conditional on the key being absent; a member change rewrites an
+  // organization's row with a PutItem conditional on its revision. Nothing in the handler updates or deletes a namespace.
+  test('namespaces: read, create and list by account only; never update or delete', () => {
+    expect(AUTH_GRANTS.namespaces).toEqual({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_github_id'] });
+    const st = statements().filter((s) => s.Sid === 'AuthNamespaces');
+    expect(st).toHaveLength(1);
+    expect(acts(st[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']);
+  });
+
+  // A member is added or changed with a PutItem, read with GetItem and Query, and an account's memberships come from the
+  // by_member index; a removal is a row written back, so nothing deletes one.
+  test('namespace_members: get, put and query with its one index; never update or delete', () => {
+    expect(AUTH_GRANTS.namespace_members).toEqual({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_member'] });
+    const st = statements().filter((s) => s.Sid === 'AuthNamespaceMembers');
+    expect(st).toHaveLength(1);
+    expect(acts(st[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']);
+    expect(flatten(st[0].Resource)).toContain(`table/${tableName(stage, 'namespace_members')}/index/by_member`);
+  });
+
+  test('the membership_passes table is no longer granted', () => {
+    expect(AUTH_GRANTS.membership_passes).toBeUndefined();
+    expect(JSON.stringify(statements())).not.toContain('membership_passes');
+  });
+
   // POST /api/v1/me/tokens asks which packages the account owns (ownedPackagesFrom: a Query on the owners table's
   // by_github_id index). A table grant does not cover an index: the index is its own resource.
   test('the role may Query the owners index by_github_id, by its own ARN', () => {
@@ -294,11 +319,15 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   test('the role may read exactly one secret, the stage OAuth app, and nothing else in Secrets Manager', () => {
     const st = statements().filter((s) => acts(s).some((a) => a.startsWith('secretsmanager:')));
     expect(st).toHaveLength(1);
+    expect(st[0].Sid).toBe('ReadGitHubOAuthSecret');
     expect(acts(st[0])).toEqual(['secretsmanager:GetSecretValue']);
-    const res = flatten(st[0].Resource);
-    expect(res).toContain(`secret:mopm/${stage}/github-oauth-??????`);
-    expect(res).not.toContain('"*"');
     expect(([] as any[]).concat(st[0].Resource)).toHaveLength(1);
+    expect(flatten(st[0].Resource)).toContain(`secret:mopm/${stage}/github-oauth-??????`);
+    expect(flatten(st[0].Resource)).not.toContain('"*"');
+    expect(JSON.stringify(statements())).not.toContain('github-app');
+    for (const fn of Object.values(t.findResources('AWS::Lambda::Function'))) {
+      expect(Object.keys((fn as any).Properties?.Environment?.Variables ?? {}).filter((k) => /APP_SECRET/.test(k))).toEqual([]);
+    }
     t.hasResourceProperties('AWS::Lambda::Function', {
       Environment: { Variables: Match.objectLike({ MOPM_OAUTH_SECRET_NAME: `mopm/${stage}/github-oauth`, MOPM_REQUIRE_2FA: 'true' }) },
     });
@@ -405,6 +434,8 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       'Query on every tokens index': withExtra({ Action: 'dynamodb:Query', Resource: `${tbl('tokens')}/index/*` }),
       'secret read widened to every secret': withExtra({ Action: 'secretsmanager:GetSecretValue', Resource: '*' }),
       'a second secret': withExtra({ Action: 'secretsmanager:GetSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/e2e/test-identity-??????` }),
+      'a third secret under the stage prefix': withExtra({ Action: 'secretsmanager:GetSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/github-app-extra-??????` }),
+      'App secret write': withExtra({ Action: 'secretsmanager:PutSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/github-app-??????` }),
       'secret write': withExtra({ Action: 'secretsmanager:PutSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/github-oauth-??????` }),
     };
     expect(policyViolations(stage, base)).toEqual([]);

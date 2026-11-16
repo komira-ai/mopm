@@ -46,6 +46,18 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| closure_cmd.addArgs(args);
     b.step("run-closure", "Make the toolchain closure files: -- <lock> <output directory>").dependOn(&closure_cmd.step);
 
+    // mopm-api-gen writes what the registry API's protos (spec/api/mopm/registry/v2/*.proto) make: the OpenAPI document of
+    // /api/v2, the TypeScript types and route table of service/api and the Zig client (tools/api_gen.zig). `zig build gen-api`.
+    const api_gen = b.addExecutable(.{
+        .name = "mopm-api-gen",
+        .root_source_file = b.path("tools/api_gen.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const api_gen_cmd = b.addRunArtifact(api_gen);
+    api_gen_cmd.addArg(b.pathFromRoot("."));
+    b.step("gen-api", "Write the outputs of the registry API's protos").dependOn(&api_gen_cmd.step);
+
     // The fake registry the CLI is tested against (registry/fake/README.md).
     const fake = b.addExecutable(.{
         .name = "mopm-fake-registry",
@@ -88,12 +100,90 @@ pub fn build(b: *std.Build) void {
     cli_tests.root_module.addOptions("build_options", build_options);
     test_step.dependOn(&b.addRunArtifact(cli_tests).step);
 
+    // The checked-in outputs of the API's protos are what mopm-api-gen makes of them, and the generator's own tests.
+    const api_gen_tests = b.addTest(.{
+        .root_source_file = b.path("tools/api_gen_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_step.dependOn(&b.addRunArtifact(api_gen_tests).step);
+
+    // The hand-written commands reach the registry through the generated client, and every operation has a command.
+    const registry_client_lint = b.addTest(.{
+        .root_source_file = b.path("tests/drivers/registry_client_lint_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_step.dependOn(&b.addRunArtifact(registry_client_lint).step);
+
     const fake_tests = b.addTest(.{
         .root_source_file = b.path("registry/fake/main.zig"),
         .target = target,
         .optimize = optimize,
     });
     test_step.dependOn(&b.addRunArtifact(fake_tests).step);
+
+    // The cross-version test of names in namespaces (docs/design/namespaces.md, section 11): the readers and the fake registry of
+    // the previous release (v0.0.108, vendored under tests/compat/v0.0.108) against this code, in one process; the farm runs the
+    // same file as //:compat_namespaces.
+    const fake_fixture = b.createModule(.{
+        .root_source_file = b.path("registry/fake/groups_test.zig"),
+    });
+    const prev_v0_0_108 = b.createModule(.{
+        .root_source_file = b.path("tests/compat/prev_v0_0_108.zig"),
+    });
+    const compat_namespaces = b.addTest(.{
+        .root_source_file = b.path("tests/drivers/compat_namespaces_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    compat_namespaces.root_module.addImport("mopm_core", core);
+    compat_namespaces.root_module.addImport("fake_fixture", fake_fixture);
+    compat_namespaces.root_module.addImport("prev_v0_0_108", prev_v0_0_108);
+    test_step.dependOn(&b.addRunArtifact(compat_namespaces).step);
+
+    // The import-name refusal of `mopm lock`, `tree` and `sync`, run as a command on temporary projects (no network);
+    // the farm runs the same file as //:import_clash_cli.
+    const import_clash_cli = b.addTest(.{ // native-only
+        .root_source_file = b.path("tests/drivers/import_clash_cli_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_import_clash_cli = b.addRunArtifact(import_clash_cli);
+    run_import_clash_cli.step.dependOn(b.getInstallStep());
+    run_import_clash_cli.has_side_effects = true;
+    run_import_clash_cli.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
+    test_step.dependOn(&run_import_clash_cli.step);
+
+    // The registry commands generated from the v2 protos, run as commands: their help goldens, their usage errors and a few
+    // calls against the fake registry; the farm runs the same file as //:registry_cli.
+    const registry_cli = b.addTest(.{ // native-only
+        .root_source_file = b.path("tests/drivers/registry_cli_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_registry_cli = b.addRunArtifact(registry_cli);
+    run_registry_cli.step.dependOn(b.getInstallStep());
+    run_registry_cli.has_side_effects = true;
+    run_registry_cli.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
+    run_registry_cli.setEnvironmentVariable("MOPM_FAKE_REGISTRY", b.getInstallPath(.bin, "mopm-fake-registry"));
+    test_step.dependOn(&run_registry_cli.step);
+
+    // `zig build test-pixi -Dpixi=<pixi binary>`: pixi installs packages `mopm pack` wrote from one conda channel per
+    // namespace, served on loopback by the test (tests/drivers/pixi_channels_test.zig). The farm has no pixi, so no
+    // Buck2 target runs it; the `pixi-channels` job of ci.yml does, with the pinned pixi of tools/install_pixi.sh.
+    const pixi = b.option([]const u8, "pixi", "The pixi binary the pixi channel test drives");
+    const pixi_channels = b.addTest(.{ // native-only
+        .root_source_file = b.path("tests/drivers/pixi_channels_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_pixi_channels = b.addRunArtifact(pixi_channels);
+    run_pixi_channels.step.dependOn(b.getInstallStep());
+    run_pixi_channels.has_side_effects = true;
+    run_pixi_channels.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
+    if (pixi) |p| run_pixi_channels.setEnvironmentVariable("PIXI", b.pathFromRoot(p));
+    b.step("test-pixi", "Run the pixi channel test natively (-Dpixi=<pixi binary>)").dependOn(&run_pixi_channels.step);
 
     // `zig build test-e2e -Dmojo-env=<environment>` runs the Mojo end-to-end
     // drivers (tests/drivers/test_*_test.zig, the same files Buck2 runs on the

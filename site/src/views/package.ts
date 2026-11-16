@@ -1,9 +1,11 @@
-// /packages/<name>: one package (getPackage).
+// /packages/<namespace>/<name>: one package (getPackage).
 //
-// The page reads top to bottom: the name, latest version, description and a line of facts; then ONE install command
-// with a Copy button (pixi, the command that installs a published package today; the other ways sit in a closed
-// <details>); then the readme and the versions table. A side panel holds the links, license, keywords, owners and the
-// newest versions with their state.
+// The page reads top to bottom: the full name, latest version, description and a line of facts; then the install
+// commands with a Copy button each (pixi: add the namespace's conda channel, then the package; the other ways, the
+// channel and the mopm.toml line with its quoted full-name key, sit in a closed <details>); then the readme and the
+// versions table. A side panel holds the links, license, keywords, the namespace (the package's owner) with its GitHub
+// account, and the newest versions with their state. The GitHub link is what tells a look-alike namespace from the real
+// one (docs/design/namespaces.md, section 1), so the panel shows the account's login as GitHub has it now.
 //
 // The shapes: a claimed name with nothing published; a package state this page does not know, or an active package
 // with no published version (every one yanked or tombstoned), with no install lines; an active package whose
@@ -14,14 +16,14 @@
 // start with 'readme-', so no readme heading can take one), its headings two levels down: a readme '# Title' is an h3
 // under the section's 'Readme' h2.
 
-import { type Doc, h } from '../doc.js';
+import { type Doc, h, type SafeHref } from '../doc.js';
 import { formatDate, stateLabel } from '../format.js';
 import { condaBase } from '../host.js';
 import { anchorHref, internalHref, webHref } from '../links.js';
 import { renderMarkdown } from '../markdown/render.js';
-import { isCanonicalName, isVersion, packagePath, searchPath, versionPath } from '../routes.js';
-import { manifestSnippet, pixiCommand, refusalSentence } from '../snippet.js';
-import type { PackageInfo, VersionSummary } from '../types.js';
+import { type FullName, fullName, isNamespace, isVersion, namespaceSearchPath, packagePath, searchPath, versionPath } from '../routes.js';
+import { manifestSnippet, namespaceChannel, pixiCommands, refusalSentence } from '../snippet.js';
+import type { NamespaceInfo, PackageInfo, VersionSummary } from '../types.js';
 import { details, snippetBlock, timeEl, type View } from './common.js';
 import { glyphClass, initials } from './recent.js';
 
@@ -54,24 +56,24 @@ export function readmeSection<N>(doc: Doc<N>, readme: string | undefined): N | n
   return section;
 }
 
-/** Keywords and owners: short lists of plain text. */
+/** Keywords: a short list of plain text. */
 export function inlineList<N>(doc: Doc<N>, items: readonly string[] | undefined, cls: string): N | null {
   if (!items || items.length === 0) return null;
   return h(doc, 'ul', { class: `inline-list ${cls}` }, ...items.map((t) => h(doc, 'li', null, t)));
 }
 
-function versionCell<N>(doc: Doc<N>, name: string, v: VersionSummary): N {
-  return isVersion(v.version) ? h(doc, 'a', { href: internalHref(versionPath(name, v.version)) }, v.version) : h(doc, 'span', null, v.version);
+function versionCell<N>(doc: Doc<N>, f: FullName, v: VersionSummary): N {
+  return isVersion(v.version) ? h(doc, 'a', { href: internalHref(versionPath(f, v.version)) }, v.version) : h(doc, 'span', null, v.version);
 }
 
-function versionsTable<N>(doc: Doc<N>, name: string, versions: readonly VersionSummary[]): N {
+function versionsTable<N>(doc: Doc<N>, f: FullName, versions: readonly VersionSummary[]): N {
   if (versions.length === 0) return h(doc, 'p', { class: 'muted' }, 'No versions are published.');
   const rows = versions.map((v) =>
     h(
       doc,
       'tr',
       { class: `state-${v.state}` },
-      h(doc, 'th', { scope: 'row' }, versionCell(doc, name, v)),
+      h(doc, 'th', { scope: 'row' }, versionCell(doc, f, v)),
       h(doc, 'td', null, stateLabel(v.state, v.state_raw, v.yank_reason)),
       h(doc, 'td', null, timeEl(doc, v.published_at)),
     ),
@@ -84,35 +86,53 @@ function versionsTable<N>(doc: Doc<N>, name: string, versions: readonly VersionS
       doc,
       'table',
       null,
-      h(doc, 'caption', null, `Versions of ${name}, newest first`),
+      h(doc, 'caption', null, `Versions of ${fullName(f)}, newest first`),
       h(doc, 'thead', null, h(doc, 'tr', null, h(doc, 'th', { scope: 'col' }, 'Version'), h(doc, 'th', { scope: 'col' }, 'State'), h(doc, 'th', { scope: 'col' }, 'Published'))),
       h(doc, 'tbody', null, ...rows),
     ),
   );
 }
 
-/** The package page's one command: where it works, naming this host's channel (one artifact serves every stage). */
-export const INSTALL_NOTE = 'in a pixi project that lists the channel ';
+/** What the install commands do, naming the namespace's channel on this host (one artifact serves every stage). */
+export const INSTALL_NOTE = 'in a pixi workspace: add the conda channel of the namespace, ';
+/** The package page knows no dependencies (getPackage has none), so it says where their channels are listed. */
+export const CHANNELS_NOTE = 'A dependency in another namespace needs that namespace’s channel as well; the page of each version adds those channels.';
+/** A version page with dependencies in other namespaces: what the extra channel lines are, and what they do not cover. */
+export const DEP_CHANNELS_NOTE = 'The other channels are the namespaces of this version’s dependencies. A dependency of a dependency may need one more; its own version page lists it.';
 
 /** How many versions the side panel lists; the table below the readme has them all. */
 export const SIDE_VERSIONS = 5;
 
+/** One command row: a prompt, the command in a <pre> and (from the page script) a Copy button named by `label`. */
+function commandRow<N>(doc: Doc<N>, cmd: string, label: string, describedBy: string): N {
+  return h(
+    doc,
+    'div',
+    { class: 'cmd cmd-lg copy-box' },
+    h(doc, 'span', { class: 'prompt', 'aria-hidden': 'true' }, '$'),
+    h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-label': label, 'aria-describedby': describedBy }, h(doc, 'code', null, cmd)),
+  );
+}
+
 /**
- * The package page's install card: the pixi command alone, with a Copy button, when this host has a channel; then the
- * conda channel and the mopm.toml lines under "Other ways to install". Without a channel (a host outside host.ts's
- * table) there is no command to lead with, and the mopm.toml lines (or why there are none) are shown as they are.
- * `caveat` is a line under the command (a version page: the command installs the newest version, not that one).
+ * The install card: the pixi commands, a Copy button each, when this host has a channel (add the namespace's channel,
+ * add the channel of each other namespace `deps` names, then add the package); then the namespace's conda channel and
+ * the mopm.toml lines under "Other ways to install". Without a channel (a host outside host.ts's table) there is no
+ * command to lead with, and the mopm.toml lines (or why there are none) are shown as they are. `caveat` is a line under
+ * the commands (a version page: they install the newest version, not that one). `deps` is null on the package page,
+ * which knows no dependencies, and a version's direct dependencies on a version page.
  */
 export function installCard<N>(
   doc: Doc<N>,
-  name: string,
+  f: FullName,
   manifest: string | null,
   ctx: PageContext,
   noManifestWhy: string | null,
   caveat: string | null = null,
+  deps: readonly string[] | null = null,
 ): N {
-  const channel = condaBase(ctx.host);
-  const pixi = channel !== null ? pixiCommand(name) : null;
+  const base = condaBase(ctx.host);
+  const cmds = base !== null ? pixiCommands(base, f, deps ?? []) : null;
   const card = h(doc, 'section', { class: 'install-card', 'aria-labelledby': 'install-heading' });
   const headRow = h(doc, 'div', { class: 'install-head' }, h(doc, 'h2', { id: 'install-heading' }, 'Install'));
   doc.append(card, headRow);
@@ -123,25 +143,21 @@ export function installCard<N>(
   } else if (noManifestWhy !== null) {
     others.push(h(doc, 'p', { class: 'muted small' }, noManifestWhy));
   }
-  if (pixi === null) {
+  if (base === null || cmds === null) {
     for (const n of others) doc.append(card, n);
     return card;
   }
-  doc.append(headRow, h(doc, 'p', { class: 'install-note', id: 'install-note' }, INSTALL_NOTE, h(doc, 'code', null, channel as string)));
-  doc.append(
-    card,
-    h(
-      doc,
-      'div',
-      { class: 'cmd cmd-lg copy-box' },
-      h(doc, 'span', { class: 'prompt', 'aria-hidden': 'true' }, '$'),
-      h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-label': 'install command', 'aria-describedby': caveat ? 'install-note install-caveat' : 'install-note' }, h(doc, 'code', null, pixi)),
-    ),
-  );
+  const channel = namespaceChannel(base, f.namespace);
+  doc.append(headRow, h(doc, 'p', { class: 'install-note', id: 'install-note' }, INSTALL_NOTE, h(doc, 'code', null, channel), ', then the package'));
+  const describedBy = caveat ? 'install-note install-caveat' : 'install-note';
+  // The last command adds the package; the ones before it add channels: the namespace's, then its dependencies'.
+  cmds.forEach((cmd, i) => doc.append(card, commandRow(doc, cmd, i === cmds.length - 1 ? 'install command' : i === 0 ? 'channel command' : `channel command ${i + 1}`, describedBy)));
   if (caveat) doc.append(card, h(doc, 'p', { class: 'install-caveat', id: 'install-caveat' }, caveat));
+  if (deps === null) doc.append(card, h(doc, 'p', { class: 'muted small' }, CHANNELS_NOTE));
+  else if (cmds.length > 2) doc.append(card, h(doc, 'p', { class: 'muted small' }, DEP_CHANNELS_NOTE));
   doc.append(
     card,
-    h(doc, 'details', { class: 'other-ways' }, h(doc, 'summary', null, 'Other ways to install'), h(doc, 'div', { class: 'alt' }, snippetBlock(doc, 'conda channel', channel as string, 'snippet-channel'), ...others)),
+    h(doc, 'details', { class: 'other-ways' }, h(doc, 'summary', null, 'Other ways to install'), h(doc, 'div', { class: 'alt' }, snippetBlock(doc, 'conda channel', channel, 'snippet-channel'), ...others)),
   );
   return card;
 }
@@ -160,7 +176,7 @@ function sideState(v: VersionSummary): string {
   }
 }
 
-function sideVersions<N>(doc: Doc<N>, name: string, versions: readonly VersionSummary[]): N | null {
+function sideVersions<N>(doc: Doc<N>, f: FullName, versions: readonly VersionSummary[]): N | null {
   if (versions.length === 0) return null;
   const shown = versions.slice(0, SIDE_VERSIONS);
   return h(
@@ -168,12 +184,57 @@ function sideVersions<N>(doc: Doc<N>, name: string, versions: readonly VersionSu
     'section',
     { 'aria-labelledby': 'side-versions' },
     h(doc, 'h2', { id: 'side-versions' }, 'Recent versions'),
-    h(doc, 'ul', { class: 'vers' }, ...shown.map((v) => h(doc, 'li', { class: `state-${v.state}` }, versionCell(doc, name, v), h(doc, 'span', null, sideState(v))))),
+    h(doc, 'ul', { class: 'vers' }, ...shown.map((v) => h(doc, 'li', { class: `state-${v.state}` }, versionCell(doc, f, v), h(doc, 'span', null, sideState(v))))),
     h(doc, 'p', { class: 'small' }, h(doc, 'a', { href: anchorHref('versions-heading') }, versions.length === 1 ? 'The versions table' : `All ${versions.length} versions`)),
   );
 }
 
-function sidePanel<N>(doc: Doc<N>, name: string, info: PackageInfo): N {
+/**
+ * A GitHub login as GitHub spells it: letters, digits, single hyphens, and '_' for an enterprise-managed account, at most
+ * 39 characters. Only such a login gets a link to its GitHub page; anything else from the API is shown as text.
+ */
+export const GITHUB_LOGIN = /^[A-Za-z0-9_](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}$/;
+
+/** The account's page on GitHub, or null when `login` is not a GitHub login. */
+export function githubHref(login: string): SafeHref | null {
+  return GITHUB_LOGIN.test(login) ? webHref(`https://github.com/${login}`) : null;
+}
+
+function kindLabel(kind: NamespaceInfo['kind']): string {
+  switch (kind) {
+    case 'org':
+      return 'GitHub organization';
+    case 'user':
+      return 'GitHub user';
+    default:
+      return 'unknown';
+  }
+}
+
+/**
+ * The namespace section of the side panel: the namespace (a link to its packages), its kind, and its GitHub account,
+ * linked by its current login. A login that is no longer the namespace's spelling (the account was renamed on GitHub)
+ * says so.
+ */
+export function namespaceSection<N>(doc: Doc<N>, ns: NamespaceInfo): N {
+  const href = githubHref(ns.login);
+  const account = href !== null ? h(doc, 'a', { href, rel: 'nofollow noopener noreferrer ugc' }, `@${ns.login}`) : h(doc, 'span', null, ns.login);
+  const meta = details(doc, [
+    ['Namespace', isNamespace(ns.namespace) ? h(doc, 'a', { href: internalHref(namespaceSearchPath(ns.namespace)), class: 'crumb-pkg' }, ns.namespace) : ns.namespace],
+    ['Kind', kindLabel(ns.kind)],
+    ['GitHub', account],
+  ]);
+  return h(
+    doc,
+    'section',
+    { 'aria-labelledby': 'side-namespace' },
+    h(doc, 'h2', { id: 'side-namespace' }, 'Namespace'),
+    meta,
+    ns.login.toLowerCase() !== ns.namespace ? h(doc, 'p', { class: 'muted small' }, `The GitHub account is now ${ns.login}; the namespace keeps the name ${ns.namespace}.`) : null,
+  );
+}
+
+function sidePanel<N>(doc: Doc<N>, f: FullName, info: PackageInfo): N {
   const aside = h(doc, 'aside', { class: 'side-panel', 'aria-label': 'Package details' });
   const meta = details(doc, [
     ['Repository', webLink(doc, info.repository)],
@@ -183,26 +244,15 @@ function sidePanel<N>(doc: Doc<N>, name: string, info: PackageInfo): N {
     ['Created', h(doc, 'time', { datetime: info.created_at }, formatDate(info.created_at))],
   ]);
   if (meta) doc.append(aside, h(doc, 'section', { 'aria-labelledby': 'side-about' }, h(doc, 'h2', { id: 'side-about' }, 'About'), meta));
-  if (info.owners.length > 0) {
-    doc.append(
-      aside,
-      h(
-        doc,
-        'section',
-        { 'aria-labelledby': 'side-owners' },
-        h(doc, 'h2', { id: 'side-owners' }, 'Owners'),
-        h(doc, 'ul', { class: 'inline-list owners' }, ...info.owners.map((o) => h(doc, 'li', null, h(doc, 'span', { class: 'avatar', 'aria-hidden': 'true' }, o.handle.slice(0, 2).toUpperCase()), o.handle))),
-      ),
-    );
-  }
-  const vers = sideVersions(doc, name, info.versions);
+  doc.append(aside, namespaceSection(doc, info.namespace));
+  const vers = sideVersions(doc, f, info.versions);
   if (vers) doc.append(aside, vers);
   return aside;
 }
 
 /** The parts of a package or version page's head band. */
 export interface HeadParts<N> {
-  name: string;
+  name: FullName;
   /** The version a version page is about; the crumb then links the package and ends at the version. */
   version?: string;
   /** After the h1: the latest version and its tag, or the version's state tag. */
@@ -213,32 +263,39 @@ export interface HeadParts<N> {
   tabs: N[];
 }
 
-/** The head band a package and a version page share: crumb, glyph and name, description, facts, jump links. */
+/**
+ * The head band a package and a version page share: crumb, glyph and full name, description, facts, jump links. The
+ * crumb is Packages / namespace (its packages) / name, then the version on a version page; the h1 is the full name, its
+ * namespace part muted.
+ */
 export function pageHead<N>(doc: Doc<N>, p: HeadParts<N>): N {
-  const crumbs: N[] = [h(doc, 'a', { href: internalHref(searchPath()) }, 'Packages'), h(doc, 'span', { class: 'sep', 'aria-hidden': 'true' }, '/')];
+  const sep = (): N => h(doc, 'span', { class: 'sep', 'aria-hidden': 'true' }, '/');
+  const crumbs: N[] = [
+    h(doc, 'a', { href: internalHref(searchPath()) }, 'Packages'),
+    sep(),
+    h(doc, 'a', { href: internalHref(namespaceSearchPath(p.name.namespace)), class: 'crumb-pkg' }, p.name.namespace),
+    sep(),
+  ];
   if (p.version === undefined) {
-    crumbs.push(h(doc, 'span', { 'aria-current': 'page' }, p.name));
+    crumbs.push(h(doc, 'span', { 'aria-current': 'page' }, p.name.name));
   } else {
-    crumbs.push(
-      isCanonicalName(p.name) ? h(doc, 'a', { href: internalHref(packagePath(p.name)), class: 'crumb-pkg' }, p.name) : h(doc, 'span', null, p.name),
-      h(doc, 'span', { class: 'sep', 'aria-hidden': 'true' }, '/'),
-      h(doc, 'span', { 'aria-current': 'page' }, p.version),
-    );
+    crumbs.push(h(doc, 'a', { href: internalHref(packagePath(p.name)), class: 'crumb-pkg' }, p.name.name), sep(), h(doc, 'span', { 'aria-current': 'page' }, p.version));
   }
-  const h1 = p.version === undefined ? h(doc, 'h1', null, p.name) : h(doc, 'h1', null, p.name, ' ', h(doc, 'span', { class: 'ver' }, p.version));
+  const title: N[] = [h(doc, 'span', { class: 'ns' }, `${p.name.namespace}/`), h(doc, 'span', null, p.name.name)];
+  const h1 = p.version === undefined ? h(doc, 'h1', null, ...title) : h(doc, 'h1', null, ...title, ' ', h(doc, 'span', { class: 'ver' }, p.version));
   return h(
     doc,
     'header',
     { class: 'page-band pkg-head' },
     h(doc, 'nav', { class: 'crumb', 'aria-label': 'Breadcrumb' }, ...crumbs),
-    h(doc, 'div', { class: 'title-row' }, h(doc, 'span', { class: `${glyphClass(p.name)} glyph-lg`, 'aria-hidden': 'true' }, initials(p.name)), h1, ...p.badges),
+    h(doc, 'div', { class: 'title-row' }, h(doc, 'span', { class: `${glyphClass(fullName(p.name))} glyph-lg`, 'aria-hidden': 'true' }, initials(p.name.name)), h1, ...p.badges),
     p.description ? h(doc, 'p', { class: 'lede' }, p.description) : null,
     p.facts.length > 0 ? h(doc, 'ul', { class: 'metarow' }, ...p.facts) : null,
     p.tabs.length > 1 ? h(doc, 'nav', { class: 'tabs', 'aria-label': 'On this page' }, ...p.tabs) : null,
   );
 }
 
-function head<N>(doc: Doc<N>, name: string, info: PackageInfo, latest: string | null, hasReadme: boolean): N {
+function head<N>(doc: Doc<N>, name: FullName, info: PackageInfo, latest: string | null, hasReadme: boolean): N {
   const latestRow = latest === null ? undefined : info.versions.find((v) => v.version === latest);
   const facts: N[] = [];
   if (latestRow) facts.push(h(doc, 'li', null, 'Published ', h(doc, 'strong', null, timeEl(doc, latestRow.published_at))));
@@ -260,7 +317,7 @@ function head<N>(doc: Doc<N>, name: string, info: PackageInfo, latest: string | 
   });
 }
 
-export function packageView<N>(doc: Doc<N>, name: string, info: PackageInfo, ctx: PageContext): View<N> {
+export function packageView<N>(doc: Doc<N>, name: FullName, info: PackageInfo, ctx: PageContext): View<N> {
   const latest = info.latest !== null && isVersion(info.latest) ? info.latest : null;
   const readme = readmeSection(doc, info.readme);
 
@@ -290,5 +347,5 @@ export function packageView<N>(doc: Doc<N>, name: string, info: PackageInfo, ctx
     doc.append(main, h(doc, 'section', { class: 'versions', 'aria-labelledby': 'versions-heading' }, h(doc, 'h2', { id: 'versions-heading' }, 'Versions'), versionsTable(doc, name, info.versions)));
   }
 
-  return { title: name, nodes: [head(doc, name, info, latest, readme !== null), h(doc, 'div', { class: 'layout' }, main, sidePanel(doc, name, info))] };
+  return { title: fullName(name), nodes: [head(doc, name, info, latest, readme !== null), h(doc, 'div', { class: 'layout' }, main, sidePanel(doc, name, info))] };
 }

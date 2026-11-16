@@ -18,7 +18,8 @@
 # skipped; lint.yml runs the repository's lints for it on a GitHub-hosted runner,
 # as it does for every pull request and every push to main.
 # The hygiene and workflow lints (//:hygiene, //:workflows) allow the id-token grant and the
-# one action outside GitHub's own for this file only, under these conditions.
+# one action outside GitHub's own for this file and farm-macos.yml only (the macOS checks on the farm's Macs, after the merge),
+# each under its own conditions.
 name: farm
 
 on:

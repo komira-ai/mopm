@@ -25,8 +25,13 @@ be wiped, so nothing should be locked to them except for testing.
 
 ## Layout (v1)
 
+There is one channel per namespace, `https://conda.<site>/<namespace>/`, with the four subdirs and the files below. A
+namespace channel holds only that namespace's packages. The channel root `https://conda.<site>/` keeps its four subdirs,
+each with a valid `repodata.json` that holds only the packages kept under flat names (on mopm.dev, the `kci_*`
+packages).
+
 ```text
-https://conda.<site>/
+https://conda.<site>/<namespace>/
   noarch/
   linux-64/
   linux-aarch64/
@@ -34,7 +39,7 @@ https://conda.<site>/
     repodata.json                 all resolvable packages of the subdir
     repodata.json.zst             the same bytes, zstd-compressed
     current_repodata.json         only the newest version of each name
-    mojo-<name>-<version>-<build>.conda
+    mojo-<namespace>.<name>-<version>-<build>.conda
     repodata_shards.msgpack.zst   planned, see Sharded repodata
     shards/<sha256>.msgpack.zst   planned
 ```
@@ -58,8 +63,10 @@ https://conda.<site>/
   (for example `mojo-compiler ==1.0.0`, the version in the build string); a
   native library uses its conda package name (the library `openssl`
   becomes the dependency `openssl`); another Mojo package is
-  `mojo-<name>` with its version constraint.
-- `removed` lists the file names (`mojo-<name>-<version>-<build>.conda`) of
+  `mojo-<namespace>.<name>` with its version constraint. A conda client finds
+  it in the channels its user lists; a package whose closure spans namespaces
+  needs every one of those channels.
+- `removed` lists the file names (`mojo-<namespace>.<name>-<version>-<build>.conda`) of
   both yanked and tombstoned (taken-down) versions of that subdir. A client
   holding a lock that names a listed file learns from the list that the
   version is no longer offered. The list is the same for either state; the
@@ -72,9 +79,12 @@ https://conda.<site>/
 
 ## Package naming (v1)
 
-- The file is `mojo-<name>-<version>-<build>.conda`. The conda package name is
-  `mojo-<name>` where `<name>` is the mopm name (the import name). `pixi add
-  mojo-json` installs the package whose import name is `json`.
+- The conda package name of the package `<namespace>/<name>` is
+  `mojo-<namespace>.<name>`; the file is
+  `mojo-<namespace>.<name>-<version>-<build>.conda`. `.` is in neither part of
+  a full name, so a conda name maps back to one full name. `pixi workspace
+  channel add https://conda.mopm.dev/komira-ai/` then `pixi add
+  mojo-komira-ai.json` installs `komira-ai/json`.
 - The build string is `mojo<compiler>_<n>` for the exact compiler the `.mojoc`
   was built with, for example `mojo1.0.0_0`. `n` is always 0. A version's file
   set is fixed when it is committed, so supporting a new compiler means
@@ -90,19 +100,20 @@ https://conda.<site>/
 A client reads these paths under the conda prefix:
 
 ```text
-lib/mojo/<name>.mojoc          the compiled Mojo package
-lib/mojo/<name>.mopm.json      the embedded metadata (package-metadata.schema.json)
-lib/<soname>                   native libraries the package declares, if any
-lib/mojo/<name>.bins/<bin>.mojo  the source of a program the package ships (`[targets] bins`), if any
+lib/mojo/<import name>.mojoc          the compiled Mojo package
+lib/mojo/<import name>.mopm.json      the embedded metadata (package-metadata.schema.json)
+lib/<soname>                          native libraries the package declares, if any
+lib/mojo/<import name>.bins/<bin>.mojo  the source of a program the package ships (`[targets] bins`), if any
 ```
 
 A program is a file of Mojo source, `<bin>` being lower case letters, digits and
 underscores. It is data: nothing runs it at install time, and mopm builds it on
 the machine that runs it (`mopm run --bin <name>:<bin>`). The registry accepts no
-other file below `lib/mojo/<name>.bins/`.
+other file below `lib/mojo/<import name>.bins/`.
 
-`<name>.mopm.json` is the source of truth for dependencies and native
-libraries; its `schema` field is 1 and a higher value is refused. Paths inside
+The import name is the part of the full name after `/`. `<import name>.mopm.json` is the source of truth for
+dependencies and native libraries; its `schema` field is 2, its `name` and each dependency's `name` are full names, and
+any other value is refused. Paths inside
 it are relative to the file. The registry refuses archives that contain
 anything outside the paths it allows (no `bin/`, no link or activate
 scripts, no symlinks or hardlinks, no executable code outside declared native
@@ -125,7 +136,7 @@ a violation as a corrupt package.
   removes the bytes. The URL then answers 410; a client treats 403 and 404
   from the channel host as "unavailable" too. The sparse index line changes to
   `state: tombstoned` with a reason code, and the version is added to
-  `/index/takedowns.json`. Its file is also listed under `removed` in
+  `/index/v2/takedowns.json`. Its file is also listed under `removed` in
   `repodata.json`, like a yanked one. `mopm` shows the reason for a locked version; a
   plain conda client only sees the error.
 - **State changes are one way where it matters.** A version is `published`

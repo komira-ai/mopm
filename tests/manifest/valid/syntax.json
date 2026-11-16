@@ -1,6 +1,6 @@
 {
   "package": {
-    "name": "syntax_demo",
+    "name": "example/syntax_demo",
     "version": "1.0.0",
     "description": "tab\there, quote \" and é",
     "license": null,
@@ -11,8 +11,8 @@
     "mojo": ["1.0.0", "1.1.0"]
   },
   "dependencies": [
-    {"name": "extras", "version": "2"},
-    {"name": "local", "path": "../local"}
+    {"name": "example/extras", "version": "2"},
+    {"name": "example/local", "path": "../local"}
   ],
   "dev-dependencies": [],
   "native-dependencies": [

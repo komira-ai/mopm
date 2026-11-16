@@ -56,7 +56,7 @@ fn lessStr(_: void, a: []const u8, b: []const u8) bool {
 }
 
 /// The libraries a package loads, from the `depends` of its repodata entry: every name that is not a Mojo
-/// package (`mojo-*`, the compiler included), sorted, without repeats.
+/// package (`mojo-*`: the compiler and `mojo-<namespace>.<name>` packages), sorted, without repeats.
 pub fn loadsOfDepends(arena: Allocator, depends: ?std.json.Value) error{ BadDepends, OutOfMemory }![]const []const u8 {
     const v = depends orelse return &.{};
     const items = switch (v) {
@@ -270,8 +270,8 @@ pub fn writeSubdirs(w: anytype, subdirs: []const Subdir) !void {
         for (sd.libs, 0..) |lib, j| {
             try w.writeAll(if (j == 0) "\n      {" else ",\n      {");
             const fields = [_]struct { []const u8, []const u8 }{
-                .{ "name", lib.name },   .{ "version", lib.version }, .{ "build", lib.build },
-                .{ "url", lib.url },     .{ "sha256", lib.sha256 },
+                .{ "name", lib.name }, .{ "version", lib.version }, .{ "build", lib.build },
+                .{ "url", lib.url },   .{ "sha256", lib.sha256 },
             };
             for (fields, 0..) |f, n| {
                 try w.print("{s}\n        \"{s}\": ", .{ if (n == 0) "" else ",", f[0] });

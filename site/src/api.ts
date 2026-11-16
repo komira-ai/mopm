@@ -5,7 +5,7 @@
 
 import { decodeHealth, decodePackageInfo, decodePackageList, decodeVersionDetail } from './decode.js';
 import { type ApiError, fromResponse, networkError, timeoutError, unreadable } from './errors.js';
-import type { SearchSort } from './routes.js';
+import type { FullName, SearchSort } from './routes.js';
 import type { Health, PackageInfo, PackageList, VersionDetail } from './types.js';
 
 export type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
@@ -22,8 +22,13 @@ export interface SearchQuery {
 export interface Client {
   getHealth(): Promise<Result<Health>>;
   searchPackages(query: SearchQuery): Promise<Result<PackageList>>;
-  getPackage(name: string): Promise<Result<PackageInfo>>;
-  getVersion(name: string, version: string): Promise<Result<VersionDetail>>;
+  getPackage(f: FullName): Promise<Result<PackageInfo>>;
+  getVersion(f: FullName, version: string): Promise<Result<VersionDetail>>;
+}
+
+/** `/packages/{namespace}/{name}`, each part encoded. */
+function packageApiPath(f: FullName): string {
+  return `/packages/${encodeURIComponent(f.namespace)}/${encodeURIComponent(f.name)}`;
 }
 
 export const REQUEST_ID_HEADER = 'x-mopm-request-id';
@@ -40,7 +45,7 @@ const REAL_TIMERS: Timers = {
   clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
-/** `base` is apiBase(location.hostname), e.g. 'https://api.mopm.dev/api/v1'. */
+/** `base` is apiBase(location.hostname), e.g. 'https://api.mopm.dev/api/v2'. */
 export function client(
   fetchFn: FetchFn,
   base: string,
@@ -86,8 +91,7 @@ export function client(
       const s = qs.toString();
       return get(s ? `/packages?${s}` : '/packages', decodePackageList);
     },
-    getPackage: (name) => get(`/packages/${encodeURIComponent(name)}`, decodePackageInfo),
-    getVersion: (name, version) =>
-      get(`/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, decodeVersionDetail),
+    getPackage: (f) => get(packageApiPath(f), decodePackageInfo),
+    getVersion: (f, version) => get(`${packageApiPath(f)}/${encodeURIComponent(version)}`, decodeVersionDetail),
   };
 }

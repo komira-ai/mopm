@@ -1,3 +1,4 @@
+import { repodataDirsOf } from '../channel-paths';
 import { packageRev } from '../index-files';
 import type { Store } from '../store';
 import { sendIndexPkg } from './indexer';
@@ -6,8 +7,8 @@ import type { IndexMessage, IndexTakedownsMessage } from './types';
 
 /**
  * After an operator has tombstoned a published version (a takedown), ask the index writer to bring everything
- * that shows it up to date: repodata of every subdir the package has files in (the file moves to `removed`),
- * the package's sparse-index file (state `tombstoned`, sha256 kept, no url) and `index/takedowns.json`.
+ * that shows it up to date: repodata of every repodata directory the package has files in (the file moves to `removed`),
+ * the package's sparse-index file (state `tombstoned`, sha256 kept, no url) and both takedown logs.
  *
  * The tombstone itself comes first and is the truth; this only queues the rebuilds, and sending it again after a
  * crash is safe (every job re-reads the rows). Like a yank, a takedown needs no gate: an index that says
@@ -16,7 +17,7 @@ import type { IndexMessage, IndexTakedownsMessage } from './types';
 export async function queueTakedownIndex(d: { registry: Store; indexQueue: Queue }, name: string): Promise<void> {
   const rows = await d.registry.listVersions(name);
   const rev = packageRev(rows);
-  const subdirs = [...new Set(rows.filter((r) => r.state === 'tombstoned').flatMap((r) => r.files.map((f) => f.subdir)))].sort();
+  const subdirs = repodataDirsOf(name, rows.filter((r) => r.state === 'tombstoned').flatMap((r) => r.files.map((f) => f.subdir)));
   for (const subdir of subdirs) {
     const msg: IndexMessage = { type: 'index', subdir };
     await d.indexQueue.send({ body: JSON.stringify(msg), groupId: subdir, dedupId: `rebuild:takedown:${name}:${rev}:${subdir}` });

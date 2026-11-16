@@ -1,1 +1,1 @@
-6:1: dependency 'util' has an invalid version requirement '': it is empty
+6:1: dependency 'example/util' has an invalid version requirement '': it is empty

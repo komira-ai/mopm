@@ -24,17 +24,19 @@ So the Mojo version is part of what a unit is.
   one package version. The older `[toolchain] mojo` is read too, as
   alternatives (a lock is made for the first that resolves); setting both is an
   error.
-- A **unit id** is `<name>@<version>#mojo<M>/<mode>[:<file>]`, for example
-  `http_client@0.4.0#mojo1.0.0/lib`. One package built for two Mojo versions is
+- A **unit id** is `<full name>@<version>#mojo<M>/<mode>[:<file>]`, for example
+  `komira-ai/json@0.1.0#mojo1.0.0/lib`. The full name is `<namespace>/<name>`
+  (see "Names" below). A reader splits the id at the first `@`: a full name has
+  none, and a test file may. One package built for two Mojo versions is
   two units, two actions, two cache entries. `<mode>` is `lib`, `test` (then
   `:<test file>` follows, relative to the workspace) or `bin` (then
   `:<binary name>`).
 - A graph is made for one **consumer Mojo version** `M`: `--mojo <M>`, or the
   one version `mopm.toml` lists. Every unit id in it names `M`. The graph says
   so in its top-level `mojo`.
-- A lock made from `[package] mojo` is `lock_version` 2 (`lock.md`). It holds,
+- The lock is `lock_version` 3 (`lock.md`). It holds,
   per package version, one artifact for each Mojo version it was published
-  for, and mopm's toolchain closure hash for each Mojo version it locks and each platform mopm pins (`linux-64`, `linux-aarch64`, `osx-arm64`); a lock that records `linux-64` only still reads.
+  for, and mopm's toolchain closure hash for each Mojo version it locks and each platform mopm pins (`linux-64`, `linux-aarch64`, `osx-arm64`); a lock that records `linux-64` only still reads. A lock written before namespaces (version 1 or 2) is stale: `plan` refuses it with `mopm.lock predates namespaces (lock_version <n>); run 'mopm lock'`.
 - `mopm lock` resolves once for each listed Mojo version and takes, for each
   dependency, the newest version in range that has a build for that Mojo. A
   version mopm pins no toolchain for cannot be listed: `mopm lock` stops with
@@ -42,19 +44,31 @@ So the Mojo version is part of what a unit is.
   If no acceptable version has a build for `M`, it stops, writing no lock,
   with
 
-      error: http_core 1.2.0 has no .mojoc for Mojo 1.1.0 (published for: 1.0.0). Build with mojo 1.0.0, ask the publisher for a 1.1.0 build, or pin a version that has one.
+      error: example/http_core 1.2.0 has no .mojoc for Mojo 1.1.0 (published for: 1.0.0). Build with mojo 1.0.0, ask the publisher for a 1.1.0 build, or pin a version that has one.
 
-  `<name> <version>` is the newest version that matches the requirements;
+  `<full name> <version>` is the newest version that matches the requirements;
   `published for` lists the Mojo versions that version has builds for. `plan`
   gives the same line when the lock has no artifact for `M`, and nothing falls
   back to another Mojo.
+
+## Names
+
+Everything in the graph that names a package names it by its **full name**,
+`<namespace>/<name>` (`komira-ai/json`): the unit ids, a unit's `package`, the
+`package` of a native entry, `native:<full name>/<id>` and the root `package`.
+The part after the `/` is the package's **import name** (`json`): what Mojo code
+imports, the name of the library directory (`src/json`), of the `.mojoc`
+(`json.mojoc`, `lib/mojo/json.mojoc` in a conda package) and of the directory
+the sources are staged in. A unit's `import` is its package's import name. Two
+packages of one import name never meet in one graph (below), so the import
+name alone is enough to stage and import a library.
 
 ## The graph
 
 ```json
 {
-  "unit_graph": 2,
-  "package": "app@1.0.0",
+  "unit_graph": 6,
+  "package": "example/app@1.0.0",
   "mojo": "1.0.0",
   "toolchain": { ... },
   "system_libs": [ { ... }, ... ],
@@ -62,16 +76,15 @@ So the Mojo version is part of what a unit is.
 }
 ```
 
-`unit_graph` is the format version (this file describes 2, 3, 4 and 5; a reader refuses
-another). Version 2 adds the `native` unit and the `built` native entry
-("Member natives", below); a graph of a project without member natives differs
-from a version 1 graph only in this number. Version 3 adds `system_libs` and the
-`loads` of a unit ("System libraries", below); a graph in which no unit has
-`loads` is version 2, byte for byte what it was before they existed, and has no
-`system_libs`. Version 4 adds `provided` on a `native` unit ("Provided natives",
-below); a graph with no provided native keeps its version 2 or 3. Version 5 adds
-`link` on the units that link archives ("System libraries of a native", below);
-a graph in which no unit has `link` keeps the version it had. `package` is the root package. `units` are sorted by `id`, and the
+`unit_graph` is the format version: 6, always. A reader refuses another format
+(`mopm unit`: `<file> is unit graph format <n>; this mopm reads 6`). Format 6
+is the first with full names: the unit ids and `package` carry the full name,
+and each unit has `import`. It includes the `native` unit and the `built` native
+entry ("Member natives", below), `system_libs` and the `loads` of a unit
+("System libraries", below), `provided` on a `native` unit ("Provided natives",
+below) and `link` on the units that link archives ("System libraries of a
+native", below); each of these is left out of a graph that has none. `package`
+is the root package, `<full name>@<version>`. `units` are sorted by `id`, and the
 text is one fixed layout, so the same inputs give the same bytes.
 
 ### toolchain
@@ -97,18 +110,18 @@ lock whose recorded hash is not the one this mopm computes.
 | field | meaning |
 |---|---|
 | `id` | the unit id above |
-| `package`, `version` | the package |
+| `package`, `import`, `version` | the package's full name, its import name, and its version |
 | `kind` | `lib`, `test`, `bin`, `prebuilt` or `native` |
 | `root` | `lib`: the package directory, relative to the workspace (never containing `..`) |
 | `srcs` | `path` (relative to the workspace, never containing `..`) and `sha256` of each source, sorted by path (for a `native` unit: its C sources) |
 | `soname`, `hdrs`, `cflags`, `cflags_by_os`, `includes`, `needs` | `native`: see "Member natives" |
 | `deps` | ids of the units this one imports, in the order `mopm.toml` lists them (order is significant) |
-| `natives` | `id`, `soname`, `sha256`, `package` of every prebuilt native library in the unit's dependency closure, and `kind`, `needs`, `exclusive` when the lock gives them (left out when `shared`, empty, none); a workspace member's own native library is listed with `id`, `soname`, `package`, `kind`, `needs`, `exclusive` (the same omissions) and `built`, the id of the `native` unit that builds it, and no `sha256`. They are in link order: a library before every library it `needs`, the sonames' order between libraries that do not constrain one another. A closure holding two libraries of one `exclusive` group is refused, naming both (group names are compared exactly: `libcrypto` and `LibCrypto` are two groups; `mopm.toml` refuses a name with leading or trailing whitespace or a control character). The refusal is graph-wide: one unit with a clash refuses the whole graph, so a clash reached only through a dev-only dependency, and so only by the `test:` unit, blocks the build |
-| `loads` | `test` and `bin`: the conda names of the system libraries the unit loads at run time, sorted, run dependencies included; each is an entry of the graph's `system_libs` (format 3 only; left out when empty, see "System libraries") |
+| `natives` | `id`, `soname`, `sha256`, `package` (a full name) of every prebuilt native library in the unit's dependency closure, and `kind`, `needs`, `exclusive` when the lock gives them (left out when `shared`, empty, none); a workspace member's own native library is listed with `id`, `soname`, `package`, `kind`, `needs`, `exclusive` (the same omissions) and `built`, the id of the `native` unit that builds it, and no `sha256`. They are in link order: a library before every library it `needs`, the sonames' order between libraries that do not constrain one another. A closure holding two libraries of one `exclusive` group is refused, naming both (group names are compared exactly: `libcrypto` and `LibCrypto` are two groups; `mopm.toml` refuses a name with leading or trailing whitespace or a control character). The refusal is graph-wide: one unit with a clash refuses the whole graph, so a clash reached only through a dev-only dependency, and so only by the `test:` unit, blocks the build |
+| `loads` | `test` and `bin`: the conda names of the system libraries the unit loads at run time, sorted, run dependencies included; each is an entry of the graph's `system_libs` (left out when empty, see "System libraries") |
 | `artifact` | `prebuilt`: `url`, `sha256`, `size` of the `.conda` for `M` (from the lock) |
 | `mojoc` | `prebuilt`: the `.mojoc` inside that package |
 | `profile` | `opt`, `assert`, `debug`: the compiler profile of a `lib`, `test` or `bin` |
-| `outputs` | the file names the unit produces: `<package>.mojoc`, `<test stem>.pass`, a binary's name |
+| `outputs` | the file names the unit produces: `<import>.mojoc`, `<test stem>.pass`, a binary's name |
 | `key` | see below |
 
 A unit is one package (a `lib`), one test file or one binary of a workspace
@@ -116,8 +129,10 @@ member; `mojo precompile` takes a whole package, so nothing is finer. A
 registry dependency is a `prebuilt` unit: a `.conda` holding a `.mojoc`, fetched
 by url and checked by sha256, never compiled. Workspace members (path
 dependencies at any depth) compile from the tree; each must list `M` in its own
-`mojo`, and each must be below the workspace directory (see "The workspace"). Two libraries of one
-name are refused: a package is imported by name.
+`mojo`, and each must be below the workspace directory (see "The workspace"). Two packages of one
+import name in the closure are refused before anything is read, each named with
+its shortest dependency path from the root (spec/mopm-toml.md, "Rules"): a
+package is imported by its import name.
 
 The prebuilt `natives` of a package are declared inputs. A lock
 entry whose native library has no `sha256` is refused. A static library
@@ -134,7 +149,7 @@ in its `mopm.toml`, or the same in a registry package, which says so in the
 one the lock pins, not whichever the machine has, so the lock names it
 (`lock.md`, "System libraries") and the graph passes the pin on.
 
-- `system_libs` (format 3): the lock's pins for this graph's `subdir`, sorted by
+- `system_libs`: the lock's pins for this graph's `subdir`, sorted by
   `name`, each `name`, `version`, `build`, `url`, `sha256`, `size`: a conda
   package of the library or of something it needs to run. Present when some unit
   has `loads`.
@@ -147,10 +162,10 @@ one the lock pins, not whichever the machine has, so the lock names it
   `natives`.
 - A build system puts the unpacked libraries of `loads` on the loader path of
   the run of that unit and of no other action. A rules version that does not know
-  `loads` must not read a version 3 graph (it would run the test against the
-  machine's libraries), which is why the format number changes.
-- A lock written before `system_libs` (it has none at all) gives no `loads`: the
-  graph is the one mopm printed before, and the run is not hermetic. A lock that
+  `loads` must not read a graph (it would run the test against the machine's
+  libraries).
+- A lock with no `system_libs` at all gives no `loads` and the graph no
+  `system_libs`: the run is not hermetic. A lock that
   has `system_libs`, with a manifest or registry package that loads a library the
   lock does not pin for the graph's subdir, is stale: `plan` refuses with
   `mopm.lock has no system library <name> for <subdir>; run 'mopm lock'`.
@@ -182,21 +197,22 @@ Two packages for Mojo 1.0.0 (the layout is the exact output; hashes shortened):
 
 ```json
 {
-  "id": "http_core@1.2.5#mojo1.0.0/lib",
-  "package": "http_core",
+  "id": "example/http_core@1.2.5#mojo1.0.0/lib",
+  "package": "example/http_core",
+  "import": "http_core",
   "version": "1.2.5",
   "kind": "prebuilt",
-  "artifact": {"url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "aaaa...", "size": 1000},
+  "artifact": {"url": "https://conda.mopm.dev/example/linux-64/mojo-example.http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "aaaa...", "size": 1000},
   "mojoc": "lib/mojo/http_core.mojoc",
   "deps": [],
   "natives": [
-    {"id": "z", "soname": "libz_native.so.1", "sha256": "348e...", "package": "http_core"}
+    {"id": "z", "soname": "libz_native.so.1", "sha256": "348e...", "package": "example/http_core"}
   ],
   "key": "b6bc..."
 }
 ```
 
-For the same package at Mojo 1.1.0 the unit is `http_core@1.2.5#mojo1.1.0/lib`
+For the same package at Mojo 1.1.0 the unit is `example/http_core@1.2.5#mojo1.1.0/lib`
 and its `artifact` is the 1.1.0 build. `tests/` holds the full output for a
 workspace built for both (`src/core/unit_graph.zig`, "golden").
 
@@ -232,12 +248,13 @@ A `shared` or `both` native, one with `mode = "load"`, and one with no `srcs`
 (unless it is `provided`, below) are refused when the graph is made, naming the
 manifest and the native.
 
-Each such native is one **`native` unit**, `native:<package>/<id>` (the id is
-not followed by `#mojo<M>`: C code does not depend on the Mojo version):
+Each such native is one **`native` unit**, `native:<full name>/<id>` (the id follows
+the last `/`, and is not followed by `#mojo<M>`: C code does not depend on the
+Mojo version):
 
 | field | meaning |
 |---|---|
-| `id`, `package`, `version`, `kind` | the unit id, the member, its version, and `native` |
+| `id`, `package`, `import`, `version`, `kind` | the unit id, the member's full name and import name, its version, and `native` |
 | `soname` | the archive's file name |
 | `srcs`, `hdrs` | `path` (relative to the workspace) and `sha256`, sorted by path |
 | `cflags`, `cflags_by_os`, `includes`, `needs` | as the manifest gives them (`includes` relative to the member, and the directories of `hdrs` when the manifest gives none; each left out when empty) |
@@ -249,7 +266,7 @@ The unit has no `artifact`: the build system compiles the sources and archives
 the objects. Every `lib`, `test` and `bin` unit of the member, and of every
 package that depends on it, lists it in `natives` as a **built** entry:
 
-    {"id": "shim", "soname": "libshim.a", "package": "app", "kind": "static", "built": "native:app/shim"}
+    {"id": "shim", "soname": "libshim.a", "package": "example/app", "kind": "static", "built": "native:example/app/shim"}
 
 It has no `sha256`: the archive is a product of the build. It stands in the
 link order like any other native, so a member's archive comes before the
@@ -265,7 +282,7 @@ consumers get a prebuilt entry.
 
 With `--workspace-root` (see "The workspace") a native is named, as any unit of
 the member is, by the package and not by where the package sits: a member at
-`src/app` that builds `[native.shim]` gives the unit `native:app/shim`, whose
+`src/app` that builds `[native.shim]` gives the unit `native:example/app/shim`, whose
 `srcs` and `hdrs` are paths from the workspace (`src/app/native/shim.c`), while
 its `includes` stay relative to the member. This holds for the root package
 and for a path dependency at any depth.
@@ -287,10 +304,8 @@ as built, in the link order of "Member natives" (a library before every library
 it `needs`). The unit's `key` covers the declaration, not the archive's bytes,
 so a build system that caches by `key` adds the archive's digest to the provided unit's key and to the key of every unit that links it: a dependent's `key` hashes the key of the provided unit, never the archive. A consumer
 that depends on the published package gets a prebuilt entry from its lock, as
-for any static native. A graph with a provided unit is format 4, which a reader
-that does not know `provided` refuses (it would make an empty archive of a unit
-with no sources); a format 4 graph has `system_libs` and `loads` exactly when a
-format 3 graph would.
+for any static native. A reader that does not know `provided` would make an
+empty archive of a unit with no sources.
 
 ## System libraries of a native
 
@@ -316,10 +331,8 @@ natives itself; `mopm build` orders the same names the same way, so both give
 one list. `mopm unit` refuses a graph file whose `link` has a name outside the
 list or a repeated name.
 
-A graph in which any unit has `link` is format 5, because a reader that does not
-know `link` would link without the libraries and fail on the undefined symbols;
-a format 5 graph has `provided`, `system_libs` and `loads` exactly when a
-format 4 graph would. The unit's `key` covers its `link`, so adding a name moves
+A reader that does not know `link` would link without the libraries and fail on
+the undefined symbols. The unit's `key` covers its `link`, so adding a name moves
 the key of every unit that links the archive.
 
 ## The workspace
@@ -368,7 +381,7 @@ it was before the flag existed. The flag is valid only with `--unit-graph`.
 | 0 | the graph was printed |
 | 1 | any other failure |
 | 2 | a usage error: `--unit-graph` and `--locked` are both required; `--mojo` is required when `mopm.toml` lists several versions; `--workspace-root` needs a directory and is valid only with `--unit-graph` |
-| 3 | there is no usable lock, or it is out of date with `mopm.toml` (a requirement, a path dependency or the Mojo versions changed). Run `mopm lock`; `plan` never repairs |
+| 3 | there is no usable lock, or it is out of date with `mopm.toml` (a requirement, a path dependency or the Mojo versions changed), or it predates namespaces (`lock_version` 1 or 2). Run `mopm lock`; `plan` never repairs |
 | 4 | the graph cannot be made from this project and lock: no toolchain pinned for `M`, a lock that does not lock `M` or records another closure, no `.mojoc` for `M`, a native library without sha256, a member outside the workspace or not listing `M`, a missing source, a `--workspace-root` that is not an existing directory or does not contain the package |
 
 A refusal is one line on standard error, `error: <reason>`.
@@ -386,7 +399,7 @@ A refusal is one line on standard error, `error: <reason>`.
 | option | the directory holds |
 |---|---|
 | `--src` (`.`) | the member sources; the graph's `srcs` paths are relative to it |
-| `--deps` (`deps`) | `<package>.mojoc` of every unit in the transitive closure of `deps`, flat. A `prebuilt` unit's file is the `.mojoc` unpacked from its `.conda` |
+| `--deps` (`deps`) | `<import>.mojoc` of every unit in the transitive closure of `deps`, flat. A `prebuilt` unit's file is the `.mojoc` unpacked from its `.conda` |
 | `--natives` (`natives`) | the native libraries, flat, by `soname`. A prebuilt one is checked against the graph's sha256; a `built` one must exist and begin with `!<arch>` followed by a newline (an `ar` archive), and has no hash to match |
 | `--toolchain` | `mojo_compile`, the pinned hermetic wrapper, and `CLOSURE_SHA256`, one line naming the closure it is |
 | `--stage` (`<out>.stage`) | scratch: the tree the compiler sees |
@@ -412,7 +425,7 @@ arguments are
 
     [--runpath=$ORIGIN/lib]  --source-root=<root>  --  <mojo arguments>
 
-- a `lib`: `<root>` is `<stage>/src/<package>`, the package directory, and the command is `precompile -I<dep dir>... <stage>/src/<package> -o <out>/<package>.mojoc`. The wrapper runs the compiler from the parent of the root and names the package by its basename, so the `.mojoc` records `<package>/<file>.mojo` and no staged path: one package staged at two paths gives the same bytes
+- a `lib`: `<root>` is `<stage>/src/<import>`, the package directory, and the command is `precompile -I<dep dir>... <stage>/src/<import> -o <out>/<import>.mojoc`. The wrapper runs the compiler from the parent of the root and names the package by its basename, so the `.mojoc` records `<import>/<file>.mojo` and no staged path: one package staged at two paths gives the same bytes
 - a `test` or `bin`: `<root>` is `<stage>/src`, and the command is `build -D ASSERT=<assert> --optimization-level <opt> [-g]
   -I<dep dir>... <stage>/src/<file> -o <out>/<name> [-Xlinker <natives>/<soname>]...`,
   with the shared libraries also copied to `<out>/lib/` beside the binary
