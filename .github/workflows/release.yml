@@ -11,7 +11,7 @@ name: release
 #   beta-macos farm-macos.yml on the pushed commit: the macOS arm64 checks as farm actions on the Mac workers (the unit tests, the CLI
 #              for the pinned macOS target, its Mach-O minimum). Green with a notice, building nothing, while the macOS workers are not
 #              configured; the macos-15 legs below run the same checks until it has passed through a release.
-#              Gamma and bake time are a slot for later stages between these and plan.
+#              Gamma and bake time are a slot for later stages between these three (beta, lint, beta-macos) and plan.
 #   plan       the version the release will have (cut_release plan --sha): the VERSION file's MAJOR.MINOR
 #              and the next PATCH. It refuses a commit that a newer release supersedes, and a base below
 #              an existing tag. Nothing is written. For a commit whose tag exists (a re-run, or a second push run) it also says whether that release is complete
