@@ -227,8 +227,13 @@ describe.each(RIGS)('the stage purpose of the CI exchange: %s', (_label, make) =
         environment: 'beta',
       }),
     );
-  const exchange = async (pkgs: Pkg[], purpose?: string) =>
-    oidc.exchange({ jwt: jwt(), packages: pkgs.map((p) => ({ name: p.name, version: p.version })), ...(purpose !== undefined ? { purpose } : {}) } as never);
+  /** /api/v1 creates no package, so the packages this identity exchanges for are made first (the ones that exist are left alone). */
+  const exchange = async (pkgs: Pkg[], purpose?: string) => {
+    for (const p of pkgs) {
+      if (!(await rig.store.getPackage(p.name))) await rig.store.createPackage({ name: p.name, state: 'claimed', created_at: env.clock.now().toISOString(), ci_owner: OWNER });
+    }
+    return oidc.exchange({ jwt: jwt(), packages: pkgs.map((p) => ({ name: p.name, version: p.version })), ...(purpose !== undefined ? { purpose } : {}) } as never);
+  };
 
   test('a stage exchange mints a stage-only token that creates, reads and aborts, and a publish exchange of the same set commits it', async () => {
     const minted = await exchange([widgets, gadgets], 'stage');
@@ -279,7 +284,7 @@ describe.each(RIGS)('the stage purpose of the CI exchange: %s', (_label, make) =
     const before = env.authStore.dumpTokens().length;
     await expect(exchange([widgets, gadgets], 'stage')).rejects.toMatchObject({ code: 'not_owner' });
     expect(env.authStore.dumpTokens()).toHaveLength(before);
-    expect(await rig.store.getPackage('gadgets')).toBeUndefined();
+    expect((await rig.store.getPackage('widgets'))?.ci_owner).toBe(OTHER_OWNER);
   });
 
   test('the default and an explicit publish purpose mint the same publish token', async () => {

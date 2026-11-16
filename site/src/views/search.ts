@@ -2,23 +2,24 @@
 //
 // The address is the state: q, sort and cursor come from the query string, and every change is a full page load
 // through the form or a link. The form carries no cursor, so a new q or sort always starts from the first page (a
-// cursor belongs to one query; the API refuses it for another). A q over 64 characters after trimming is answered here
-// and never sent.
+// cursor belongs to one query; the API refuses it for another). A q over 104 characters after trimming (a namespace of
+// 39, '/', a name of 64) is answered here and never sent.
 //
-// The page says what the API does: the search matches the start of a package name (searchPackages has no full-text
-// mode), so there are no ranking reasons and no ranking explainer. Each result is a card: glyph, name, latest version,
+// The page says what the API does: the search matches the start of a package's name in every namespace, or, when q
+// starts with '<namespace>/', the start of a name in that namespace (searchPackages has no full-text mode), so there are
+// no ranking reasons and no ranking explainer. Results are full names. Each result is a card: glyph, name, latest version,
 // description and the date of its last update; paging is a First page and a Next page button.
 
 import type { ApiError } from '../errors.js';
 import { type Doc, h } from '../doc.js';
 import { internalHref } from '../links.js';
-import { isCanonicalName, packagePath, type SearchSort, searchPath } from '../routes.js';
+import { packagePath, splitFullName, type SearchSort, searchPath } from '../routes.js';
 import type { PackageList } from '../types.js';
 import { formatDate } from '../format.js';
 import { errorView, type View } from './common.js';
 import { glyphClass, initials } from './recent.js';
 
-export const Q_MAX = 64;
+export const Q_MAX = 104;
 export const CURSOR_MAX = 512;
 
 export interface SearchState {
@@ -52,7 +53,7 @@ function heading(state: SearchState): string {
 }
 
 /** What the API does today, said where the reader types: a name prefix, nothing else. */
-export const PREFIX_NOTE = 'Search matches the start of a package name, not descriptions or readmes.';
+export const PREFIX_NOTE = 'Search matches the start of a package name in every namespace, or after “<namespace>/” in that namespace; not descriptions or readmes.';
 
 /** The page's own search form: q and sort, never a cursor. A big search box, then the sort and the prefix note. */
 export function searchForm<N>(doc: Doc<N>, state: SearchState): N {
@@ -121,8 +122,9 @@ function searchHelp<N>(doc: Doc<N>): N {
       doc,
       'ul',
       null,
-      h(doc, 'li', null, 'It finds every package whose name starts with what you type.'),
-      h(doc, 'li', null, 'Package names are lowercase letters, digits and underscores.'),
+      h(doc, 'li', null, 'It finds every package whose name starts with what you type, in every namespace.'),
+      h(doc, 'li', null, 'A package is ', h(doc, 'code', null, '<namespace>/<name>'), ': the namespace is a GitHub account, the name lowercase letters, digits and underscores.'),
+      h(doc, 'li', null, 'Type ', h(doc, 'code', null, 'komira-ai/'), ' to list one namespace’s packages, or ', h(doc, 'code', null, 'komira-ai/js'), ' to search in it.'),
       h(doc, 'li', null, 'Results are sorted by name, or by last update for up to 1000 matches.'),
     ),
     h(doc, 'p', null, h(doc, 'a', { href: internalHref(searchPath()) }, 'Browse all packages')),
@@ -141,19 +143,20 @@ export function searchTooLongView<N>(doc: Doc<N>, state: SearchState): View<N> {
   return page(
     doc,
     state,
-    h(doc, 'p', { class: 'notice notice-warn', role: 'alert' }, `Package names are at most ${Q_MAX} characters, so a longer search matches nothing. Shorten it and search again.`),
+    h(doc, 'p', { class: 'notice notice-warn', role: 'alert' }, `Full package names are at most ${Q_MAX} characters, so a longer search matches nothing. Shorten it and search again.`),
   );
 }
 
 function resultItem<N>(doc: Doc<N>, p: PackageList['packages'][number]): N {
-  const name = isCanonicalName(p.name)
-    ? h(doc, 'a', { href: internalHref(packagePath(p.name)), class: 'result-name' }, p.name)
+  const full = splitFullName(p.name);
+  const name = full !== null
+    ? h(doc, 'a', { href: internalHref(packagePath(full)), class: 'result-name' }, p.name)
     : h(doc, 'span', { class: 'result-name' }, p.name);
   return h(
     doc,
     'li',
     { class: 'result' },
-    h(doc, 'span', { class: glyphClass(p.name), 'aria-hidden': 'true' }, initials(p.name)),
+    h(doc, 'span', { class: glyphClass(p.name), 'aria-hidden': 'true' }, initials(full?.name ?? p.name)),
     h(
       doc,
       'div',

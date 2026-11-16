@@ -5,7 +5,7 @@ import { client, type FetchFn, type Timers } from '../src/api';
 import { type ErrorKind, fromResponse, kindOfStatus } from '../src/errors';
 import { READ_OPS, responseOf, validErrorCases } from './fixtures';
 
-const BASE = 'https://api.mopm.dev/api/v1';
+const BASE = 'https://api.mopm.dev/api/v2';
 
 // Every code in errors.json. Read codes map by meaning; codes of other operations (which the site never calls) fall
 // back to their status class. A new code in the fixtures fails the first test until it is added here.
@@ -13,6 +13,9 @@ const EXPECTED: Record<string, ErrorKind> = {
   invalid_request: 'invalid',
   invalid_name: 'invalid',
   invalid_version: 'invalid',
+  invalid_namespace: 'invalid',
+  namespace_reserved: 'invalid',
+  namespace_not_found: 'notFound',
   package_not_found: 'notFound',
   version_not_found: 'notFound',
   route_not_found: 'notFound',
@@ -31,29 +34,31 @@ const EXPECTED: Record<string, ErrorKind> = {
   scope_missing: 'invalid',
   not_owner: 'invalid',
   name_reserved: 'invalid',
-  oidc_not_trusted: 'invalid',
+  not_namespace_member: 'invalid',
+  not_namespace_owner: 'invalid',
+  not_org_admin: 'invalid',
+  github_account_mismatch: 'invalid',
+  namespace_taken: 'invalid',
+  last_owner: 'invalid',
+  member_not_found: 'notFound',
   user_not_found: 'notFound',
-  invitation_not_found: 'notFound',
+  oidc_not_trusted: 'invalid',
   device_code_unknown: 'notFound',
   token_not_found: 'notFound',
-  owner_not_found: 'notFound',
   publish_not_found: 'notFound',
   group_not_found: 'notFound',
   group_not_open: 'invalid',
   group_conflict: 'invalid',
   group_commit_refused: 'invalid',
   group_not_settled: 'invalid',
-  name_taken: 'invalid',
-  name_too_similar: 'invalid',
   version_exists: 'invalid',
-  already_owner: 'invalid',
-  last_owner: 'invalid',
   invalid_transition: 'invalid',
   upload_used: 'invalid',
-  invitation_expired: 'invalid',
   payload_too_large: 'invalid',
   limit_exceeded: 'invalid',
 };
+
+const PKG = { namespace: 'komira-ai', name: 'nosuch' };
 
 const cases = validErrorCases();
 const codeOf = (body: unknown): string => (body as { error: { code: string } }).error.code;
@@ -74,7 +79,7 @@ test.each(cases.map((c) => [`${c.response.status} ${codeOf(c.response.body)}`, c
 
 test('read-operation errors arrive through the client the same way', async () => {
   const reads = cases.filter((c) => (READ_OPS as readonly string[]).includes(c.operationId));
-  expect(reads.length).toBeGreaterThanOrEqual(8);
+  expect(reads.length).toBeGreaterThanOrEqual(7);
   for (const c of reads) {
     const fetchFn: FetchFn = async () => responseOf(c);
     const api = client(fetchFn, BASE);
@@ -83,11 +88,25 @@ test('read-operation errors arrive through the client the same way', async () =>
       : c.operationId === 'searchPackages'
         ? api.searchPackages({})
         : c.operationId === 'getPackage'
-          ? api.getPackage('nosuch')
-          : api.getVersion('http_client', '9.9.9'));
+          ? api.getPackage(PKG)
+          : api.getVersion({ namespace: 'komira-ai', name: 'json' }, '9.9.9'));
     expect([c.name, r.kind]).toEqual([c.name, EXPECTED[codeOf(c.response.body)]]);
     if (r.kind === 'ok') throw new Error('expected an error');
     expect(r.requestId).toBe(c.response.headers['x-mopm-request-id']);
+  }
+});
+
+test.each([
+  ['invalid_namespace', 400, 'invalid'],
+  ['namespace_reserved', 403, 'invalid'],
+  ['namespace_not_found', 404, 'notFound'],
+] as const)('a package or version call answered %s is %s, with its request id', async (code, status, kind) => {
+  const body = JSON.stringify({ error: { code, message: 'm', hint: 'h' } });
+  const fetchFn: FetchFn = async () => new Response(body, { status, headers: { 'x-mopm-request-id': 'req-ns-1' } });
+  const api = client(fetchFn, BASE);
+  const f = { namespace: 'komira-ai', name: 'json' };
+  for (const r of [await api.getPackage(f), await api.getVersion(f, '1.0.0')]) {
+    expect(r).toMatchObject({ kind, code, status, requestId: 'req-ns-1' });
   }
 });
 
@@ -98,7 +117,7 @@ test('the request id is kept on an answer that is not an envelope (a gateway 404
     [502, '<html>Bad Gateway</html>', 'server'],
   ] as const) {
     const fetchFn: FetchFn = async () => new Response(body, { status, headers: { 'x-mopm-request-id': 'req-gw-1' } });
-    const r = await client(fetchFn, BASE).getPackage('nosuch');
+    const r = await client(fetchFn, BASE).getPackage(PKG);
     expect(r).toMatchObject({ kind, status, requestId: 'req-gw-1' });
     expect(r).not.toHaveProperty('code');
   }
@@ -127,6 +146,20 @@ test.each([
   const e = fromResponse(status, '{"error":{"code":"brand_new_code","message":"m","hint":""}}', 'r');
   expect(e.kind).toBe(kind);
   expect(e.code).toBe('brand_new_code');
+});
+
+// The three codes a namespace route adds: a name that is not a namespace and a namespace nobody can hold name nothing
+// (invalid), an unregistered namespace is not found; none of them follows its status class when the status differs.
+test.each([
+  ['invalid_namespace', 400, 'invalid'],
+  ['invalid_namespace', 404, 'invalid'],
+  ['namespace_reserved', 403, 'invalid'],
+  ['namespace_reserved', 404, 'invalid'],
+  ['namespace_not_found', 404, 'notFound'],
+  ['namespace_not_found', 400, 'notFound'],
+] as const)('code %s with status %d is %s', (code, status, kind) => {
+  const e = fromResponse(status, JSON.stringify({ error: { code, message: 'm', hint: 'h' } }), 'r');
+  expect(e).toMatchObject({ kind, code, status, detail: 'm', hint: 'h', message: kind === 'notFound' ? 'Not found.' : 'The registry did not accept this request.' });
 });
 
 test('a known code wins over its status', () => {

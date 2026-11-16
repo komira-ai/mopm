@@ -44,6 +44,11 @@ export interface TokenRecord {
    * (`gh-repo:<repository_id>`). The token's `github_id` is then the account, and `ci_owner` is absent.
    */
   acts_via?: string;
+  /**
+   * An `oidc` token minted by `/api/v2`'s exchange for a publisher of a namespace (a registered one, or a configured CI
+   * publisher with `namespace`): that namespace. Its `packages` are full names in it, and it writes those only.
+   */
+  ci_namespace?: string;
   /** Session tokens only: full-strength actions need a login newer than this. */
   fresh_until?: string;
   created_at: string;
@@ -65,6 +70,10 @@ export interface DeviceLoginRecord {
   expires_at: string;
   interval: number;
   last_polled_at?: string;
+  /** A device flow that registers an organization namespace (not a login): the namespace string it was started for. */
+  org_namespace?: string;
+  /** With `org_namespace`: the GitHub id of the account that started it, the only one that may poll it. */
+  account_id?: number;
 }
 
 /**

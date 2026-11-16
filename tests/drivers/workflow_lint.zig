@@ -4,7 +4,8 @@
 //! fixtures): read-only token, no `write` outside
 //! the id-token grants, secrets reach a step only through env, only
 //! GitHub-owned actions pinned by SHA, no step that prints a secret-bearing
-//! variable, and a syntax check of every `run:` script. `repoProblems` is the
+//! variable, a step that runs cdk sets AWS_REGION or AWS_DEFAULT_REGION, and a
+//! syntax check of every `run:` script. `repoProblems` is the
 //! whole-repository half: the promotion chain, the guard jobs of deploy.yml and
 //! e2e.yml, and oidc-subject-check.yml.
 //!
@@ -401,6 +402,9 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
             for (try leakyLines(a, run)) |l| {
                 try c.problem(a, out, prefix ++ "{s}: {s} step {d}: prints a secret-bearing variable: {s}", .{ f, jn, i, l });
             }
+            if (try runsCdk(a, run) and !setsRegion(&.{ c.get(st, "env"), c.get(job, "env"), c.get(doc, "env") })) {
+                try c.problem(a, out, prefix ++ "{s}: {s} step {d}: runs cdk with no AWS_REGION or AWS_DEFAULT_REGION in its env, its job's or the workflow's (cdk replaces CDK_DEFAULT_REGION with the region it resolves, on a hosted runner in AWS the runner's own)", .{ f, jn, i });
+            }
             if (c.refsSecrets(run)) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: run script references secrets.*", .{ f, jn, i });
             // Event fields and inputs reach scripts through env:, never by interpolation.
             if (std.mem.indexOf(u8, run, "${{") != null) {
@@ -417,10 +421,40 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
     }
 }
 
+// ---- the region of a cdk command ------------------------------------------------
+//
+// The cdk command line gives the app CDK_DEFAULT_REGION itself, from the region the AWS SDK resolves: AWS_REGION,
+// AWS_DEFAULT_REGION, ~/.aws/config, then the host's instance metadata. A CDK_DEFAULT_REGION a step sets is replaced, so on
+// a hosted runner in AWS the app sees the runner's region. A step that runs cdk names the region in one of the two
+// variables the SDK reads first.
+
+const cdk_region_keys = [_][]const u8{ "AWS_REGION", "AWS_DEFAULT_REGION" };
+
+/// Whether `script` runs the cdk command line: the word `cdk` then a space, at the start of a command (the start of a
+/// line, or after a space, a tab, `;`, `&`, `|` or `(`), on a line that is not a comment.
+fn runsCdk(a: Allocator, script: []const u8) !bool {
+    const live = try c.nonCommentLines(a, script);
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, live, i, "cdk ")) |p| : (i = p + 1) {
+        if (p == 0 or std.mem.indexOfScalar(u8, " \t\n;&|(", live[p - 1]) != null) return true;
+    }
+    return false;
+}
+
+/// Whether one of the env mappings sets AWS_REGION or AWS_DEFAULT_REGION to a non-empty string (the SDK reads an empty
+/// one as unset).
+fn setsRegion(envs: []const ?Value) bool {
+    for (envs) |e| {
+        for (cdk_region_keys) |k| {
+            if (c.str(c.get(e, k))) |v| if (v.len != 0) return true;
+        }
+    }
+    return false;
+}
+
 fn lessThan(_: void, x: []const u8, y: []const u8) bool {
     return std.mem.lessThan(u8, x, y);
 }
-
 
 // ---- advisories.yml: the daily scan, report only ---------------------------------------
 

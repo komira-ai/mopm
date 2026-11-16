@@ -1,0 +1,930 @@
+syntax = "proto3";
+
+package mopm.registry.v2;
+
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+import "mopm/registry/v2/options.proto";
+import "mopm/registry/v2/types.proto";
+import "mopm/registry/v2/errors.proto";
+import "mopm/registry/v2/auth.proto";
+import "mopm/registry/v2/tokens.proto";
+import "mopm/registry/v2/namespaces.proto";
+import "mopm/registry/v2/packages.proto";
+import "mopm/registry/v2/publish.proto";
+
+// This file is the contract between the `mopm` command line tool and the
+// hosted registry at mopm.dev for `/api/v2`. It is served beside
+// `spec/api/openapi.yaml` (`/api/v1`) on the same host. The two never meet
+// over a package: a v1 package has a flat name (`json`) and is seen only by
+// `/api/v1`; a v2 package has a full name (`komira-ai/json`) and is seen only
+// by `/api/v2`. An operation that names no package (`/health`, `/auth/device`,
+// `/auth/device/poll`, listing and revoking tokens in `/me/tokens`) behaves
+// the same at both prefixes. A publish (`/publishes/{publish_id}`) is seen only
+// by the prefix its package's name belongs to: a flat name's by `/api/v1`, a
+// full name's by `/api/v2`. The design is
+// `docs/design/namespaces.md`.
+//
+// ## Versioning rule (additive only)
+//
+// All paths live under `/api/v2`. Within `/api/v2`:
+//
+// - A change may add an optional request field, add a response field, add an
+//   endpoint, add a value to a response enum, or add an error code.
+// - A change may NOT remove or rename a field, make an optional request field
+//   required, tighten validation of a request that was accepted before,
+//   change the type, format or meaning of a field, change an error code or the
+//   HTTP status of an existing error, or change the cursor format.
+// - Clients MUST ignore response fields they do not know, MUST treat an
+//   unknown enum value as "unknown" rather than as an error, and MUST treat
+//   an unknown error code as the generic failure of its HTTP status class.
+// - The static index (`spec/index.md`) is versioned separately by
+//   `index_version` in `config.json`; a CLI refuses an index version it does
+//   not know.
+//
+// ## Conventions
+//
+// - Bodies are JSON (`application/json`, UTF-8). Timestamps are RFC 3339 in UTC.
+// - Every response carries the header `x-mopm-request-id`. The CLI prints it
+//   with any error.
+// - Errors have the shape `{"error": {"code", "message", "hint"}}`. The
+//   stable codes are the `ErrorCode` enum; the table of code, HTTP status,
+//   message template and hint is the `x-mopm-errors` extension at the end of
+//   this file. Clients branch on `code`, never on `message`.
+// - A path that is not an operation of this API, or a method the path does
+//   not take, is answered `route_not_found` (404). It is never a 400: the
+//   request was well formed, there is just nothing there.
+// - Writes need `Authorization: Bearer <token>`. Reads and installs never
+//   need a token.
+// - A package is named by its full name `<namespace>/<name>`; in a path it is
+//   the two segments `{namespace}` and `{name}`. The namespace is a GitHub
+//   login in lower case (at most 39 characters), the name is a normalised
+//   name (lowercase; letters, digits and `_`). Nothing is normalised for the
+//   caller: `Komira-AI` is refused with `invalid_namespace`, and a
+//   non-normalised name with `invalid_name`.
+// - The name is the package's import name. It is not a Mojo keyword or
+//   builtin, nor `mopm`, `mojo`, `max`, `modular`, `std` or `stdlib`, nor a
+//   top-level module of the Mojo standard library; `createPackage` refuses
+//   those with `name_reserved`.
+// - Versions in paths start with a digit, so a version never collides with
+//   the literal path segment `versions`.
+// - A version is `MAJOR.MINOR.PATCH` (see `Version`). Any other spelling
+//   (`1.0`, `1.0.0.0`, `1.0rc1`, `1.0.0-rc.1`) is refused with
+//   `invalid_version`, so a version has one spelling and publishing the same
+//   version twice is refused with `version_exists`.
+// - Lists are paginated with an opaque `cursor`; `next_cursor` is null on the
+//   last page.
+//
+// ## Who may write
+//
+// A package belongs to its namespace; there are no package owners, no
+// ownership invitations and no claim. In a `user` namespace the account bound
+// to it may write; in an `org` namespace an account that is a member of it
+// (an `owner` or a `member`, a list kept in mopm and read at each write, with
+// no call to GitHub). GitHub is asked about an organization once, when its
+// namespace is registered: the account that registers it (`createNamespace`,
+// then `pollNamespace`, a GitHub device flow that asks for `read:org` for that
+// one call, and the token is not kept) must be an active admin of the GitHub
+// organization, and becomes the first `owner`. An `owner` adds and removes
+// members and changes roles (`setMember`, `removeMember`); a `member` may
+// create packages and publish. A trusted publisher of a namespace may write in
+// it, and its token is minted for that namespace. `createPackage` checks the right to write before it
+// answers: a session of an account that can write the namespace, an API token
+// with `publish` whose `packages` names the full name, or a trusted
+// publisher's token minted for it.
+//
+// ## Authentication
+//
+// Tokens look like `mopm_` followed by lowercase base32 characters. The
+// prefix lets secret scanners recognise them. There are four ways a bearer
+// token is accepted, named below as security schemes. A request with no token
+// where one is required gets `token_missing`.
+service Registry {
+  option (api) = {
+    title: "mopm registry API"
+    version: "2.0.0"
+    summary: "The HTTP API of the hosted mopm registry, version 2, with package names in owner namespaces."
+    license_name: "Apache-2.0"
+    license_identifier: "Apache-2.0"
+    base_path: "/api/v2"
+    servers {
+      url: "https://{host}/api/v2"
+      description: "One API host per stage, `api.<site>`: prod is api.mopm.dev, gamma is\n"
+        "api.gamma.mopm.dev and beta is api.beta.mopm.dev. The site `<site>`\n"
+        "(mopm.dev, gamma.mopm.dev, beta.mopm.dev) is the website, and the conda\n"
+        "channel is conda.<site>; a namespace's channel is conda.<site>/<namespace>/."
+      variable: "host"
+      default: "api.mopm.dev"
+      values: "api.mopm.dev"
+      values: "api.gamma.mopm.dev"
+      values: "api.beta.mopm.dev"
+    }
+    tags: "auth"
+    tags: "tokens"
+    tags: "publish"
+    tags: "packages"
+    tags: "namespaces"
+    tags: "me"
+    tags: "meta"
+    security_schemes {
+      name: "userToken"
+      bearer_format: "mopm token"
+      description: "Any live token of a user: a session token or an API token (but `createPackage` refuses an API token that has only the `stage` scope)."
+    }
+    security_schemes {
+      name: "freshSession"
+      bearer_format: "mopm session token"
+      description: "A session token younger than 15 minutes (login again to refresh). An\n"
+        "older session, or an API token, gets `stale_session`. Used for creating\n"
+        "a namespace and for token management."
+    }
+    security_schemes {
+      name: "publishToken"
+      bearer_format: "mopm token"
+      description: "An API token with the `publish` scope for the package (its full name), or a token from\n"
+        "the OIDC exchange for exactly this package and version."
+    }
+    security_schemes {
+      name: "yankToken"
+      bearer_format: "mopm token"
+      description: "An API token with the `yank` scope for the package (its full name)."
+    }
+    security_schemes {
+      name: "stageToken"
+      bearer_format: "mopm token"
+      description: "An API token with the `stage` scope for the package, or a token from the OIDC exchange with `purpose: stage`\n"
+        "for exactly this package and version. Accepted only where an operation lists it (`createGroup`, `getGroup`,\n"
+        "`abortGroup`); `publishToken` is accepted there too. No other operation takes it: a commit needs `publishToken`\n"
+        "and a yank needs `yankToken` or `publishToken`."
+    }
+    headers {
+      name: "RequestId"
+      wire: "x-mopm-request-id"
+      description: "Identifies the request in the registry's logs. Print it with every error."
+      required: true
+      type: "string"
+      min_length: 1
+      on_success: true
+    }
+    headers {
+      name: "RetryAfter"
+      wire: "retry-after"
+      description: "Seconds to wait before retrying. Present on `rate_limited` and `read_only_mode`."
+      type: "integer"
+      minimum: 0
+      on_success: false
+    }
+    error_response: "Any error. The `code` is stable (see `x-mopm-errors`); the HTTP status\n"
+      "is the one the catalogue lists for that code."
+  };
+
+  rpc GetHealth(google.protobuf.Empty) returns (Health) {
+    option (google.api.http) = {
+      get: "/api/v2/health"
+    };
+    option (operation) = {
+      tags: ["meta"]
+      summary: "Liveness and mode of the stage."
+      responses { status: 200 description: "The stage is up. `read_only` is true when new uploads are refused." }
+      commands { name: "health" summary: "Show whether the registry is up and in which mode." }
+    };
+  }
+
+  // Returns a user code to show the person and a device code to poll with.
+  // The approval page shows the requesting client and expires in ten
+  // minutes. Throttled per IP and per device code.
+  rpc StartDeviceLogin(StartDeviceLoginParams) returns (DeviceStartResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/auth/device"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["auth"]
+      summary: "Start the device login flow (CLI login through GitHub)."
+      responses { status: 200 description: "A device login was started." }
+      commands { name: "api start-device-login" set: "client=mopm {cli_version}" summary: "Start a device login and print its codes (one step of 'mopm login')." }
+    };
+  }
+
+  // Poll no faster than `interval` seconds. While the person has not
+  // decided, `status` is `pending`. `approved` carries a session token;
+  // the session is fresh (see `fresh_until`) so that the CLI can mint an
+  // API token right after login.
+  rpc PollDeviceLogin(PollDeviceLoginParams) returns (DevicePollResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/auth/device/poll"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["auth"]
+      summary: "Poll a started device login."
+      responses { status: 200 description: "The state of the login." }
+      commands { name: "api poll-device-login" args: "device_code" summary: "Ask once whether a device login was approved (one step of 'mopm login')." }
+    };
+  }
+
+  // The token is valid for 10 minutes, may only publish (or, with `purpose: stage`, only stage), and only for the
+  // package versions named in the request (one, or the `packages` list), each a full name. The CI identity must
+  // match a trusted publisher of the package's namespace: its repository
+  // and owner ids (the owner id is the namespace's GitHub id), workflow file and (when the publisher names one)
+  // environment, the ref it runs on (`refs/heads/main` unless the
+  // publisher names another) and the event that started it (a push or a
+  // manual dispatch). The call mints a token and creates nothing: a package that does not exist is created with
+  // `createPackage`, which the token minted for the namespace may do, and the token names that namespace. A CI identity token can be exchanged once; a second
+  // exchange of the same token is refused as `oidc_token_invalid`.
+  //
+  // `purpose` is optional: `publish` (the default, the token this call has always minted) or `stage`. A `stage` token
+  // has the one scope `stage`: the same packages, versions, namespace and life as the `publish` token of the same request,
+  // but it can only prepare a group (`createGroup`, `getGroup`, `abortGroup`); `commitGroup`, `commitPublish`, `setYanked`
+  // and `yankGroup` refuse it as `scope_missing`. Any other `purpose` is
+  // `invalid_request`, before the CI identity token is spent.
+  rpc ExchangeOidcToken(ExchangeOidcTokenParams) returns (OidcExchangeResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/auth/oidc/exchange"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["auth"]
+      summary: "Exchange a CI identity token for a short-lived publish token."
+      responses { status: 200 description: "A publish (or, for `purpose: stage`, a stage) token for one package version." }
+      commands { name: "api exchange-oidc-token" summary: "Exchange a CI identity token for a registry token (one step of 'mopm publish --oidc')." }
+    };
+  }
+
+  rpc GetMe(google.protobuf.Empty) returns (MeV2) {
+    option (google.api.http) = {
+      get: "/api/v2/me"
+    };
+    option (operation) = {
+      tags: ["me"]
+      summary: "The calling user and the namespaces they can write in."
+      security: ["userToken"]
+      responses { status: 200 description: "The user behind the token." }
+      commands { name: "whoami" summary: "Show the account the token belongs to and its namespaces." }
+    };
+  }
+
+  // Needs a fresh session. The secret is shown once and stored hashed.
+  // `packages` is mandatory: an explicit list of full names, or `all_current`, a snapshot
+  // of the packages of the namespaces the caller can write in at creation time (not future packages). A listed
+  // full name may be a package that does not exist yet, in a namespace the caller can write in.
+  rpc CreateToken(CreateTokenParams) returns (CreateTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/me/tokens"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["tokens"]
+      summary: "Create an API token."
+      security: ["freshSession"]
+      responses { status: 201 description: "The token. `token` is the only time the secret is returned." }
+      commands { name: "token create" args: "name" summary: "Create an API token; its secret is printed once." }
+    };
+  }
+
+  rpc ListTokens(google.protobuf.Empty) returns (TokenList) {
+    option (google.api.http) = {
+      get: "/api/v2/me/tokens"
+    };
+    option (operation) = {
+      tags: ["tokens"]
+      summary: "List the caller's tokens (metadata only, never secrets)."
+      security: ["freshSession"]
+      responses { status: 200 description: "The caller's live tokens." }
+      commands { name: "token list" summary: "List the API tokens of the account." }
+    };
+  }
+
+  rpc RevokeToken(RevokeTokenParams) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      delete: "/api/v2/me/tokens/{token_id}"
+    };
+    option (operation) = {
+      tags: ["tokens"]
+      summary: "Revoke a token. Revocation is immediate."
+      security: ["freshSession"]
+      responses { status: 204 description: "The token is revoked." }
+      commands { name: "token revoke" args: "token_id" summary: "Revoke an API token." }
+    };
+  }
+
+  // Needs a fresh session. The namespace string is the lower-case login of a GitHub organization. A user's
+  // namespace is not made here: it is made at the user's first login. The call refuses a namespace outside the
+  // grammar (`invalid_namespace`), a reserved one (`namespace_reserved`) and one that any account, user or
+  // organization, already holds (`namespace_taken`). A caller that holds no user namespace of its own, which happens when
+  // its login is outside the grammar, is reserved or is held by another account, is `user_not_found`, because it could
+  // not be named as a member. None of these asks GitHub.
+  //
+  // Otherwise it starts a GitHub device flow that asks for the scope `read:org` and answers 202 with the code to show
+  // the person, as `startDeviceLogin` does. The flow is bound to the caller; it lives ten minutes. Nothing is created
+  // until `pollNamespace` answers `created`.
+  rpc CreateNamespace(CreateNamespaceParams) returns (DeviceStartResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/namespaces"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["namespaces"]
+      summary: "Start registering an organization namespace."
+      security: ["freshSession"]
+      responses { status: 202 description: "The registration was started; the person approves on GitHub and the caller polls." }
+      commands { name: "api create-namespace" args: "namespace" summary: "Start registering an organization's namespace (one step of 'mopm org create')." }
+    };
+  }
+
+  // Poll no faster than `interval` seconds, with a session or a user token of the account that started the
+  // registration (another account's `device_code` is `device_code_unknown`). While the person has not decided,
+  // `status` is `pending`; `denied` and `expired` end the flow.
+  //
+  // When GitHub approves, the registry reads, with the one-time token, the account that approved (its id must be
+  // the caller's: otherwise `github_account_mismatch`) and that account's membership of the organization. The
+  // namespace is created only when the membership is `active`, its role is `admin` and the organization's current
+  // login in lower case is the namespace; any other answer of GitHub (no membership, a pending invitation, the
+  // role `member` or `billing_manager`, an organization that restricts OAuth apps, another current login) is
+  // `not_org_admin`. The organization's GitHub id is stored on the namespace and the caller becomes its first
+  // `owner`. The token is discarded and nothing about the organization is asked of GitHub afterwards.
+  //
+  // `created` answers once; the string taken in the meantime is `namespace_taken`.
+  rpc PollNamespace(PollNamespaceParams) returns (NamespacePollResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/namespaces/poll"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["namespaces"]
+      summary: "Poll a started organization registration."
+      security: ["userToken"]
+      responses { status: 200 description: "The state of the registration." }
+      commands { name: "api poll-namespace" args: "device_code" summary: "Ask once whether a namespace registration was approved (one step of 'mopm org create')." }
+    };
+  }
+
+  rpc GetNamespace(GetNamespaceParams) returns (NamespaceInfo) {
+    option (google.api.http) = {
+      get: "/api/v2/namespaces/{namespace}"
+    };
+    option (operation) = {
+      tags: ["namespaces"]
+      summary: "A namespace."
+      responses { status: 200 description: "The namespace, its kind and its GitHub account." }
+      commands { name: "namespace info" args: "namespace" summary: "Show a namespace: its kind and its GitHub account." }
+    };
+  }
+
+  // Readable by an owner or a member of the namespace; any other account is `not_namespace_member`. A user
+  // namespace has no members (`invalid_request`). Sorted by `user`.
+  rpc ListMembers(ListMembersParams) returns (MemberList) {
+    option (google.api.http) = {
+      get: "/api/v2/namespaces/{namespace}/members"
+    };
+    option (operation) = {
+      tags: ["namespaces"]
+      summary: "The members of an organization namespace."
+      security: ["userToken"]
+      responses { status: 200 description: "The members." }
+      commands { name: "org list" args: "namespace" summary: "List the members of a namespace and their roles." }
+    };
+  }
+
+  // Needs a fresh session of an `owner` of the namespace (a `member` is `not_namespace_owner`; an account that is
+  // is not in it at all is `not_namespace_member`). `user` is a mopm username: the user namespace of the account, which an
+  // account gets at its first login; any other string is `user_not_found`. Answers 201 when the account was
+  // added, 200 when its role changed or already was the one asked. Making the only owner a `member` is
+  // `last_owner`.
+  rpc SetMember(SetMemberParams) returns (Member) {
+    option (google.api.http) = {
+      put: "/api/v2/namespaces/{namespace}/members/{user}"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["namespaces"]
+      summary: "Add a member to an organization namespace, or change its role."
+      security: ["freshSession"]
+      responses { status: 201 description: "The account was added." }
+      responses { status: 200 description: "The account was a member; its role is now the one asked." }
+      commands { name: "org add" args: "namespace" args: "user" defaults: "role=member" summary: "Add a member to a namespace, or change a member's role." }
+    };
+  }
+
+  // Needs a fresh session of an `owner`. The removal takes effect at once: the next write of that account in the
+  // namespace is `not_namespace_member`. An owner may remove themselves while another owner remains; the only
+  // owner is `last_owner`. An account that is not a member is `member_not_found`.
+  rpc RemoveMember(RemoveMemberParams) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      delete: "/api/v2/namespaces/{namespace}/members/{user}"
+    };
+    option (operation) = {
+      tags: ["namespaces"]
+      summary: "Remove a member from an organization namespace."
+      security: ["freshSession"]
+      responses { status: 204 description: "The account is no longer a member." }
+      commands { name: "org remove" args: "namespace" args: "user" summary: "Remove a member from a namespace." }
+    };
+  }
+
+  // Filters only what the index serves: a prefix (`q`) and a sort order. `q` is a name prefix, or
+  // `<namespace>/` with an optional name prefix to list one namespace's packages. Filtering by platform, Mojo
+  // version or native library is not offered.
+  rpc SearchPackages(SearchPackagesParams) returns (PackageList) {
+    option (google.api.http) = {
+      get: "/api/v2/packages"
+    };
+    option (operation) = {
+      tags: ["packages"]
+      summary: "List or search packages."
+      responses { status: 200 description: "One page of packages." }
+      commands { name: "search" args: "q" summary: "Search the packages by name." }
+    };
+  }
+
+  rpc GetPackage(GetPackageParams) returns (PackageInfoV2) {
+    option (google.api.http) = {
+      get: "/api/v2/packages/{namespace}/{name}"
+    };
+    option (operation) = {
+      tags: ["packages"]
+      summary: "Package information."
+      responses { status: 200 description: "The package, its namespace and its versions." }
+      commands { name: "package info" args: "namespace/name" summary: "Show a package and its versions." }
+    };
+  }
+
+  // The only way to create a package; it takes no body. The right to write the namespace is checked before anything
+  // else (see "Who may write" above): a caller that cannot write it gets `not_namespace_member`, or
+  // `namespace_not_found` when there is no such namespace. The name must be a possible import name: a Mojo keyword
+  // or builtin, `mopm`, `mojo`, `max`, `modular`, `std`, `stdlib` or a top-level module of the Mojo standard library
+  // is `name_reserved`, and its message says which. A package has no claim and no expiry. Creation is rate limited per
+  // account and per token: 50 a UTC day each, unless the operator of the registry has set a higher daily limit for the
+  // account; over it the call is `rate_limited` and `Retry-After` says when the day ends. An API token that has only
+  // the `stage` scope is refused (`scope_missing`).
+  //
+  // Answers 201 with the package it made, or 200 with the package as it is when it already exists.
+  rpc CreatePackage(CreatePackageParams) returns (PackageInfoV2) {
+    option (google.api.http) = {
+      put: "/api/v2/packages/{namespace}/{name}"
+    };
+    option (operation) = {
+      tags: ["packages"]
+      summary: "Create a package in a namespace."
+      security: ["userToken", "publishToken"]
+      responses { status: 201 description: "The package was created." }
+      responses { status: 200 description: "The package already exists; it is returned as it is." }
+      commands { name: "package create" args: "namespace/name" summary: "Create a package in a namespace you can write in." }
+    };
+  }
+
+  // Includes yanked and tombstoned versions, with their state.
+  rpc ListVersions(ListVersionsParams) returns (VersionList) {
+    option (google.api.http) = {
+      get: "/api/v2/packages/{namespace}/{name}/versions"
+    };
+    option (operation) = {
+      tags: ["packages"]
+      summary: "Versions of a package, newest first."
+      responses { status: 200 description: "One page of versions." }
+      commands { name: "package versions" args: "namespace/name" summary: "List the versions of a package." }
+    };
+  }
+
+  // A yanked version is returned with `state: yanked` and its reason. A
+  // tombstoned version is returned with `state: tombstoned`, the reason
+  // code and the sha256 of each file, but no `url`.
+  rpc GetVersion(GetVersionParams) returns (VersionDetail) {
+    option (google.api.http) = {
+      get: "/api/v2/packages/{namespace}/{name}/{version}"
+    };
+    option (operation) = {
+      tags: ["packages"]
+      summary: "One version of a package."
+      responses { status: 200 description: "The version." }
+      commands { name: "package version" args: "namespace/name" args: "version" summary: "Show one version of a package: its state, files and dependencies." }
+    };
+  }
+
+  // Publishing is three steps: begin an upload per file (this call), PUT the
+  // bytes to the returned URL with the returned headers, then commit
+  // (`commitPublish`). The registry binds the upload to the caller, the
+  // name, the version, the sha256 and the size; the presigned URL carries a
+  // signed `x-amz-checksum-sha256` and an exact content length so the
+  // storage layer itself rejects any other bytes. The URL expires in at
+  // most five minutes.
+  //
+  // A file over the per-file limit is `payload_too_large` (413). A file
+  // that would take the package's live files (published and yanked
+  // versions; a takedown frees its bytes) over the 10 GB per-project limit
+  // is `limit_exceeded` (403), which is about the project, not the file:
+  // a smaller file may still fit.
+  rpc BeginUpload(BeginUploadParams) returns (BeginUploadResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/packages/{namespace}/{name}/{version}/files"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["publish"]
+      summary: "Begin the upload of one file of a version."
+      security: ["publishToken"]
+      responses { status: 200 description: "Where and how to upload." }
+      commands { name: "api begin-upload" args: "namespace/name" args: "version" summary: "Begin the upload of one file of a version (one step of 'mopm publish')." }
+    };
+  }
+
+  // Asynchronous. The registry answers 202 with a status URL; the CLI
+  // polls it. Each upload id is single use and must belong to the caller
+  // and to this name and version. Committing the same upload ids again
+  // while the version is still `pending` resumes the same publish. A
+  // version that exists in any other state is refused with
+  // `version_exists`, whose message carries the sha256 already published;
+  // a client that wants "succeed if these exact bytes are already
+  // published" compares that sha256 with its own (or reads `getVersion`).
+  // The file set of a version is fixed at commit.
+  //
+  // The optional display fields (`description`, `license`, `repository`,
+  // `homepage`, `keywords`, `readme`) are checked here, stored on the
+  // version when it is published and served back by `getVersion`. A value
+  // that breaks its rule is `invalid_request`. A client that sends none gets
+  // a version without them, as before.
+  //
+  // The optional `source_commit` is the git commit id the version was built
+  // from (40 or 64 lowercase hex digits). It is stored once with the version,
+  // returned by `getVersion` as `source_commit`, and left out for a version
+  // committed without one. The registry only checks its form: it is not verified
+  // against the archives or the caller, and versions are never compared or
+  // ordered by it.
+  rpc CommitPublish(CommitPublishParams) returns (CommitPublishResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/packages/{namespace}/{name}/{version}/publish"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["publish"]
+      summary: "Commit uploaded files as a version."
+      security: ["publishToken"]
+      responses { status: 202 description: "The publish was accepted and is being processed." }
+      commands { name: "api commit-publish" args: "namespace/name" args: "version" summary: "Commit the uploads of a version (one step of 'mopm publish')." }
+    };
+  }
+
+  // `pending`, `validating` and `indexing` are in progress; `published` and
+  // `rejected` are final. A rejected publish burns the version number.
+  // A publish that passed can still carry `warnings`.
+  rpc GetPublishStatus(GetPublishStatusParams) returns (PublishStatus) {
+    option (google.api.http) = {
+      get: "/api/v2/publishes/{publish_id}"
+    };
+    option (operation) = {
+      tags: ["publish"]
+      summary: "Status of a publish."
+      security: ["publishToken"]
+      responses { status: 200 description: "The current status." }
+      commands { name: "publish status" args: "publish_id" summary: "Show how a publish is going." }
+    };
+  }
+
+  // A group is a set of versions, at most one per package, that are meant to be published together. This call
+  // declares the whole set up front (each member's name, version and files with their sha256 and size) and
+  // reserves the version numbers; the caller then PUTs each file to the URL it is given. Creating a group
+  // publishes nothing and makes nothing visible.
+  //
+  // The token must be an API token with the `publish` or `stage` scope for every member's package, and the caller must be
+  // able to write the namespace of each package; or a CI identity token minted by `exchangeOidcToken` for a publisher of the
+  // namespace, which must name every member's package and version. The first member
+  // that fails any of these refuses the whole group and is named in the error. A number that a published version
+  // already holds is `version_exists`; one that another group is still using is `group_conflict`. A
+  // `group_conflict` carries a `reason` (see `Error`) that tells the causes apart without reading the message.
+  //
+  // The id of a group is a function of the caller and the declared set: the same request again is the same group. The
+  // derivation is a stable interface, so a client can compute the id itself and read the group with `getGroup` (a 404
+  // `group_not_found` means there is no such group of the caller's). The id is `grp_` followed by the first 32 lowercase hex
+  // digits of the SHA-256 of the UTF-8 bytes of the compact JSON text (no white space) of the array
+  // `[actor, set]`. `actor` is `u:<GitHub account id>` for an account's token, including a CI token that acts for an
+  // account, and `ci:gh-repo:<repository id>` for a configured CI publisher's own token. `set` is the array of members
+  // sorted by full name, each member `[name, version, files]`, with `files` the array of the member's files sorted by
+  // the text `<subdir>/<filename>`, each file `[subdir, filename, sha256, size]` (`size` a JSON integer). The order of
+  // members and files in the request, `on_overlap`, a member's `readme` and every other option are not part of it. For the actor `u:1234` and
+  // the one file `linux-64/mojo-komira-ai.alpha-1.0.0-mojo1.0.0_0.conda` (sha256 `a` repeated 64 times, size 1000) of
+  // `komira-ai/alpha` 1.0.0, the text hashed is
+  // `["u:1234",[["komira-ai/alpha","1.0.0",[["linux-64","mojo-komira-ai.alpha-1.0.0-mojo1.0.0_0.conda","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",1000]]]]]`
+  // and the id is `grp_598a7e4a7e56109c58051a434f3be338`. More vectors are in the registry's test fixtures. A change to the
+  // derivation would be a new id prefix, never a different hash under `grp_`. The hosted registry derives ids this way; the
+  // fake registry's ids are opaque and a client must not compute them.
+  //
+  // Repeating the request while the group is `open` returns `200` and continues it (a reply with `reserving` has not
+  // reached every member yet; send the same request again), with fresh upload URLs for the files not yet in
+  // storage. Repeating it for a group that ended without committing (`expired`, `aborted`, `rejected`,
+  // `superseded`) opens it again with the next `attempt` (`201`). A group that is `validating`, `committed` or
+  // `visible` is returned as it is. A `failed` group has burned its numbers: `group_conflict`.
+  //
+  // A caller has a limited number of open groups. A different set that shares a version with one of the caller's
+  // own open groups supersedes it; a group that is validating is never superseded. With `on_overlap: refuse` it is
+  // refused instead (`group_conflict`, reason `overlap_refused`) and nothing is ended. The groups a create ended are
+  // listed in `superseded` of its answer. A group that is past its
+  // `deadline_at` is expired by the next request that meets it. A group costs its number of files from a daily
+  // allowance of its own, once per attempt, which is not the allowance of single publishes.
+  //
+  // A registry that lists `group_readme_objects` in the `features` of `getHealth` also takes a `readme` on a member: the
+  // SHA-256 and size of the member's readme. It answers, for such a member, where to PUT the readme (`readme` of the
+  // member's answer, see `GroupUploadReadme`), and `commitGroup` then names the readme by that digest and size instead of
+  // carrying its text. A `readme` that is not `{sha256, size}` of a readme of 1 to 65536 bytes is `invalid_request`, and
+  // the message names the member. A registry that does not list the feature ignores the field and answers none.
+  //
+  // Group publishing is off unless the registry has enabled it for the caller. Until then this call is answered
+  // `route_not_found`; reading and aborting a group that exists keep working.
+  rpc CreateGroup(CreateGroupParams) returns (CreateGroupResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/groups"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["publish"]
+      summary: "Declare a set of versions to publish together."
+      security: ["stageToken", "publishToken"]
+      responses { status: 201 description: "The group was created, or opened again with the next attempt." }
+      responses { status: 200 description: "The group already existed: continued if it is open, otherwise as it is." }
+      commands { name: "api create-group" summary: "Create or continue a publish group (one step of 'mopm publish --staged')." }
+    };
+  }
+
+  // The group's status, attempt and deadline, and the state of each member: `pending` (its number is not reserved
+  // yet), `reserved`, `staged`, `published` or `yanked`. Each member also lists its `files`: the facts the caller declared at
+  // `createGroup`, and, while the group is `open`, whether each file is in storage. The read reserves and charges nothing (it only
+  // expires a group past its deadline), so it is the way to see a group, whatever its status, without `createGroup` (which reopens a group that ended).
+  // Needs a token with `stage` or `publish`. Readable by the caller who created the group and by an account that can write the namespace of every
+  // package in it; anyone else gets `group_not_found`. A group past its deadline that was still open is expired
+  // by this read.
+  rpc GetGroup(GetGroupParams) returns (Group) {
+    option (google.api.http) = {
+      get: "/api/v2/groups/{group_id}"
+    };
+    option (operation) = {
+      tags: ["publish"]
+      summary: "Status of a group."
+      security: ["stageToken", "publishToken"]
+      responses { status: 200 description: "The current status." }
+      commands { name: "group status" args: "group_id" summary: "Show a publish group: its state, its members and its yank." }
+    };
+  }
+
+  // Ends a group that is `open`. Its reserved version numbers are free again: another group, or a single publish,
+  // may take them. Repeating the call on an aborted group is a no-op and returns 200. A group in any other state
+  // (`validating`, `committed`, `expired`, ...) is `group_not_open`. Allowed for the same callers as `getGroup`: a token with `stage` or `publish`.
+  rpc AbortGroup(AbortGroupParams) returns (Group) {
+    option (google.api.http) = {
+      delete: "/api/v2/groups/{group_id}"
+    };
+    option (operation) = {
+      tags: ["publish"]
+      summary: "Abort an open group."
+      security: ["stageToken", "publishToken"]
+      responses { status: 200 description: "The group, aborted." }
+      commands { name: "group abort" args: "group_id" summary: "End an open publish group without publishing it." }
+    };
+  }
+
+  // Asynchronous. The caller has created the group and PUT every file to the URL it was given; this call hands over what
+  // the archives cannot say for themselves, one entry per member: the optional `manifest_sha256` of its embedded manifest (checked when given, as in
+  // `commitPublish`), the optional display fields (the same rules as `commitPublish`) and the optional `source_commit` (the
+  // same rules, informational and unverified; it lands on that member's version only). Every member of the group is listed exactly once.
+  //
+  // The registry checks that the group is `open`, not past its `deadline_at`, that every member is reserved and that every
+  // file is in storage at its declared size, stores the request, moves the group to `validating` and answers 202. It then
+  // validates every member's archives; if every one is valid it copies the files into the channel and commits the group:
+  // the members become visible together to the read API, as `published` at the commit time. A member whose archive is not
+  // valid, a deadline that passes, or an upload more than 18 hours old ends the group `rejected` before anything is copied
+  // (its version numbers are free again); a failure after the copies began ends it `failed`, and its version numbers are
+  // burned. Read `getGroup` for where it is: `status` and, for a group that ended, `failure`.
+  //
+  // The same request again resumes: while the group is `validating` it queues the validation again (one job), and for a
+  // group that has committed it answers `200` as it is. A different request for a group that already has one is refused.
+  // A group that is not open (`aborted`, `expired`, `rejected`, ...) is refused with `group_commit_refused`; create it
+  // again with the same request to open it again. A commit is a write: read-only mode refuses it. It is not gated by the
+  // switch that enables group creation, since a group that exists is finished whatever the switch says.
+  //
+  // The token must have the `publish` scope (or, for a CI identity token, be the `publish` token of the exchange). A token with
+  // only `stage` is refused as `scope_missing`, and the group stays as it was.
+  //
+  // A member's `readme` is either the text (a string) or, at a registry that lists `group_readme_objects` in the
+  // `features` of `getHealth`, the `{sha256, size}` of a readme the caller has PUT to the URL `createGroup` gave. With
+  // text, the request is one body that holds the display fields of every member (a readme is up to 64 KiB), so a group
+  // of many members with readmes can exceed what the gateway accepts. With the object form the body holds a digest and a
+  // size for each readme (under 100 bytes), so its size does not depend on the readmes and a group of up to 500
+  // members stays far below any limit of the gateway.
+  rpc CommitGroup(CommitGroupParams) returns (CommitGroupResponse) {
+    option (google.api.http) = {
+      post: "/api/v2/groups/{group_id}/commit"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["publish"]
+      summary: "Say that a group's files are uploaded and ask for the group to be validated and committed."
+      security: ["publishToken"]
+      responses { status: 202 description: "The group is validating; its validation is queued." }
+      responses { status: 200 description: "The group had already committed; it is returned as it is." }
+      commands { name: "api commit-group" args: "group_id" summary: "Commit a publish group (one step of 'mopm publish --staged')." }
+    };
+  }
+
+  // The body is that of `setYanked`. `yanked: true` yanks the group's versions that are `published`; `yanked: false` restores
+  // exactly the versions that yank changed. Allowed for an account that can write the namespace of every package in it now, whether or not it created the
+  // group (a token outlives a membership change; an account that has lost the right is refused with `not_namespace_member`), with a token
+  // that has the `yank` or `publish` scope for every member (read-only mode refuses it).
+  //
+  // Only a group that is `visible` can be yanked or unyanked; a group that has not committed, or whose files are still being
+  // released after the commit, is refused with `group_not_settled`, as is a yank while an unyank of the group is running and the
+  // other way round. Asynchronous: the request records the intent, answers 202 and returns the group; the versions are yanked
+  // (or restored) by a job, then repodata and the sparse index follow, and the group's `yank.state` reaches `yanked` (or
+  // `restored`) when they are written. A version somebody yanked by hand before the group's yank stays yanked, and is not
+  // restored by the group's unyank. The same request again while the yank or unyank runs answers 202 as it is; a group already as
+  // asked (yanked and `yanked: true`, or never yanked or restored and `yanked: false`) answers 200 as it is.
+  rpc YankGroup(YankGroupParams) returns (Group) {
+    option (google.api.http) = {
+      put: "/api/v2/groups/{group_id}/yank"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["publish"]
+      summary: "Yank or unyank every version a group published."
+      security: ["yankToken", "publishToken"]
+      responses { status: 202 description: "The yank or unyank is running." }
+      responses { status: 200 description: "The group is already as asked." }
+      commands { name: "group yank" args: "group_id" set: "yanked=true" summary: "Yank every version a publish group published." }
+      commands { name: "group unyank" args: "group_id" set: "yanked=false" summary: "Restore the versions a group's yank changed." }
+    };
+  }
+
+  // `yanked: true` hides the version from new resolution; its files stay
+  // downloadable at their exact URLs, so existing locks keep working.
+  // `yanked: false` restores it. Allowed for an account that can write the
+  // namespace, or a token with the `yank` or `publish` scope for the package. Repeating the same change
+  // is a no-op and returns 200. A change the version's state does not
+  // allow is refused with `invalid_transition` (409): yanking a version
+  // that is still pending or is tombstoned, unyanking a version that is
+  // not yanked, or any change to a tombstoned version. A tombstoned
+  // version (taken down by an administrator) never changes state.
+  rpc SetYanked(SetYankedParams) returns (VersionSummary) {
+    option (google.api.http) = {
+      put: "/api/v2/packages/{namespace}/{name}/{version}/yank"
+      body: "body"
+    };
+    option (operation) = {
+      tags: ["publish"]
+      summary: "Yank or unyank a version."
+      security: ["yankToken", "publishToken"]
+      responses { status: 200 description: "The version after the change." }
+      responses { status: 409 description: "`invalid_transition`: the version's state does not allow this change." error: true }
+      commands { name: "yank" args: "namespace/name" args: "version" set: "yanked=true" summary: "Yank a version: new resolutions no longer pick it." }
+      commands { name: "unyank" args: "namespace/name" args: "version" set: "yanked=false" summary: "Restore a yanked version." }
+    };
+  }
+}
+
+message StartDeviceLoginParams {
+  DeviceStartRequest body = 1;
+}
+
+message PollDeviceLoginParams {
+  DevicePollRequest body = 1;
+}
+
+message ExchangeOidcTokenParams {
+  OidcExchangeRequest body = 1;
+}
+
+message CreateTokenParams {
+  CreateTokenRequest body = 1;
+}
+
+message RevokeTokenParams {
+  string token_id = 1 [(field) = {param: "TokenId", min_length: 1, max_length: 64}];
+}
+
+message CreateNamespaceParams {
+  CreateNamespaceRequest body = 1;
+}
+
+message PollNamespaceParams {
+  DevicePollRequest body = 1;
+}
+
+message GetNamespaceParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+}
+
+message ListMembersParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+}
+
+message SetMemberParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+  // A mopm username, the user namespace of an account (its GitHub login in lower case).
+  Namespace user = 2 [(field) = {param: "User"}];
+  SetMemberRequest body = 3;
+}
+
+message RemoveMemberParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+  // A mopm username, the user namespace of an account (its GitHub login in lower case).
+  Namespace user = 2 [(field) = {param: "User"}];
+}
+
+message SearchPackagesParams {
+  // A name prefix, or `<namespace>/` with an optional name prefix; normalised before matching.
+  string q = 1 [(field) = {param: "Query", max_length: 104}];
+  enum Sort {
+    SORT_UNSPECIFIED = 0;
+    SORT_NAME = 1;
+    SORT_UPDATED = 2;
+  }
+  Sort sort = 2 [(field) = {param: "Sort", default: "name"}];
+  // Opaque. Pass the `next_cursor` of the previous page.
+  string cursor = 3 [(field) = {param: "Cursor", min_length: 1, max_length: 512}];
+  int64 limit = 4 [(field) = {param: "Limit", minimum: 1, maximum: 100, default: "20"}];
+}
+
+message GetPackageParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+  // Normalised package name, the part of the full name after the `/`.
+  Name name = 2 [(field) = {param: "Name"}];
+}
+
+message CreatePackageParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+  // Normalised package name, the part of the full name after the `/`.
+  Name name = 2 [(field) = {param: "Name"}];
+}
+
+message ListVersionsParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+  // Normalised package name, the part of the full name after the `/`.
+  Name name = 2 [(field) = {param: "Name"}];
+  // Opaque. Pass the `next_cursor` of the previous page.
+  string cursor = 3 [(field) = {param: "Cursor", min_length: 1, max_length: 512}];
+  int64 limit = 4 [(field) = {param: "Limit", minimum: 1, maximum: 100, default: "20"}];
+}
+
+message GetVersionParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+  // Normalised package name, the part of the full name after the `/`.
+  Name name = 2 [(field) = {param: "Name"}];
+  Version version = 3 [(field) = {param: "Version"}];
+}
+
+message BeginUploadParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+  // Normalised package name, the part of the full name after the `/`.
+  Name name = 2 [(field) = {param: "Name"}];
+  Version version = 3 [(field) = {param: "Version"}];
+  BeginUploadRequest body = 4;
+}
+
+message CommitPublishParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+  // Normalised package name, the part of the full name after the `/`.
+  Name name = 2 [(field) = {param: "Name"}];
+  Version version = 3 [(field) = {param: "Version"}];
+  CommitPublishRequest body = 4;
+}
+
+message GetPublishStatusParams {
+  string publish_id = 1 [(field) = {param: "PublishId", min_length: 1, max_length: 64}];
+}
+
+message CreateGroupParams {
+  CreateGroupRequest body = 1;
+}
+
+message GetGroupParams {
+  string group_id = 1 [(field) = {param: "GroupId", pattern: "^grp_[0-9a-f]{32}$"}];
+}
+
+message AbortGroupParams {
+  string group_id = 1 [(field) = {param: "GroupId", pattern: "^grp_[0-9a-f]{32}$"}];
+}
+
+message CommitGroupParams {
+  string group_id = 1 [(field) = {param: "GroupId", pattern: "^grp_[0-9a-f]{32}$"}];
+  CommitGroupRequest body = 2;
+}
+
+message YankGroupParams {
+  string group_id = 1 [(field) = {param: "GroupId", pattern: "^grp_[0-9a-f]{32}$"}];
+  YankRequest body = 2;
+}
+
+message SetYankedParams {
+  // The namespace of the package, a GitHub login in lower case.
+  Namespace namespace = 1 [(field) = {param: "Namespace"}];
+  // Normalised package name, the part of the full name after the `/`.
+  Name name = 2 [(field) = {param: "Name"}];
+  Version version = 3 [(field) = {param: "Version"}];
+  YankRequest body = 4;
+}

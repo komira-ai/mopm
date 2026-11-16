@@ -68,10 +68,10 @@ const Ctx = struct {
         try c.mustRun(try h.fmt(c.a, "cc lib{s}", .{name}), try c.m.cc(argv.items));
     }
 
-    /// lib/mojo/<name>.mopm.json content.
+    /// lib/mojo/<name>.mopm.json content: the package is `example/<name>`.
     fn meta(c: *Ctx, name: []const u8, deps: []const u8, needs: []const u8) ![]u8 {
         return h.fmt(c.a,
-            \\{{"schema": 1, "name": "{s}", "version": "1.0.0", "deps": {s},
+            \\{{"schema": 2, "name": "example/{s}", "version": "1.0.0", "deps": {s},
             \\ "native": [{{"id": "{s}", "soname": "lib{s}.{s}", "file": "../lib{s}.{s}", "needs": {s}}}]}}
             \\
         , .{ name, deps, name, name, mojo_env.ext, name, mojo_env.ext, needs });
@@ -86,7 +86,7 @@ const Ctx = struct {
         }
         try h.writeFile(try h.fmt(c.a, "{s}/lib/mojo/greet.mopm.json", .{prefix}), try c.meta("greet", "[]", "[]"));
         try h.writeFile(try h.fmt(c.a, "{s}/lib/mojo/inner.mopm.json", .{prefix}), try c.meta("inner", "[]", "[]"));
-        try h.writeFile(try h.fmt(c.a, "{s}/lib/mojo/outer.mopm.json", .{prefix}), try c.meta("outer", "[{\"name\": \"inner\"}]", try h.fmt(c.a, "[\"libinner.{s}\"]", .{mojo_env.ext})));
+        try h.writeFile(try h.fmt(c.a, "{s}/lib/mojo/outer.mopm.json", .{prefix}), try c.meta("outer", "[{\"name\": \"example/inner\"}]", try h.fmt(c.a, "[\"libinner.{s}\"]", .{mojo_env.ext})));
     }
 
     fn wantFor(prog: []const u8) []const []const u8 {

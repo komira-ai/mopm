@@ -1,6 +1,6 @@
 {
   "package": {
-    "name": "tiny",
+    "name": "example/tiny",
     "version": "0.1.0",
     "description": null,
     "license": null,

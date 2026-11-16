@@ -21,7 +21,7 @@ pub const usage =
     \\  build one unit of a unit graph (mopm plan --unit-graph), or build and run
     \\  one test unit, from declared inputs only: nothing is resolved or fetched
     \\  --src <dir>        the member sources the graph's paths are relative to (.)
-    \\  --deps <dir>       <package>.mojoc of every dependency (deps)
+    \\  --deps <dir>       <import>.mojoc of every dependency (deps)
     \\  --natives <dir>    native libraries by soname (natives)
     \\  --stage <dir>      scratch for the compiler's tree (<out>.stage)
     \\  --toolchain <dir>  mojo_compile and CLOSURE_SHA256 of the pinned toolchain
@@ -119,8 +119,17 @@ pub fn main(arena: Allocator, args: []const []const u8) u8 {
 /// Why a graph of format `format` cannot be read, or null when this mopm reads it.
 pub fn formatProblem(arena: Allocator, path: []const u8, format: u32) Allocator.Error!?[]const u8 {
     const g = core.unit_graph;
-    if (format == g.format_version or format == g.format_loads or format == g.format_provided or format == g.format_link) return null;
-    return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d}, {d}, {d} and {d}", .{ path, format, g.format_version, g.format_loads, g.format_provided, g.format_link });
+    if (format == g.format_version) return null;
+    return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d}", .{ path, format, g.format_version });
+}
+
+/// Why a graph file cannot be used, or null: a unit has no `import`, the directory its sources are staged in and the
+/// name of its `.mojoc`.
+pub fn importProblem(arena: Allocator, path: []const u8, g: core.unit_graph.Graph) Allocator.Error!?[]const u8 {
+    for (g.units) |u| {
+        if (u.import.len == 0) return try std.fmt.allocPrint(arena, "{s}: unit {s} has no import name", .{ path, u.id });
+    }
+    return null;
 }
 
 /// Why a graph file cannot be used, or null: a unit's `link` names a system library outside `native_link.allowed`, or
@@ -152,7 +161,7 @@ fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
         say("{s} is not a unit graph: {s}\n", .{ a.graph, @errorName(e) });
         return 1;
     };
-    if (try formatProblem(arena, a.graph, g.unit_graph) orelse try linkProblem(arena, a.graph, g)) |why| {
+    if (try formatProblem(arena, a.graph, g.unit_graph) orelse try importProblem(arena, a.graph, g) orelse try linkProblem(arena, a.graph, g)) |why| {
         say("{s}\n", .{why});
         return 1;
     }
@@ -186,11 +195,11 @@ fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
 }
 
 test "unit build and test take the unit, the graph, the output and the toolchain" {
-    const base = [_][]const u8{ "--unit", "p@1.0.0#mojo1.0.0/lib", "--graph", "g.json", "--out", "o", "--toolchain", "t" };
+    const base = [_][]const u8{ "--unit", "example/p@1.0.0#mojo1.0.0/lib", "--graph", "g.json", "--out", "o", "--toolchain", "t" };
     const build = [_][]const u8{"build"} ++ base;
     const a = parseArgs(&build).?;
     try std.testing.expectEqual(Verb.build, a.verb);
-    try std.testing.expectEqualStrings("p@1.0.0#mojo1.0.0/lib", a.unit);
+    try std.testing.expectEqualStrings("example/p@1.0.0#mojo1.0.0/lib", a.unit);
     try std.testing.expectEqualStrings(".", a.src);
     const test_verb = [_][]const u8{"test"} ++ base;
     try std.testing.expectEqual(Verb.@"test", parseArgs(&test_verb).?.verb);
@@ -221,13 +230,13 @@ test "unit build and test take the unit, the graph, the output and the toolchain
 }
 
 const empty_graph =
-    \\{"unit_graph": @F@, "package": "p@1.0.0", "mojo": "1.0.0",
+    \\{"unit_graph": @F@, "package": "example/p@1.0.0", "mojo": "1.0.0",
     \\ "toolchain": {"mojo": "1.0.0", "subdir": "linux-64", "cc_target": "x86_64-linux-gnu.2.34", "closure_sha256": "c", "zig": {"version": "0.12.0", "url": "u", "sha256": "f", "size": 1}, "components": []},
     \\ "units": [@U@]}
 ;
 
 const lib_unit =
-    \\{"id": "p@1.0.0#mojo1.0.0/lib", "package": "p", "version": "1.0.0", "kind": "lib", "root": "src/p", "deps": [], "natives": [], "outputs": ["p.mojoc"]}
+    \\{"id": "example/p@1.0.0#mojo1.0.0/lib", "package": "example/p", "import": "p", "version": "1.0.0", "kind": "lib", "root": "src/p", "deps": [], "natives": [], "outputs": ["p.mojoc"]}
 ;
 
 test "a unit graph of another format is refused with its message; this format is read" {
@@ -235,28 +244,26 @@ test "a unit graph of another format is refused with its message; this format is
     defer st.deinit();
     const a = st.allocator();
     try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_version)) == null);
-    try std.testing.expectEqualStrings("g.json is unit graph format 1; this mopm reads 2, 3, 4 and 5", (try formatProblem(a, "g.json", 1)).?);
-    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_loads)) == null);
-    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_provided)) == null);
-    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_link)) == null);
-    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_link + 1)) != null);
+    try std.testing.expectEqualStrings("g.json is unit graph format 1; this mopm reads 6", (try formatProblem(a, "g.json", 1)).?);
+    try std.testing.expectEqualStrings("g.json is unit graph format 5; this mopm reads 6", (try formatProblem(a, "g.json", 5)).?);
+    try std.testing.expectEqualStrings("g.json is unit graph format 7; this mopm reads 6", (try formatProblem(a, "g.json", 7)).?);
 
-    var with_loads = core.unit_graph.Unit{ .id = "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", .package = "p", .version = "1.0.0", .kind = "test" };
+    var with_loads = core.unit_graph.Unit{ .id = "example/p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", .package = "example/p", .import = "p", .version = "1.0.0", .kind = "test" };
     try std.testing.expect((try testLoadsProblem(a, with_loads)) == null);
     with_loads.loads = &.{ "libbrotlicommon", "libbrotlidec" };
     const refused = (try testLoadsProblem(a, with_loads)).?;
     try std.testing.expect(std.mem.indexOf(u8, refused, "loads system libraries (libbrotlicommon, libbrotlidec)") != null);
 
-    // `run` stops at a format 1 graph (exit 1) before it looks for the unit, and goes on with a format 2 one (the unit is unknown: exit 4).
+    // `run` stops at a format 5 graph (exit 1) before it looks for the unit, and goes on with a format 6 one (the unit is unknown: exit 4).
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const no_units = try std.mem.replaceOwned(u8, a, empty_graph, "@U@", "");
-    try tmp.dir.writeFile("old.json", try std.mem.replaceOwned(u8, a, no_units, "@F@", "1"));
-    try tmp.dir.writeFile("new.json", try std.mem.replaceOwned(u8, a, no_units, "@F@", "2"));
-    try tmp.dir.writeFile("one.json", try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, empty_graph, "@U@", lib_unit), "@F@", "2"));
+    try tmp.dir.writeFile("old.json", try std.mem.replaceOwned(u8, a, no_units, "@F@", "5"));
+    try tmp.dir.writeFile("new.json", try std.mem.replaceOwned(u8, a, no_units, "@F@", "6"));
+    try tmp.dir.writeFile("one.json", try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, empty_graph, "@U@", lib_unit), "@F@", "6"));
     try tmp.dir.writeFile("junk.json", "not json");
     const root = try tmp.dir.realpathAlloc(a, ".");
-    const base = Args{ .verb = .build, .unit = "p@1.0.0#mojo1.0.0/lib", .graph = "", .out = "o", .toolchain = "t" };
+    const base = Args{ .verb = .build, .unit = "example/p@1.0.0#mojo1.0.0/lib", .graph = "", .out = "o", .toolchain = "t" };
     var old = base;
     old.graph = try std.fs.path.join(a, &.{ root, "old.json" });
     try std.testing.expectEqual(@as(u8, 1), try run(a, old, null));
@@ -276,9 +283,7 @@ test "a unit graph of another format is refused with its message; this format is
     try tmp.dir.writeFile("tc/mojo_compile", "not executable\n");
     var spawn = one;
     spawn.toolchain = try std.fs.path.join(a, &.{ root, "tc" });
-    if (run(a, spawn, null)) |_| {
-        return error.TestUnexpectedResult;
-    } else |e| try std.testing.expect(e != error.Refused);
+    try std.testing.expect(if (run(a, spawn, null)) |_| false else |e| e != error.Refused);
     // A graph that is not there, or is not a graph: exit 1.
     var gone = base;
     gone.graph = try std.fs.path.join(a, &.{ root, "gone.json" });
@@ -312,23 +317,21 @@ test "unit test refuses a unit that loads system libraries, before it looks at t
     defer st.deinit();
     const a = st.allocator();
     const loading_unit =
-        \\{"id": "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", "package": "p", "version": "1.0.0", "kind": "test", "root": "src/p", "deps": [], "natives": [], "outputs": [], "loads": ["libbrotlicommon"]}
+        \\{"id": "example/p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", "package": "example/p", "import": "p", "version": "1.0.0", "kind": "test", "root": "src/p", "deps": [], "natives": [], "outputs": [], "loads": ["libbrotlicommon"]}
     ;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile("loads.json", try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, empty_graph, "@U@", loading_unit), "@F@", "3"));
+    try tmp.dir.writeFile("loads.json", try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, empty_graph, "@U@", loading_unit), "@F@", "6"));
     try tmp.dir.makePath("tc");
     try tmp.dir.writeFile("tc/CLOSURE_SHA256", "c\n");
     try tmp.dir.writeFile("tc/mojo_compile", "not executable\n");
     const root = try tmp.dir.realpathAlloc(a, ".");
-    var args = Args{ .verb = .@"test", .unit = "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", .graph = try std.fs.path.join(a, &.{ root, "loads.json" }), .out = try std.fs.path.join(a, &.{ root, "out" }), .toolchain = try std.fs.path.join(a, &.{ root, "tc" }) };
+    var args = Args{ .verb = .@"test", .unit = "example/p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", .graph = try std.fs.path.join(a, &.{ root, "loads.json" }), .out = try std.fs.path.join(a, &.{ root, "out" }), .toolchain = try std.fs.path.join(a, &.{ root, "tc" }) };
     // The toolchain is complete, so only the loads refuse the test.
     try std.testing.expectEqual(exit_refused, try run(a, args, null));
     // The same unit as a build is not refused for its loads: the run goes on to the wrapper, which here cannot be executed.
     args.verb = .build;
-    if (run(a, args, null)) |_| {
-        return error.TestUnexpectedResult;
-    } else |e| try std.testing.expect(e != error.Refused);
+    try std.testing.expect(if (run(a, args, null)) |_| false else |e| e != error.Refused);
 }
 
 // Defect it catches: `mopm unit` putting any string from a graph file after -Xlinker as -l<string>.
@@ -336,11 +339,34 @@ test "a graph file whose link has a name outside the list, or a repeated name, i
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
-    var units = [_]core.unit_graph.Unit{.{ .id = "p@1.0.0#mojo1.0.0/lib", .package = "p", .version = "1.0.0", .kind = "lib", .link = &.{ "c++", "m" } }};
-    const g = core.unit_graph.Graph{ .package = "p@1.0.0", .mojo = "1.0.0", .toolchain = undefined, .units = &units };
+    var units = [_]core.unit_graph.Unit{.{ .id = "example/p@1.0.0#mojo1.0.0/lib", .package = "example/p", .import = "p", .version = "1.0.0", .kind = "lib", .link = &.{ "c++", "m" } }};
+    const g = core.unit_graph.Graph{ .package = "example/p@1.0.0", .mojo = "1.0.0", .toolchain = undefined, .units = &units };
     try std.testing.expect((try linkProblem(a, "g.json", g)) == null);
     units[0].link = &.{ "c++", "-Wl,-z,execstack" };
-    try std.testing.expectEqualStrings("g.json: unit p@1.0.0#mojo1.0.0/lib: link: '-Wl,-z,execstack' is not a system library a native may link; the allowed ones are c++, dl, m and pthread", (try linkProblem(a, "g.json", g)).?);
+    try std.testing.expectEqualStrings("g.json: unit example/p@1.0.0#mojo1.0.0/lib: link: '-Wl,-z,execstack' is not a system library a native may link; the allowed ones are c++, dl, m and pthread", (try linkProblem(a, "g.json", g)).?);
     units[0].link = &.{ "m", "m" };
     try std.testing.expect(std.mem.indexOf(u8, (try linkProblem(a, "g.json", g)).?, "'m' is named twice") != null);
+}
+
+// Defect it catches: a graph file whose unit has no import name reaching `mopm unit`, which would stage the sources of a
+// library in a directory named "" and name its `.mojoc` ".mojoc".
+test "a graph file with a unit that has no import name is refused, naming the unit; exit 1 before the unit is looked up" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var units = [_]core.unit_graph.Unit{.{ .id = "example/p@1.0.0#mojo1.0.0/lib", .package = "example/p", .import = "p", .version = "1.0.0", .kind = "lib" }};
+    const g = core.unit_graph.Graph{ .package = "example/p@1.0.0", .mojo = "1.0.0", .toolchain = undefined, .units = &units };
+    try std.testing.expect((try importProblem(a, "g.json", g)) == null);
+    units[0].import = "";
+    try std.testing.expectEqualStrings("g.json: unit example/p@1.0.0#mojo1.0.0/lib has no import name", (try importProblem(a, "g.json", g)).?);
+
+    const bare_unit =
+        \\{"id": "example/p@1.0.0#mojo1.0.0/lib", "package": "example/p", "version": "1.0.0", "kind": "lib", "root": "src/p", "deps": [], "natives": [], "outputs": ["p.mojoc"]}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile("bare.json", try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, empty_graph, "@U@", bare_unit), "@F@", "6"));
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    const args = Args{ .verb = .build, .unit = "example/p@1.0.0#mojo1.0.0/lib", .graph = try std.fs.path.join(a, &.{ root, "bare.json" }), .out = "o", .toolchain = "t" };
+    try std.testing.expectEqual(@as(u8, 1), try run(a, args, null));
 }

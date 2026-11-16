@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { AUTH_ROUTES, CLAIM_ROUTES, PUBLISH_ROUTES, READ_ROUTES } from '../lib/api-stack';
+import { AUTH_ROUTES, CLAIM_ROUTES, PUBLISH_ROUTES, READ_ROUTES, V2_ROUTES } from '../lib/api-stack';
 
 /**
  * Every operation of spec/api/openapi.yaml (each path with each method) is routed at the gateway or is on the list of operations that
@@ -10,6 +10,7 @@ import { AUTH_ROUTES, CLAIM_ROUTES, PUBLISH_ROUTES, READ_ROUTES } from '../lib/a
  */
 
 const SPEC = path.resolve(__dirname, '../../../../spec/api/openapi.yaml');
+const SPEC_V2 = path.resolve(__dirname, '../../../../spec/api/openapi-v2.yaml');
 
 /** Not served yet (no router branch, no gateway route): ownership invitations and owner management. Remove an entry with its branch and route. */
 const NOT_SERVED_YET = [
@@ -19,24 +20,24 @@ const NOT_SERVED_YET = [
   'DELETE /api/v1/packages/{name}/owners/{github_id}',
 ];
 
-function specOperations(): string[] {
+function specOperations(file: string = SPEC, prefix = '/api/v1'): string[] {
   const out: string[] = [];
   let inPaths = false;
   let current: string | undefined;
-  for (const line of fs.readFileSync(SPEC, 'utf8').split('\n')) {
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     if (/^\S/.test(line)) inPaths = line.startsWith('paths:');
     if (!inPaths) continue;
     const p = /^  (\/\S*):\s*$/.exec(line);
     if (p) current = p[1];
     const m = /^    (get|post|put|delete|patch):\s*$/.exec(line);
-    if (m && current) out.push(`${m[1]!.toUpperCase()} /api/v1${current}`);
+    if (m && current) out.push(`${m[1]!.toUpperCase()} ${prefix}${current}`);
   }
   return out;
 }
 
 const routed = new Set([
   ...READ_ROUTES.map((p) => `GET ${p}`),
-  ...[...PUBLISH_ROUTES, ...CLAIM_ROUTES, ...AUTH_ROUTES].map((r) => `${r.method} ${r.path}`),
+  ...[...PUBLISH_ROUTES, ...CLAIM_ROUTES, ...AUTH_ROUTES, ...V2_ROUTES].map((r) => `${r.method} ${r.path}`),
 ]);
 
 describe('the gateway routes every operation of the spec', () => {
@@ -54,5 +55,34 @@ describe('the gateway routes every operation of the spec', () => {
 
   test.each(NOT_SERVED_YET)('%s has no gateway route yet (routed now: take it off the list)', (op) => {
     expect(routed.has(op)).toBe(false);
+  });
+});
+
+// The v2 half: every operation of spec/api/openapi-v2.yaml is a gateway route `METHOD /api/v2<path>`, and V2_ROUTES holds nothing else.
+describe('the gateway routes every operation of the /api/v2 spec', () => {
+  const ops = specOperations(SPEC_V2, '/api/v2');
+
+  test('the spec is read (an empty list proves nothing)', () => {
+    expect(ops.length).toBeGreaterThanOrEqual(20);
+    expect(ops).toContain('PUT /api/v2/packages/{namespace}/{name}');
+    expect(ops).toContain('POST /api/v2/namespaces');
+    expect(ops).toContain('POST /api/v2/namespaces/poll');
+    expect(ops).toContain('GET /api/v2/namespaces/{namespace}/members');
+    expect(ops).toContain('PUT /api/v2/namespaces/{namespace}/members/{user}');
+    expect(ops).toContain('DELETE /api/v2/namespaces/{namespace}/members/{user}');
+  });
+
+  test.each(ops)('%s is a gateway route', (op) => {
+    expect(routed.has(op)).toBe(true);
+  });
+
+  test('V2_ROUTES lists exactly the operations of the spec, each once', () => {
+    const listed = V2_ROUTES.map((r) => `${r.method} ${r.path}`);
+    expect([...listed].sort()).toEqual([...ops].sort());
+    expect(new Set(listed).size).toBe(listed.length);
+  });
+
+  test('no v2 route names an operation of the retired owner model', () => {
+    expect(V2_ROUTES.filter((r) => /owners|invitations|claim/.test(r.path))).toEqual([]);
   });
 });

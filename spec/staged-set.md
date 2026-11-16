@@ -11,12 +11,23 @@ Nothing here is about how a staged set is made. Whatever makes it writes the
 files below; `publish --staged` reads them and checks them before it sends a
 request.
 
+## The built artifacts
+
+`mopm stage --artifacts <dir>` reads each member's library from
+`<dir>/<subdir>/<namespace>/<name>.mojoc`, and each of its natives from
+`<dir>/<subdir>/<namespace>/<name>.native/lib<id>.a`, where `<subdir>` is one of
+`noarch`, `linux-64`, `linux-aarch64`, `osx-arm64`. The layout without the
+namespace directory is not read. A member with none of the files is refused:
+`<full name> has no build artifact: expected <artifacts>/<subdir>/<namespace>/<name>.mojoc
+for one of noarch, linux-64, linux-aarch64, osx-arm64`.
+
 ## The directory
 
 ```text
 <dir>/
   plan.json                     read: the members, in dependency order
   <subdir>/<file>.conda         read: the files plan.json names, as `mopm pack` makes them
+                                (the file name carries the namespace: `mojo-<namespace>.<name>-...`)
   <readme path>                 read: a member's readme, if plan.json names one
   state.json                    written: the group this directory is being published as
   report.json                   written: what each member came to
@@ -29,19 +40,23 @@ conda channel (`channel.md`). Other files in the directory are ignored.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "members": [
-    { "name": "http_core", "version": "0.4.0", "action": "upload",
+    { "name": "acme/http_core", "version": "0.4.0", "action": "upload",
       "manifest_sha256": "<64 hex digits>",
-      "files": [ { "subdir": "noarch", "filename": "mojo-http_core-0.4.0-mojo1.0.0_0.conda",
+      "files": [ { "subdir": "noarch", "filename": "mojo-acme.http_core-0.4.0-mojo1.0.0_0.conda",
                    "sha256": "<64 hex digits>", "size": 12345 } ],
-      "readme": "http_core/README.md" },
-    { "name": "http_client", "version": "0.4.0", "action": "skip",
+      "readme": "acme/http_core/README.md" },
+    { "name": "acme/http_client", "version": "0.4.0", "action": "skip",
       "reason": "already published with these bytes" }
   ]
 }
 ```
 
+- `version` is 2. A `plan.json` of version 1 (it predates namespaces) is refused, naming the file: the set is staged
+  again.
+- Every member's `name` is a full name, `<namespace>/<name>` (`acme/http_core`). Files stay at
+  `<dir>/<subdir>/<file>.conda`; their names carry the namespace and the name (`mojo-<namespace>.<name>-...`).
 - `members` is in dependency order: a package comes after every package of the
   set it depends on. `publish --staged` uploads in this order.
 - `action` is `upload`, `skip` or `refuse`.
@@ -100,7 +115,12 @@ conda channel (`channel.md`). Other files in the directory are ignored.
 2. Reads the token (`$MOPM_TOKEN`, else the login's) and `state.json`. A state
    written for another registry or another plan (a different `plan.json`) is
    refused: remove the file to start a new group.
-3. `POST /groups` with the members to upload; in objects mode each member with
+3. For a new group (`state.json` holds no `group_id`), `PUT <api_v2_url>/packages/<namespace>/<name>`
+   with no body for each member to upload, in plan order, with the token, before the group
+   is asked for. A 201 prints `created <full name> on <stage>`; a 200 (the package
+   existed) prints nothing; any other answer ends the run with exit 1. A run that
+   resumes a group, and `--dry-run`, send none.
+   `POST /groups` with the members to upload; in objects mode each member with
    a readme that is not empty carries `readme`, the `{sha256, size}` of its
    bytes, which is not part of the group id. The registry's answer names a
    reservation for each member and a URL for each file it does not hold. While
@@ -222,6 +242,8 @@ sent again; a group that expired is opened again with the next attempt.
   with jittered waits when the connection fails or times out or the answer is
   500, 502, 503 or 504; any other 4xx is final. The create and the commit are
   sent once.
+- Every request of the run goes to the registry's version 2 API (`api_v2_url` of its `config.json`); package names in
+  bodies and the OIDC exchange are full names. `state.json` names the registry by its `api_url`.
 - The token goes only to the registry's API, as a bearer token. It is never
   printed, never in a file, and not in the environment of any program mopm
   starts.
@@ -231,12 +253,12 @@ sent again; a group that expired is opened again with the next attempt.
 ```json
 { "registry": "<the registry's API root>", "plan_sha256": "<sha256 of plan.json>",
   "group_id": "grp_...", "attempt": 1, "committed": false,
-  "uploaded": [ "http_core/noarch/mojo-http_core-0.4.0-mojo1.0.0_0.conda" ] }
+  "uploaded": [ "acme/http_core/noarch/mojo-acme.http_core-0.4.0-mojo1.0.0_0.conda" ] }
 ```
 
 Written before the first request (with no `group_id`) so a directory that
 cannot be written is found while nothing is held. `uploaded` lists
-`<package>/<subdir>/<file name>` for each file the registry holds.
+`<namespace>/<name>/<subdir>/<file name>` for each file the registry holds.
 
 ## report.json
 
@@ -244,9 +266,9 @@ cannot be written is found while nothing is held. `uploaded` lists
 { "run_id": "<16 hex digits, new for each run>", "registry": "<API root>",
   "group_id": "grp_...", "group_status": "visible", "outcome": "published",
   "members": [
-    { "name": "http_core", "version": "0.4.0", "outcome": "published",
+    { "name": "acme/http_core", "version": "0.4.0", "outcome": "published",
       "files": [ { "subdir": "noarch", "filename": "...", "sha256": "..." } ] },
-    { "name": "http_client", "version": "0.4.0", "outcome": "skipped",
+    { "name": "acme/http_client", "version": "0.4.0", "outcome": "skipped",
       "code": "already published with these bytes" } ] }
 ```
 
@@ -321,7 +343,7 @@ group_id = "grp_" + first 32 lowercase hex digits of
   it is. A CI token of any other kind is `ci:<token id>`; it creates no group.
   A client that wants a stable id across runs uses an account token or a
   configured CI publisher, never a per-run token.
-- `set` is the array of the members sorted by package `name`. A member is the
+- `set` is the array of the members sorted by package `name`, a full name (`<namespace>/<name>`). A member is the
   array `[name, version, files]`; `version` is exactly `MAJOR.MINOR.PATCH`.
   `files` is the array of the member's files sorted by the text
   `<subdir>/<filename>`, and a file is the array `[subdir, filename, sha256,
@@ -330,15 +352,15 @@ group_id = "grp_" + first 32 lowercase hex digits of
   JavaScript's `JSON.stringify` writes them. The order of members and files in
   the request, `on_overlap` and any other option are not part of the id.
 
-For the actor `u:1234` declaring `alpha` 1.0.0 with the one file
-`linux-64/mojo-alpha-1.0.0-mojo1.0.0_0.conda` (sha256: 64 times `a`, size 1000)
+For the actor `u:1234` declaring `acme/alpha` 1.0.0 with the one file
+`linux-64/mojo-acme.alpha-1.0.0-mojo1.0.0_0.conda` (sha256: 64 times `a`, size 1000)
 the text hashed is
 
 ```text
-["u:1234",[["alpha","1.0.0",[["linux-64","mojo-alpha-1.0.0-mojo1.0.0_0.conda","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",1000]]]]]
+["u:1234",[["acme/alpha","1.0.0",[["linux-64","mojo-acme.alpha-1.0.0-mojo1.0.0_0.conda","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",1000]]]]]
 ```
 
-and the id is `grp_750db8c095f4c2517cedf12a308149e5`. Further vectors, for a
+and the id is `grp_4273778169a0787e42fe14e9bd00d299`. Further vectors, for a
 configured CI publisher, several members and files sent out of order, and
 one-field differences, are in the registry's test fixtures
 (`service/api/test/fixtures/group-id-vectors.json`), and a test fails if any id
@@ -364,7 +386,7 @@ group_not_found`, never 403.
 
 ### The group of a version
 
-`GET /packages/{name}/{version}` carries `group_id` for a version a group
+`GET /packages/{namespace}/{name}/{version}` carries `group_id` for a version a group
 published, and no `group_id` for a version a single publish made. A version that
 is still pending is not found. The id grants nothing: reading or yanking the
 group keeps its own ownership and scope rules.
@@ -388,7 +410,7 @@ whatever it says about the hash.
 id the version was built from, exactly 40 or 64 lowercase hexadecimal digits. Anything else (uppercase, another length, a
 character that is not a hex digit, a value that is not a string) is `invalid_request`, and for a group commit the message
 names the member. The registry stores it once with the version, on that member's version only, and
-`GET /packages/{name}/{version}` returns it as `source_commit`; a version committed without one, and every version published
+`GET /packages/{namespace}/{name}/{version}` returns it as `source_commit`; a version committed without one, and every version published
 before the field existed, has no `source_commit` key.
 
 It is informational. The registry checks its form and nothing else: it does not look the commit up, does not compare it with

@@ -105,9 +105,9 @@ const expected = [_]Expect{
 };
 
 const test_keys = [_][]const u8{
-    "id",              "file",           "name",       "status",                 "ms",            "cpu_ms",
-    "peak_rss_bytes",  "exit_code",      "signal",     "signal_name",            "timeout",       "leftover_processes",
-    "message",         "stdout",         "stderr",     "ignore",                 "binary_sha256", "attempts",
+    "id",             "file",      "name",   "status",      "ms",            "cpu_ms",
+    "peak_rss_bytes", "exit_code", "signal", "signal_name", "timeout",       "leftover_processes",
+    "message",        "stdout",    "stderr", "ignore",      "binary_sha256", "attempts",
 };
 
 /// JUnit element and type per non-passing status.
@@ -131,7 +131,7 @@ fn checkRun(c: *r.Chk, run_json: []const u8, junit_xml: []const u8, pkg: []const
         r.int(r.field(st, "opt_level")) == 1 and std.mem.eql(u8, r.str(r.field(st, "assert")) orelse "", "all"), "json: settings", .{});
     const sm = r.field(doc, "summary") orelse .null;
     const want_sum = [_]struct { []const u8, i64 }{
-        .{ "tests", 13 },  .{ "pass", 5 }, .{ "fail", 3 },  .{ "crash", 2 },         .{ "timeout", 2 }, .{ "oom", 1 },
+        .{ "tests", 13 },        .{ "pass", 5 },  .{ "fail", 3 }, .{ "crash", 2 },        .{ "timeout", 2 }, .{ "oom", 1 },
         .{ "compile_error", 0 }, .{ "flaky", 0 }, .{ "skip", 0 }, .{ "filtered_out", 0 },
     };
     var sum_ok = sm == .object and sm.object.count() == want_sum.len;
@@ -356,7 +356,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
             return error.Fatal;
         }
         try h.writeFile(try h.join(a, &.{ prefix, "lib/mojo/greet.mopm.json" }), try h.fmt(a,
-            \\{{"schema": 1, "name": "greet", "version": "1.0.0", "deps": [],
+            \\{{"schema": 2, "name": "example/greet", "version": "1.0.0", "deps": [],
             \\ "native": [{{"id": "greet", "soname": "{s}", "file": "../{s}", "needs": []}}]}}
             \\
         , .{ libgreet, libgreet }));

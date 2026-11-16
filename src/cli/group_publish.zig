@@ -6,6 +6,10 @@
 //!
 //! The run, in order:
 //!   1. read `<dir>/plan.json`, refuse a plan that has a refused member, and check every file against the plan;
+//!   1a. for a new group (state.json names none), `PUT /packages/<name>` for each member to upload, in plan order: the registry creates
+//!      the package when it does not have it (201, said as `created <name> on <stage>`; 200 for one it had, silent) after checking
+//!      the token's right to write the namespace, and a group needs every member's package to exist. A refusal stops the run
+//!      before the group is asked for. A resumed group, which the registry holds with its packages, sends none; `--dry-run` sends none;
 //!   2. `POST /groups` with the members to upload (the plan's order is dependency order): the registry answers one
 //!      reservation per member, and a URL for each file it does not yet hold;
 //!   3. PUT each file, member by member in that order; the PUT carries no token. When the registry takes readmes as objects
@@ -52,6 +56,7 @@ const core = @import("mopm_core");
 const http = core.http;
 const registry = core.registry;
 const ci_oidc = core.ci_oidc;
+const v2 = core.registry_v2;
 const stage_token = @import("group_stage_token.zig");
 const plan_mod = @import("group_plan.zig");
 const registry_cmd = @import("registry_cmd.zig");
@@ -103,11 +108,15 @@ const CreateAnswer = struct {
     reserving: ?struct { done: u32 = 0, total: u32 = 0 } = null,
     members: []const MemberAnswer = &.{},
 };
-pub const Failure = struct { code: []const u8, message: []const u8 = "", member: ?[]const u8 = null };
-const GroupAnswer = struct { group_id: []const u8 = "", status: []const u8, failure: ?Failure = null };
+pub const Failure = v2.GroupFailure;
 
-/// The statuses of a group that ended without being published.
-const ended_statuses = [_][]const u8{ "rejected", "failed", "expired", "aborted", "superseded" };
+/// Whether `status` is one of a group that ended without being published.
+fn ended(status: v2.GroupStatusName) bool {
+    return switch (status) {
+        .rejected, .failed, .expired, .aborted, .superseded => true,
+        else => false,
+    };
+}
 
 pub fn isGroupId(s: []const u8) bool {
     if (s.len != 36 or !std.mem.startsWith(u8, s, "grp_")) return false;
@@ -145,7 +154,8 @@ pub const Publisher = struct {
     /// What stops this run once the group turns out to be open (`readmes.decideResumed`): a run that resumes a group sends a
     /// commit only for an open group, so a group the registry holds past open is waited for whatever this says.
     refusal: ?readmes.Refusal = null,
-    /// The registry's API root, without a trailing slash (`http://127.0.0.1:1234/api/v1`).
+    /// The registry's version 2 API root, without a trailing slash (`http://127.0.0.1:1234/api/v2`): every request of the run goes
+    /// under it, with full names in paths and bodies.
     api_url: []const u8,
     token: []const u8,
     wait_secs: i64,
@@ -165,10 +175,11 @@ pub const Publisher = struct {
     /// Where the bytes of one file are held while it is uploaded; freed after each file.
     scratch: Allocator = std.heap.page_allocator,
 
-    fn call(p: *Publisher, method: std.http.Method, path: []const u8, body: ?[]const u8) Stop!http.Answer {
-        const url = try std.fmt.allocPrint(p.arena, "{s}{s}", .{ p.api_url, path });
-        return p.net.request(p.arena, method, url, .{ .token = p.token, .body = body }) catch |e| {
-            p.console.fail("{s} {s}: {s}\n", .{ @tagName(method), path, @errorName(e) });
+    /// Sends the registry operation `Op` with `params` through the generated client, repeating it as `net.policy` allows.
+    fn sendOp(p: *Publisher, comptime Op: type, params: Op.Params) Stop!http.Answer {
+        return v2.send(Op, p.arena, p.net, p.net.policy, p.api_url, p.token, params) catch |e| {
+            const path = Op.target(p.arena, params) catch Op.path_template;
+            p.console.fail("{s} {s}: {s}\n", .{ @tagName(Op.method), path, @errorName(e) });
             return error.Failed;
         };
     }
@@ -198,44 +209,27 @@ pub const Publisher = struct {
         };
     }
 
-    fn createBody(p: *Publisher) Stop![]const u8 {
-        var out = std.ArrayList(u8).init(p.arena);
-        const w = out.writer();
-        try w.writeAll("{\"members\":[");
-        var first = true;
-        for (p.plan.members) |m| {
-            if (m.action != .upload) continue;
-            if (!first) try w.writeByte(',');
-            first = false;
-            try w.writeAll("{\"name\":");
-            try std.json.encodeJsonString(m.name, .{}, w);
-            try w.writeAll(",\"version\":");
-            try std.json.encodeJsonString(m.version, .{}, w);
-            try w.writeAll(",\"files\":[");
-            for (m.files, 0..) |f, i| {
-                if (i != 0) try w.writeByte(',');
-                try w.writeAll("{\"subdir\":");
-                try std.json.encodeJsonString(f.subdir, .{}, w);
-                try w.writeAll(",\"filename\":");
-                try std.json.encodeJsonString(f.filename, .{}, w);
-                try w.print(",\"sha256\":\"{s}\",\"size\":{d}}}", .{ f.sha256, f.size });
-            }
-            try w.writeAll("]");
+    fn createRequest(p: *Publisher) Stop!v2.CreateGroupRequest {
+        const uploads = try p.plan.uploads(p.arena);
+        const members = try p.arena.alloc(v2.GroupMemberRequest, uploads.len);
+        for (uploads, members) |m, *out| {
+            const files = try p.arena.alloc(v2.GroupFile, m.files.len);
+            // The plan checked every subdir (`conda.isSubdir`) and every size (at most 100 MB).
+            for (m.files, files) |f, *o| o.* = .{ .subdir = std.meta.stringToEnum(v2.Subdir, f.subdir) orelse .unknown, .filename = f.filename, .sha256 = f.sha256, .size = @intCast(f.size) };
+            out.* = .{ .name = m.name, .version = m.version, .files = files };
             if (p.objects) {
-                if (readmes.entryWithReadme(p.entries, m.name)) |e| try readmes.writeRef(w, e);
+                if (readmes.entryWithReadme(p.entries, m.name)) |e| out.readme = .{ .sha256 = e.readme_sha256, .size = @intCast(e.readme.?.len) };
             }
-            try w.writeAll("}");
         }
-        try w.writeAll("]}");
-        return out.items;
+        return .{ .members = members };
     }
 
     /// Asks for the group, repeating the request while the registry has reserved only some of the members.
     fn create(p: *Publisher) Stop!CreateAnswer {
-        const body = try p.createBody();
+        const request = try p.createRequest();
         var round: usize = 0;
         while (round < max_reserving_rounds) : (round += 1) {
-            const a = try p.call(.POST, "/groups", body);
+            const a = try p.sendOp(v2.CreateGroup, .{ .body = request });
             if (a.status == 404) {
                 const e = try http.apiError(p.arena, a);
                 if (e.code.len == 0 or std.mem.eql(u8, e.code, "route_not_found")) {
@@ -459,6 +453,7 @@ pub const Publisher = struct {
             },
         };
         // No bearer token: the URL is presigned.
+        // not the registry API: the file is PUT to the storage URL the registry signed
         const r = p.net.request(scratch, .PUT, url, .{ .body = bytes, .content_type = null, .extra_headers = headers }) catch |e| {
             p.console.fail("uploading {s} failed: {s}; run the same command again to resume group {s}\n", .{ what.name, @errorName(e), p.state.group_id });
             return error.Failed;
@@ -474,9 +469,14 @@ pub const Publisher = struct {
     }
 
     fn commit(p: *Publisher) Stop!void {
-        const path = try std.fmt.allocPrint(p.arena, "/groups/{s}/commit", .{p.state.group_id});
-        const body = if (p.objects) try plan_mod.objectsBody(p.arena, p.entries) else p.commit_body;
-        const a = try p.call(.POST, path, body);
+        const text = if (p.objects) try plan_mod.objectsBody(p.arena, p.entries) else p.commit_body;
+        // The body text is written by plan_mod (`commitBody`, `objectsBody`) in the field order of the contract, so the
+        // request read back from it is written again with the same bytes.
+        const request = std.json.parseFromSliceLeaky(v2.CommitGroupRequest, p.arena, text, .{}) catch |e| {
+            p.console.fail("the commit request of group {s} is not one the contract has: {s}\n", .{ p.state.group_id, @errorName(e) });
+            return error.Failed;
+        };
+        const a = try p.sendOp(v2.CommitGroup, .{ .group_id = p.state.group_id, .body = request });
         if (!a.ok()) {
             const stop = p.refuse(a);
             // A registry from before readme objects refuses a `readme` that is not a string; other refusals get no note.
@@ -497,22 +497,21 @@ pub const Publisher = struct {
     /// it must hear that it ended, not find a different one committed. Only an `open` group (or one past open, which this
     /// run then waits for, or refuses under `--no-commit`) goes on.
     fn checkStaged(p: *Publisher) Stop!void {
-        const path = try std.fmt.allocPrint(p.arena, "/groups/{s}", .{p.state.group_id});
-        const a = try p.call(.GET, path, null);
+        const path = try v2.GetGroup.target(p.arena, .{ .group_id = p.state.group_id });
+        const a = try p.sendOp(v2.GetGroup, .{ .group_id = p.state.group_id });
         if (a.status == 404) {
             p.console.fail("group {s}, staged by an earlier run (see {s}), is not known to the registry; nothing was sent\n", .{ p.state.group_id, plan_mod.state_name });
             p.console.note("remove {s} and stage the set again\n", .{plan_mod.state_name});
             return error.Failed;
         }
         if (!a.ok()) return p.refuse(a);
-        const g = std.json.parseFromSliceLeaky(GroupAnswer, p.arena, a.body, .{ .ignore_unknown_fields = true }) catch {
+        const g = v2.decode(v2.GetGroup, p.arena, a.body) catch {
             p.console.fail("the registry's answer to GET {s} is not one this mopm reads\n", .{path});
             return error.Failed;
         };
-        p.group_status = g.status;
-        for (ended_statuses) |e| {
-            if (!std.mem.eql(u8, g.status, e)) continue;
-            p.console.fail("group {s}, staged by an earlier run, is {s}: it can no longer be committed; nothing was sent\n", .{ p.state.group_id, g.status });
+        p.group_status = @tagName(g.status);
+        if (ended(g.status)) {
+            p.console.fail("group {s}, staged by an earlier run, is {s}: it can no longer be committed; nothing was sent\n", .{ p.state.group_id, @tagName(g.status) });
             p.console.note("the files tested locally are unchanged: remove {s} and stage the set again to get a new group\n", .{plan_mod.state_name});
             return error.Failed;
         }
@@ -525,29 +524,25 @@ pub const Publisher = struct {
             p.console.say("{s} names no group: nothing to abort\n", .{plan_mod.state_name});
             return .nothing_to_abort;
         }
-        const path = try std.fmt.allocPrint(p.arena, "/groups/{s}", .{p.state.group_id});
-        const a = try p.call(.DELETE, path, null);
+        const path = try v2.GetGroup.target(p.arena, .{ .group_id = p.state.group_id });
+        const a = try p.sendOp(v2.AbortGroup, .{ .group_id = p.state.group_id });
         var gone = false;
         if (a.ok()) {
             p.group_status = "aborted";
         } else if (a.status == 409) {
             // Not open: read what it is. An ended group holds nothing; a committed one is not this command's to stop.
-            const g = try p.call(.GET, path, null);
+            const g = try p.sendOp(v2.GetGroup, .{ .group_id = p.state.group_id });
             if (!g.ok()) return p.refuse(g);
-            const now = std.json.parseFromSliceLeaky(GroupAnswer, p.arena, g.body, .{ .ignore_unknown_fields = true }) catch {
+            const now = v2.decode(v2.GetGroup, p.arena, g.body) catch {
                 p.console.fail("the registry's answer to GET {s} is not one this mopm reads\n", .{path});
                 return error.Failed;
             };
-            p.group_status = now.status;
-            var ended = false;
-            for (ended_statuses) |e| {
-                if (std.mem.eql(u8, now.status, e)) ended = true;
-            }
-            if (!ended) {
-                p.console.fail("group {s} is {s}: it was committed, so it cannot be aborted; if it becomes visible, 'mopm yank --group {s}' takes it back\n", .{ p.state.group_id, now.status, p.state.group_id });
+            p.group_status = @tagName(now.status);
+            if (!ended(now.status)) {
+                p.console.fail("group {s} is {s}: it was committed, so it cannot be aborted; if it becomes visible, 'mopm group yank {s} --reason <text>' takes it back\n", .{ p.state.group_id, @tagName(now.status), p.state.group_id });
                 return error.Failed;
             }
-            p.console.say("group {s} is already {s}: nothing is held\n", .{ p.state.group_id, now.status });
+            p.console.say("group {s} is already {s}: nothing is held\n", .{ p.state.group_id, @tagName(now.status) });
         } else if (a.status == 404) {
             // The registry does not know the group (swept, or never created): nothing is left to abort.
             p.group_status = "unknown";
@@ -568,34 +563,33 @@ pub const Publisher = struct {
 
     /// Polls the group until it is visible. A group that ended without being visible is a failure, and says why.
     fn wait(p: *Publisher) Stop!void {
-        const path = try std.fmt.allocPrint(p.arena, "/groups/{s}", .{p.state.group_id});
+        const path = try v2.GetGroup.target(p.arena, .{ .group_id = p.state.group_id });
         const deadline = p.net.now() + p.wait_secs;
         while (true) {
-            const a = try p.call(.GET, path, null);
+            const a = try p.sendOp(v2.GetGroup, .{ .group_id = p.state.group_id });
             if (!a.ok()) return p.refuse(a);
-            const g = std.json.parseFromSliceLeaky(GroupAnswer, p.arena, a.body, .{ .ignore_unknown_fields = true }) catch {
+            const g = v2.decode(v2.GetGroup, p.arena, a.body) catch {
                 p.console.fail("the registry's answer to GET {s} is not one this mopm reads\n", .{path});
                 return error.Failed;
             };
-            p.group_status = g.status;
-            if (std.mem.eql(u8, g.status, "visible")) return;
-            for (ended_statuses) |e| {
-                if (!std.mem.eql(u8, g.status, e)) continue;
+            p.group_status = @tagName(g.status);
+            if (g.status == .visible) return;
+            if (ended(g.status)) {
                 p.failure = g.failure;
                 if (g.failure) |f| {
                     if (f.member) |m| {
-                        p.console.fail("group {s} is {s}: {s}: {s} (member {s})\n", .{ p.state.group_id, g.status, f.code, f.message, m });
+                        p.console.fail("group {s} is {s}: {s}: {s} (member {s})\n", .{ p.state.group_id, @tagName(g.status), f.code, f.message, m });
                     } else {
-                        p.console.fail("group {s} is {s}: {s}: {s}\n", .{ p.state.group_id, g.status, f.code, f.message });
+                        p.console.fail("group {s} is {s}: {s}: {s}\n", .{ p.state.group_id, @tagName(g.status), f.code, f.message });
                     }
                 } else {
-                    p.console.fail("group {s} is {s}\n", .{ p.state.group_id, g.status });
+                    p.console.fail("group {s} is {s}\n", .{ p.state.group_id, @tagName(g.status) });
                 }
                 p.console.note("none of its members is published\n", .{});
                 return error.Failed;
             }
             if (p.net.now() >= deadline) {
-                p.console.fail("gave up waiting after {d} seconds: group {s} is {s} and still in progress, not failed; it may yet become visible\n", .{ p.wait_secs, p.state.group_id, g.status });
+                p.console.fail("gave up waiting after {d} seconds: group {s} is {s} and still in progress, not failed; it may yet become visible\n", .{ p.wait_secs, p.state.group_id, @tagName(g.status) });
                 p.console.note("to keep waiting (nothing is sent again), run: {s}\n", .{p.rerun});
                 return error.TimedOut;
             }
@@ -718,7 +712,7 @@ pub const Publisher = struct {
         }
         const report = plan_mod.Report{
             .run_id = run_id,
-            .registry = p.api_url,
+            .registry = p.state.registry,
             .group_id = if (p.state.group_id.len > 0) p.state.group_id else if (p.reported_group.len > 0) p.reported_group else null,
             .group_status = p.group_status,
             .outcome = outcomeName(result),
@@ -815,10 +809,15 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
 
     const opened = (try openRegistry(arena, flags, cli_version)) orelse return 1;
     // The form of the readmes is read from /health, without a token, before the token is asked for.
-    const form = (try formOf(arena, net, opened.session.config.api_url, checked, resumedGroup(arena, dir), &console)) orelse return 1;
+    const form = (try formOf(arena, net, opened.session.config.api_v2_url, checked, resumedGroup(arena, dir), &console)) orelse return 1;
     const choice = form.choice;
     const creds = (try credentials(arena, net, flags, opened, uploads)) orelse return 1;
     const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, &console, "resuming")) orelse return 1;
+
+    // A new group needs every member's package to exist; a group the registry already holds has its packages.
+    if (loaded.state.group_id.len == 0) {
+        if (!try createPackages(arena, net, &console, creds.api_v2_url, creds.token, opened.session.config.stage, uploads)) return 1;
+    }
 
     var p = Publisher{
         .arena = arena,
@@ -830,7 +829,7 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         .entries = checked.entries,
         .objects = choice.objects,
         .refusal = form.refusal,
-        .api_url = creds.api_url,
+        .api_url = creds.api_v2_url,
         .token = creds.token,
         .wait_secs = flags.wait_secs orelse defaultWaitFor(uploads.len),
         .no_commit = flags.no_commit,
@@ -841,6 +840,16 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
     return p.finish(result);
 }
 
+/// Creates the package of every member to upload, in the plan's order, before the group that names them is asked for
+/// (`publish_cmd.ensurePackage`: `PUT /packages/<name>`, which says `created <name> on <stage>` for a package it made and is silent
+/// for one the registry had). The first refusal is printed and stops the run: the result is false and nothing after it is sent.
+pub fn createPackages(arena: Allocator, net: Net, console: *Console, api_v2_url: []const u8, token: []const u8, stage: []const u8, uploads: []const plan_mod.Member) Allocator.Error!bool {
+    for (uploads) |m| {
+        if (!try publish_cmd.ensurePackage(arena, net, console, api_v2_url, token, stage, m.name)) return false;
+    }
+    return true;
+}
+
 /// A notice of the run, on stderr, in the voice of the other messages.
 const StderrNotes = struct {
     pub fn writeAll(_: *StderrNotes, text: []const u8) !void {
@@ -848,7 +857,8 @@ const StderrNotes = struct {
     }
 };
 
-const Credentials = struct { api_url: []const u8, token: []const u8 };
+/// `api_url` (version 1) names the registry in state.json and the login's credentials; `api_v2_url` is where the requests go.
+const Credentials = struct { api_url: []const u8, api_v2_url: []const u8, token: []const u8 };
 
 /// The registry the flags name and, with `--oidc`, the job's identity request.
 const Opened = struct { session: registry_cmd.Session, actions: ?ci_oidc.Actions };
@@ -869,7 +879,7 @@ fn credentials(arena: Allocator, net: Net, flags: Flags, opened: Opened, uploads
     const s = opened.session;
     var notes = StderrNotes{};
     const purpose = stage_token.purposeOf(flags.no_commit, flags.abort);
-    const token = if (opened.actions) |act| switch (try stage_token.token(arena, net, act, s.config.api_url, s.config.stage, uploads, purpose, &notes)) {
+    const token = if (opened.actions) |act| switch (try stage_token.token(arena, net, act, s.config.api_v2_url, s.config.stage, uploads, purpose, &notes)) {
         .ok => |t| t,
         .bad => |why| {
             err("{s}\n", .{why});
@@ -879,7 +889,7 @@ fn credentials(arena: Allocator, net: Net, flags: Flags, opened: Opened, uploads
         err("not logged in to {s}; run 'mopm login' or set MOPM_TOKEN\n", .{s.config.stage});
         return null;
     };
-    return .{ .api_url = s.config.api_url, .token = token };
+    return .{ .api_url = s.config.api_url, .api_v2_url = s.config.api_v2_url, .token = token };
 }
 
 const LoadedFor = struct { state: plan_mod.State, found: bool };
@@ -929,7 +939,7 @@ fn abortCommand(arena: Allocator, flags: Flags, cli_version: []const u8, net: Ne
         .plan = plan,
         // An abort sends no commit.
         .commit_body = "",
-        .api_url = creds.api_url,
+        .api_url = creds.api_v2_url,
         .token = creds.token,
         .wait_secs = 0,
         .state = loaded.state,
@@ -948,18 +958,18 @@ fn dryRun(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net, pla
             return 1;
         },
     };
-    var api_url: []const u8 = "";
+    var api_v2_url: []const u8 = "";
     if (readmes.hasReadme(checked.entries)) {
-        api_url = switch (registry.load(arena, base, cli_version) catch |e| {
+        api_v2_url = switch (registry.load(arena, base, cli_version) catch |e| {
             err("{s}: {s}\n", .{ base, @errorName(e) });
             return 1;
         }) {
-            .ok => |c| c.api_url,
+            .ok => |c| c.api_v2_url,
             .bad => |why| {
                 err("{s}: {s}\n", .{ base, why });
                 return 1;
             },
         };
     }
-    return readmes.dryRun(arena, console, net, api_url, flags.no_commit, plan, uploads, checked.entries, checked.inlineCommit());
+    return readmes.dryRun(arena, console, net, api_v2_url, flags.no_commit, plan, uploads, checked.entries, checked.inlineCommit());
 }

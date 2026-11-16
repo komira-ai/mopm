@@ -30,14 +30,16 @@ Two builds describe the same program, and both stay.
   (`//:mopm` is not built unless `//:core_test` and `//:cli_test` passed).
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
   golden files; it replaced `tests/run_golden.sh`), `//:registry_login` and
-  `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:group_publish` (`mopm publish --staged` and `mopm yank --group` against the fake registry), `//:stage` (`mopm stage` against the fake registry, and `publish --staged` on its output), `//:install_e2e`
+  `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:group_publish` (`mopm publish --staged` and `mopm group yank` against the fake registry), `//:stage` (`mopm stage` against the fake registry, and `publish --staged` on its output), `//:install_e2e`
   (`mopm sync`, then `mopm build` and `run` with the real Mojo; the former `tests/install_e2e/run.py`), `//:sync_e2e` (`mopm sync`
   installing the environment itself with no pixi on `PATH`: pinned bytes only, a current environment downloads nothing, a mirror
   closure, a failed install leaves the old environment; on every pull request), `//:sync_state_e2e`, `//:sync_refuse_e2e`
   and `//:sync_cache_e2e` (`mopm sync` against a moved, damaged, interrupted or concurrently synced project; each refusal and
   what it leaves; the cache layout, system libraries and conflicting paths; on every pull request), `//:gen_errors_current` (the committed
   `registry/fake/errors.zig` is what `./buck2 run //:gen_errors -- spec/api/openapi.yaml registry/fake/errors.zig`
-  makes of the spec; the former `gen_errors.py`), and the
+  makes of the spec; the former `gen_errors.py`), `//:api_gen_test` (`spec/api/openapi-v2.yaml`,
+  `service/api/src/gen/registry-v2.ts` and `src/core/registry_v2.zig` are what `zig build gen-api` makes of
+  `spec/api/mopm/registry/v2/*.proto`; `zig build test` and `lint.yml` run it too), and the
   contract checks: `//:contract` (the OpenAPI
   document, the JSON Schemas, the API cases and the examples),
   `//:contract_replay` (the fake registry against the API

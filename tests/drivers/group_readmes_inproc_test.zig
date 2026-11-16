@@ -13,7 +13,8 @@
 //! through a `Net`, so it cannot run hermetically in one process. The order the command makes (`/health` read before any token
 //! exchange) is src/cli/group_readmes_test.zig's and tests/drivers/oidc_publish_test.zig's.
 //!
-//! A set is a staged directory (plan.json, the package files, one `<name>.md` readme per member that has one).
+//! A set is a staged directory (plan.json version 2, the package files, one `<namespace>/<name>.md` readme per member that has
+//! one); its members are full names of the namespace `example`, which an account of that name made through `/api/v2`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -40,6 +41,7 @@ const expectContains = inproc.expectContains;
 const fileExists = inproc.fileExists;
 const big_count = 100;
 const big_readme_len = 65536;
+const ns = inproc.namespace ++ "/";
 const refusal_head = "the commit request of the 100 members to upload is ";
 const objects_note = "the registry does not take readmes as objects";
 
@@ -66,7 +68,7 @@ fn servedWhole(w: *World, prefix: []const u8, texts: []const ?[]const u8, versio
 fn expectHealthFirstWithoutToken(w: *World, from: usize) !void {
     const first = w.seen.items[from];
     try std.testing.expectEqual(std.http.Method.GET, first.method);
-    try std.testing.expectEqualStrings("/api/v1/health", first.path);
+    try std.testing.expectEqualStrings("/api/v2/health", first.path);
     try std.testing.expect(first.token == null);
 }
 
@@ -77,19 +79,19 @@ test "100 members with 64 KiB readmes, over what a commit may carry inline, publ
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var w: World = undefined;
-    try World.open(a, &w, try namesOf(a, "rdb", big_count));
+    try World.open(a, &w, try namesOf(a, ns ++ "rdb", big_count));
     defer w.close();
     var staged = std.testing.tmpDir(.{});
     defer staged.cleanup();
-    const texts = try bigTexts(a, "rdb", big_count, big_readme_len);
-    try stageSet(a, staged.dir, "rdb", "1.0.0", texts);
+    const texts = try bigTexts(a, ns ++ "rdb", big_count, big_readme_len);
+    try stageSet(a, staged.dir, ns ++ "rdb", "1.0.0", texts);
 
     const r = try run(&w, staged.dir, false);
     try std.testing.expectEqual(@as(?gp.Result, .published), r.result);
     try expectHealthFirstWithoutToken(&w, r.from);
-    try std.testing.expectEqual(@as(usize, big_count), try w.published("rdb", big_count, "1.0.0"));
-    try std.testing.expectEqual(@as(usize, big_count), try servedWhole(&w, "rdb", texts, "1.0.0"));
-    try std.testing.expectEqualStrings(texts[7].?, (try w.packageReadme("rdb7")).?);
+    try std.testing.expectEqual(@as(usize, big_count), try w.published(ns ++ "rdb", big_count, "1.0.0"));
+    try std.testing.expectEqual(@as(usize, big_count), try servedWhole(&w, ns ++ "rdb", texts, "1.0.0"));
+    try std.testing.expectEqualStrings(texts[7].?, (try w.packageReadme(ns ++ "rdb7")).?);
 
     // The commit request the registry received names the readmes and carries none: the body is far under what 6.4 MB of text takes.
     const commit = w.lastCommit().?;
@@ -117,24 +119,24 @@ test "a registry without the capability takes a small set inline and refuses a l
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var w: World = undefined;
-    const names = try std.mem.concat(a, []const u8, &.{ try namesOf(a, "rds", 3), try namesOf(a, "rdb", big_count) });
+    const names = try std.mem.concat(a, []const u8, &.{ try namesOf(a, ns ++ "rds", 3), try namesOf(a, ns ++ "rdb", big_count) });
     try World.open(a, &w, names);
     defer w.close();
     try setObjects(&w, false);
 
     var small_dir = std.testing.tmpDir(.{});
     defer small_dir.cleanup();
-    const small = try bigTexts(a, "rds", 3, 2000);
-    try stageSet(a, small_dir.dir, "rds", "1.0.0", small);
+    const small = try bigTexts(a, ns ++ "rds", 3, 2000);
+    try stageSet(a, small_dir.dir, ns ++ "rds", "1.0.0", small);
     const s = try run(&w, small_dir.dir, false);
     try std.testing.expectEqual(@as(?gp.Result, .published), s.result);
-    try std.testing.expectEqual(@as(usize, 3), try servedWhole(&w, "rds", small, "1.0.0"));
+    try std.testing.expectEqual(@as(usize, 3), try servedWhole(&w, ns ++ "rds", small, "1.0.0"));
     // Inline: the commit carries the text.
-    try expectContains(w.lastCommit().?.body, "\"readme\":\"# rds0\\n");
+    try expectContains(w.lastCommit().?.body, "\"readme\":\"# example/rds0\\n");
 
     var large_dir = std.testing.tmpDir(.{});
     defer large_dir.cleanup();
-    try stageSet(a, large_dir.dir, "rdb", "2.0.0", try bigTexts(a, "rdb", big_count, big_readme_len));
+    try stageSet(a, large_dir.dir, ns ++ "rdb", "2.0.0", try bigTexts(a, ns ++ "rdb", big_count, big_readme_len));
     const r = try run(&w, large_dir.dir, false);
     try std.testing.expectEqual(@as(?gp.Result, null), r.result);
     try expectContains(r.err, refusal_head);
@@ -144,7 +146,7 @@ test "a registry without the capability takes a small set inline and refuses a l
     try std.testing.expectEqual(@as(usize, 1), w.seen.items.len - r.from);
     try expectHealthFirstWithoutToken(&w, r.from);
     try std.testing.expect(!fileExists(large_dir.dir, "state.json"));
-    try std.testing.expectEqual(@as(usize, 0), try w.published("rdb", big_count, "2.0.0"));
+    try std.testing.expectEqual(@as(usize, 0), try w.published(ns ++ "rdb", big_count, "2.0.0"));
 }
 
 test "a group staged with readme objects is resumed inline when the set fits and refused while open when it does not, then published when objects are back" {
@@ -152,7 +154,7 @@ test "a group staged with readme objects is resumed inline when the set fits and
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var w: World = undefined;
-    const names = try std.mem.concat(a, []const u8, &.{ try namesOf(a, "rdt", 3), try namesOf(a, "rdb", big_count) });
+    const names = try std.mem.concat(a, []const u8, &.{ try namesOf(a, ns ++ "rdt", 3), try namesOf(a, ns ++ "rdb", big_count) });
     try World.open(a, &w, names);
     defer w.close();
     try setObjects(&w, true);
@@ -160,8 +162,8 @@ test "a group staged with readme objects is resumed inline when the set fits and
     // A set that fits inline: staged with objects, resumed inline in the same group.
     var fits_dir = std.testing.tmpDir(.{});
     defer fits_dir.cleanup();
-    const fits = try bigTexts(a, "rdt", 3, 3000);
-    try stageSet(a, fits_dir.dir, "rdt", "1.0.0", fits);
+    const fits = try bigTexts(a, ns ++ "rdt", 3, 3000);
+    try stageSet(a, fits_dir.dir, ns ++ "rdt", "1.0.0", fits);
     const staged = try run(&w, fits_dir.dir, true);
     try std.testing.expectEqual(@as(?gp.Result, .staged), staged.result);
     try std.testing.expectEqualStrings("open", try w.groupStatus(staged.group_id));
@@ -169,14 +171,14 @@ test "a group staged with readme objects is resumed inline when the set fits and
     const resumed = try run(&w, fits_dir.dir, false);
     try std.testing.expectEqual(@as(?gp.Result, .published), resumed.result);
     try std.testing.expectEqualStrings(staged.group_id, resumed.group_id);
-    try std.testing.expectEqual(@as(usize, 3), try servedWhole(&w, "rdt", fits, "1.0.0"));
+    try std.testing.expectEqual(@as(usize, 3), try servedWhole(&w, ns ++ "rdt", fits, "1.0.0"));
 
     // A set that does not fit inline: the resume is refused, the group stays open, and state.json is as it was.
     try setObjects(&w, true);
     var over_dir = std.testing.tmpDir(.{});
     defer over_dir.cleanup();
-    const over = try bigTexts(a, "rdb", big_count, big_readme_len);
-    try stageSet(a, over_dir.dir, "rdb", "3.0.0", over);
+    const over = try bigTexts(a, ns ++ "rdb", big_count, big_readme_len);
+    try stageSet(a, over_dir.dir, ns ++ "rdb", "3.0.0", over);
     const staged_over = try run(&w, over_dir.dir, true);
     try std.testing.expectEqual(@as(?gp.Result, .staged), staged_over.result);
     const state_before = try over_dir.dir.readFileAlloc(a, "state.json", 1 << 20);
@@ -189,14 +191,14 @@ test "a group staged with readme objects is resumed inline when the set fits and
     try std.testing.expectEqual(@as(usize, 0), w.seenCount(.PUT, refused.from, ""));
     try std.testing.expectEqual(@as(usize, 0), w.seenCount(.POST, refused.from, "/commit"));
     try std.testing.expectEqualStrings("open", try w.groupStatus(staged_over.group_id));
-    try std.testing.expectEqual(@as(usize, 0), try w.published("rdb", big_count, "3.0.0"));
+    try std.testing.expectEqual(@as(usize, 0), try w.published(ns ++ "rdb", big_count, "3.0.0"));
     try std.testing.expectEqualStrings(state_before, try over_dir.dir.readFileAlloc(a, "state.json", 1 << 20));
 
     try setObjects(&w, true);
     const again = try run(&w, over_dir.dir, false);
     try std.testing.expectEqual(@as(?gp.Result, .published), again.result);
     try std.testing.expectEqualStrings(staged_over.group_id, again.group_id);
-    try std.testing.expectEqual(@as(usize, big_count), try servedWhole(&w, "rdb", over, "3.0.0"));
+    try std.testing.expectEqual(@as(usize, big_count), try servedWhole(&w, ns ++ "rdb", over, "3.0.0"));
 }
 
 test "the same set published as objects and inline serves the same readmes, index records and channel files" {
@@ -205,9 +207,9 @@ test "the same set published as objects and inline serves the same readmes, inde
     const a = arena_state.allocator();
     var with: World = undefined;
     var without: World = undefined;
-    try World.open(a, &with, try namesOf(a, "rdm", 3));
+    try World.open(a, &with, try namesOf(a, ns ++ "rdm", 3));
     defer with.close();
-    try World.open(a, &without, try namesOf(a, "rdm", 3));
+    try World.open(a, &without, try namesOf(a, ns ++ "rdm", 3));
     defer without.close();
     try setObjects(&with, true);
     try setObjects(&without, false);
@@ -222,8 +224,8 @@ test "the same set published as objects and inline serves the same readmes, inde
     defer dir_a.cleanup();
     var dir_b = std.testing.tmpDir(.{});
     defer dir_b.cleanup();
-    try stageSet(a, dir_a.dir, "rdm", "1.0.0", &texts);
-    try stageSet(a, dir_b.dir, "rdm", "1.0.0", &texts);
+    try stageSet(a, dir_a.dir, ns ++ "rdm", "1.0.0", &texts);
+    try stageSet(a, dir_b.dir, ns ++ "rdm", "1.0.0", &texts);
     const x = try run(&with, dir_a.dir, false);
     const y = try run(&without, dir_b.dir, false);
     try std.testing.expectEqual(@as(?gp.Result, .published), x.result);
@@ -233,8 +235,8 @@ test "the same set published as objects and inline serves the same readmes, inde
     try expectContains(without.lastCommit().?.body, "with a byte order mark");
 
     for (texts, 0..) |t, i| {
-        const fx = try inproc.servedFacts(&with, try nameOf(a, "rdm", i), "1.0.0");
-        const fy = try inproc.servedFacts(&without, try nameOf(a, "rdm", i), "1.0.0");
+        const fx = try inproc.servedFacts(&with, try nameOf(a, ns ++ "rdm", i), "1.0.0");
+        const fy = try inproc.servedFacts(&without, try nameOf(a, ns ++ "rdm", i), "1.0.0");
         try std.testing.expectEqualStrings(t.?, fx[0]);
         try std.testing.expectEqualStrings(t.?, fx[1]);
         for (fx, fy) |ex, ey| try std.testing.expectEqualStrings(ex, ey);
@@ -248,21 +250,21 @@ test "an empty, an absent and a non-empty readme in one set are served as the em
     const texts = [_]?[]const u8{ "", null, "# text\nthe body\n" };
     for ([_]bool{ true, false }) |objects| {
         var w: World = undefined;
-        try World.open(a, &w, try namesOf(a, "rde", 3));
+        try World.open(a, &w, try namesOf(a, ns ++ "rde", 3));
         defer w.close();
         try setObjects(&w, objects);
         var dir = std.testing.tmpDir(.{});
         defer dir.cleanup();
-        try stageSet(a, dir.dir, "rde", "1.0.0", &texts);
+        try stageSet(a, dir.dir, ns ++ "rde", "1.0.0", &texts);
         const r = try run(&w, dir.dir, false);
         try std.testing.expectEqual(@as(?gp.Result, .published), r.result);
 
-        try std.testing.expectEqualStrings("", (try w.versionReadme("rde0", "1.0.0")).?);
-        try std.testing.expect((try w.versionReadme("rde1", "1.0.0")) == null);
-        try std.testing.expectEqualStrings(texts[2].?, (try w.versionReadme("rde2", "1.0.0")).?);
-        try std.testing.expectEqualStrings("", (try w.packageReadme("rde0")).?);
-        try std.testing.expect((try w.packageReadme("rde1")) == null);
-        try std.testing.expectEqualStrings(texts[2].?, (try w.packageReadme("rde2")).?);
+        try std.testing.expectEqualStrings("", (try w.versionReadme(ns ++ "rde0", "1.0.0")).?);
+        try std.testing.expect((try w.versionReadme(ns ++ "rde1", "1.0.0")) == null);
+        try std.testing.expectEqualStrings(texts[2].?, (try w.versionReadme(ns ++ "rde2", "1.0.0")).?);
+        try std.testing.expectEqualStrings("", (try w.packageReadme(ns ++ "rde0")).?);
+        try std.testing.expect((try w.packageReadme(ns ++ "rde1")) == null);
+        try std.testing.expectEqualStrings(texts[2].?, (try w.packageReadme(ns ++ "rde2")).?);
         // With objects only the non-empty readme travels as an object; the empty one is in the commit as the empty string.
         const commit = w.lastCommit().?.body;
         try expectContains(commit, "\"readme\":\"\"");
@@ -275,12 +277,12 @@ test "a large group whose commit answer is lost is waited for to visible by a re
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var w: World = undefined;
-    try World.open(a, &w, try namesOf(a, "rdb", big_count));
+    try World.open(a, &w, try namesOf(a, ns ++ "rdb", big_count));
     defer w.close();
     var dir = std.testing.tmpDir(.{});
     defer dir.cleanup();
-    const texts = try bigTexts(a, "rdb", big_count, big_readme_len);
-    try stageSet(a, dir.dir, "rdb", "1.0.0", texts);
+    const texts = try bigTexts(a, ns ++ "rdb", big_count, big_readme_len);
+    try stageSet(a, dir.dir, ns ++ "rdb", "1.0.0", texts);
     try setObjects(&w, true);
 
     // The registry applies the commit and the answer never arrives.
@@ -299,9 +301,9 @@ test "a large group whose commit answer is lost is waited for to visible by a re
     // The rerun cannot know the commit went through (its answer was lost), so it reads /health first and defers the refusal an
     // oversized inline commit would earn; the create then finds the group past open, and there is nothing to refuse.
     try expectHealthFirstWithoutToken(&w, rerun.from);
-    try std.testing.expectEqualStrings("/api/v1/groups", w.seen.items[rerun.from + 1].path);
+    try std.testing.expectEqualStrings("/api/v2/groups", w.seen.items[rerun.from + 1].path);
     try std.testing.expectEqual(@as(usize, 0), w.seenCount(.PUT, rerun.from, ""));
     try std.testing.expectEqual(@as(usize, 0), w.seenCount(.POST, rerun.from, "/commit"));
     try std.testing.expectEqualStrings("visible", try w.groupStatus(first.group_id));
-    try std.testing.expectEqual(@as(usize, big_count), try servedWhole(&w, "rdb", texts, "1.0.0"));
+    try std.testing.expectEqual(@as(usize, big_count), try servedWhole(&w, ns ++ "rdb", texts, "1.0.0"));
 }

@@ -51,9 +51,13 @@ jobs:
           test -d dist/assets
       - run: npm run typecheck
       - run: npm test
+      # cdk hands the app the region it resolves itself as CDK_DEFAULT_REGION: AWS_REGION, AWS_DEFAULT_REGION, ~/.aws/config,
+      # then the host's instance metadata, which on a hosted runner in AWS is the runner's own region. The region is set
+      # here as deploy.yml sets it, and the metadata is off so neither the runner's region nor its account reaches the synth.
       - name: Synth every stage with a dummy account and zone id
         env:
-          CDK_DEFAULT_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_EC2_METADATA_DISABLED: 'true'
         run: |
           export CDK_DEFAULT_ACCOUNT="$(printf '1%.0s' $(seq 12))"
           for stage in beta gamma prod; do
@@ -125,9 +129,12 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test
+      # The region and the metadata as in the stacks job's synth.
       - name: Synth the zone of every stage and the delegation, with dummy values
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_EC2_METADATA_DISABLED: 'true'
         run: |
-          export CDK_DEFAULT_REGION=us-east-1
           acct="$(printf '1%.0s' $(seq 12))"
           for stage in beta gamma prod; do
             npx cdk synth --quiet -c stage=$stage -c account="$acct" --output cdk.out/$stage

@@ -1,3 +1,5 @@
+import { namespaceProblem } from './namespaces';
+
 /** The events a CI identity may exchange from (the same set as ALLOWED_EVENTS in oidc.ts, which tests pin equal). */
 export const CI_EVENTS: readonly string[] = ['push', 'workflow_dispatch'];
 
@@ -5,13 +7,14 @@ export const CI_EVENTS: readonly string[] = ['push', 'workflow_dispatch'];
  * Repository-level CI publishers: a CI identity the deployment itself trusts, as configuration in the code that
  * deploys it (the `CI_PUBLISHERS` environment variable of the API function), not as rows a package owner registers.
  * Only the beta stage may carry one, plus prod for rows that carry `acts_for` (a CI identity that publishes AS a named account,
- * owning nothing itself): gamma keeps the human step, a row without `acts_for` on prod is refused, and `parseCiPublishers` refuses to
- * load a policy on any other stage, whatever the infrastructure says.
+ * owning nothing itself) or `namespace` (a CI identity that publishes in an owner namespace through `/api/v2`): gamma keeps the human
+ * step, a row with neither on prod is refused, and `parseCiPublishers` refuses to load a policy on any other stage, whatever the
+ * infrastructure says. Beta accepts either or neither.
  */
 export const CI_PUBLISHERS_ENV = 'CI_PUBLISHERS';
 /** The stage that may trust any CI identity by configuration. */
 export const CI_PUBLISHER_STAGE = 'beta';
-/** The stage that may trust a CI identity only as one that acts for an account (rows with `acts_for`). */
+/** The stage that may trust a CI identity only as one that acts for an account or publishes in a namespace (rows with `acts_for` or `namespace`). */
 export const CI_ACTS_FOR_STAGE = 'prod';
 /** The most publishers a deployment may name. */
 export const MAX_CI_PUBLISHERS = 8;
@@ -43,6 +46,11 @@ export interface CiPublisher {
    * The token records the CI identity it came through (`acts_via`), so its publishes are distinguishable from the account's own.
    */
   acts_for?: string;
+  /**
+   * Optional: an owner namespace this identity publishes in through `/api/v2`'s `packages` exchange. The row's `repository_owner_id`
+   * must be the namespace's GitHub id (checked at exchange). Such a row creates nothing; it cannot also carry `acts_for`.
+   */
+  namespace?: string;
 }
 
 /** The owner identity a repository's publisher holds on the packages it creates: `PackageRecord.ci_owner`. */
@@ -54,7 +62,7 @@ export const ciOwnerOf = (repository_id: string): string => `gh-repo:${repositor
  */
 export const ciActorOf = (ci_owner: string): string => `ci:${ci_owner}`;
 
-const KEYS = ['repository_id', 'repository_owner_id', 'workflow', 'ref', 'job_workflow_ref', 'events', 'environment', 'acts_for'] as const;
+const KEYS = ['repository_id', 'repository_owner_id', 'workflow', 'ref', 'job_workflow_ref', 'events', 'environment', 'acts_for', 'namespace'] as const;
 const JOB_WORKFLOW_REF = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml@refs\/(heads|tags)\/[A-Za-z0-9._\/-]+$/;
 const DIGITS = /^[1-9][0-9]{0,19}$/;
 const REF = /^refs\/(heads|tags)\/[A-Za-z0-9._\/-]+$/;
@@ -66,12 +74,12 @@ const bad = (detail: string) => new Error(`${CI_PUBLISHERS_ENV} is not valid: ${
 /**
  * The CI publishers named by the environment value. Absent or empty: none. Present on any stage but beta and prod: an error,
  * so the function does not start (a mistake in infrastructure cannot turn the trust on elsewhere). On prod every row must carry
- * `acts_for`; a row without it is an error there. Malformed: an error naming what is wrong, never a partial list.
+ * `acts_for` or `namespace`; a row with neither is an error there. A row with both is an error on every stage. Malformed: an error naming what is wrong, never a partial list.
  */
 export function parseCiPublishers(stage: string, raw: string | undefined): CiPublisher[] {
   if (raw === undefined || raw === '') return [];
   if (stage !== CI_PUBLISHER_STAGE && stage !== CI_ACTS_FOR_STAGE) {
-    throw new Error(`${CI_PUBLISHERS_ENV} may be set on the ${CI_PUBLISHER_STAGE} stage only (or ${CI_ACTS_FOR_STAGE}, for rows that act for an account); this is ${stage}`);
+    throw new Error(`${CI_PUBLISHERS_ENV} may be set on the ${CI_PUBLISHER_STAGE} stage only (or ${CI_ACTS_FOR_STAGE}, for rows that act for an account or publish in a namespace); this is ${stage}`);
   }
   let v: unknown;
   try {
@@ -98,11 +106,16 @@ export function parseCiPublishers(stage: string, raw: string | undefined): CiPub
     const ref = str('ref', REF);
     const job_workflow_ref = str('job_workflow_ref', JOB_WORKFLOW_REF);
     if (!job_workflow_ref.endsWith(`/${workflow}@${ref}`)) throw bad(`entry ${i}: 'job_workflow_ref' must end in '/<workflow>@<ref>' of the same entry`);
-    if (stage !== CI_PUBLISHER_STAGE && o.acts_for === undefined) {
-      throw bad(`entry ${i}: the ${stage} stage trusts only rows that carry 'acts_for'; this row does not`);
+    if (o.acts_for !== undefined && o.namespace !== undefined) throw bad(`entry ${i}: 'acts_for' and 'namespace' are exclusive`);
+    if (stage !== CI_PUBLISHER_STAGE && o.acts_for === undefined && o.namespace === undefined) {
+      throw bad(`entry ${i}: the ${stage} stage trusts only rows that carry 'acts_for' or 'namespace'; this row has neither`);
+    }
+    if (o.namespace !== undefined && (typeof o.namespace !== 'string' || namespaceProblem(o.namespace) !== undefined)) {
+      throw bad(`entry ${i}: 'namespace' is missing or malformed`);
     }
     out.push({
       ...(o.acts_for === undefined ? {} : { acts_for: str('acts_for', DIGITS) }),
+      ...(o.namespace === undefined ? {} : { namespace: o.namespace as string }),
       repository_id: str('repository_id', DIGITS),
       repository_owner_id: str('repository_owner_id', DIGITS),
       workflow,

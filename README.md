@@ -7,7 +7,7 @@ registry at [mopm.dev](https://mopm.dev).
 **Status: early.** `mopm --version`, `mopm link-plan`, `mopm metadata`,
 `mopm new`, `mopm init`, `mopm build`, `mopm run`, `mopm repl`, `mopm test`, `mopm login`, `mopm logout`,
 `mopm whoami`, `mopm pack`, `mopm publish`, `mopm lock`, `mopm update`, `mopm tree`, `mopm sync`, `mopm add`,
-`mopm remove`, `mopm plan`, `mopm unit`, `mopm yank` and `mopm stage` work today.
+`mopm remove`, `mopm plan`, `mopm unit`, `mopm yank`, `mopm stage` and `mopm org` work today, as do the generated commands of the registry's API (`mopm --help` lists them).
 Everything else below is a plan, and the design may change. The documentation is on
 [mopm.dev/docs](https://mopm.dev/docs/): [why mopm and how it is built](docs/why-and-design.md) and
 [getting started](docs/getting-started.md).
@@ -56,8 +56,8 @@ repository's release workflow.
 ## Command tour
 
 ```text
-mopm new my_pkg            # create a package with a mopm.toml
-mopm add http_client       # add a dependency
+mopm new alice/my_pkg      # create a package with a mopm.toml (names are <namespace>/<name>; a bare name takes the namespace `mopm login` stored)
+mopm add alice/http_client # add a dependency
 mopm build                 # build, linking native libraries for you
 mopm run                   # mojo run with the right -Xlinker list
 mopm repl                  # mojo repl with natives preloaded
@@ -72,7 +72,7 @@ Working today:
 mopm --version
 mopm link-plan tests/fixtures/chain/http_client.mopm.json tests/fixtures/chain/crypto.mopm.json
 mopm metadata tests/manifest/valid/full.toml
-mopm new my_package --lib      # or --bin; `mopm init` makes one in the current directory
+mopm new alice/my_package --lib  # or --bin; `mopm init` makes one in the current directory
 mopm build hello.mojo -o hello   # -Xlinker -L/-l (Linux: --no-as-needed) plus a run path to <env>/lib
 mopm run hello.mojo              # one -Xlinker <shared object> per library
 mopm repl                        # LD_PRELOAD (macOS DYLD_INSERT_LIBRARIES) for the JIT
@@ -95,7 +95,7 @@ spelling to print.
 | path | what |
 |---|---|
 | `src/cli/` | the `mopm` command line (Zig) |
-| `src/core/` | `metadata.zig` (parse `<name>.mopm.json`), `link_planner.zig` (compute link arguments), `toml.zig` (the strict TOML subset), `manifest.zig` (check `mopm.toml`), `scaffold.zig` (`mopm new` and `mopm init`), `env.zig` (find the environment and its packages), `mojo_cmd.zig` (the `mojo` command lines) |
+| `src/core/` | `metadata.zig` (parse `<import name>.mopm.json`, schema 2), `link_planner.zig` (compute link arguments), `toml.zig` (the strict TOML subset), `manifest.zig` (check `mopm.toml`), `scaffold.zig` (`mopm new` and `mopm init`), `env.zig` (find the environment and its packages), `mojo_cmd.zig` (the `mojo` command lines) |
 | `spec/` | draft `mopm.toml` spec and the JSON Schema for `<name>.mopm.json` |
 | `tests/` | fixtures (metadata sets, and environment trees under `tests/fixtures/env`) and golden files for `link-plan`, `--print-cmd` and running mojo; `tests/manifest/{valid,invalid}` for `mopm.toml`; `tests/new/{lib,bin}` for `mopm new`; `tests/e2e` builds real fixture packages with native libraries and runs `mopm build`, `run` and `repl` against the pinned `mojo` |
 | `rules/buck2`, `rules/bazel` | build rules (placeholders) |

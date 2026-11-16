@@ -4,5 +4,10 @@
   "api_url": "https://api.beta.mopm.dev/api/v1",
   "channel_url": "https://conda.beta.mopm.dev/",
   "min_cli_version": "0.1.0",
-  "read_only": true
+  "read_only": true,
+  "index_versions": [
+    1,
+    2
+  ],
+  "api_v2_url": "https://api.beta.mopm.dev/api/v2"
 }

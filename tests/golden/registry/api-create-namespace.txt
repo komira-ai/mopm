@@ -1,0 +1,26 @@
+usage: mopm api create-namespace <namespace> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Start registering an organization's namespace (one step of 'mopm org create').
+
+Needs a fresh session. The namespace string is the lower-case login of a GitHub organization. A user's
+namespace is not made here: it is made at the user's first login. The call refuses a namespace outside the
+grammar (`invalid_namespace`), a reserved one (`namespace_reserved`) and one that any account, user or
+organization, already holds (`namespace_taken`). A caller that holds no user namespace of its own, which happens when
+its login is outside the grammar, is reserved or is held by another account, is `user_not_found`, because it could
+not be named as a member. None of these asks GitHub.
+
+Otherwise it starts a GitHub device flow that asks for the scope `read:org` and answers 202 with the code to show
+the person, as `startDeviceLogin` does. The flow is bound to the caller; it lives ten minutes. Nothing is created
+until `pollNamespace` answers `created`.
+
+arguments:
+  <namespace>
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends POST /api/v2/namespaces (createNamespace) with the token 'mopm login' stored, or $MOPM_TOKEN.

@@ -319,10 +319,10 @@ test "/health listing the capability among other names, with other fields around
     defer st.deinit();
     const a = st.allocator();
     const cases = [_]struct { body: []const u8, takes: bool }{
-        .{ .body = "{\"status\":\"ok\",\"features\":[\"future_one\",\"group_readme_objects\",\"future_two\"]}", .takes = true },
-        .{ .body = "{\"extra\":{\"a\":1},\"features\":[\"group_readme_objects\",\"x\"],\"more\":[1,2]}", .takes = true },
-        .{ .body = "{\"features\":[\"future_one\",\"future_two\"]}", .takes = false },
-        .{ .body = "{\"features\":[]}", .takes = false },
+        .{ .body = "{" ++ rt.health_head ++ ",\"features\":[\"future_one\",\"group_readme_objects\",\"future_two\"]}", .takes = true },
+        .{ .body = "{\"extra\":{\"a\":1}," ++ rt.health_head ++ ",\"features\":[\"group_readme_objects\",\"x\"],\"more\":[1,2]}", .takes = true },
+        .{ .body = "{" ++ rt.health_head ++ ",\"features\":[\"future_one\",\"future_two\"]}", .takes = false },
+        .{ .body = "{" ++ rt.health_head ++ ",\"features\":[]}", .takes = false },
     };
     for (cases) |c| {
         var script = gt.newScript(a, &.{step(.GET, "/health", 200, c.body)});
@@ -358,7 +358,7 @@ test "a create answer whose readme echoes another size or digest is not trusted:
         try std.testing.expectEqual(Result.published, d.result.?);
         try std.testing.expect(script.mismatch == null);
         try std.testing.expectEqual(@as(usize, 2), script.count(.PUT));
-        try gt.expectContains(console.out.items, "the registry no longer takes readmes as objects (its answer names another readme than the one declared for m0); sending them inline\n");
+        try gt.expectContains(console.out.items, "the registry no longer takes readmes as objects (its answer names another readme than the one declared for acme/m0); sending them inline\n");
         try gt.expectContains(script.seen.items[4].body.?, "\"readme\":\"# a readme\\n\"");
     }
 }
@@ -377,7 +377,7 @@ test "a create answer for a set too large inline whose readme echoes another siz
     const d = try rt.drive(a, &tmp, &script, &console, null);
     try std.testing.expectEqual(Result.failed, d.result.?);
     try std.testing.expectEqual(@as(usize, 0), script.count(.PUT));
-    try gt.expectContains(console.err.items, "the registry no longer takes readmes as objects (its answer names another readme than the one declared for m7), and sent inline they are too large");
+    try gt.expectContains(console.err.items, "the registry no longer takes readmes as objects (its answer names another readme than the one declared for acme/m7), and sent inline they are too large");
 }
 
 test "a create answer for another version of the member is refused before any PUT" {
@@ -388,13 +388,13 @@ test "a create answer for another version of the member is refused before any PU
     defer tmp.cleanup();
     const texts = [_]?[]const u8{ text_a, null };
     _ = try rt.stageSet(a, &tmp, &texts);
-    const other = try std.mem.replaceOwned(u8, a, try answerOf(a, &texts, 0, .pending, ""), "\"name\":\"m0\",\"version\":\"1.0.0\"", "\"name\":\"m0\",\"version\":\"2.0.0\"");
+    const other = try std.mem.replaceOwned(u8, a, try answerOf(a, &texts, 0, .pending, ""), "\"name\":\"acme/m0\",\"version\":\"1.0.0\"", "\"name\":\"acme/m0\",\"version\":\"2.0.0\"");
     var script = gt.newScript(a, &.{ step(.GET, "/health", 200, health_objects), step(.POST, "/groups", 201, other) });
     var console = Console.init(a, null);
     const d = try rt.drive(a, &tmp, &script, &console, null);
     try std.testing.expectEqual(Result.failed, d.result.?);
     try std.testing.expectEqual(@as(usize, 0), script.count(.PUT));
-    try gt.expectContains(console.err.items, "the registry's answer has no reservation for m0 1.0.0\n");
+    try gt.expectContains(console.err.items, "the registry's answer has no reservation for acme/m0 1.0.0\n");
 }
 
 test "an upload descriptor that is not one is refused clearly before any PUT: no URL, or headers that are not an object" {
@@ -418,7 +418,7 @@ test "an upload descriptor that is not one is refused clearly before any PUT: no
         const d = try rt.drive(a, &tmp, &script, &console, null);
         try std.testing.expectEqual(Result.failed, d.result.?);
         try std.testing.expectEqual(@as(usize, 0), script.count(.PUT));
-        try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "mopm: the registry's answer for the readme of m0 is not an upload descriptor: {s}; nothing was uploaded\n", .{c.why}), console.err.items);
+        try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "mopm: the registry's answer for the readme of acme/m0 is not an upload descriptor: {s}; nothing was uploaded\n", .{c.why}), console.err.items);
     }
 }
 
@@ -430,8 +430,8 @@ test "a refreshed answer is held to the declaration: another size or digest, or 
     const sha = try core.install.sha256Hex(a, text_a);
     const fresh = try answerOf(a, &texts, 1, .pending, "x");
     const cases = [_]struct { answer: []const u8, msg: []const u8 }{
-        .{ .answer = try std.mem.replaceOwned(u8, a, fresh, "\"size\":11,\"upload_id\"", "\"size\":10,\"upload_id\""), .msg = "the registry's answer names another readme for m0 than the one declared" },
-        .{ .answer = try std.mem.replaceOwned(u8, a, fresh, sha, "f" ** 64), .msg = "the registry's answer names another readme for m0 than the one declared" },
+        .{ .answer = try std.mem.replaceOwned(u8, a, fresh, "\"size\":11,\"upload_id\"", "\"size\":10,\"upload_id\""), .msg = "the registry's answer names another readme for acme/m0 than the one declared" },
+        .{ .answer = try std.mem.replaceOwned(u8, a, fresh, sha, "f" ** 64), .msg = "the registry's answer names another readme for acme/m0 than the one declared" },
         .{ .answer = try std.mem.replaceOwned(u8, a, fresh, "\"put_url\":\"http://127.0.0.1:1/put/r0x\",", ""), .msg = "is not an upload descriptor: it is not uploaded and has no put_url; nothing was committed" },
     };
     for (cases) |c| {

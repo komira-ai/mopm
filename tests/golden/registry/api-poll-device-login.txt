@@ -1,0 +1,20 @@
+usage: mopm api poll-device-login <device_code> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Ask once whether a device login was approved (one step of 'mopm login').
+
+Poll no faster than `interval` seconds. While the person has not
+decided, `status` is `pending`. `approved` carries a session token;
+the session is fresh (see `fresh_until`) so that the CLI can mint an
+API token right after login.
+
+arguments:
+  <device_code>
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends POST /api/v2/auth/device/poll (pollDeviceLogin).

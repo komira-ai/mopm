@@ -78,6 +78,9 @@ pub const Opts = struct {
 
 const Out = struct { code: u8, stdout: []u8, stderr: []u8 };
 
+/// The account that logs in, and so its user namespace: the package of this walk is `beta-user/beta_lib`.
+const beta_namespace = "beta-user";
+
 const Ctx = struct {
     a: Allocator,
     rep: *h.Report,
@@ -239,24 +242,24 @@ fn create(c: *Ctx) !void {
     var r = try c.mopm(c.ws, &.{"--version"});
     c.check("candidate: mopm --version is exactly the candidate's version", r.code == 0 and std.mem.eql(u8, r.stdout, try h.fmt(a, "mopm {s}\n", .{c.o.version})), r);
 
-    r = try c.mopm(c.ws, &.{ "new", "beta_lib", "--lib" });
+    r = try c.mopm(c.ws, &.{ "new", "beta-user/beta_lib", "--lib" });
     const lib_files = [_][]const u8{ "mopm.toml", "src/beta_lib/__init__.mojo", "tests/test_beta_lib.mojo", "README.md", ".gitignore" };
     var all = true;
     for (lib_files) |f| all = all and Ctx.exists(c.path(&.{ c.ws, "beta_lib", f }));
-    c.check("new --lib creates the library package and its files", r.code == 0 and all and std.mem.eql(u8, r.stdout, "created library package 'beta_lib' in beta_lib/\n"), r);
+    c.check("new --lib creates the library package and its files", r.code == 0 and all and std.mem.eql(u8, r.stdout, "created library package 'beta-user/beta_lib' in beta_lib/\n"), r);
 
-    r = try c.mopm(c.ws, &.{ "new", "beta_app", "--bin" });
+    r = try c.mopm(c.ws, &.{ "new", "example/beta_app", "--bin" });
     c.check("new --bin creates the binary package with src/main.mojo", r.code == 0 and Ctx.exists(c.path(&.{ c.ws, "beta_app", "src/main.mojo" })) and
-        std.mem.eql(u8, r.stdout, "created binary package 'beta_app' in beta_app/\n"), r);
+        std.mem.eql(u8, r.stdout, "created binary package 'example/beta_app' in beta_app/\n"), r);
 
-    r = try c.mopm(c.ws, &.{ "new", "beta_lib" });
+    r = try c.mopm(c.ws, &.{ "new", "beta-user/beta_lib" });
     c.check("new refuses a directory that exists", r.code == 1 and h.contains(r.stderr, "'beta_lib' already exists"), r);
 
     const here = c.path(&.{ c.ws, "init_here" });
     try std.fs.cwd().makePath(here);
-    r = try c.mopm(here, &.{ "init", "--lib", "--name", "beta_init" });
-    c.check("init writes the package into this directory", r.code == 0 and Ctx.exists(c.path(&.{ here, "mopm.toml" })) and std.mem.eql(u8, r.stdout, "created library package 'beta_init'\n"), r);
-    r = try c.mopm(here, &.{ "init", "--lib", "--name", "beta_init" });
+    r = try c.mopm(here, &.{ "init", "--lib", "--name", "example/beta_init" });
+    c.check("init writes the package into this directory", r.code == 0 and Ctx.exists(c.path(&.{ here, "mopm.toml" })) and std.mem.eql(u8, r.stdout, "created library package 'example/beta_init'\n"), r);
+    r = try c.mopm(here, &.{ "init", "--lib", "--name", "example/beta_init" });
     c.check("init refuses to overwrite", r.code == 1 and h.contains(r.stderr, "already exists; nothing was written"), r);
 
     r = try c.mopm(c.ws, &.{ "metadata", "beta_lib/mopm.toml" });
@@ -302,7 +305,7 @@ fn account(c: *Ctx) ![]const u8 {
         const first = try h.readLine(a, child.stdout.?);
         const code = codeIn(first);
         if (code) |cd| {
-            _ = try c.fake.control(a, "/device", try h.fmt(a, "{{\"user_code\":\"{s}\",\"decision\":\"approve\",\"handle\":\"beta-user\"}}", .{cd}));
+            _ = try c.fake.control(a, "/device", try h.fmt(a, "{{\"user_code\":\"{s}\",\"decision\":\"approve\",\"handle\":\"{s}\"}}", .{ cd, beta_namespace }));
         }
         const out = try child.stdout.?.reader().readAllAlloc(a, 1 << 20);
         const err = try child.stderr.?.reader().readAllAlloc(a, 1 << 20);
@@ -311,7 +314,7 @@ fn account(c: *Ctx) ![]const u8 {
         c.rep.check("login: a device login approved on the registry stores the account", ok, try h.fmt(a, "first line: {s}\n{s}\n{s}", .{ first, out, err }));
     }
     r = try c.mopm(c.ws, &.{ "whoami", "--registry", c.fake.base, "--config-dir", c.conf });
-    c.check("whoami names the account", r.code == 0 and h.contains(r.stdout, "beta-user (GitHub id ") and h.contains(r.stdout, ") on beta"), r);
+    c.check("whoami names the account", r.code == 0 and h.hasLine(r.stdout, "handle: beta-user") and h.hasLinePrefix(r.stdout, "github_id: "), r);
 
     // What the person does next, on the registry's API: claim the name and make a token that may publish it.
     const creds = h.parseJson(a, c.read(c.path(&.{ c.conf, "credentials.json" }))) catch std.json.Value{ .null = {} };
@@ -321,9 +324,9 @@ fn account(c: *Ctx) ![]const u8 {
     }
     c.rep.check("login stored a session token", session.len != 0, "no token in credentials.json");
     c.session = session;
-    var resp = try h.request(a, "POST", c.fake.base, "/api/v1/packages/beta_lib/claim", "{}", session);
-    c.rep.check("the account claims the package name", resp.status == 201, resp.body);
-    resp = try h.request(a, "POST", c.fake.base, "/api/v1/me/tokens", "{\"name\":\"user-beta\",\"scopes\":[\"publish\"],\"packages\":[\"beta_lib\"],\"expires_in_days\":1}", session);
+    var resp = try h.request(a, "PUT", c.fake.base, "/api/v2/packages/beta-user/beta_lib", null, session);
+    c.rep.check("the account creates the package in its namespace", resp.status == 201, resp.body);
+    resp = try h.request(a, "POST", c.fake.base, "/api/v2/me/tokens", "{\"name\":\"user-beta\",\"scopes\":[\"publish\"],\"packages\":[\"beta-user/beta_lib\"],\"expires_in_days\":1}", session);
     const token = if (resp.status == 201) (h.jsonString(try h.parseJson(a, resp.body), "token") orelse "") else "";
     c.rep.check("the account makes an API token that may publish it", token.len != 0, resp.body);
     return token;
@@ -341,7 +344,7 @@ fn publish(c: *Ctx, token: []const u8) !void {
     const dist = c.path(&.{ c.o.work, "dist" });
     r = try c.mopm(lib, &.{ "pack", "--compiler", "1.0.0", "--mojoc", mojoc, "-o", dist });
     const pk = parsePacked(r.stdout);
-    const conda = "mojo-beta_lib-0.1.0-mojo1.0.0_0.conda";
+    const conda = "mojo-beta-user.beta_lib-0.1.0-mojo1.0.0_0.conda";
     c.check("pack writes noarch/<file>.conda and prints its sha256", r.code == 0 and pk != null and std.mem.endsWith(u8, pk.?.path, "/noarch/" ++ conda) and Ctx.exists(pk.?.path), r);
     const packed_sha = if (pk) |p| p.sha else "";
 
@@ -350,17 +353,17 @@ fn publish(c: *Ctx, token: []const u8) !void {
     r = try c.mopm(lib, &(pub_args ++ flags ++ [_][]const u8{"--dry-run"}));
     c.check("publish --dry-run says what it would send and sends nothing", r.code == 0 and h.contains(r.stdout, "would upload noarch/" ++ conda) and
         h.contains(r.stdout, try h.fmt(a, "sha256 {s}", .{packed_sha})) and h.contains(r.stdout, "dry run: nothing was sent"), r);
-    var resp = try h.request(a, "GET", c.fake.base, "/api/v1/packages/beta_lib/0.1.0", null, null);
+    var resp = try h.request(a, "GET", c.fake.base, "/api/v2/packages/beta-user/beta_lib/0.1.0", null, null);
     c.rep.check("after the dry run the registry has no such version", resp.status == 404, resp.body);
 
     h.stage = "publish";
     r = try c.run(c.o.mopm, lib, &(pub_args ++ flags), &.{.{ "MOPM_TOKEN", token }});
-    c.check("publish uploads, commits and ends 'published'", r.code == 0 and h.contains(r.stdout, "uploaded " ++ conda) and h.contains(r.stdout, "published mojo-beta_lib 0.1.0"), r);
-    resp = try h.request(a, "GET", c.fake.base, "/api/v1/packages/beta_lib/0.1.0", null, null);
+    c.check("publish uploads, commits and ends 'published'", r.code == 0 and h.contains(r.stdout, "uploaded " ++ conda) and h.contains(r.stdout, "published beta-user/beta_lib 0.1.0"), r);
+    resp = try h.request(a, "GET", c.fake.base, "/api/v2/packages/beta-user/beta_lib/0.1.0", null, null);
     c.rep.check("the registry serves the version", resp.status == 200 and std.mem.eql(u8, h.jsonString(try h.parseJson(a, resp.body), "version") orelse "", "0.1.0"), resp.body);
-    resp = try h.request(a, "GET", c.fake.base, "/index/be/ta/beta_lib", null, null);
+    resp = try h.request(a, "GET", c.fake.base, "/index/v2/be/ta/beta-user/beta_lib", null, null);
     c.rep.check("the sparse index lists the version with the packed sha256", resp.status == 200 and h.contains(resp.body, "\"version\":\"0.1.0\"") and packed_sha.len != 0 and h.contains(resp.body, packed_sha), resp.body);
-    resp = try h.request(a, "GET", c.fake.base, "/channel/noarch/" ++ conda, null, null);
+    resp = try h.request(a, "GET", c.fake.base, "/channel/beta-user/noarch/" ++ conda, null, null);
     c.rep.check("the channel serves the file", resp.status == 200 and resp.body.len != 0, "status or empty body");
     if (resp.status == 200) {
         var d: [32]u8 = undefined;
@@ -379,10 +382,10 @@ fn depend(c: *Ctx) !void {
     const a = c.a;
     const app = c.path(&.{ c.ws, "beta_app" });
     const reg = [_][]const u8{ "--registry", c.fake.base };
-    var r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "add", "beta_lib" }, &reg }));
+    var r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "add", "beta-user/beta_lib" }, &reg }));
     const manifest = c.read(c.path(&.{ app, "mopm.toml" }));
     const lock = c.read(c.path(&.{ app, "mopm.lock" }));
-    c.check("add resolves the package from the registry and writes mopm.toml and mopm.lock", r.code == 0 and h.contains(manifest, "beta_lib = \"^0.1.0\"") and h.contains(lock, "beta_lib") and h.contains(lock, "0.1.0"), r);
+    c.check("add resolves the package from the registry and writes mopm.toml and mopm.lock", r.code == 0 and h.contains(manifest, "\"beta-user/beta_lib\" = \"^0.1.0\"") and h.contains(lock, "beta_lib") and h.contains(lock, "0.1.0"), r);
 
     r = try c.mopm(app, &.{"tree"});
     c.check("tree draws the locked graph", r.code == 0 and h.contains(r.stdout, "beta_lib"), r);
@@ -392,15 +395,17 @@ fn depend(c: *Ctx) !void {
     r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{"update"}, &reg }));
     c.check("update succeeds with nothing newer to move to", r.code == 0 and h.contains(c.read(c.path(&.{ app, "mopm.lock" })), "0.1.0"), r);
 
-    r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "add", "no_such_package_beta" }, &reg }));
+    r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "add", "example/no_such_package_beta" }, &reg }));
     c.check("add of a package the registry does not have is refused and writes nothing", r.code != 0 and !h.contains(c.read(c.path(&.{ app, "mopm.toml" })), "no_such_package_beta"), r);
 
     h.stage = "sync";
+    // The lock records mopm's pinned toolchain closure, which the stand-in toolchain does not match: unpin it first.
+    if (c.sync_args.len > 0) _ = try cp.unpinToolchain(a, c.path(&.{ app, "mopm.lock" }));
     r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{"sync"}, c.sync_args, &reg }));
     const env = c.path(&.{ app, ".mopm/env" });
     const found = try h.findFiles(a, c.path(&.{ env, "lib" }), "beta_lib.mojoc");
     c.check("sync downloads the published package, checks its sha256 against the lock and installs it into .mopm/env", r.code == 0 and h.contains(r.stdout, "installed 1 packages for ") and h.contains(r.stdout, "into .mopm/env") and found.len >= 1, r);
-    c.check("the locked file is kept in .mopm/pkgs", Ctx.exists(c.path(&.{ app, ".mopm/pkgs/mojo-beta_lib-0.1.0-mojo1.0.0_0.conda" })), r);
+    c.check("the locked file is kept in .mopm/pkgs", Ctx.exists(c.path(&.{ app, ".mopm/pkgs/mojo-beta-user.beta_lib-0.1.0-mojo1.0.0_0.conda" })), r);
     c.check(".mopm holds the environment and the kept packages, no pixi project", Ctx.exists(c.path(&.{ app, ".mopm/pkgs" })) and !Ctx.exists(c.path(&.{ app, ".mopm/pixi.toml" })) and !Ctx.exists(c.path(&.{ app, ".mopm/channel" })), r);
     try c.layCompiler(env);
     r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "sync", "--locked" }, c.sync_args }));
@@ -463,6 +468,7 @@ fn native(c: *Ctx) !void {
                 .fixture = fixture,
                 .registry = c.fake.base,
                 .session = c.session,
+                .namespace = beta_namespace,
                 .zig = zig,
                 .mojo_env = c.o.mojo_env,
                 .sync_args = c.sync_args,
@@ -476,8 +482,8 @@ fn native(c: *Ctx) !void {
 /// 7: remove the dependency, log out.
 fn finish(c: *Ctx) !void {
     const app = c.path(&.{ c.ws, "beta_app" });
-    var r = try c.mopm(app, &.{ "remove", "beta_lib", "--registry", c.fake.base });
-    c.check("remove takes the dependency out of mopm.toml and mopm.lock", r.code == 0 and !h.contains(c.read(c.path(&.{ app, "mopm.toml" })), "beta_lib =") and !h.contains(c.read(c.path(&.{ app, "mopm.lock" })), "\"beta_lib\""), r);
+    var r = try c.mopm(app, &.{ "remove", "beta-user/beta_lib", "--registry", c.fake.base });
+    c.check("remove takes the dependency out of mopm.toml and mopm.lock", r.code == 0 and !h.contains(c.read(c.path(&.{ app, "mopm.toml" })), "\"beta-user/beta_lib\" =") and !h.contains(c.read(c.path(&.{ app, "mopm.lock" })), "\"beta-user/beta_lib\""), r);
     r = try c.mopm(c.ws, &.{ "logout", "--registry", c.fake.base, "--config-dir", c.conf });
     c.check("logout removes the stored token", r.code == 0 and h.contains(r.stdout, "Logged out of beta."), r);
     r = try c.mopm(c.ws, &.{ "whoami", "--registry", c.fake.base, "--config-dir", c.conf });
@@ -515,7 +521,7 @@ fn install(c: *Ctx) !void {
         r = try c.run(installed, c.o.work, &.{"--version"}, &.{});
         c.check("the installed mopm --version equals the candidate version", r.code == 0 and std.mem.eql(u8, r.stdout, try h.fmt(a, "mopm {s}\n", .{c.o.version})), r);
         c.rep.check("the installed file is the candidate binary, byte for byte", std.mem.eql(u8, try sha256File(a, installed), try sha256File(a, c.o.mopm)), "the installed binary differs from the candidate");
-        r = try c.run(installed, c.path(&.{ c.o.work, "ws" }), &.{ "new", "installed_check", "--lib" }, &.{});
+        r = try c.run(installed, c.path(&.{ c.o.work, "ws" }), &.{ "new", "example/installed_check", "--lib" }, &.{});
         c.check("the installed mopm works (new)", r.code == 0 and Ctx.exists(c.path(&.{ c.ws, "installed_check/mopm.toml" })), r);
     }
 

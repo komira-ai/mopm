@@ -1,1 +1,1 @@
-2:1: package name 'async' is a Mojo keyword; choose another name
+2:1: package name 'example/async': the import name 'async' is a Mojo keyword; choose another name

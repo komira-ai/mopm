@@ -4,8 +4,8 @@
 //!
 //!   mopm sync [--locked] [--registry <prod|gamma|beta|url>] [--overlay <dir>] [--cache <dir>] [--toolchain <file>]
 //!
-//! It locks first when there is no lock or it no longer matches mopm.toml (as
-//! `mopm lock` does; never with `--locked`). It downloads each locked file of
+//! It locks first when there is no lock, it predates namespaces (`lock_version` 1 or 2) or it no longer matches
+//! mopm.toml (as `mopm lock` does; never with `--locked`). It downloads each locked file of
 //! this machine's subdir, each system library the lock pins for it and each
 //! file of the pinned toolchain closure of the lock's Mojo
 //! (core/closure.zig), refuses one whose size or sha256 is not its pin,
@@ -20,14 +20,13 @@
 //! back a backup an interrupted sync left. The environment records a stamp of
 //! what it holds and where: a sync whose files and path have the same stamp,
 //! and whose environment still holds every recorded file, downloads nothing;
-//! one whose environment does not says why and installs it again. A version 2
-//! lock that records the toolchain closure of its Mojo is refused, before any
-//! download, when the closure to install hashes differently. `.mopm/.pixi`,
+//! one whose environment does not says why and installs it again.
+//! A lock that records the toolchain closure of its Mojo is refused, before any download, when the closure to install hashes differently. `.mopm/.pixi`,
 //! `.mopm/channel` and `.mopm/pixi.toml` of an older mopm are never read or
 //! changed.
 //! `--toolchain <file>` names another closure file than the built-in one (a
 //! mirror: the same pins, other channel urls; or a test). With `--locked` it
-//! never locks: a missing or out-of-date lock is an error, and the sparse index
+//! never locks: a missing, out-of-date or pre-namespace lock is an error, and the sparse index
 //! is not read.
 //!
 //! `--overlay <dir>` reads a staged set (core/overlay.zig); `sync` installs a
@@ -183,7 +182,7 @@ fn commitFailure(arena: Allocator, e: anyerror, message: []const u8) ![]const u8
 /// Installs `whole` and its Mojo toolchain into `.mopm/env` (see core/install.zig); 0 when the environment is exactly
 /// the lock.
 fn install(arena: Allocator, whole: lock.Lock, args: Args, staged: ?overlay.Overlay) !u8 {
-    // A version 2 lock installs the builds for its first Mojo version.
+    // A lock installs the builds for its first Mojo version.
     const l = try lock.forMojo(arena, whole, whole.mojo);
     const cwd = std.fs.cwd();
     const subdir = inst.hostSubdir() orelse {
@@ -345,7 +344,6 @@ fn install(arena: Allocator, whole: lock.Lock, args: Args, staged: ?overlay.Over
     try out.print("installed {d} packages for {s} (mojo {s}, {d} toolchain files) into {s}\n", .{ pkgs.len, subdir, l.mojo, tc.packages.len, inst.prefix });
     return 0;
 }
-
 
 test {
     _ = sync_cache;

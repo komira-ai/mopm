@@ -1,0 +1,30 @@
+usage: mopm group yank <group_id> [--reason <reason>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Yank every version a publish group published.
+
+The body is that of `setYanked`. `yanked: true` yanks the group's versions that are `published`; `yanked: false` restores
+exactly the versions that yank changed. Allowed for an account that can write the namespace of every package in it now, whether or not it created the
+group (a token outlives a membership change; an account that has lost the right is refused with `not_namespace_member`), with a token
+that has the `yank` or `publish` scope for every member (read-only mode refuses it).
+
+Only a group that is `visible` can be yanked or unyanked; a group that has not committed, or whose files are still being
+released after the commit, is refused with `group_not_settled`, as is a yank while an unyank of the group is running and the
+other way round. Asynchronous: the request records the intent, answers 202 and returns the group; the versions are yanked
+(or restored) by a job, then repodata and the sparse index follow, and the group's `yank.state` reaches `yanked` (or
+`restored`) when they are written. A version somebody yanked by hand before the group's yank stays yanked, and is not
+restored by the group's unyank. The same request again while the yank or unyank runs answers 202 as it is; a group already as
+asked (yanked and `yanked: true`, or never yanked or restored and `yanked: false`) answers 200 as it is.
+
+arguments:
+  <group_id>
+options:
+  --reason <reason>
+      Required when `yanked` is true. Shown to people who locked the version.
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends PUT /api/v2/groups/{group_id}/yank (yankGroup) with the token 'mopm login' stored, or $MOPM_TOKEN.

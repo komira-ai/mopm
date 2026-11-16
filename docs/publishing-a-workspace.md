@@ -1,6 +1,6 @@
 # Publishing a workspace as one group
 
-`mopm stage` packs the members of a workspace and checks them against a registry, and `mopm publish --staged` publishes the result through one group: the registry validates every member before anything is visible, and either all the members appear in its API at the same moment or none does. `mopm yank --group` takes a group back. This page is the reference for the three commands; the file formats are in [the staged set](../spec/staged-set.md), and publishing one package is in [getting started](getting-started.md).
+`mopm stage` packs the members of a workspace and checks them against a registry, and `mopm publish --staged` publishes the result through one group: the registry validates every member before anything is visible, and either all the members appear in its API at the same moment or none does. `mopm group yank` takes a group back. This page is the reference for `stage`, `publish --staged` and the group yank commands; the file formats are in [the staged set](../spec/staged-set.md), and publishing one package is in [getting started](getting-started.md).
 
 ## Group publish is off on the hosted registries
 
@@ -10,7 +10,7 @@ Group publish is deployed, and it is switched off. On `prod`, `gamma` and `beta`
 
 1. `mopm stage` finds the members of the workspace, puts them in dependency order, packs each one from its built artifacts, and checks each version against the registry. It reads no token and writes nothing to the registry.
 2. `mopm publish --staged` sends the staged set to the registry as one group, uploads the files, commits the group and waits until it is visible.
-3. If the release has to be taken back, `mopm yank --group` yanks every version the group published.
+3. If the release has to be taken back, `mopm group yank` yanks every version the group published.
 
 ### mopm stage
 
@@ -21,15 +21,15 @@ mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <m
 | flag | meaning |
 |---|---|
 | `--workspace-root <dir>` | The directory searched for members: every directory below it that holds a `mopm.toml`. |
-| `<package>...` | Optional package names. With names, the set is those packages and the members they depend on; without, every member. |
-| `--artifacts <dir>` | Where the built `.mojoc` files are: `<dir>/<subdir>/<name>.mojoc` for each member. A member with `[native.<id>]` libraries also has each one's static archive beside it, at `<dir>/<subdir>/<name>.native/lib<id>.a` (the native's `soname`, if it sets one, is the file name); stage packs it as `mopm pack --native <id>=<subdir>:<file>` would, and refuses a member whose archive is missing or is not an `ar` archive. A native is built for one platform, so its `.mojoc` is never under `noarch`. |
+| `<package>...` | Optional package names, each a full name (`example/util`) or its import name (`util`; one workspace holds one member per import name). With names, the set is those packages and the members they depend on; without, every member. |
+| `--artifacts <dir>` | Where the built `.mojoc` files are: `<dir>/<subdir>/<namespace>/<name>.mojoc` for each member (`<subdir>` is `noarch`, `linux-64`, `linux-aarch64` or `osx-arm64`; the layout without the namespace directory is not read). A member with `[native.<id>]` libraries also has each one's static archive beside it, at `<dir>/<subdir>/<namespace>/<name>.native/lib<id>.a` (the native's `soname`, if it sets one, is the file name); stage packs it as `mopm pack --native <id>=<subdir>:<file>` would, and refuses a member whose archive is missing or is not an `ar` archive. A native is built for one platform, so its `.mojoc` is never under `noarch`. |
 | `--compiler <mojo version>` | The exact Mojo version the artifacts were built with. |
 | `--out <dir>` | Where the staged set is written. |
 | `--registry <name>` | Which registry the versions are checked against: `prod`, `gamma`, `beta` or a URL. There is no default. |
 
 A member whose `mopm.toml` has `publish = false` under `[package]` (a test-support helper that other members use as a path dependency or dev-dependency, and that has no built artifact) is never staged. Without package names, `mopm stage` leaves it out and prints one line for it, `not staged <name> <version>: publish = false`. Naming it is refused. A member that is staged may not have one in its `[dependencies]`, directly or through other members (a consumer of the published package could not install it); `mopm stage` refuses that, naming both packages. A `[dev-dependencies]` entry on it is fine. `mopm pack` and `mopm publish` of one package refuse it in the same way. Every other command treats it like any member.
 
-A dependency on another member (a path dependency, or a registry dependency whose name is a member's) is an edge: the dependency comes first, and a cycle is refused. Each file is packed twice and the two results must be the same bytes. For each member the registry is asked, without a token, what it holds for that version, and the member is given an action in `plan.json`:
+A dependency on another member (a path dependency, or a registry dependency whose name is a member's) is an edge: the dependency comes first, and a cycle is refused. Each file is packed twice and the two results must be the same bytes. For each member the registry is asked, without a token, what it holds for that version, and the member is given an action in `plan.json` (version 2: members are named by full name, and the files are `<dir>/<subdir>/mojo-<namespace>.<name>-<version>-<build>.conda`; a `plan.json` of version 1, from before namespaces, is refused naming the file: stage the set again):
 
 | action | when |
 |---|---|
@@ -59,6 +59,8 @@ mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>
 | `--oidc` | Inside a GitHub Actions job, take the registry token from the job's identity instead of `$MOPM_TOKEN` or the login. See "Publishing from GitHub Actions without a token" below. |
 | `--no-commit` | Upload every file and stop with the group open. See "Staging a group and committing it later" below. With `--oidc` the run asks the registry for a stage-only token. |
 | `--abort` | End the open group that `state.json` names. Reads `plan.json` and `state.json` only. Cannot be combined with `--no-commit` or `--dry-run`. |
+
+A member whose package does not exist yet needs it created before a group can name it. For a new group (no `group_id` in `state.json`) mopm sends `PUT /packages/<namespace>/<name>` with no body for each member it uploads, in plan order, after the token is read and before the group is asked for: a 201 prints `created <full name> on <registry>`, a 200 prints nothing, any other answer ends the run with exit 1. A run that resumes a group and `--dry-run` send none.
 
 The token is `$MOPM_TOKEN`, else the login's. It is read after the plan has been checked, goes only to the registry's API, is never printed, and is not in the environment of any program mopm starts. The uploads themselves carry no token.
 
@@ -95,7 +97,7 @@ Before it asks for the group, a run that resumes a staged group reads it. If the
 
 `--no-commit` on a group that is already past open (validating, committed, visible) is refused: it stages a group before its commit.
 
-`--abort` ends the group `state.json` names (`DELETE /groups/{id}`), which frees the actor's place at once; its version numbers stay free, since nothing was published. It reads `plan.json` and `state.json` but none of the set's files, so the job that runs after a failure does not need the bytes; with `--oidc` it makes its own exchange for the packages of the plan. The outcome is `aborted` in `report.json`, the members are `not_published`, and `state.json` is left with no group. It ends 0 when the group is aborted, when it had already ended without being published (the registry expired it), and when `state.json` names no group; it ends 1 for a directory with no `state.json`, a `state.json` of another registry or plan, and a group that was committed (the message says to use `mopm yank --group` if it becomes visible).
+`--abort` ends the group `state.json` names (`DELETE /groups/{id}`), which frees the actor's place at once; its version numbers stay free, since nothing was published. It reads `plan.json` and `state.json` but none of the set's files, so the job that runs after a failure does not need the bytes; with `--oidc` it makes its own exchange for the packages of the plan. The outcome is `aborted` in `report.json`, the members are `not_published`, and `state.json` is left with no group. It ends 0 when the group is aborted, when it had already ended without being published (the registry expired it), and when `state.json` names no group; it ends 1 for a directory with no `state.json`, a `state.json` of another registry or plan, and a group that was committed (the message says to use `mopm group yank` if it becomes visible).
 
 #### report.json
 
@@ -129,7 +131,7 @@ mopm publish --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc --registry beta --oi
 The run, for a single package version (a staged set is described after the steps):
 
 1. mopm asks GitHub for an identity token whose audience names the registry: `mopm.dev` for `prod`, and `<stage>.mopm.dev` for the others (`beta.mopm.dev` for `beta`, `gamma.mopm.dev` for `gamma`). The stage is the one the registry reports about itself. mopm sends the request token only to an `https` URL (or a loopback `http` one, for a test).
-2. mopm posts that identity token, the package name and the version to the registry's `/auth/oidc/exchange` route. The registry answers a token that can publish that one package version and expires after 15 minutes, if the job's repository, workflow and environment match a trusted publisher registered for the package. If it does not, mopm prints the registry's message and exits 1; nothing is uploaded.
+2. mopm posts that identity token, the package's full name and the version to the `/auth/oidc/exchange` route of the registry's `api_v2_url`. The registry answers a token that can publish that one package version and expires after 15 minutes, if the job's repository, workflow and environment match a trusted publisher registered for the package. If it does not, mopm prints the registry's message and exits 1; nothing is uploaded.
 3. mopm publishes with that token.
 
 The registry token is kept in memory. It is not written to a file (`--oidc` does not read or write `credentials.json`), it is not put in the environment, and it is never printed; neither is the identity token. `$MOPM_TOKEN` and a stored login are not used when `--oidc` is given. The two `ACTIONS_ID_TOKEN_REQUEST_` variables are, like `MOPM_TOKEN`, taken out of the environment of every program mopm starts. A rerun asks GitHub for a new identity token, so a run that is repeated never presents one twice.
@@ -145,15 +147,16 @@ The command line does not read the API. `mopm add`, `mopm lock` and `mopm sync` 
 ## Yanking a group
 
 ```text
-mopm yank --group <id> --registry <prod|gamma|beta|url> --reason <text> [--config-dir <dir>] [--wait <seconds>]
-mopm yank --group <id> --registry <prod|gamma|beta|url> --unyank [--config-dir <dir>] [--wait <seconds>]
+mopm group yank <group_id> --reason <text> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+mopm group unyank <group_id> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+mopm group status <group_id> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
 ```
 
-The group id is the one `mopm publish --staged` printed and wrote into `report.json`. `--reason` is required for a yank, 1 to 280 characters, and is refused with `--unyank`. `--registry` is required, with no default. `--wait` is as for `publish --staged`.
+These are generated commands: each makes one call of the registry's API (`PUT /groups/{group_id}/yank`, `GET /groups/{group_id}`), and `mopm group yank --help` prints the flags and the registry's description of the operation. The group id is the one `mopm publish --staged` printed and wrote into `report.json`. `--reason` says why the versions are yanked, and is shown to people who locked one of them. The registry is `prod` unless `--registry` names another.
 
-A group yank is not one flip, and it is not the inverse of a publish. The registry records the request and answers at once; then it yanks the members one by one, and then it rebuilds the repodata and the index. The command waits until the group says the yank is `yanked` (or, after `--unyank`, `restored`). While it runs, some members are yanked and others are not. An unyank restores only the versions that this group's yank changed: a version somebody yanked by hand before stays yanked.
+A group yank is not one flip, and it is not the inverse of a publish. The registry records the request and answers at once with the group; then it yanks the members one by one, and then it rebuilds the repodata and the index. `mopm group yank` and `mopm group unyank` print that answer and do not wait: `mopm group status <group_id>` shows the group's yank, which is `yanked` when it is done (or, after `mopm group unyank`, `restored`). While it runs, some members are yanked and others are not. An unyank restores only the versions that this group's yank changed: a version somebody yanked by hand before stays yanked.
 
-Only a group that is `visible` can be yanked. Before that the registry answers 409 with the code `group_not_settled`, and mopm prints its hint. A single version can still be yanked on its own through the registry's API at any time.
+Only a group that is `visible` can be yanked. Before that the registry answers 409 with the code `group_not_settled`, and mopm prints its hint. A single version is yanked on its own with `mopm yank <namespace>/<name> <version>` and restored with `mopm unyank`.
 
 ## Exit status
 
@@ -161,4 +164,4 @@ Only a group that is `visible` can be yanked. Before that the registry answers 4
 |---|---|---|---|
 | `mopm stage` | staged | refused or failed | usage error |
 | `mopm publish --staged` | the group is visible, or `--dry-run` checked the set, or every member was skipped, or `--no-commit` staged the group, or `--abort` ended it (or found nothing to end) | the plan or a file is wrong, the registry refused, or the run stopped | usage error |
-| `mopm yank --group` | the yank is `yanked` (or `restored`) | refused, failed or gave up waiting | usage error |
+| `mopm group yank`, `unyank`, `status` | the registry answered | refused or failed | usage error |

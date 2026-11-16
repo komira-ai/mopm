@@ -230,6 +230,7 @@ describe('lambda entry points on recorded events', () => {
       'api_publish_unwired.json',
       'api_search_query.json',
       'api_unknown_package.json',
+      'api_v2_health_and_index_config.json',
       'group_validator_cold_start_refusals.json',
       'group_validator_drops_unrecognised.json',
       'group_validator_flip_unknown_group.json',

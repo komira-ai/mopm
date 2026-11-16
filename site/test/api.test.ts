@@ -4,7 +4,7 @@
 import { client, type FetchFn } from '../src/api';
 import { type ContractCase, responseOf, validReadCases } from './fixtures';
 
-const BASE = 'https://api.mopm.dev/api/v1';
+const BASE = 'https://api.mopm.dev/api/v2';
 
 function recorder(res: () => Response): { fetchFn: FetchFn; calls: { url: string; init: RequestInit }[] } {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -16,6 +16,8 @@ function recorder(res: () => Response): { fetchFn: FetchFn; calls: { url: string
     },
   };
 }
+
+const full = (p: Record<string, string | number>) => ({ namespace: String(p.namespace), name: String(p.name) });
 
 function call(c: ContractCase & { operationId: string }, fetchFn: FetchFn) {
   const api = client(fetchFn, BASE);
@@ -35,9 +37,9 @@ function call(c: ContractCase & { operationId: string }, fetchFn: FetchFn) {
         path: '/packages',
       };
     case 'getPackage':
-      return { result: api.getPackage(String(p.name)), path: `/packages/${p.name}` };
+      return { result: api.getPackage(full(p)), path: `/packages/${p.namespace}/${p.name}` };
     case 'getVersion':
-      return { result: api.getVersion(String(p.name), String(p.version)), path: `/packages/${p.name}/${p.version}` };
+      return { result: api.getVersion(full(p), String(p.version)), path: `/packages/${p.namespace}/${p.name}/${p.version}` };
     default:
       throw new Error(`not a read operation: ${c.operationId}`);
   }
@@ -89,14 +91,16 @@ test('a claimed package (latest null, no versions) replays through getPackage', 
   const c = cases.find((x) => x.operationId === 'getPackage')!;
   const body = { ...(c.response.body as Record<string, unknown>), state: 'claimed', latest: null, versions: [] };
   const fetchFn: FetchFn = async () => new Response(JSON.stringify(body), { headers: c.response.headers });
-  const r = await client(fetchFn, BASE).getPackage(String(c.request.path?.name));
+  const r = await client(fetchFn, BASE).getPackage(full(c.request.path ?? {}));
   if (r.kind !== 'ok') throw new Error(`expected ok, got ${JSON.stringify(r)}`);
   expect(r.value).toEqual(body);
 });
 
 test('spec-only fields the server never sends are not decoded (readme_html is never read)', async () => {
-  const c = cases.find((x) => x.operationId === 'getVersion' && (x.response.body as { readme_html?: unknown }).readme_html)!;
-  const { fetchFn } = recorder(() => responseOf(c));
+  // No v2 fixture carries readme_html, so it is added to a version answer.
+  const c = cases.find((x) => x.operationId === 'getVersion')!;
+  const body = { ...(c.response.body as Record<string, unknown>), readme_html: '<p>x</p>', manifest: { a: 1 } };
+  const { fetchFn } = recorder(() => new Response(JSON.stringify(body), { headers: c.response.headers }));
   const r = await call(c, fetchFn).result;
   if (r.kind !== 'ok') throw new Error('expected ok');
   expect(r.value).not.toHaveProperty('readme_html');
@@ -107,7 +111,7 @@ describe('T5 request shape', () => {
   test('a GET with mode cors, credentials omit, no headers and an abort signal', async () => {
     const c = cases.find((x) => x.operationId === 'getPackage')!;
     const { fetchFn, calls } = recorder(() => responseOf(c));
-    await client(fetchFn, BASE).getPackage('http_client');
+    await client(fetchFn, BASE).getPackage({ namespace: 'komira-ai', name: 'json' });
     const init = calls[0].init;
     expect(init.method).toBe('GET');
     expect(init.mode).toBe('cors');
@@ -120,8 +124,28 @@ describe('T5 request shape', () => {
 
   test('path segments are encoded', async () => {
     const { fetchFn, calls } = recorder(() => new Response('{}', { status: 404 }));
-    await client(fetchFn, BASE).getVersion('a/b', '1.0?x');
-    expect(calls[0].url).toBe(`${BASE}/packages/a%2Fb/1.0%3Fx`);
+    await client(fetchFn, BASE).getVersion({ namespace: 'a/b', name: 'c?d' }, '1.0?x');
+    expect(calls[0].url).toBe(`${BASE}/packages/a%2Fb/c%3Fd/1.0%3Fx`);
+  });
+
+  test('a package call is /packages/{namespace}/{name}: two segments, never a flat name or an encoded slash joining them', async () => {
+    const { fetchFn, calls } = recorder(() => new Response('{}', { status: 404 }));
+    await client(fetchFn, BASE).getPackage({ namespace: 'komira-ai', name: 'json_5' });
+    expect(calls[0].url).toBe(`${BASE}/packages/komira-ai/json_5`);
+  });
+
+  test('a version call appends the encoded version to the package path', async () => {
+    const { fetchFn, calls } = recorder(() => new Response('{}', { status: 404 }));
+    await client(fetchFn, BASE).getVersion({ namespace: 'komira-ai', name: 'json' }, '1.1.0');
+    expect(calls[0].url).toBe(`${BASE}/packages/komira-ai/json/1.1.0`);
+  });
+
+  test('the same name in two namespaces is two requests', async () => {
+    const { fetchFn, calls } = recorder(() => new Response('{}', { status: 404 }));
+    const api = client(fetchFn, BASE);
+    await api.getPackage({ namespace: 'alice', name: 'json' });
+    await api.getPackage({ namespace: 'komira-ai', name: 'json' });
+    expect(calls.map((c) => c.url)).toEqual([`${BASE}/packages/alice/json`, `${BASE}/packages/komira-ai/json`]);
   });
 
   test('an empty search sends no query string', async () => {

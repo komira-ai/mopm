@@ -51,3 +51,46 @@ export class AuthError extends Error {
 
 export const oidcInvalid = (detail: string) =>
   new AuthError('oidc_token_invalid', `The CI identity token was rejected: ${detail}.`, { detail });
+
+/** The codes of the namespaces (docs/design/namespaces.md section 8) besides `unavailable`. */
+export type NamespaceErrorCode =
+  | 'invalid_namespace'
+  | 'namespace_reserved'
+  | 'namespace_not_found'
+  | 'namespace_taken'
+  | 'not_namespace_member'
+  | 'not_namespace_owner'
+  | 'not_org_admin'
+  | 'github_account_mismatch'
+  | 'last_owner'
+  | 'member_not_found'
+  | 'user_not_found';
+
+export const NAMESPACE_HTTP_STATUS: Record<NamespaceErrorCode, number> = {
+  invalid_namespace: 400,
+  namespace_reserved: 403,
+  namespace_not_found: 404,
+  namespace_taken: 409,
+  not_namespace_member: 403,
+  not_namespace_owner: 403,
+  not_org_admin: 403,
+  github_account_mismatch: 403,
+  last_owner: 409,
+  member_not_found: 404,
+  user_not_found: 404,
+};
+
+/** A refused read, write or registration in a namespace. Same shape as AuthError (code, status, detail), so a router answers both alike. */
+export class NamespaceError extends Error {
+  readonly status: number;
+  constructor(
+    readonly code: NamespaceErrorCode,
+    message: string,
+    /** The values of the message template: `namespace`, and `user` where the message names one. */
+    readonly detail: Record<string, string>,
+  ) {
+    super(message);
+    this.name = 'NamespaceError';
+    this.status = NAMESPACE_HTTP_STATUS[code];
+  }
+}

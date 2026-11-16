@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "name": "crypto_sys",
+  "schema": 2,
+  "name": "example/crypto_sys",
   "version": "1.39.0",
   "native": [
     {

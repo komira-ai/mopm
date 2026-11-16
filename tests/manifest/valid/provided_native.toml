@@ -1,6 +1,6 @@
 # A native whose archive another build produces (spec/mopm-toml.md, [native.<id>] provided).
 [package]
-name = "tls_natives"
+name = "example/tls_natives"
 version = "1.0.0"
 
 [toolchain]

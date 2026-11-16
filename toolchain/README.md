@@ -8,6 +8,7 @@ and everything they need) is a fixed list per Mojo version and platform:
 | `versions.txt` | the Mojo versions mopm can install | a person |
 | `mojo-<version>.pixi.lock` | the solver's answer for that version, all platforms | the `toolchain` job of `.github/workflows/kpin-update.yml` (pixi, on GitHub) |
 | `../src/core/toolchain/mojo-<version>-<subdir>.json` | the closure of one platform: url, sha256, size and conda-meta fields of every package | `mopm-closure`, from the lock |
+| `mojo-<version>.std-modules.txt` | the top-level modules of that version's standard library, one per line (below) | `mopm-closure --std-modules`, from the pinned `mojo-compiler` (the same job) |
 | `natives.txt` | the conda names of the native libraries a package may load (the allow-list), one per line | a person |
 | `natives.libs` | the shared libraries each catalog package holds, read from the package files (below) | `mopm-closure --natives-libs`, from the catalog (the same job) |
 | `natives.pixi.lock` | the solver's answer for all of `natives.txt` at once, all platforms; independent of the Mojo version | the same job |
@@ -56,3 +57,23 @@ pin that moved without its lines being read again. Update it with the lock.
 package is downloaded from its catalog url, checked against its pinned sha256 (a mismatch fails the run, naming both)
 and its `lib/*.so*` and `lib/*.dylib` entries are listed, and the lines of packages the catalog no longer pins are
 dropped. Only `.conda` packages are read. By hand, after changing a lock, run the same command.
+
+## The standard library modules
+
+`mojo-<version>.std-modules.txt` lists the top-level modules of the Mojo standard library of that version, one per
+line; no package's import name may be one (`src/core/names.zig`: Mojo code writes both `import std.collections` and
+`import collections`). `../src/core/toolchain/std-modules.txt`, which mopm embeds, is the union over every version of
+`versions.txt`. Both are made, never by hand, by
+
+    zig build run-closure -- --std-modules src/core/toolchain toolchain
+
+which the weekly `toolchain` job runs after `--natives-libs`. For each version it downloads the linux-64
+`mojo-compiler` of `../src/core/toolchain/mojo-<version>-linux-64.json`, checks its pinned size and sha256 (a mismatch
+fails the run, naming both), and reads `lib/mojo/std.mojoc`: after its header the file is one zstd frame, whose content
+records the source path of each file of the library, `mojo/stdlib/std/<module>/...` or `mojo/stdlib/std/<module>.mojo`
+(`src/core/std_modules.zig`). The modules are those `<module>` names, except those starting with `_`. The standard
+library is the same Mojo source on every platform of one version, so one platform is read.
+
+The unit test "the embedded list is the union of the list of every version of toolchain/versions.txt" fails when
+`../src/core/toolchain/std-modules.txt` is not the union of the files here, and reading a version's file fails when
+`versions.txt` names a version that has none, so adding a Mojo version needs the command above.

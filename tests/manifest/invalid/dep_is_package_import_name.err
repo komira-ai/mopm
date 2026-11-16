@@ -1,0 +1,1 @@
+6:1: dependency 'other/json' has the import name 'json' of the package example/json itself; Mojo imports a package by the part after '/', so one name holds one package

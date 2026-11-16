@@ -23,7 +23,7 @@ pub const Refused = error{Refused};
 pub const Dirs = struct {
     /// The member sources: a path of the graph is relative to this.
     src: []const u8,
-    /// The `.mojoc` of every dependency, flat, as `<package>.mojoc`.
+    /// The `.mojoc` of every dependency, flat, as `<import>.mojoc`.
     deps: []const u8,
     /// The pinned toolchain: `mojo_compile` and `CLOSURE_SHA256`.
     toolchain: []const u8,
@@ -175,8 +175,8 @@ pub fn argv(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs) !Plan {
     if (!is_lib) try a.append("--runpath=$ORIGIN/lib");
     // The wrapper takes the root to be the directory of the package it compiles (a library) or the tree the
     // sources are in (a test or binary): it replaces the argument that names the root by its basename, so
-    // the `.mojoc` records `<package>/<file>.mojo`, not the staged path.
-    const root = if (is_lib) try join(arena, stage_src, u.package) else stage_src;
+    // the `.mojoc` records `<import>/<file>.mojo`, not the staged path.
+    const root = if (is_lib) try join(arena, stage_src, u.import) else stage_src;
     try a.append(try std.fmt.allocPrint(arena, "--source-root={s}", .{root}));
     try a.append("--");
     try a.append(if (is_lib) "precompile" else "build");
@@ -202,7 +202,7 @@ pub fn argv(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs) !Plan {
     var exe: []const u8 = "";
     var marker: []const u8 = "";
     if (is_lib) {
-        try a.append(try join(arena, stage_src, u.package));
+        try a.append(try join(arena, stage_src, u.import));
         product = try join(arena, d.out, u.outputs[0]);
         try a.append("-o");
         try a.append(product);
@@ -239,9 +239,9 @@ fn copyInto(arena: Allocator, from: []const u8, to: []const u8) !void {
 }
 
 /// Puts the sources and the dependencies where `argv` expects them: the
-/// sources of a library under `<stage>/src/<package>/` (relative to its
+/// sources of a library under `<stage>/src/<import>/` (relative to its
 /// root), those of a test or binary under `<stage>/src/<path>`, each
-/// dependency's `.mojoc` alone in `<stage>/deps/<package>/`, and the native
+/// dependency's `.mojoc` alone in `<stage>/deps/<import>/`, and the native
 /// libraries beside the binary in `<out>/lib/`.
 pub fn stage(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs) !void {
     const u = g.units[idx];
@@ -253,7 +253,7 @@ pub fn stage(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs) !void {
         const rel = if (isLib(u)) blk: {
             const root = u.root;
             const inside = if (root.len == 0) s.path else if (std.mem.startsWith(u8, s.path, root) and s.path.len > root.len and s.path[root.len] == '/') s.path[root.len + 1 ..] else return error.BadUnit;
-            break :blk try join(arena, u.package, inside);
+            break :blk try join(arena, u.import, inside);
         } else s.path;
         try copyInto(arena, from, try join(arena, stage_src, rel));
     }
@@ -358,35 +358,37 @@ fn sha(a: Allocator, bytes: []const u8) ![]const u8 {
 fn fixtureGraph(a: Allocator) !unit_graph.Graph {
     const p_srcs = try a.dupe(unit_graph.Src, &.{.{ .path = "src/p/__init__.mojo", .sha256 = try sha(a, src_p) }});
     const t_srcs = try a.dupe(unit_graph.Src, &.{.{ .path = "tests/test_p.mojo", .sha256 = try sha(a, src_t) }});
-    const natives = try a.dupe(unit_graph.NativeRef, &.{.{ .id = "n", .soname = "libn.so.1", .sha256 = try sha(a, native_bytes), .package = "d" }});
+    const natives = try a.dupe(unit_graph.NativeRef, &.{.{ .id = "n", .soname = "libn.so.1", .sha256 = try sha(a, native_bytes), .package = "example/d" }});
     const units = try a.dupe(unit_graph.Unit, &.{
-        .{ .id = "d@1.0.0#mojo1.0.0/lib", .package = "d", .version = "1.0.0", .kind = "prebuilt", .mojoc = "lib/mojo/d.mojoc", .natives = natives },
+        .{ .id = "example/d@1.0.0#mojo1.0.0/lib", .package = "example/d", .import = "d", .version = "1.0.0", .kind = "prebuilt", .mojoc = "lib/mojo/d.mojoc", .natives = natives },
         .{
-            .id = "p@2.0.0#mojo1.0.0/lib",
-            .package = "p",
+            .id = "example/p@2.0.0#mojo1.0.0/lib",
+            .package = "example/p",
+            .import = "p",
             .version = "2.0.0",
             .kind = "lib",
             .root = "src/p",
             .srcs = p_srcs,
-            .deps = &.{"d@1.0.0#mojo1.0.0/lib"},
+            .deps = &.{"example/d@1.0.0#mojo1.0.0/lib"},
             .natives = natives,
             .profile = .{ .opt = 1, .assert = "all", .debug = false },
             .outputs = &.{"p.mojoc"},
         },
         .{
-            .id = "p@2.0.0#mojo1.0.0/test:tests/test_p.mojo",
-            .package = "p",
+            .id = "example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo",
+            .package = "example/p",
+            .import = "p",
             .version = "2.0.0",
             .kind = "test",
             .srcs = t_srcs,
-            .deps = &.{"p@2.0.0#mojo1.0.0/lib"},
+            .deps = &.{"example/p@2.0.0#mojo1.0.0/lib"},
             .natives = natives,
             .profile = .{ .opt = 1, .assert = "all", .debug = false },
             .outputs = &.{"test_p.pass"},
         },
     });
     return .{
-        .package = "p@2.0.0",
+        .package = "example/p@2.0.0",
         .mojo = "1.0.0",
         .toolchain = .{
             .mojo = "1.0.0",
@@ -450,14 +452,14 @@ test "a unit with every declared input verifies; each input missing or different
     const g = try fixtureGraph(a);
     const root = try tmp.dir.realpathAlloc(a, ".");
     const d = try dirsIn(a, root);
-    const lib = g.find("p@2.0.0#mojo1.0.0/lib").?;
-    const tst = g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
+    const lib = g.find("example/p@2.0.0#mojo1.0.0/lib").?;
+    const tst = g.find("example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
     var why: []const u8 = "";
     try verify(a, g, lib, d, &why);
     try verify(a, g, tst, d, &why);
 
     // A prebuilt unit is fetched, not built.
-    try expectRefusal(a, g, g.find("d@1.0.0#mojo1.0.0/lib").?, d, "is a prebuilt unit");
+    try expectRefusal(a, g, g.find("example/d@1.0.0#mojo1.0.0/lib").?, d, "is a prebuilt unit");
 
     // A source that is not there.
     try tmp.dir.deleteFile("w/src/p/__init__.mojo");
@@ -471,10 +473,10 @@ test "a unit with every declared input verifies; each input missing or different
     // A dependency's .mojoc that is not there: the direct one and a transitive one.
     try tmp.dir.deleteFile("deps/d.mojoc");
     try expectRefusal(a, g, lib, d, "missing input");
-    try expectRefusal(a, g, lib, d, "d.mojoc, the .mojoc of d@1.0.0#mojo1.0.0/lib");
+    try expectRefusal(a, g, lib, d, "d.mojoc, the .mojoc of example/d@1.0.0#mojo1.0.0/lib");
     try tmp.dir.writeFile("deps/d.mojoc", "d.mojoc bytes\n");
     try tmp.dir.deleteFile("deps/p.mojoc");
-    try expectRefusal(a, g, tst, d, "p.mojoc, the .mojoc of p@2.0.0#mojo1.0.0/lib (a dependency of p@2.0.0#mojo1.0.0/test:tests/test_p.mojo)");
+    try expectRefusal(a, g, tst, d, "p.mojoc, the .mojoc of example/p@2.0.0#mojo1.0.0/lib (a dependency of example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo)");
     try tmp.dir.writeFile("deps/p.mojoc", "p.mojoc bytes\n");
     try tmp.dir.writeFile("deps/d.mojoc", "");
     try expectRefusal(a, g, lib, d, "is empty");
@@ -512,12 +514,12 @@ test "a unit's system libraries come last on the link line of a test, each once,
     g.units = units;
     const d = Dirs{ .src = "/s", .deps = "/d", .toolchain = "/t", .natives = "/n", .out = "/o", .stage = "/g" };
 
-    const tst = try argv(a, g, g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, d);
+    const tst = try argv(a, g, g.find("example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, d);
     const tail = [_][]const u8{ "-Xlinker", "/n/libn.so.1", "-Xlinker", "-lc++", "-Xlinker", "-lm" };
     try std.testing.expect(tst.argv.len > tail.len);
     for (tail, tst.argv[tst.argv.len - tail.len ..]) |w, got| try std.testing.expectEqualStrings(w, got);
 
-    const lib = try argv(a, g, g.find("p@2.0.0#mojo1.0.0/lib").?, d);
+    const lib = try argv(a, g, g.find("example/p@2.0.0#mojo1.0.0/lib").?, d);
     for (lib.argv) |arg| try std.testing.expect(!std.mem.startsWith(u8, arg, "-l") and !std.mem.eql(u8, arg, "-Xlinker"));
 }
 
@@ -528,16 +530,16 @@ test "the wrapper gets the staged tree, the dependencies' -I directories and not
     const g = try fixtureGraph(a);
     const d = Dirs{ .src = "/s", .deps = "/d", .toolchain = "/t", .natives = "/n", .out = "/o", .stage = "/g" };
 
-    const lib = try argv(a, g, g.find("p@2.0.0#mojo1.0.0/lib").?, d);
+    const lib = try argv(a, g, g.find("example/p@2.0.0#mojo1.0.0/lib").?, d);
     const want_lib = [_][]const u8{ "/t/mojo_compile", "--source-root=/g/src/p", "--", "precompile", "-I/g/deps/d", "/g/src/p", "-o", "/o/p.mojoc" };
     try std.testing.expectEqual(want_lib.len, lib.argv.len);
     for (want_lib, lib.argv) |w, got| try std.testing.expectEqualStrings(w, got);
     try std.testing.expectEqualStrings("/o/p.mojoc", lib.product);
     try std.testing.expectEqualStrings("", lib.exe);
 
-    const tst = try argv(a, g, g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, d);
+    const tst = try argv(a, g, g.find("example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, d);
     const want_test = [_][]const u8{
-        "/t/mojo_compile", "--runpath=$ORIGIN/lib", "--source-root=/g/src", "--", "build", "-D", "ASSERT=all", "--optimization-level", "1",
+        "/t/mojo_compile", "--runpath=$ORIGIN/lib", "--source-root=/g/src",     "--", "build",     "-D",       "ASSERT=all",   "--optimization-level", "1",
         "-I/g/deps/d",     "-I/g/deps/p",           "/g/src/tests/test_p.mojo", "-o", "/o/test_p", "-Xlinker", "/n/libn.so.1",
     };
     try std.testing.expectEqual(want_test.len, tst.argv.len);
@@ -552,8 +554,8 @@ test "--target-cpu: each level reaches a test's compiler command, right after bu
     const a = arena_state.allocator();
     const g = try fixtureGraph(a);
     const target_cpu = @import("target_cpu.zig");
-    const tid = g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
-    const bid = g.find("p@2.0.0#mojo1.0.0/lib").?;
+    const tid = g.find("example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
+    const bid = g.find("example/p@2.0.0#mojo1.0.0/lib").?;
     var d = Dirs{ .src = "/s", .deps = "/d", .toolchain = "/t", .natives = "/n", .out = "/o", .stage = "/g" };
 
     // No level: no CPU argument anywhere.
@@ -593,7 +595,7 @@ test "mopm unit build stages the tree, runs the wrapper in an empty environment 
     const root = try tmp.dir.realpathAlloc(a, ".");
     const d = try dirsIn(a, root);
     var why: []const u8 = "";
-    const code = run(a, g, g.find("p@2.0.0#mojo1.0.0/lib").?, .build, d, &why) catch |e| {
+    const code = run(a, g, g.find("example/p@2.0.0#mojo1.0.0/lib").?, .build, d, &why) catch |e| {
         std.debug.print("refused: {s}\n", .{why});
         return e;
     };
@@ -605,7 +607,7 @@ test "mopm unit build stages the tree, runs the wrapper in an empty environment 
     _ = try tmp.dir.statFile("stage/deps/d/d.mojoc");
 
     // A test unit builds its binary; `unit test` would then run it.
-    const t = run(a, g, g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, .build, d, &why) catch |e| {
+    const t = run(a, g, g.find("example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, .build, d, &why) catch |e| {
         std.debug.print("refused: {s}\n", .{why});
         return e;
     };
@@ -616,10 +618,10 @@ test "mopm unit build stages the tree, runs the wrapper in an empty environment 
     // A refusal happens before the wrapper runs: nothing new is written.
     try tmp.dir.deleteFile("w/src/p/__init__.mojo");
     try tmp.dir.deleteFile("out/p.mojoc");
-    try std.testing.expectError(error.Refused, run(a, g, g.find("p@2.0.0#mojo1.0.0/lib").?, .build, d, &why));
+    try std.testing.expectError(error.Refused, run(a, g, g.find("example/p@2.0.0#mojo1.0.0/lib").?, .build, d, &why));
     try std.testing.expectError(error.FileNotFound, tmp.dir.statFile("out/p.mojoc"));
     // `unit test` on a library is refused.
-    try std.testing.expectError(error.Refused, run(a, g, g.find("p@2.0.0#mojo1.0.0/lib").?, .run_test, d, &why));
+    try std.testing.expectError(error.Refused, run(a, g, g.find("example/p@2.0.0#mojo1.0.0/lib").?, .run_test, d, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "runs test units") != null);
 }
 
@@ -634,7 +636,7 @@ fn buildLibAt(a: Allocator, child: []const u8, stage_rel: []const u8) ![]const u
     var d = try dirsIn(a, root);
     d.stage = try join(a, root, stage_rel);
     var why: []const u8 = "";
-    const code = run(a, g, g.find("p@2.0.0#mojo1.0.0/lib").?, .build, d, &why) catch |e| {
+    const code = run(a, g, g.find("example/p@2.0.0#mojo1.0.0/lib").?, .build, d, &why) catch |e| {
         std.debug.print("refused: {s}\n", .{why});
         return e;
     };
@@ -671,7 +673,7 @@ fn testEnvOf(a: Allocator, child: []const u8, with_lib: bool) ![]const u8 {
     const root = try tmp.dir.realpathAlloc(a, ".");
     const d = try dirsIn(a, root);
     var why: []const u8 = "";
-    const code = run(a, g, g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, .run_test, d, &why) catch |e| {
+    const code = run(a, g, g.find("example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, .run_test, d, &why) catch |e| {
         std.debug.print("refused: {s}\n", .{why});
         return e;
     };
@@ -709,13 +711,13 @@ test "a static archive is a linker input in the order the unit gives, and is not
     try tmp.dir.writeFile("natives/libcrypto_sys.a", crypto_bytes);
 
     var g = try fixtureGraph(a);
-    const tid = g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
+    const tid = g.find("example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
     const units = try a.dupe(unit_graph.Unit, g.units);
     // tls_sys needs crypto_sys, so it is first; by soname, libcrypto_sys.a would be.
     units[tid].natives = try a.dupe(unit_graph.NativeRef, &.{
-        .{ .id = "tls_sys", .soname = "libtls_sys.a", .sha256 = try sha(a, tls_bytes), .package = "tls_sys", .kind = .static, .needs = &.{"libcrypto_sys.a"} },
-        .{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .sha256 = try sha(a, crypto_bytes), .package = "crypto_sys", .kind = .static },
-        .{ .id = "n", .soname = "libn.so.1", .sha256 = try sha(a, native_bytes), .package = "d" },
+        .{ .id = "tls_sys", .soname = "libtls_sys.a", .sha256 = try sha(a, tls_bytes), .package = "example/tls_sys", .kind = .static, .needs = &.{"libcrypto_sys.a"} },
+        .{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .sha256 = try sha(a, crypto_bytes), .package = "example/crypto_sys", .kind = .static },
+        .{ .id = "n", .soname = "libn.so.1", .sha256 = try sha(a, native_bytes), .package = "example/d" },
     });
     g.units = units;
     const root = try tmp.dir.realpathAlloc(a, ".");
@@ -756,27 +758,27 @@ test "a built native must be in the natives directory and be an archive, but has
     try writeInputs(tmp.dir);
 
     var g = try fixtureGraph(a);
-    const tid = g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
-    const built_id = "native:p/shim";
+    const tid = g.find("example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
+    const built_id = "native:example/p/shim";
     const units = try a.alloc(unit_graph.Unit, g.units.len + 1);
     @memcpy(units[0..g.units.len], g.units);
-    units[g.units.len] = .{ .id = built_id, .package = "p", .version = "2.0.0", .kind = "native", .soname = "libshim.a", .outputs = &.{"libshim.a"} };
+    units[g.units.len] = .{ .id = built_id, .package = "example/p", .import = "p", .version = "2.0.0", .kind = "native", .soname = "libshim.a", .outputs = &.{"libshim.a"} };
     // The shim comes first in the test's link line, before the prebuilt shared library.
     units[tid].natives = try a.dupe(unit_graph.NativeRef, &.{
-        .{ .id = "shim", .soname = "libshim.a", .package = "p", .kind = .static, .built = built_id },
-        .{ .id = "n", .soname = "libn.so.1", .sha256 = try sha(a, native_bytes), .package = "d" },
+        .{ .id = "shim", .soname = "libshim.a", .package = "example/p", .kind = .static, .built = built_id },
+        .{ .id = "n", .soname = "libn.so.1", .sha256 = try sha(a, native_bytes), .package = "example/d" },
     });
     g.units = units;
     const root = try tmp.dir.realpathAlloc(a, ".");
     const d = try dirsIn(a, root);
-    const who = "(a native library of p@2.0.0#mojo1.0.0/test:tests/test_p.mojo)";
+    const who = "(a native library of example/p@2.0.0#mojo1.0.0/test:tests/test_p.mojo)";
 
     // Not there.
-    try expectRefusal(a, g, tid, d, "missing input: libshim.a, the archive of native:p/shim " ++ who);
+    try expectRefusal(a, g, tid, d, "missing input: libshim.a, the archive of native:example/p/shim " ++ who);
     // Not an archive: text, the magic cut short, nothing at all.
     for ([_][]const u8{ "int shim(void);\n", "!<arch>", "" }) |bytes| {
         try tmp.dir.writeFile("natives/libshim.a", bytes);
-        try expectRefusal(a, g, tid, d, "native library libshim.a, the archive of native:p/shim " ++ who ++ ", is not a static archive: it does not start with !<arch>");
+        try expectRefusal(a, g, tid, d, "native library libshim.a, the archive of native:example/p/shim " ++ who ++ ", is not a static archive: it does not start with !<arch>");
     }
     // An archive, whatever its bytes: there is no hash to hold it to.
     var why: []const u8 = "";
@@ -802,5 +804,5 @@ test "a built native must be in the natives directory and be an archive, but has
     try std.testing.expectError(error.FileNotFound, tmp.dir.statFile("out/lib/libshim.a"));
 
     // The native unit itself is the build system's to build.
-    try expectRefusal(a, g, g.find(built_id).?, d, "native:p/shim is a native unit: the build system compiles its C sources into libshim.a");
+    try expectRefusal(a, g, g.find(built_id).?, d, "native:example/p/shim is a native unit: the build system compiles its C sources into libshim.a");
 }

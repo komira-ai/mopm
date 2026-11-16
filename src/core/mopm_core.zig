@@ -11,6 +11,9 @@ pub const link_planner = @import("link_planner.zig");
 pub const toml = @import("toml.zig");
 pub const toml_edit = @import("toml_edit.zig");
 pub const manifest = @import("manifest.zig");
+pub const names = @import("names.zig");
+pub const import_names = @import("import_names.zig");
+pub const std_modules = @import("std_modules.zig");
 pub const scaffold = @import("scaffold.zig");
 pub const semver = @import("semver.zig");
 pub const env = @import("env.zig");
@@ -24,6 +27,8 @@ pub const test_filter = @import("test_filter.zig");
 pub const child_env = @import("child_env.zig");
 pub const http = @import("http.zig");
 pub const registry = @import("registry.zig");
+/// The client of the registry API, version 2, generated from spec/api/mopm/registry/v2/*.proto (tools/api_gen.zig).
+pub const registry_v2 = @import("registry_v2.zig");
 pub const credentials = @import("credentials.zig");
 pub const ci_oidc = @import("ci_oidc.zig");
 pub const conda = @import("conda.zig");
@@ -53,11 +58,17 @@ pub const target_cpu = @import("target_cpu.zig");
 pub const debugserver = @import("debugserver.zig");
 
 test {
+    _ = @import("registry_v2.zig");
     _ = @import("metadata.zig");
     _ = @import("link_planner.zig");
     _ = @import("toml.zig");
     _ = @import("toml_edit.zig");
     _ = @import("manifest.zig");
+    _ = @import("names.zig");
+    _ = @import("import_names.zig");
+    _ = @import("import_names_test.zig");
+    _ = @import("std_modules.zig");
+    _ = @import("manifest_names_test.zig");
     _ = @import("scaffold.zig");
     _ = @import("semver.zig");
     _ = @import("env.zig");
@@ -73,9 +84,11 @@ test {
     _ = @import("credentials.zig");
     _ = @import("ci_oidc.zig");
     _ = @import("conda.zig");
+    _ = @import("conda_names_test.zig");
     _ = @import("bins.zig");
     _ = @import("resolve.zig");
     _ = @import("lock.zig");
+    _ = @import("lock_test.zig");
     _ = @import("install_plan.zig");
     _ = @import("install.zig");
     _ = @import("overlay.zig");
@@ -97,6 +110,8 @@ test {
     _ = @import("unit_graph_platform_test.zig");
     _ = @import("unit_graph_loads_test.zig");
     _ = @import("unit_graph_provided_test.zig");
+    _ = @import("unit_graph_imports_test.zig");
+    _ = @import("unit_graph_names_test.zig");
     _ = @import("install_plan_loads_test.zig");
     _ = @import("lock_libs.zig");
     _ = @import("lock_libs_test.zig");

@@ -1,6 +1,6 @@
 import type { GroupMembers } from '../group';
 import { bitmapHas, bitmapSet, memberAuditId, type GroupRecord, type GroupStore } from '../group-store';
-import { SUBDIRS_V1 } from '../types';
+import { repodataDirsOf } from '../channel-paths';
 import { groupAudit } from './group-lifecycle';
 import type { Queue } from './ports';
 import type { FlipGroupMessage, GroupHop, IndexMessage, IndexPkgMessage } from './types';
@@ -9,7 +9,8 @@ import type { FlipGroupMessage, GroupHop, IndexMessage, IndexPkgMessage } from '
  * What follows a group's commit: the chain that puts the group into the channel's files, in an order a client can rely on, and then
  * makes its rows plain `published` rows.
  *
- *   1. one repodata hop per subdir the group has files in,
+ *   1. one repodata hop per repodata directory the group has files in (a namespace channel's `<namespace>/<subdir>`, or the root's plain
+ *      `<subdir>` for flat names),
  *   2. then one index hop per member, in the header's `write_order` (dependencies first),
  *   3. then the flip: every member row becomes `published`, and the header `visible`.
  *
@@ -26,10 +27,13 @@ import type { FlipGroupMessage, GroupHop, IndexMessage, IndexPkgMessage } from '
 /** One step of the chain. */
 export type ChainStep = { kind: 'repodata'; subdir: string } | { kind: 'index'; position: number; name: string } | { kind: 'flip' };
 
-/** The subdirs the group has files in, in the channel's order. These are the repodata hops. */
-export function touchedSubdirs(members: GroupMembers): string[] {
-  const all = new Set(members.members.flatMap((m) => m.subdirs));
-  return SUBDIRS_V1.filter((s) => all.has(s));
+/**
+ * The repodata directories the group has files in, deduplicated and in code-unit order: these are the repodata hops. A flat member's
+ * directory is its plain subdir, so a header written before namespaces, whose `repodata_released` holds plain subdirs, still matches
+ * its flat members.
+ */
+export function touchedDirs(members: GroupMembers): string[] {
+  return [...new Set(members.members.flatMap((m) => repodataDirsOf(m.name, m.subdirs)))].sort();
 }
 
 /** The header is of a group that committed at `attempt` and is not visible yet: the only group whose chain runs. */
@@ -47,7 +51,7 @@ export const writeOrderOf = (h: GroupRecord, members: GroupMembers): number[] =>
 export function nextStep(h: GroupRecord, members: GroupMembers): ChainStep | undefined {
   if (h.committed_at === undefined || h.status !== 'committed') return undefined;
   const released = h.repodata_released ?? [];
-  const subdir = touchedSubdirs(members).find((s) => !released.includes(s));
+  const subdir = touchedDirs(members).find((s) => !released.includes(s));
   if (subdir !== undefined) return { kind: 'repodata', subdir };
   const order = writeOrderOf(h, members);
   const done = h.index_released ?? [];
@@ -67,7 +71,7 @@ export interface ChainQueues {
 export const stepDedupId = (gid: string, attempt: number, step: ChainStep, resend: number): string =>
   `grp:${gid}:${attempt}:${step.kind === 'repodata' ? `r-${step.subdir}` : step.kind === 'index' ? `i-${step.position}` : 'flip'}:${resend}`;
 
-/** Queue a step. The FIFO groups are those of the files it writes (the subdir, `pkg:<name>`), so a hop never runs beside another writer of the same file. */
+/** Queue a step. The FIFO groups are those of the files it writes (the repodata directory, `pkg:<name>`), so a hop never runs beside another writer of the same file. */
 export async function sendStep(q: ChainQueues, gid: string, attempt: number, resend: number, step: ChainStep): Promise<void> {
   const dedupId = stepDedupId(gid, attempt, step, resend);
   const hop: GroupHop = { group_id: gid, attempt, resend };
@@ -118,15 +122,15 @@ export interface HopDeps {
 }
 
 /**
- * The gate of a repodata hop: set the subdir in the header's `repodata_released` (a compare-and-set; already set is fine), and
+ * The gate of a repodata hop: set the repodata directory (the hop's `subdir`) in the header's `repodata_released` (a compare-and-set; already set is fine), and
  * answer the member list, or undefined when the hop is not for a group that is committed at its attempt and not yet visible, or for
- * a subdir the group has no file in. The caller builds the subdir's repodata only when this answers.
+ * a repodata directory the group has no file in. The caller builds that directory's repodata only when this answers.
  */
 export async function releaseRepodata(d: HopDeps, hop: GroupHop, subdir: string): Promise<GroupMembers | undefined> {
   const at = d.now().toISOString();
   const members = await d.groups.getGroupMembers(hop.group_id);
   if (!members) return stale(d, hop, 'a repodata hop for a group that has no member list');
-  if (!touchedSubdirs(members).includes(subdir)) return stale(d, hop, `a repodata hop for ${subdir}, which holds no file of the group`);
+  if (!touchedDirs(members).includes(subdir)) return stale(d, hop, `a repodata hop for ${subdir}, a repodata directory that holds no file of the group`);
   const after = await d.groups.updateGroup(hop.group_id, (cur) =>
     !chainLive(cur, hop.attempt) || (cur.repodata_released ?? []).includes(subdir) ? undefined : { ...cur, repodata_released: [...(cur.repodata_released ?? []), subdir], ...progressed(at) },
   );
@@ -146,7 +150,7 @@ export async function releaseIndex(d: HopDeps, q: ChainQueues, hop: GroupHop & {
   if (!chainLive(first, hop.attempt) || !members) return stale(d, hop, 'an index hop for a group that is not committed at that attempt');
   const order = writeOrderOf(first, members);
   if (members.members[order[hop.position] ?? -1]?.name !== name) return stale(d, hop, `an index hop for ${name} at position ${hop.position}, which is not that member's place in the write order`);
-  const subdirs = touchedSubdirs(members);
+  const subdirs = touchedDirs(members);
   const after = await d.groups.updateGroup(hop.group_id, (cur) => {
     if (!chainLive(cur, hop.attempt)) return undefined;
     const done = cur.index_released ?? [];

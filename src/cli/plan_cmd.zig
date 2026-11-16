@@ -133,6 +133,7 @@ fn run(arena: Allocator, a: Args) !u8 {
         return 1;
     }
     const old = install_cmd.readLock(arena, .plan) catch |e| {
+        // readLock has reported why: an invalid lock, or one that predates namespaces.
         if (e == error.Invalid) return exit_stale;
         return e;
     };
@@ -140,10 +141,6 @@ fn run(arena: Allocator, a: Args) !u8 {
         say("there is no mopm.lock; run 'mopm lock' (plan never resolves)\n", .{});
         return exit_stale;
     };
-    if (project.m.mojo_all and l.mojos.len == 0) {
-        say("mopm.lock is a version 1 lock, and mopm.toml lists [package] mojo; run 'mopm lock'\n", .{});
-        return exit_stale;
-    }
     if (try core.install.staleness(arena, project.m.mojo, project.roots, project.paths, l)) |why| {
         say("mopm.lock is out of date with mopm.toml: {s}; run 'mopm lock'\n", .{why});
         return exit_stale;

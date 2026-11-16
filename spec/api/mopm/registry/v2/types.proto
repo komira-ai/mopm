@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package mopm.registry.v2;
+
+import "mopm/registry/v2/options.proto";
+
+// A namespace: a GitHub login in lower case, letters, digits and single hyphens, at most 39 characters. Nothing
+// normalises it; a reader checks the length as well as the pattern.
+message Namespace {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {min_length: 1, max_length: 39, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"}];
+}
+
+// A normalised package name; in a full name, the import name.
+message Name {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {pattern: "^[a-z][a-z0-9_]{1,63}$"}];
+}
+
+// `<namespace>/<name>`, the name of a package: a `Namespace`, one `/` and a `Name`. The conda name of the package is
+// `mojo-<namespace>.<name>`.
+message FullName {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {max_length: 104, pattern: "^[a-z0-9]+(-[a-z0-9]+)*/[a-z][a-z0-9_]{1,63}$"}];
+}
+
+// A version: `MAJOR.MINOR.PATCH`, exactly three numbers separated by
+// dots, each without leading zeros. There are no pre-release, post-release,
+// dev or local versions and no shorter or longer spellings (`1.0`,
+// `1.0.0.0`, `1.0.0-rc.1`, `1.0rc1` are all invalid), so a version has one
+// spelling and two versions are equal exactly when their text is. Anything
+// else is `invalid_version`.
+message Version {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {pattern: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"}];
+}
+
+message Sha256 {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {pattern: "^[0-9a-f]{64}$"}];
+}
+
+// A git commit id: exactly 40 (SHA-1) or 64 (SHA-256) lowercase hex digits. The publisher states it when it commits a version
+// (`commitPublish`, `commitGroup`); the registry stores it once with the version and serves it back from `getVersion`. It is
+// informational: the registry does not verify it against the archives, the repository or the caller's identity, and it never
+// compares or orders versions by it. Anything else (uppercase, another length, a non-hex character, a value that is not a
+// string) is `invalid_request`.
+message SourceCommit {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"}];
+}
+
+// A conda subdir. New values may be added.
+enum Subdir {
+  SUBDIR_UNSPECIFIED = 0;
+  SUBDIR_LINUX_64 = 1 [(json) = "linux-64"];
+  SUBDIR_LINUX_AARCH64 = 2 [(json) = "linux-aarch64"];
+  SUBDIR_OSX_ARM64 = 3 [(json) = "osx-arm64"];
+  SUBDIR_NOARCH = 4;
+}
+
+// The conda file name, `mojo-<namespace>.<name>-<version>-<build>.conda`.
+message Filename {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {pattern: "^mojo-[a-z0-9]+(-[a-z0-9]+)*\\.[a-z][a-z0-9_]{1,63}-[0-9][0-9a-z.]*-[A-Za-z0-9_.]+\\.conda$"}];
+}
+
+message Timestamp {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {format: "date-time"}];
+}
+
+// A bearer token. Shown once, at creation.
+message Token {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {pattern: "^mopm_[a-z2-7]{32,64}$"}];
+}
+
+// `published`: resolvable. `yanked`: hidden from new resolution, bytes
+// stay. `tombstoned`: bytes removed by an administrator; the number stays
+// burned. Clients treat an unknown state as not resolvable.
+enum VersionState {
+  VERSION_STATE_UNSPECIFIED = 0;
+  VERSION_STATE_PUBLISHED = 1;
+  VERSION_STATE_YANKED = 2;
+  VERSION_STATE_TOMBSTONED = 3;
+}
+
+message FileRef {
+  Subdir subdir = 1 [(field) = {required: true}];
+  Filename filename = 2 [(field) = {required: true}];
+  Sha256 sha256 = 3 [(field) = {required: true}];
+  int64 size = 4 [(field) = {required: true, minimum: 1}];
+  // Absolute URL on the channel host. Absent when the version is tombstoned.
+  string url = 5 [(field) = {format: "uri"}];
+}
+
+message Dep {
+  FullName name = 1 [(field) = {required: true}];
+  string range = 2;
+}
+
+message NativeRef {
+  string id = 1 [(field) = {required: true, min_length: 1}];
+  string soname = 2 [(field) = {required: true, min_length: 1}];
+}
+
+// Free-form tags from `keywords` in mopm.toml, at most 10, each 1 to 32 characters (see spec/mopm-toml.md).
+message Keywords {
+  option (schema) = {wrapper: true};
+  repeated string value = 1 [(field) = {max_items: 10, unique_items: true, items: {min_length: 1, max_length: 32}}];
+}
+
+message GroupId {
+  option (schema) = {wrapper: true};
+  string value = 1 [(field) = {pattern: "^grp_[0-9a-f]{32}$"}];
+}

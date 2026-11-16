@@ -18,15 +18,18 @@ export interface FakeGitHubState {
   pollScript: Array<Record<string, unknown>>;
   user: Record<string, unknown>;
   userStatus: number;
+  /** `GET /user/memberships/orgs/{org}` by organization name: the status and body it answers. A name not listed is a 404. */
+  memberships: Record<string, { status?: number; body: unknown }>;
   calls: Array<{ url: string; method: string; headers: Record<string, string>; body?: string }>;
 }
 
-/** A fake of the three GitHub endpoints login uses. No network. */
+/** A fake of the GitHub endpoints login and organization registration use. No network. */
 export function fakeGitHub(over: Partial<FakeGitHubState> = {}) {
   const state: FakeGitHubState = {
     pollScript: [{ access_token: 'gho_faketoken', token_type: 'bearer', scope: 'read:user' }],
     user: { id: 4242, login: 'octo', two_factor_authentication: true },
     userStatus: 200,
+    memberships: {},
     calls: [],
     ...over,
   };
@@ -47,6 +50,11 @@ export function fakeGitHub(over: Partial<FakeGitHubState> = {}) {
       return reply(200, next);
     }
     if (url === 'https://api.github.com/user') return reply(state.userStatus, state.user);
+    const org = /^https:\/\/api\.github\.com\/user\/memberships\/orgs\/([^/?]+)$/.exec(url);
+    if (org) {
+      const m = state.memberships[org[1]!];
+      return m ? reply(m.status ?? 200, m.body) : reply(404, { message: 'Not Found' });
+    }
     return reply(404, {});
   };
   return { state, fetchFn };
@@ -98,3 +106,11 @@ export function goodClaims(clock: TestClock, over: Record<string, unknown> = {})
     ...over,
   };
 }
+
+/** GitHub's answer for `GET /user/memberships/orgs/{org}`. */
+export const orgMembership = (org: { id: number; login: string }, role = 'admin', state = 'active', userId = 4242) => ({
+  state,
+  role,
+  organization: { id: org.id, login: org.login, url: `https://api.github.com/orgs/${org.login}` },
+  user: { id: userId, login: 'octo' },
+});

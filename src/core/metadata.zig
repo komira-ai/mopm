@@ -1,13 +1,15 @@
-//! Parser for the `<name>.mopm.json` file embedded in every installed package
-//! (schema 1; see spec/package-metadata.schema.json).
+//! Parser for the `<import name>.mopm.json` file embedded in every installed package
+//! (schema 2; see spec/package-metadata.schema.json). `name` and each dependency's `name` are full names
+//! (`komira-ai/json`).
 //!
-//! Unknown keys are ignored; a higher `schema` is refused.
+//! Unknown keys are ignored; any `schema` but 2 is refused.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const native_link = @import("native_link.zig");
+const names = @import("names.zig");
 
-pub const supported_schema: u32 = 1;
+pub const supported_schema: u32 = 2;
 
 /// Which flavours of a native library the package ships.
 pub const Kind = enum { shared, static, both };
@@ -50,6 +52,8 @@ pub const ParseError = error{
     InvalidMetadata,
     UnsupportedSchema,
     EmptyName,
+    /// `name`, or the name of a dependency, is not a full name.
+    BadName,
     MissingFile,
     BadSoname,
     BadLink,
@@ -76,9 +80,13 @@ pub fn parse(arena: Allocator, text: []const u8) ParseError!Metadata {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.InvalidMetadata,
     };
-    if (m.schema > supported_schema) return error.UnsupportedSchema;
     if (m.schema == 0) return error.InvalidMetadata;
+    if (m.schema != supported_schema) return error.UnsupportedSchema;
     if (m.name.len == 0) return error.EmptyName;
+    if (!names.isFullName(m.name)) return error.BadName;
+    for (m.deps) |d| {
+        if (!names.isFullName(d.name)) return error.BadName;
+    }
     for (m.native) |n| {
         if (linkName(n.soname) == null) return error.BadSoname;
         if (n.kind != .static and n.file.len == 0) return error.MissingFile;
@@ -110,17 +118,17 @@ test "parse a full document with defaults and unknown keys" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const m = try parse(arenaFor(&t),
-        \\{ "schema": 1, "name": "http_client", "version": "0.4.0", "extra": [1, 2],
-        \\  "deps": [{"name": "http_core", "range": ">=1.2"}],
+        \\{ "schema": 2, "name": "komira-ai/http_client", "version": "0.4.0", "extra": [1, 2],
+        \\  "deps": [{"name": "komira-ai/http_core", "range": ">=1.2"}],
         \\  "native": [
         \\    {"id": "a", "soname": "liba.so.1", "file": "lib/liba.so.1", "needs": ["libb.so.1"]},
         \\    {"id": "b", "soname": "libb.so.1", "kind": "both", "mode": "load",
         \\     "file": "lib/libb.so.1", "static_file": "lib/libb.a"}
         \\  ] }
     );
-    try std.testing.expectEqualStrings("http_client", m.name);
+    try std.testing.expectEqualStrings("komira-ai/http_client", m.name);
     try std.testing.expectEqual(@as(usize, 1), m.deps.len);
-    try std.testing.expectEqualStrings("http_core", m.deps[0].name);
+    try std.testing.expectEqualStrings("komira-ai/http_core", m.deps[0].name);
     try std.testing.expectEqual(@as(usize, 2), m.native.len);
     try std.testing.expectEqual(Kind.shared, m.native[0].kind);
     try std.testing.expectEqual(Mode.link, m.native[0].mode);
@@ -132,15 +140,29 @@ test "parse a full document with defaults and unknown keys" {
 test "a package without natives parses" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
-    const m = try parse(arenaFor(&t), "{\"schema\": 1, \"name\": \"pure\"}");
+    const m = try parse(arenaFor(&t), "{\"schema\": 2, \"name\": \"komira-ai/pure\"}");
     try std.testing.expectEqual(@as(usize, 0), m.native.len);
     try std.testing.expectEqual(@as(usize, 0), m.deps.len);
 }
 
-test "a higher schema is refused" {
+test "a schema other than 2 is refused, the old one and a higher one alike" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
-    try std.testing.expectError(error.UnsupportedSchema, parse(arenaFor(&t), "{\"schema\": 2, \"name\": \"x\"}"));
+    const a = arenaFor(&t);
+    try std.testing.expectError(error.UnsupportedSchema, parse(a, "{\"schema\": 1, \"name\": \"json\"}"));
+    try std.testing.expectError(error.UnsupportedSchema, parse(a, "{\"schema\": 1, \"name\": \"komira-ai/json\"}"));
+    try std.testing.expectError(error.UnsupportedSchema, parse(a, "{\"schema\": 3, \"name\": \"komira-ai/json\"}"));
+}
+
+test "name and dependency names must be full names" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = arenaFor(&t);
+    try std.testing.expectError(error.BadName, parse(a, "{\"schema\": 2, \"name\": \"json\"}"));
+    try std.testing.expectError(error.BadName, parse(a, "{\"schema\": 2, \"name\": \"Komira/json\"}"));
+    try std.testing.expectError(error.BadName, parse(a, "{\"schema\": 2, \"name\": \"komira-ai/json\", \"deps\": [{\"name\": \"bb\"}]}"));
+    const m = try parse(a, "{\"schema\": 2, \"name\": \"komira-ai/json\", \"deps\": [{\"name\": \"other/bb\"}]}");
+    try std.testing.expectEqualStrings("other/bb", m.deps[0].name);
 }
 
 test "invalid documents are refused" {
@@ -148,12 +170,12 @@ test "invalid documents are refused" {
     defer t.deinit();
     const a = arenaFor(&t);
     try std.testing.expectError(error.InvalidMetadata, parse(a, "not json"));
-    try std.testing.expectError(error.InvalidMetadata, parse(a, "{\"name\": \"x\"}"));
-    try std.testing.expectError(error.InvalidMetadata, parse(a, "{\"schema\": 0, \"name\": \"x\"}"));
+    try std.testing.expectError(error.InvalidMetadata, parse(a, "{\"name\": \"o/xx\"}"));
+    try std.testing.expectError(error.InvalidMetadata, parse(a, "{\"schema\": 0, \"name\": \"o/xx\"}"));
     try std.testing.expectError(error.InvalidMetadata, parse(a,
-        \\{"schema": 1, "name": "x", "native": [{"id": "a", "soname": "liba.so", "kind": "weird", "file": "f"}]}
+        \\{"schema": 2, "name": "o/xx", "native": [{"id": "a", "soname": "liba.so", "kind": "weird", "file": "f"}]}
     ));
-    try std.testing.expectError(error.EmptyName, parse(a, "{\"schema\": 1, \"name\": \"\"}"));
+    try std.testing.expectError(error.EmptyName, parse(a, "{\"schema\": 2, \"name\": \"\"}"));
 }
 
 test "natives are validated" {
@@ -161,19 +183,19 @@ test "natives are validated" {
     defer t.deinit();
     const a = arenaFor(&t);
     try std.testing.expectError(error.BadSoname, parse(a,
-        \\{"schema": 1, "name": "x", "native": [{"id": "a", "soname": "a.so", "file": "f"}]}
+        \\{"schema": 2, "name": "o/xx", "native": [{"id": "a", "soname": "a.so", "file": "f"}]}
     ));
     // shared without a shared file
     try std.testing.expectError(error.MissingFile, parse(a,
-        \\{"schema": 1, "name": "x", "native": [{"id": "a", "soname": "liba.so.1"}]}
+        \\{"schema": 2, "name": "o/xx", "native": [{"id": "a", "soname": "liba.so.1"}]}
     ));
     // static without an archive
     try std.testing.expectError(error.MissingFile, parse(a,
-        \\{"schema": 1, "name": "x", "native": [{"id": "a", "soname": "liba.a", "kind": "static", "file": "f"}]}
+        \\{"schema": 2, "name": "o/xx", "native": [{"id": "a", "soname": "liba.a", "kind": "static", "file": "f"}]}
     ));
     // both needs both files
     try std.testing.expectError(error.MissingFile, parse(a,
-        \\{"schema": 1, "name": "x", "native": [{"id": "a", "soname": "liba.so.1", "kind": "both", "file": "f"}]}
+        \\{"schema": 2, "name": "o/xx", "native": [{"id": "a", "soname": "liba.so.1", "kind": "both", "file": "f"}]}
     ));
 }
 
@@ -181,7 +203,7 @@ test "a native library's exclusivity group is read, and is empty when the metada
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const m = try parse(arenaFor(&t),
-        \\{"schema": 1, "name": "x", "native": [
+        \\{"schema": 2, "name": "o/xx", "native": [
         \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "../liba.a", "exclusive": "libcrypto"},
         \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "../libb.a"}]}
     );
@@ -196,7 +218,7 @@ test "a static native's link names are read in order, empty when the metadata na
     defer t.deinit();
     const a = arenaFor(&t);
     const m = try parse(a,
-        \\{"schema": 1, "name": "x", "native": [
+        \\{"schema": 2, "name": "o/xx", "native": [
         \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "../liba.a", "link": ["c++", "m"]},
         \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "../libb.a"}]}
     );
@@ -205,7 +227,7 @@ test "a static native's link names are read in order, empty when the metadata na
     try std.testing.expectEqualStrings("m", m.native[0].link[1]);
     try std.testing.expectEqual(@as(usize, 0), m.native[1].link.len);
 
-    const head = "{\"schema\": 1, \"name\": \"x\", \"native\": [{\"id\": \"a\", \"soname\": \"liba.a\", ";
+    const head = "{\"schema\": 2, \"name\": \"o/xx\", \"native\": [{\"id\": \"a\", \"soname\": \"liba.a\", ";
     // outside the list, twice, on a shared library, on a library the package loads itself
     try std.testing.expectError(error.BadLink, parse(a, head ++ "\"kind\": \"static\", \"static_file\": \"f\", \"link\": [\"stdc++\"]}]}"));
     try std.testing.expectError(error.BadLink, parse(a, head ++ "\"kind\": \"static\", \"static_file\": \"f\", \"link\": [\"-Wl,-rpath,/x\"]}]}"));

@@ -1,0 +1,1 @@
+6:9: 'lib' in [targets]: the path 'src/jsonlib' ends in 'jsonlib', not in the import name 'json'; Mojo imports a package by its directory's name, so name the directory json

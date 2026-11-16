@@ -10,6 +10,7 @@ const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
 const bins = core.bins;
 const conda = core.conda;
+const pkg_names = core.names;
 
 pub const Ref = struct { package: []const u8, program: []const u8 };
 
@@ -57,11 +58,12 @@ fn shipped(arena: Allocator, prefix: []const u8, package: []const u8) Allocator.
     return names.items;
 }
 
-/// The source file of `ref` in the environment at `prefix` (absolute), given the names of the packages installed there
-/// (`lib/mojo/<name>.mopm.json`): the package must be installed, and ship the program.
+/// The source file of `ref` in the environment at `prefix` (absolute), given the full names of the packages installed
+/// there. `ref.package` is an import name (the `lib/mojo/<import name>.mopm.json` of the package), as the user typed it,
+/// and the messages name it so: the package must be installed, and ship the program.
 pub fn resolve(arena: Allocator, prefix: []const u8, installed: []const []const u8, ref: Ref) Allocator.Error!Result([]const u8) {
     var present = false;
-    for (installed) |n| present = present or std.mem.eql(u8, n, ref.package);
+    for (installed) |n| present = present or std.mem.eql(u8, pkg_names.importName(n), ref.package);
     if (!present) {
         return .{ .bad = try std.fmt.allocPrint(arena, "package '{s}' is not installed in {s}; add it to mopm.toml and run 'mopm sync'", .{ ref.package, prefix }) };
     }
@@ -118,7 +120,7 @@ test "resolve: the installed file of a shipped program, and a reason for each th
     // A directory of programs whose package is not installed.
     try writeFile(&tmp, "lib/mojo/ghost.bins/x.mojo", "x");
     const prefix = try tmp.dir.realpathAlloc(a, ".");
-    const installed = [_][]const u8{ "benchy", "plain" };
+    const installed = [_][]const u8{ "acme/benchy", "acme/plain" };
 
     const got = (try resolve(a, prefix, &installed, .{ .package = "benchy", .program = "alpha" })).ok;
     try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "{s}/lib/mojo/benchy.bins/alpha.mojo", .{prefix}), got);
@@ -129,4 +131,7 @@ test "resolve: the installed file of a shipped program, and a reason for each th
     try std.testing.expectEqualStrings("package 'plain' ships no programs", none);
     const ghost = (try resolve(a, prefix, &installed, .{ .package = "ghost", .program = "x" })).bad;
     try std.testing.expect(std.mem.startsWith(u8, ghost, "package 'ghost' is not installed in "));
+    // The reference is an import name: the full name of the package does not name it.
+    const full = (try resolve(a, prefix, &installed, .{ .package = "acme/benchy", .program = "alpha" })).bad;
+    try std.testing.expect(std.mem.startsWith(u8, full, "package 'acme/benchy' is not installed in "));
 }

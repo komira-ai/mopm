@@ -30,7 +30,8 @@
 //!
 //! The lock's channel is the fake's loopback http URL with a path
 //! (`http://127.0.0.1:<port>/channel/`), which mopm writes and reads; a lock
-//! naming a plain-http channel on any other host is refused. The lock written
+//! naming a plain-http channel on any other host is refused. Every package is in the namespace `example`: its index
+//! file is `index/v2/ex/am/example/<name>` and its channel is `channel/example/<subdir>/`. The lock written
 //! is compared byte for byte with expected.lock and also validated against
 //! spec/lock.schema.json plus the rules of spec/lock.md, with the validator of
 //! the contract driver (contract_test.zig). So that the schema check is shown
@@ -75,10 +76,18 @@ const Ver = struct {
     yank_reason: ?[]const u8 = null,
     tombstoned: bool = false,
 };
+/// A package of the namespace `example`; `name` is its import name.
 const Pkg = struct { name: []const u8, versions: []const Ver };
 
-const client_deps = [_]Dep{ .{ .name = "http_core", .range = ">=1.2,<2" }, .{ .name = "crypto", .range = "2" } };
-const tls_deps = [_]Dep{.{ .name = "http_core", .range = "~1.2" }};
+const namespace = "example";
+
+/// `mojo-example.<name>`, the conda name of the package `name` of the namespace `example`.
+fn condaName(a: Allocator, name: []const u8) ![]u8 {
+    return std.fmt.allocPrint(a, "mojo-{s}.{s}", .{ namespace, name });
+}
+
+const client_deps = [_]Dep{ .{ .name = "example/http_core", .range = ">=1.2,<2" }, .{ .name = "example/crypto", .range = "2" } };
+const tls_deps = [_]Dep{.{ .name = "example/http_core", .range = "~1.2" }};
 const crypto_native = [_]Native{.{ .id = "crypto", .soname = "libcrypto_native.a" }};
 
 const packages = [_]Pkg{
@@ -120,7 +129,7 @@ const all_subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64", "no
 const Tombstone = struct { date: []const u8, reason_code: []const u8 };
 const File = struct { filename: []const u8, sha256: []const u8, size: u32, subdir: []const u8, url: ?[]const u8 = null };
 const Record = struct {
-    v: u8 = 1,
+    v: u8 = 2,
     name: []const u8,
     version: []const u8,
     build: []const u8,
@@ -146,7 +155,7 @@ const RepoEntry = struct {
 };
 
 fn filenameOf(a: Allocator, pkg: []const u8, v: Ver) ![]u8 {
-    return std.fmt.allocPrint(a, "mojo-{s}-{s}-mojo{s}_0.conda", .{ pkg, v.ver, v.mojo });
+    return std.fmt.allocPrint(a, "{s}-{s}-mojo{s}_0.conda", .{ try condaName(a, pkg), v.ver, v.mojo });
 }
 
 fn toJson(a: Allocator, value: anytype) ![]u8 {
@@ -179,7 +188,7 @@ const crypto_archive_osx = "!<arch>\ncrypto native, osx-arm64\n";
 fn packCrypto(a: Allocator, mopm: []const u8, work: []const u8) ![]const RealFile {
     const dir = try h.join(a, &.{ work, "crypto_pack" });
     const manifest = try h.join(a, &.{ dir, "mopm.toml" });
-    try h.writeFile(manifest, "[package]\nname = \"crypto\"\nversion = \"2.0.1\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[native.crypto]\nkind = \"static\"\n");
+    try h.writeFile(manifest, "[package]\nname = \"example/crypto\"\nversion = \"2.0.1\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[native.crypto]\nkind = \"static\"\n");
     const mojoc = try h.join(a, &.{ dir, "crypto.mojoc" });
     try h.writeFile(mojoc, "not a real mojoc, only bytes\n");
     const f_linux = try h.join(a, &.{ dir, "linux", "libcrypto_native.a" });
@@ -188,16 +197,15 @@ fn packCrypto(a: Allocator, mopm: []const u8, work: []const u8) ![]const RealFil
     try h.writeFile(f_osx, crypto_archive_osx);
     const out = try h.join(a, &.{ dir, "dist" });
     const argv = [_][]const u8{
-        mopm, "pack", "--compiler", "1.0.0", "--manifest", manifest, "-o", out,
-        "--mojoc", try std.fmt.allocPrint(a, "linux-64={s}", .{mojoc}), "--mojoc", try std.fmt.allocPrint(a, "osx-arm64={s}", .{mojoc}),
-        "--native", try std.fmt.allocPrint(a, "crypto=linux-64:{s}", .{f_linux}), "--native", try std.fmt.allocPrint(a, "crypto=osx-arm64:{s}", .{f_osx}),
+        mopm,      "pack",                                              "--compiler", "1.0.0",                                              "--manifest", manifest,                                                     "-o",       out,
+        "--mojoc", try std.fmt.allocPrint(a, "linux-64={s}", .{mojoc}), "--mojoc",    try std.fmt.allocPrint(a, "osx-arm64={s}", .{mojoc}), "--native",   try std.fmt.allocPrint(a, "crypto=linux-64:{s}", .{f_linux}), "--native", try std.fmt.allocPrint(a, "crypto=osx-arm64:{s}", .{f_osx}),
     };
     const r = try std.process.Child.run(.{ .allocator = a, .argv = &argv });
     if (r.term != .Exited or r.term.Exited != 0) {
         std.debug.print("mopm pack of crypto failed: {s}{s}\n", .{ r.stdout, r.stderr });
         return error.PackFailed;
     }
-    const name = "mojo-crypto-2.0.1-mojo1.0.0_0.conda";
+    const name = "mojo-example.crypto-2.0.1-mojo1.0.0_0.conda";
     var reals = std.ArrayList(RealFile).init(a);
     for ([_][]const u8{ "linux-64", "osx-arm64" }) |sub| {
         const bytes = try h.readFile(a, try h.join(a, &.{ out, sub, name }));
@@ -224,13 +232,13 @@ fn writeRegistry(a: Allocator, root: []const u8, base: []const u8, reals: []cons
                 const real = realFile(reals, sub, fname);
                 const sha = if (real) |r| r.sha256 else try digest(a, sub, fname);
                 const size: u32 = if (real) |r| @intCast(r.bytes.len) else SIZE;
-                if (real) |r| try h.writeFile(try std.fmt.allocPrint(a, "{s}/channel/{s}/{s}", .{ root, sub, fname }), r.bytes);
+                if (real) |r| try h.writeFile(try std.fmt.allocPrint(a, "{s}/channel/{s}/{s}/{s}", .{ root, namespace, sub, fname }), r.bytes);
                 try files.append(.{
                     .filename = fname,
                     .sha256 = sha,
                     .size = size,
                     .subdir = sub,
-                    .url = if (std.mem.eql(u8, v.state, "tombstoned")) null else try std.fmt.allocPrint(a, "{s}/channel/{s}/{s}", .{ base, sub, fname }),
+                    .url = if (std.mem.eql(u8, v.state, "tombstoned")) null else try std.fmt.allocPrint(a, "{s}/channel/{s}/{s}/{s}", .{ base, namespace, sub, fname }),
                 });
                 const idx = for (all_subdirs, 0..) |s, i| {
                     if (std.mem.eql(u8, s, sub)) break i;
@@ -240,12 +248,12 @@ fn writeRegistry(a: Allocator, root: []const u8, base: []const u8, reals: []cons
                     var depends = std.ArrayList([]const u8).init(a);
                     try depends.append(try std.fmt.allocPrint(a, "mojo-compiler =={s}", .{v.mojo}));
                     // Deliberately not the index's ranges: never read.
-                    for (v.deps) |d| try depends.append(try std.fmt.allocPrint(a, "mojo-{s} >=99", .{d.name}));
+                    for (v.deps) |d| try depends.append(try std.fmt.allocPrint(a, "mojo-{s}.{s} >=99", .{ namespace, d.name["example/".len..] }));
                     try depends.append("mojo-zlib_never_read 1");
                     const entry = RepoEntry{
                         .build = build,
                         .depends = depends.items,
-                        .name = try std.fmt.allocPrint(a, "mojo-{s}", .{pkg.name}),
+                        .name = try condaName(a, pkg.name),
                         .sha256 = if (tampered) try digest(a, sub, "tampered") else sha,
                         .size = size,
                         .subdir = sub,
@@ -258,7 +266,7 @@ fn writeRegistry(a: Allocator, root: []const u8, base: []const u8, reals: []cons
                 }
             }
             const rec = Record{
-                .name = pkg.name,
+                .name = try std.fmt.allocPrint(a, "{s}/{s}", .{ namespace, pkg.name }),
                 .version = v.ver,
                 .build = build,
                 .state = v.state,
@@ -272,9 +280,8 @@ fn writeRegistry(a: Allocator, root: []const u8, base: []const u8, reals: []cons
             };
             try lines.writer().print("{s}\n", .{try toJson(a, rec)});
         }
-        var padded: [4]u8 = "____".*;
-        for (pkg.name[0..@min(pkg.name.len, 4)], 0..) |b, i| padded[i] = b;
-        const path = try std.fmt.allocPrint(a, "{s}/index/{s}/{s}/{s}", .{ root, padded[0..2], padded[2..4], pkg.name });
+        // The namespace's first four characters shard the index: `ex/am`.
+        const path = try std.fmt.allocPrint(a, "{s}/index/v2/{s}/{s}/{s}/{s}", .{ root, namespace[0..2], namespace[2..4], namespace, pkg.name });
         try h.writeFile(path, lines.items);
     }
     for (all_subdirs, 0..) |sub, i| {
@@ -286,7 +293,7 @@ fn writeRegistry(a: Allocator, root: []const u8, base: []const u8, reals: []cons
             try doc.writer().print("\"{s}\"", .{name});
         }
         try doc.appendSlice("]}\n");
-        try h.writeFile(try std.fmt.allocPrint(a, "{s}/channel/{s}/repodata.json", .{ root, sub }), doc.items);
+        try h.writeFile(try std.fmt.allocPrint(a, "{s}/channel/{s}/{s}/repodata.json", .{ root, namespace, sub }), doc.items);
     }
 }
 
@@ -294,7 +301,7 @@ fn writeRegistry(a: Allocator, root: []const u8, base: []const u8, reals: []cons
 
 const MANIFEST_HEAD =
     \\[package]
-    \\name = "app"
+    \\name = "example/app"
     \\version = "0.1.0"
     \\
     \\[toolchain]
@@ -305,12 +312,12 @@ const MANIFEST_HEAD =
 ;
 
 const TREE =
-    \\app 0.1.0
-    \\├── http_client 0.4.0
-    \\│   ├── crypto 2.0.1
-    \\│   └── http_core 1.2.5
-    \\└── tls 1.1.0
-    \\    └── http_core 1.2.5
+    \\example/app 0.1.0
+    \\├── example/http_client 0.4.0
+    \\│   ├── example/crypto 2.0.1
+    \\│   └── example/http_core 1.2.5
+    \\└── example/tls 1.1.0
+    \\    └── example/http_core 1.2.5
     \\
 ;
 
@@ -337,7 +344,7 @@ const Cx = struct {
 
     /// A path dependency's own mopm.toml.
     fn package(cx: *Cx, dir: []const u8, name: []const u8, ver: []const u8, deps: []const u8) !void {
-        try h.writeFile(try h.join(cx.a, &.{ dir, "mopm.toml" }), try std.fmt.allocPrint(cx.a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\n\n[dependencies]\n{s}\n", .{ name, ver, deps }));
+        try h.writeFile(try h.join(cx.a, &.{ dir, "mopm.toml" }), try std.fmt.allocPrint(cx.a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\n\n[dependencies]\n{s}\n", .{ name, ver, deps }));
     }
 
     /// `mopm <args>` in `dir`; stdout and stderr apart.
@@ -402,31 +409,31 @@ fn has(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
 }
 
-// ------------------------------------- [package] mojo, the version 2 lock, mopm plan
+// ------------------------------------- [package] mojo, the version 3 lock, mopm plan
 
 /// A project whose mopm.toml lists its Mojo versions under [package] and
 /// depends on `dep`, with one source file for its library.
 fn unitProject(cx: *Cx, name: []const u8, mojo: []const u8, dep: []const u8) ![]u8 {
     const d = try h.join(cx.a, &.{ cx.work, name });
-    try h.writeFile(try h.join(cx.a, &.{ d, "mopm.toml" }), try cx.fmt("[package]\nname = \"app\"\nversion = \"0.1.0\"\nmojo = {s}\n\n[dependencies]\n{s}\n", .{ mojo, dep }));
+    try h.writeFile(try h.join(cx.a, &.{ d, "mopm.toml" }), try cx.fmt("[package]\nname = \"example/app\"\nversion = \"0.1.0\"\nmojo = {s}\n\n[dependencies]\n{s}\n", .{ mojo, dep }));
     try h.writeFile(try h.join(cx.a, &.{ d, "src", "app", "__init__.mojo" }), "def run():\n    pass\n");
     return d;
 }
 
-/// `[package] mojo` makes a version 2 lock with the toolchain's closure hash;
+/// `[package] mojo` makes a version 3 lock with the toolchain's closure hash;
 /// `mopm plan --unit-graph --locked` prints the graph of it and refuses what
 /// it cannot plan with the exit status spec/unit-graph.md names. Every
 /// refusal here is checked against a project that differs in one thing only.
 fn unitGraph(cx: *Cx) !void {
     h.stage = "unit graph";
-    const ok_dir = try unitProject(cx, "unit_ok", "[\"1.0.0\"]", "legacy = \"1\"");
+    const ok_dir = try unitProject(cx, "unit_ok", "[\"1.0.0\"]", "\"example/legacy\" = \"1\"");
     var r = try cx.runReg(ok_dir, &.{"lock"});
     cx.ok("[package] mojo: lock succeeds", r.code == 0 and has(r.stdout, "for mojo 1.0.0\n"), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
     const lock_text = (try cx.lockOf(ok_dir)) orelse "";
-    cx.ok("the lock is version 2: mojo, a closure hash, one artifact per Mojo version", has(lock_text, "\"lock_version\": 2") and has(lock_text, "\"mojo\": [\n    \"1.0.0\"\n  ]") and has(lock_text, "\"toolchain\": {\n    \"1.0.0\": {\n      \"linux-64\": \"") and has(lock_text, "\"artifacts\": {\n        \"1.0.0\": {"), lock_text);
+    cx.ok("the lock is version 3: mojo, a closure hash, one artifact per Mojo version", has(lock_text, "\"lock_version\": 3") and has(lock_text, "\"mojo\": [\n    \"1.0.0\"\n  ]") and has(lock_text, "\"toolchain\": {\n    \"1.0.0\": {\n      \"linux-64\": \"") and has(lock_text, "\"artifacts\": {\n        \"1.0.0\": {"), lock_text);
 
     r = try cx.run(ok_dir, &.{ "plan", "--unit-graph", "--locked" });
-    cx.ok("plan prints the graph: units named for the Mojo version, the dependency prebuilt", r.code == 0 and has(r.stdout, "\"unit_graph\": 2") and has(r.stdout, "\"id\": \"app@0.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"id\": \"legacy@1.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"kind\": \"prebuilt\"") and has(r.stdout, "\"closure_sha256\": \""), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+    cx.ok("plan prints the graph: units named for the Mojo version, the dependency prebuilt", r.code == 0 and has(r.stdout, "\"unit_graph\": 6") and has(r.stdout, "\"id\": \"example/app@0.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"id\": \"example/legacy@1.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"kind\": \"prebuilt\"") and has(r.stdout, "\"closure_sha256\": \""), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
     const first = r.stdout;
     r = try cx.run(ok_dir, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0" });
     cx.ok("plan prints the same bytes again", r.code == 0 and std.mem.eql(u8, first, r.stdout), r.stderr);
@@ -437,29 +444,29 @@ fn unitGraph(cx: *Cx) !void {
     cx.ok("plan without --locked is a usage error (2)", r.code == 2, r.stderr);
 
     // A lock that no longer fits mopm.toml: the same project asking for a version the lock does not hold.
-    const stale = try unitProject(cx, "unit_stale", "[\"1.0.0\"]", "legacy = \"1\"");
+    const stale = try unitProject(cx, "unit_stale", "[\"1.0.0\"]", "\"example/legacy\" = \"1\"");
     r = try cx.runReg(stale, &.{"lock"});
-    try h.writeFile(try h.join(cx.a, &.{ stale, "mopm.toml" }), "[package]\nname = \"app\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\nlegacy = \"=1.0.0\"\n");
+    try h.writeFile(try h.join(cx.a, &.{ stale, "mopm.toml" }), "[package]\nname = \"example/app\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\"example/legacy\" = \"=1.0.0\"\n");
     r = try cx.run(stale, &.{ "plan", "--unit-graph", "--locked" });
-    cx.ok("a stale lock is refused (3) and not repaired", r.code == 3 and has(r.stderr, "out of date") and has(r.stderr, "but mopm.lock has legacy 1.1.0") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
-    const nolock = try unitProject(cx, "unit_nolock", "[\"1.0.0\"]", "legacy = \"1\"");
+    cx.ok("a stale lock is refused (3) and not repaired", r.code == 3 and has(r.stderr, "out of date") and has(r.stderr, "but mopm.lock has example/legacy 1.1.0") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    const nolock = try unitProject(cx, "unit_nolock", "[\"1.0.0\"]", "\"example/legacy\" = \"1\"");
     r = try cx.run(nolock, &.{ "plan", "--unit-graph", "--locked" });
     cx.ok("no lock is refused (3); plan never resolves", r.code == 3 and has(r.stderr, "there is no mopm.lock") and (try cx.lockOf(nolock)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 
     // A native library: `mopm lock` fetches the package file, hashes the archive in it and pins that (with the kind);
     // `plan` takes the pin; a lock without it (one written before locks held it) is refused.
-    const native = try unitProject(cx, "unit_native", "[\"1.0.0\"]", "crypto = \"2\"");
+    const native = try unitProject(cx, "unit_native", "[\"1.0.0\"]", "\"example/crypto\" = \"2\"");
     r = try cx.runReg(native, &.{"lock"});
-    cx.ok("lock of a package that ships a static archive succeeds", r.code == 0 and has(r.stdout, "adding crypto 2.0.1\n"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    cx.ok("lock of a package that ships a static archive succeeds", r.code == 0 and has(r.stdout, "adding example/crypto 2.0.1\n"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     const native_lock = (try cx.lockOf(native)) orelse "";
     const archive_sha = try sha256Hex(cx.a, crypto_archive_linux);
     const pin = try cx.fmt(",\n          \"sha256\": \"{s}\",\n          \"kind\": \"static\"", .{archive_sha});
     const pin_osx = try cx.fmt(",\n          \"sha256\": \"{s}\",\n          \"kind\": \"static\"", .{try sha256Hex(cx.a, crypto_archive_osx)});
     cx.ok("the lock pins each subdir's archive: the sha256 of the library file (not of the package file) and its kind", has(native_lock, pin) and has(native_lock, pin_osx), native_lock);
     r = try cx.run(native, &.{ "plan", "--unit-graph", "--locked" });
-    cx.ok("plan takes the pinned archive: soname, sha256 and kind are in the graph", r.code == 0 and has(r.stdout, try cx.fmt("{{\"id\": \"crypto\", \"soname\": \"libcrypto_native.a\", \"sha256\": \"{s}\", \"package\": \"crypto\", \"kind\": \"static\"}}", .{archive_sha})), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    cx.ok("plan takes the pinned archive: soname, sha256 and kind are in the graph", r.code == 0 and has(r.stdout, try cx.fmt("{{\"id\": \"crypto\", \"soname\": \"libcrypto_native.a\", \"sha256\": \"{s}\", \"package\": \"example/crypto\", \"kind\": \"static\"}}", .{archive_sha})), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     {
-        const old_file = try h.join(cx.a, &.{ cx.work, "fake", "channel", "linux-64", "mojo-crypto-2.0.1-mojo1.0.0_0.conda" });
+        const old_file = try h.join(cx.a, &.{ cx.work, "fake", "channel", namespace, "linux-64", "mojo-example.crypto-2.0.1-mojo1.0.0_0.conda" });
         const bytes = try h.readFile(cx.a, old_file);
         try std.fs.cwd().deleteFile(old_file);
         // The old lock pins that file\'s natives, so locking again needs no download: the file can be gone.
@@ -467,12 +474,12 @@ fn unitGraph(cx: *Cx) !void {
         const again = (try cx.lockOf(native)) orelse "";
         cx.ok("locking again does not fetch a package file the lock already pins (it is gone, and lock still succeeds)", r.code == 0 and std.mem.eql(u8, again, native_lock), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         // `update` names the same file again, so it too reuses the pin and needs no download.
-        r = try cx.runReg(native, &.{ "update", "crypto" });
+        r = try cx.runReg(native, &.{ "update", "example/crypto" });
         cx.ok("update of the same file does not fetch it either", r.code == 0 and std.mem.eql(u8, (try cx.lockOf(native)) orelse "", native_lock), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         // With no lock there is no pin: the file is needed, the channel answers 404, and no lock is written.
-        const fresh = try unitProject(cx, "unit_native_fresh", "[\"1.0.0\"]", "crypto = \"2\"");
+        const fresh = try unitProject(cx, "unit_native_fresh", "[\"1.0.0\"]", "\"example/crypto\" = \"2\"");
         r = try cx.runReg(fresh, &.{"lock"});
-        cx.ok("a lock with no pin does fetch it: with the file gone it fails naming the URL, and writes no lock", r.code == 1 and has(r.stderr, "mojo-crypto-2.0.1-mojo1.0.0_0.conda answered HTTP 404") and (try cx.lockOf(fresh)) == null, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        cx.ok("a lock with no pin does fetch it: with the file gone it fails naming the URL, and writes no lock", r.code == 1 and has(r.stderr, "mojo-example.crypto-2.0.1-mojo1.0.0_0.conda answered HTTP 404") and (try cx.lockOf(fresh)) == null, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         try h.writeFile(old_file, bytes);
         r = try cx.runReg(fresh, &.{"lock"});
         cx.ok("with the file back the fresh lock is the same bytes as the first", r.code == 0 and std.mem.eql(u8, (try cx.lockOf(fresh)) orelse "", native_lock), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
@@ -482,12 +489,12 @@ fn unitGraph(cx: *Cx) !void {
     cx.ok("a native library without a sha256 in the lock is refused (4)", r.code == 4 and has(r.stderr, "libcrypto_native.a") and has(r.stderr, "has no sha256 in mopm.lock"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 
     // http_client 0.4.1 is built for Mojo 1.1.0 only.
-    const nomojoc = try unitProject(cx, "unit_nomojoc", "[\"1.0.0\"]", "http_client = \"=0.4.1\"");
+    const nomojoc = try unitProject(cx, "unit_nomojoc", "[\"1.0.0\"]", "\"example/http_client\" = \"=0.4.1\"");
     r = try cx.runReg(nomojoc, &.{"lock"});
-    cx.ok("no .mojoc for the project's Mojo: lock gives the specified error and writes no lock", r.code == 1 and has(r.stderr, "error: http_client 0.4.1 has no .mojoc for Mojo 1.0.0 (published for: 1.1.0). Build with mojo 1.1.0, ask the publisher for a 1.0.0 build, or pin a version that has one.\n") and (try cx.lockOf(nomojoc)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    cx.ok("no .mojoc for the project's Mojo: lock gives the specified error and writes no lock", r.code == 1 and has(r.stderr, "error: example/http_client 0.4.1 has no .mojoc for Mojo 1.0.0 (published for: 1.1.0). Build with mojo 1.1.0, ask the publisher for a 1.0.0 build, or pin a version that has one.\n") and (try cx.lockOf(nomojoc)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 
     // Listing a Mojo version mopm pins no toolchain for.
-    const unpinned = try unitProject(cx, "unit_unpinned", "[\"1.0.0\", \"1.1.0\"]", "legacy = \"1\"");
+    const unpinned = try unitProject(cx, "unit_unpinned", "[\"1.0.0\", \"1.1.0\"]", "\"example/legacy\" = \"1\"");
     r = try cx.runReg(unpinned, &.{"lock"});
     cx.ok("a Mojo version without a pinned toolchain is refused at lock", r.code == 1 and has(r.stderr, "mopm has no pinned toolchain for mojo 1.1.0") and (try cx.lockOf(unpinned)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 }
@@ -503,23 +510,23 @@ const dead_registry = "http://127.0.0.1:1";
 /// with one registry dependency does contact the registry and fails on it.
 fn offlineLock(cx: *Cx) !void {
     h.stage = "offline lock";
-    const d = try cx.project("offline", "local = { path = \"local\" }");
-    try cx.package(try h.join(cx.a, &.{ d, "local" }), "local", "0.3.0", "inner = { path = \"../inner\" }");
+    const d = try cx.project("offline", "\"example/local\" = { path = \"local\" }");
+    try cx.package(try h.join(cx.a, &.{ d, "local" }), "local", "0.3.0", "\"example/inner\" = { path = \"../inner\" }");
     try cx.package(try h.join(cx.a, &.{ d, "inner" }), "inner", "0.1.0", "");
     var r = try cx.run(d, &.{ "lock", "--registry", dead_registry });
     cx.ok("a project with only path dependencies locks with the registry down", r.code == 0 and has(r.stdout, "locked 2 packages for mojo 1.0.0\n") and r.stderr.len == 0, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     const text = (try cx.lockOf(d)) orelse "";
-    cx.ok("its lock holds both path packages, as path sources, and the default channel", has(text, "\"source\": \"path\"") and has(text, "\"name\": \"local\"") and has(text, "\"name\": \"inner\"") and has(text, "\"channels\": [\n    \"https://conda.mopm.dev/\"\n  ]"), text);
-    r = try cx.run(d, &.{ "tree" });
-    cx.ok("tree reads that lock", r.code == 0 and has(r.stdout, "local"), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+    cx.ok("its lock holds both path packages, as path sources, and the default channel", has(text, "\"source\": \"path\"") and has(text, "\"name\": \"example/local\"") and has(text, "\"name\": \"example/inner\"") and has(text, "\"channels\": [\n    \"https://conda.mopm.dev/\"\n  ]"), text);
+    r = try cx.run(d, &.{"tree"});
+    cx.ok("tree reads that lock", r.code == 0 and has(r.stdout, "example/local"), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
 
     // Control: a registry dependency, anywhere in the project, needs the registry.
-    const direct = try cx.project("offline_direct", "local = { path = \"local\" }\nlegacy = \"1\"");
+    const direct = try cx.project("offline_direct", "\"example/local\" = { path = \"local\" }\n\"example/legacy\" = \"1\"");
     try cx.package(try h.join(cx.a, &.{ direct, "local" }), "local", "0.3.0", "");
     r = try cx.run(direct, &.{ "lock", "--registry", dead_registry });
     cx.ok("can fail: a registry dependency of the project is not locked with the registry down", r.code == 1 and has(r.stderr, "cannot reach http://127.0.0.1:1") and (try cx.lockOf(direct)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
-    const nested = try cx.project("offline_nested", "local = { path = \"local\" }");
-    try cx.package(try h.join(cx.a, &.{ nested, "local" }), "local", "0.3.0", "legacy = \"1\"");
+    const nested = try cx.project("offline_nested", "\"example/local\" = { path = \"local\" }");
+    try cx.package(try h.join(cx.a, &.{ nested, "local" }), "local", "0.3.0", "\"example/legacy\" = \"1\"");
     r = try cx.run(nested, &.{ "lock", "--registry", dead_registry });
     cx.ok("can fail: nor is a registry dependency of a path dependency", r.code == 1 and has(r.stderr, "cannot reach http://127.0.0.1:1") and (try cx.lockOf(nested)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 }
@@ -537,21 +544,21 @@ fn occurrences(hay: []const u8, needle: []const u8) usize {
     return n;
 }
 
-/// Four packages side by side as a repository holds them: app depends on b and d, b and d on c. Each has a library;
-/// app, b and c have a test file. Returns app's directory.
+/// Four packages side by side as a repository holds them: app depends on bb and dd, bb and dd on cc. Each has a library;
+/// app, bb and cc have a test file. Returns app's directory.
 fn siblingRepo(cx: *Cx, repo: []const u8) ![]u8 {
-    const app = try cx.project(try cx.fmt("{s}/app", .{repo}), "b = { path = \"../b\" }\nd = { path = \"../d\" }");
+    const app = try cx.project(try cx.fmt("{s}/app", .{repo}), "\"example/bb\" = { path = \"../bb\" }\n\"example/dd\" = { path = \"../dd\" }");
     const root = try h.join(cx.a, &.{ cx.work, repo });
     const pkgs = [_]struct { name: []const u8, deps: []const u8 }{
-        .{ .name = "b", .deps = "c = { path = \"../c\" }" },
-        .{ .name = "c", .deps = "" },
-        .{ .name = "d", .deps = "c = { path = \"../c\" }" },
+        .{ .name = "bb", .deps = "\"example/cc\" = { path = \"../cc\" }" },
+        .{ .name = "cc", .deps = "" },
+        .{ .name = "dd", .deps = "\"example/cc\" = { path = \"../cc\" }" },
     };
     for (pkgs) |p| try cx.package(try h.join(cx.a, &.{ root, p.name }), p.name, "0.1.0", p.deps);
-    for ([_][]const u8{ "app", "b", "c", "d" }) |name| {
+    for ([_][]const u8{ "app", "bb", "cc", "dd" }) |name| {
         try h.writeFile(try h.join(cx.a, &.{ root, name, "src", name, "__init__.mojo" }), try cx.fmt("def {s}_fn():\n    pass\n", .{name}));
     }
-    for ([_][]const u8{ "app", "b", "c" }) |name| {
+    for ([_][]const u8{ "app", "bb", "cc" }) |name| {
         try h.writeFile(try h.join(cx.a, &.{ root, name, "tests", try cx.fmt("test_{s}.mojo", .{name}) }), "def main():\n    pass\n");
     }
     return app;
@@ -563,17 +570,17 @@ fn siblingWorkspace(cx: *Cx) !void {
     h.stage = "sibling workspace";
     const app = try siblingRepo(cx, "sib");
     var r = try cx.run(app, &.{ "lock", "--registry", dead_registry });
-    cx.ok("sibling path dependencies (app, b, c, d) lock offline", r.code == 0 and has(r.stdout, "locked 3 packages for mojo 1.0.0\n"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    cx.ok("sibling path dependencies (app, bb, cc, dd) lock offline", r.code == 0 and has(r.stdout, "locked 3 packages for mojo 1.0.0\n"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
 
     r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", ".." });
     const graph = r.stdout;
     cx.ok("plan --workspace-root over siblings succeeds", r.code == 0 and r.stderr.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
-    cx.ok("unit roots are relative to the workspace root: app, b, c and d each under their own directory", has(graph, "\"root\": \"app/src/app\"") and has(graph, "\"root\": \"b/src/b\"") and has(graph, "\"root\": \"c/src/c\"") and has(graph, "\"root\": \"d/src/d\""), graph);
-    cx.ok("sources are relative to the workspace root", has(graph, "{\"path\": \"b/src/b/__init__.mojo\", \"sha256\": \"") and has(graph, "{\"path\": \"app/src/app/__init__.mojo\", \"sha256\": \""), graph);
+    cx.ok("unit roots are relative to the workspace root: app, bb, cc and dd each under their own directory", has(graph, "\"root\": \"app/src/app\"") and has(graph, "\"root\": \"bb/src/bb\"") and has(graph, "\"root\": \"cc/src/cc\"") and has(graph, "\"root\": \"dd/src/dd\""), graph);
+    cx.ok("sources are relative to the workspace root", has(graph, "{\"path\": \"bb/src/bb/__init__.mojo\", \"sha256\": \"") and has(graph, "{\"path\": \"app/src/app/__init__.mojo\", \"sha256\": \""), graph);
     cx.ok("no path in the graph has a '..' in it", !has(graph, ".."), graph);
-    cx.ok("a nested sibling (app, b, c) and a diamond (b and d both use c) give c exactly one unit", occurrences(graph, "\"id\": \"c@0.1.0#mojo1.0.0/lib\"") == 1 and occurrences(graph, "\"package\": \"c\"") == 1, graph);
-    cx.ok("the root package's tests are planned, named from the workspace root", has(graph, "\"id\": \"app@0.1.0#mojo1.0.0/test:app/tests/test_app.mojo\"") and has(graph, "{\"path\": \"app/tests/test_app.mojo\""), graph);
-    cx.ok("the members' tests are not planned", !has(graph, "test_b.mojo") and !has(graph, "test_c.mojo"), graph);
+    cx.ok("a nested sibling (app, bb, cc) and a diamond (bb and dd both use cc) give cc exactly one unit", occurrences(graph, "\"id\": \"example/cc@0.1.0#mojo1.0.0/lib\"") == 1 and occurrences(graph, "\"package\": \"example/cc\"") == 1, graph);
+    cx.ok("the root package's tests are planned, named from the workspace root", has(graph, "\"id\": \"example/app@0.1.0#mojo1.0.0/test:app/tests/test_app.mojo\"") and has(graph, "{\"path\": \"app/tests/test_app.mojo\""), graph);
+    cx.ok("the members' tests are not planned", !has(graph, "test_bb.mojo") and !has(graph, "test_cc.mojo"), graph);
 
     r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", try h.join(cx.a, &.{ cx.work, "sib" }) });
     cx.ok("the workspace root may be absolute: the same graph as the relative one", r.code == 0 and std.mem.eql(u8, r.stdout, graph), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
@@ -589,13 +596,13 @@ fn siblingWorkspace(cx: *Cx) !void {
     r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked" });
     cx.ok("with no --workspace-root a sibling is refused as before (4)", r.code == 4 and has(r.stderr, "error: the path dependency ") and has(r.stderr, " is ../") and has(r.stderr, ", which is not below the workspace .;"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 
-    const b_dir = try h.join(cx.a, &.{ cx.work, "sib", "b" });
+    const b_dir = try h.join(cx.a, &.{ cx.work, "sib", "bb" });
     r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", b_dir });
     cx.ok("a package outside the workspace root is refused, naming both (4)", r.code == 4 and has(r.stderr, "is not below --workspace-root") and has(r.stderr, b_dir) and has(r.stderr, "/sib/app") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
     r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", "../nothing_here" });
     cx.ok("a workspace root that does not exist is refused, naming it and the package directory (4)", r.code == 4 and has(r.stderr, "--workspace-root ../nothing_here") and has(r.stderr, "/sib/app") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
-    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", "../b/mopm.toml" });
-    cx.ok("a workspace root that is a file is refused (4)", r.code == 4 and has(r.stderr, "--workspace-root ../b/mopm.toml"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", "../bb/mopm.toml" });
+    cx.ok("a workspace root that is a file is refused (4)", r.code == 4 and has(r.stderr, "--workspace-root ../bb/mopm.toml"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
     r = try cx.run(app, &.{ "plan", "--locked", "--workspace-root", ".." });
     cx.ok("--workspace-root without --unit-graph is a usage error (2) that says so", r.code == 2 and has(r.stderr, "--workspace-root belongs to --unit-graph") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
     r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root" });
@@ -604,12 +611,12 @@ fn siblingWorkspace(cx: *Cx) !void {
     // A lock that no longer fits mopm.toml is stale under --workspace-root too, and plan does not repair it.
     const stale = try siblingRepo(cx, "stale");
     r = try cx.run(stale, &.{ "lock", "--registry", dead_registry });
-    try h.writeFile(try h.join(cx.a, &.{ stale, "mopm.toml" }), try cx.fmt("{s}b = {{ path = \"../b\" }}\n", .{MANIFEST_HEAD}));
+    try h.writeFile(try h.join(cx.a, &.{ stale, "mopm.toml" }), try cx.fmt("{s}\"example/bb\" = {{ path = \"../bb\" }}\n", .{MANIFEST_HEAD}));
     r = try cx.run(stale, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", ".." });
     cx.ok("a stale lock is refused (3) under --workspace-root, and nothing is printed", r.code == 3 and has(r.stderr, "out of date") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 
     // Without the flag nothing changes: a project whose members are below it plans the same bytes, flag or not.
-    const below = try cx.project("below", "local = { path = \"local\" }");
+    const below = try cx.project("below", "\"example/local\" = { path = \"local\" }");
     try cx.package(try h.join(cx.a, &.{ below, "local" }), "local", "0.3.0", "");
     try h.writeFile(try h.join(cx.a, &.{ below, "local", "src", "local", "__init__.mojo" }), "def f():\n    pass\n");
     try h.writeFile(try h.join(cx.a, &.{ below, "src", "app", "__init__.mojo" }), "def g():\n    pass\n");
@@ -694,42 +701,42 @@ fn addRemove(cx: *Cx) !void {
     }
 
     // No requirement: the newest version that fits, as ^X.Y.Z, after the last entry.
-    var r = try cx.runReg(d, &.{ "add", "http_client" });
+    var r = try cx.runReg(d, &.{ "add", "example/http_client" });
     var got = try h.readFile(a, toml);
-    const want_first = try std.mem.replaceOwned(u8, a, after_add, "http_core = \"^1.2.5\"\n", "");
+    const want_first = try std.mem.replaceOwned(u8, a, after_add, "\"example/http_core\" = \"^1.2.5\"\n", "");
     cx.ok("add writes ^ the newest version that fits, after the table's last entry, every other byte kept", r.code == 0 and std.mem.eql(u8, got, want_first), try cx.fmt("{s}\n--- got\n{s}\n--- want\n{s}", .{ r.stderr, got, want_first }));
-    cx.ok("add locks the added package and what it pulls in", std.mem.eql(u8, try lockedVersion(cx, d, "http_client"), "0.5.0") and std.mem.eql(u8, try lockedVersion(cx, d, "crypto"), "2.0.1") and has(r.stdout, "adding http_client 0.5.0\n"), r.stdout);
+    cx.ok("add locks the added package and what it pulls in", std.mem.eql(u8, try lockedVersion(cx, d, "example/http_client"), "0.5.0") and std.mem.eql(u8, try lockedVersion(cx, d, "example/crypto"), "2.0.1") and has(r.stdout, "adding example/http_client 0.5.0\n"), r.stdout);
 
     // The newest http_core in the index is 2.0.0; tls's "~1.2" lets only 1.2.x fit.
-    r = try cx.runReg(d, &.{ "add", "http_core", "--dev" });
+    r = try cx.runReg(d, &.{ "add", "example/http_core", "--dev" });
     got = try h.readFile(a, toml);
     cx.ok("add --dev writes [dev-dependencies]; the version is the newest that fits, not the newest (golden add_after.toml)", r.code == 0 and std.mem.eql(u8, got, after_add), try cx.fmt("{s}\n--- got\n{s}", .{ r.stderr, got }));
 
-    r = try cx.runReg(d, &.{ "add", "tls@~1.1" });
+    r = try cx.runReg(d, &.{ "add", "example/tls@~1.1" });
     got = try h.readFile(a, toml);
-    const want_tls = try std.mem.replaceOwned(u8, a, after_add, "tls   =   \"1\"", "tls   =   \"~1.1\"");
-    cx.ok("add of an existing dependency replaces its value in place (spacing and comment kept)", r.code == 0 and std.mem.eql(u8, got, want_tls) and std.mem.eql(u8, try lockedVersion(cx, d, "tls"), "1.1.0"), try cx.fmt("{s}\n--- got\n{s}\n--- want\n{s}", .{ r.stderr, got, want_tls }));
+    const want_tls = try std.mem.replaceOwned(u8, a, after_add, "\"example/tls\"   =   \"1\"", "\"example/tls\"   =   \"~1.1\"");
+    cx.ok("add of an existing dependency replaces its value in place (spacing and comment kept)", r.code == 0 and std.mem.eql(u8, got, want_tls) and std.mem.eql(u8, try lockedVersion(cx, d, "example/tls"), "1.1.0"), try cx.fmt("{s}\n--- got\n{s}\n--- want\n{s}", .{ r.stderr, got, want_tls }));
 
-    r = try cx.runReg(d, &.{ "remove", "legacy" });
+    r = try cx.runReg(d, &.{ "remove", "example/legacy" });
     got = try h.readFile(a, toml);
     cx.ok("remove of the middle key of a table takes its line only (golden remove_after.toml)", r.code == 0 and std.mem.eql(u8, got, after_remove), try cx.fmt("{s}\n--- got\n{s}", .{ r.stderr, got }));
-    cx.ok("remove takes the package out of the lock", std.mem.eql(u8, try lockedVersion(cx, d, "legacy"), "") and has(r.stdout, "removing legacy 1.1.0\n"), r.stdout);
+    cx.ok("remove takes the package out of the lock", std.mem.eql(u8, try lockedVersion(cx, d, "example/legacy"), "") and has(r.stdout, "removing example/legacy 1.1.0\n"), r.stdout);
 
-    r = try cx.runReg(d, &.{ "remove", "http_client" });
+    r = try cx.runReg(d, &.{ "remove", "example/http_client" });
     got = try h.readFile(a, toml);
     cx.ok("remove drops what only the removed package pulled in, and keeps what others need", r.code == 0 and
-        std.mem.eql(u8, try lockedVersion(cx, d, "http_client"), "") and std.mem.eql(u8, try lockedVersion(cx, d, "crypto"), "") and
-        std.mem.eql(u8, try lockedVersion(cx, d, "http_core"), "1.2.5") and std.mem.eql(u8, try lockedVersion(cx, d, "tls"), "1.1.0") and
-        std.mem.eql(u8, got, try std.mem.replaceOwned(u8, a, after_remove, "http_client = \"^0.5.0\"\n", "")), try cx.fmt("{s}\n{s}", .{ r.stderr, got }));
+        std.mem.eql(u8, try lockedVersion(cx, d, "example/http_client"), "") and std.mem.eql(u8, try lockedVersion(cx, d, "example/crypto"), "") and
+        std.mem.eql(u8, try lockedVersion(cx, d, "example/http_core"), "1.2.5") and std.mem.eql(u8, try lockedVersion(cx, d, "example/tls"), "1.1.0") and
+        std.mem.eql(u8, got, try std.mem.replaceOwned(u8, a, after_remove, "\"example/http_client\" = \"^0.5.0\"\n", "")), try cx.fmt("{s}\n{s}", .{ r.stderr, got }));
 
     const toml_now = try h.readFile(a, toml);
     const lock_now = try cx.lockOf(d);
     const Refusal = struct { args: []const []const u8, wants: []const u8 };
     const refusals = [_]Refusal{
-        .{ .args = &.{ "remove", "nosuch" }, .wants = "nosuch is not a dependency: [dependencies] of mopm.toml does not name it" },
-        .{ .args = &.{ "remove", "http_core" }, .wants = "http_core is not a dependency: [dependencies] of mopm.toml does not name it" },
-        .{ .args = &.{ "add", "nosuch" }, .wants = "nosuch (required by mopm.toml) is not in the registry's index" },
-        .{ .args = &.{ "add", "tls@3" }, .wants = "no version of tls matches 3 (from mopm.toml)" },
+        .{ .args = &.{ "remove", "example/nosuch" }, .wants = "example/nosuch is not a dependency: [dependencies] of mopm.toml does not name it" },
+        .{ .args = &.{ "remove", "example/http_core" }, .wants = "example/http_core is not a dependency: [dependencies] of mopm.toml does not name it" },
+        .{ .args = &.{ "add", "example/nosuch" }, .wants = "example/nosuch (required by mopm.toml) is not in the registry's index" },
+        .{ .args = &.{ "add", "example/tls@3" }, .wants = "no version of example/tls matches 3 (from mopm.toml)" },
     };
     for (refusals) |refusal| {
         r = try cx.runReg(d, refusal.args);
@@ -740,23 +747,23 @@ fn addRemove(cx: *Cx) !void {
     // A project with no lock: a failed add writes neither file.
     const fresh = try h.join(a, &.{ cx.work, "edit_fresh" });
     try h.writeFile(try h.join(a, &.{ fresh, "mopm.toml" }), before);
-    r = try cx.runReg(fresh, &.{ "add", "http_core@3" });
+    r = try cx.runReg(fresh, &.{ "add", "example/http_core@3" });
     var changed = try changedFiles(cx, fresh, before, null);
-    cx.ok("an add that does not resolve leaves mopm.toml byte-identical and writes no lock", r.code == 1 and has(r.stderr, "no version of http_core matches 3") and changed.len == 0, try cx.fmt("exit {d}, {s}, stderr {s}", .{ r.code, changed, r.stderr }));
+    cx.ok("an add that does not resolve leaves mopm.toml byte-identical and writes no lock", r.code == 1 and has(r.stderr, "no version of example/http_core matches 3") and changed.len == 0, try cx.fmt("exit {d}, {s}, stderr {s}", .{ r.code, changed, r.stderr }));
     // The defect that check guards against: the edit written before resolving.
     const faulty = try h.join(a, &.{ cx.work, "edit_faulty" });
-    try h.writeFile(try h.join(a, &.{ faulty, "mopm.toml" }), try std.mem.replaceOwned(u8, a, before, "legacy = \"1\"\n", "legacy = \"1\"\nhttp_core = \"3\"\n"));
+    try h.writeFile(try h.join(a, &.{ faulty, "mopm.toml" }), try std.mem.replaceOwned(u8, a, before, "\"example/legacy\" = \"1\"\n", "\"example/legacy\" = \"1\"\n\"example/http_core\" = \"3\"\n"));
     changed = try changedFiles(cx, faulty, before, null);
     cx.ok("can fail: the unchanged check refuses mopm.toml written before resolving", std.mem.eql(u8, changed, "mopm.toml changed"), if (changed.len == 0) "accepted" else changed);
 
     // A path dependency: { path = "<dir>" }, locked with source path.
     const with_path = try h.join(a, &.{ cx.work, "edit_path" });
     try h.writeFile(try h.join(a, &.{ with_path, "mopm.toml" }), before);
-    try h.writeFile(try h.join(a, &.{ with_path, "local", "mopm.toml" }), "[package]\nname = \"local\"\nversion = \"0.3.0\"\n");
-    r = try cx.runReg(with_path, &.{ "add", "local", "--path", "local" });
-    const want_path = try std.mem.replaceOwned(u8, a, before, "legacy = \"1\"\n", "legacy = \"1\"\nlocal = { path = \"local\" }\n");
+    try h.writeFile(try h.join(a, &.{ with_path, "local", "mopm.toml" }), "[package]\nname = \"example/local\"\nversion = \"0.3.0\"\n");
+    r = try cx.runReg(with_path, &.{ "add", "example/local", "--path", "local" });
+    const want_path = try std.mem.replaceOwned(u8, a, before, "\"example/legacy\" = \"1\"\n", "\"example/legacy\" = \"1\"\n\"example/local\" = { path = \"local\" }\n");
     got = try h.readFile(a, try h.join(a, &.{ with_path, "mopm.toml" }));
-    cx.ok("add --path writes { path = \"<dir>\" } and locks it as a path dependency", r.code == 0 and std.mem.eql(u8, got, want_path) and std.mem.eql(u8, try lockedVersion(cx, with_path, "local"), "0.3.0"), try cx.fmt("{s}\n--- got\n{s}", .{ r.stderr, got }));
+    cx.ok("add --path writes { path = \"<dir>\" } and locks it as a path dependency", r.code == 0 and std.mem.eql(u8, got, want_path) and std.mem.eql(u8, try lockedVersion(cx, with_path, "example/local"), "0.3.0"), try cx.fmt("{s}\n--- got\n{s}", .{ r.stderr, got }));
 }
 
 test "mopm lock, update and tree resolve against the fake registry" {
@@ -780,7 +787,7 @@ test "mopm lock, update and tree resolve against the fake registry" {
     // sha256 of each archive, which this test knows from the bytes it handed to `mopm pack`.
     var expected = try std.mem.replaceOwned(u8, a, try h.readFile(a, "tests/resolve_e2e/expected.lock"), "@CHANNEL@", channel);
     for ([_]struct { []const u8, []const u8, []const u8 }{ .{ "LINUX", "linux-64", crypto_archive_linux }, .{ "OSX", "osx-arm64", crypto_archive_osx } }) |p| {
-        const real = realFile(reals, p[1], "mojo-crypto-2.0.1-mojo1.0.0_0.conda").?;
+        const real = realFile(reals, p[1], "mojo-example.crypto-2.0.1-mojo1.0.0_0.conda").?;
         expected = try std.mem.replaceOwned(u8, a, expected, try std.fmt.allocPrint(a, "@CRYPTO_{s}_FILE_SHA@", .{p[0]}), real.sha256);
         expected = try std.mem.replaceOwned(u8, a, expected, try std.fmt.allocPrint(a, "@CRYPTO_{s}_FILE_SIZE@", .{p[0]}), try std.fmt.allocPrint(a, "{d}", .{real.bytes.len}));
         expected = try std.mem.replaceOwned(u8, a, expected, try std.fmt.allocPrint(a, "@CRYPTO_{s}_NATIVE_SHA@", .{p[0]}), try sha256Hex(a, p[2]));
@@ -789,14 +796,14 @@ test "mopm lock, update and tree resolve against the fake registry" {
     var cx = Cx{ .a = a, .rep = &rep, .mopm = mopm_exe, .work = work, .registry = fake.base, .lock_schema = try c.loadJson(a, "spec/lock.schema.json") };
 
     h.stage = "app";
-    const app = try cx.project("app", "http_client = \"0.4\"\ntls = \"1\"");
+    const app = try cx.project("app", "\"example/http_client\" = \"0.4\"\n\"example/tls\" = \"1\"");
 
     var r = try cx.run(app, &.{"tree"});
     cx.ok("tree without a lock says to lock", r.code == 1 and has(r.stderr, "no mopm.lock; run 'mopm lock'"), r.stderr);
 
     r = try cx.runReg(app, &.{"lock"});
     cx.ok("lock succeeds", r.code == 0, try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
-    cx.ok("lock warns once about crypto 2.1.0b1 and about nothing else", std.mem.eql(u8, r.stderr, try warning(a, "crypto", "2.1.0b1")), r.stderr);
+    cx.ok("lock warns once about crypto 2.1.0b1 and about nothing else", std.mem.eql(u8, r.stderr, try warning(a, "example/crypto", "2.1.0b1")), r.stderr);
     {
         const re = try regex.Regex.compile(a, "^http://127\\.0\\.0\\.1:[0-9]+/channel/$");
         cx.ok("the channel is loopback http with a path", re.search(channel), channel);
@@ -816,7 +823,7 @@ test "mopm lock, update and tree resolve against the fake registry" {
             cx.ok(try cx.fmt("the schema check refuses the same lock with channel {s}", .{bad}), refused.items.len != 0 and got != null, "accepted");
         }
     }
-    cx.ok("lock reports what it added", std.mem.eql(u8, r.stdout, "adding crypto 2.0.1\nadding http_client 0.4.0\nadding http_core 1.2.5\nadding tls 1.1.0\nlocked 4 packages for mojo 1.0.0\n"), r.stdout);
+    cx.ok("lock reports what it added", std.mem.eql(u8, r.stdout, "adding example/crypto 2.0.1\nadding example/http_client 0.4.0\nadding example/http_core 1.2.5\nadding example/tls 1.1.0\nlocked 4 packages for mojo 1.0.0\n"), r.stdout);
 
     r = try cx.run(app, &.{"tree"});
     cx.ok("tree draws the locked graph", r.code == 0 and std.mem.eql(u8, r.stdout, TREE), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
@@ -827,19 +834,19 @@ test "mopm lock, update and tree resolve against the fake registry" {
         cx.ok("locking again changes nothing", r.code == 0 and std.mem.eql(u8, r.stdout, "locked 4 packages for mojo 1.0.0\n") and again != null and std.mem.eql(u8, again.?, expected), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
     }
 
-    // A version 1 lock too reuses the pins of the lock it replaces: with both package files of crypto gone from the channel,
+    // A lock reuses the pins of the lock it replaces: with both package files of crypto gone from the channel,
     // locking again still gives the same bytes (nothing is fetched), and with the old lock gone it cannot (HTTP 404).
     {
         var gone = std.ArrayList(struct { []const u8, []const u8 }).init(a);
         for (reals) |real| {
-            const path = try h.join(a, &.{ work, "fake", "channel", real.subdir, real.filename });
+            const path = try h.join(a, &.{ work, "fake", "channel", namespace, real.subdir, real.filename });
             try gone.append(.{ path, real.bytes });
             try std.fs.cwd().deleteFile(path);
         }
         r = try cx.runReg(app, &.{"lock"});
         const reused = try cx.lockOf(app);
-        cx.ok("a version 1 lock reuses the pinned natives: the package files are gone and lock still gives the same bytes", r.code == 0 and reused != null and std.mem.eql(u8, reused.?, expected), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
-        const no_old = try cx.project("app_no_old_lock", "http_client = \"0.4\"\ntls = \"1\"");
+        cx.ok("a lock reuses the pinned natives: the package files are gone and lock still gives the same bytes", r.code == 0 and reused != null and std.mem.eql(u8, reused.?, expected), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+        const no_old = try cx.project("app_no_old_lock", "\"example/http_client\" = \"0.4\"\n\"example/tls\" = \"1\"");
         r = try cx.runReg(no_old, &.{"lock"});
         cx.ok("with no old lock the same channel cannot be locked: the pin needs the package file", r.code == 1 and has(r.stderr, "answered HTTP 404") and (try cx.lockOf(no_old)) == null, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         for (gone.items) |g| try h.writeFile(g[0], g[1]);
@@ -847,8 +854,8 @@ test "mopm lock, update and tree resolve against the fake registry" {
 
     // A lock that pins an older http_core keeps it; update moves it.
     {
-        const old_fn = "mojo-http_core-1.2.4-mojo1.0.0_0.conda";
-        const new_fn = "mojo-http_core-1.2.5-mojo1.0.0_0.conda";
+        const old_fn = "mojo-example.http_core-1.2.4-mojo1.0.0_0.conda";
+        const new_fn = "mojo-example.http_core-1.2.5-mojo1.0.0_0.conda";
         var pinned = try std.mem.replaceOwned(u8, a, expected, new_fn, old_fn);
         pinned = try std.mem.replaceOwned(u8, a, pinned, "\"version\": \"1.2.5\"", "\"version\": \"1.2.4\"");
         pinned = try std.mem.replaceOwned(u8, a, pinned, try digest(a, "linux-64", new_fn), try digest(a, "linux-64", old_fn));
@@ -856,11 +863,11 @@ test "mopm lock, update and tree resolve against the fake registry" {
         r = try cx.runReg(app, &.{"lock"});
         var now = try cx.lockOf(app);
         cx.ok("lock keeps a pinned version that still fits", r.code == 0 and now != null and std.mem.eql(u8, now.?, pinned), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
-        r = try cx.runReg(app, &.{ "update", "http_core" });
+        r = try cx.runReg(app, &.{ "update", "example/http_core" });
         now = try cx.lockOf(app);
-        cx.ok("update moves the named package to the newest that fits", r.code == 0 and now != null and std.mem.eql(u8, now.?, expected) and has(r.stdout, "updating http_core 1.2.4 -> 1.2.5\n"), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
-        r = try cx.runReg(app, &.{ "update", "nosuch" });
-        cx.ok("update refuses a package the lock does not hold", r.code == 1 and has(r.stderr, "nosuch is not in mopm.lock"), r.stderr);
+        cx.ok("update moves the named package to the newest that fits", r.code == 0 and now != null and std.mem.eql(u8, now.?, expected) and has(r.stdout, "updating example/http_core 1.2.4 -> 1.2.5\n"), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+        r = try cx.runReg(app, &.{ "update", "example/nosuch" });
+        cx.ok("update refuses a package the lock does not hold", r.code == 1 and has(r.stderr, "example/nosuch is not in mopm.lock"), r.stderr);
     }
 
     for ([_][]const u8{ "http://example.com/channel/", "http://127.0.0.2:80/channel/" }) |host| {
@@ -874,7 +881,7 @@ test "mopm lock, update and tree resolve against the fake registry" {
 
     // Versions: 1.0 is 1.0.0; 1.2.3.4 and 2.0.0-rc1 are ignored, with a warning each.
     {
-        const legacy_warnings = try cx.fmt("{s}{s}", .{ try warning(a, "legacy", "1.2.3.4"), try warning(a, "legacy", "2.0.0-rc1") });
+        const legacy_warnings = try cx.fmt("{s}{s}", .{ try warning(a, "example/legacy", "1.2.3.4"), try warning(a, "example/legacy", "2.0.0-rc1") });
         const Case = struct { name: []const u8, req: []const u8, want: []const u8 };
         var last_dir: []const u8 = "";
         var last_text: ?[]u8 = null;
@@ -883,15 +890,18 @@ test "mopm lock, update and tree resolve against the fake registry" {
             .{ .name = "exact", .req = "=1.0.0", .want = "1.0" },
             .{ .name = "below", .req = "<1.1", .want = "1.0" },
         }) |case| {
-            const d = try cx.project(try cx.fmt("legacy_{s}", .{case.name}), try cx.fmt("legacy = \"{s}\"", .{case.req}));
+            const d = try cx.project(try cx.fmt("legacy_{s}", .{case.name}), try cx.fmt("\"example/legacy\" = \"{s}\"", .{case.req}));
             r = try cx.runReg(d, &.{"lock"});
             const text = try cx.lockOf(d);
             const files = try cx.entries(text);
-            const fname = try cx.fmt("mojo-legacy-{s}-mojo1.0.0_0.conda", .{case.want});
-            const want_url = try cx.fmt("{s}linux-64/{s}", .{ channel, fname });
+            const fname = try cx.fmt("mojo-example.legacy-{s}-mojo1.0.0_0.conda", .{case.want});
+            const want_url = try cx.fmt("{s}example/linux-64/{s}", .{ channel, fname });
             var picked_ok = files.count() == 1;
-            if (files.get("legacy")) |p| {
-                picked_ok = picked_ok and std.mem.eql(u8, c.getStr(p, "version") orelse "", case.want) and std.mem.eql(u8, c.getStr(p, "url") orelse "", want_url);
+            if (files.get("example/legacy")) |p| {
+                // Lock version 3 records the file under artifacts[<mojo version>], not on the package.
+                const art = if (c.get(p, "artifacts")) |arts| c.get(arts, "1.0.0") else null;
+                const got_url = if (art) |ar| (c.getStr(ar, "url") orelse "") else "";
+                picked_ok = picked_ok and std.mem.eql(u8, c.getStr(p, "version") orelse "", case.want) and std.mem.eql(u8, got_url, want_url);
             } else picked_ok = false;
             cx.ok(try cx.fmt("legacy {s} picks {s} and warns about each ignored version", .{ case.req, case.want }), r.code == 0 and std.mem.eql(u8, r.stderr, legacy_warnings) and picked_ok, try cx.fmt("exit {d}, stderr {s}", .{ r.code, r.stderr }));
             last_dir = d;
@@ -906,59 +916,71 @@ test "mopm lock, update and tree resolve against the fake registry" {
     // Path dependencies: locked as source = path, at the version their own
     // mopm.toml gives, with no file; their own requirements resolve.
     {
-        const withpath = try cx.project("withpath", "local = { path = \"local\" }");
+        const withpath = try cx.project("withpath", "\"example/local\" = { path = \"local\" }");
         const local_dir = try h.join(a, &.{ withpath, "local" });
         const util_dir = try h.join(a, &.{ withpath, "util" });
-        try cx.package(local_dir, "local", "0.3.0", "tls = \"1\"\nutil = { path = \"../util\" }");
+        try cx.package(local_dir, "local", "0.3.0", "\"example/tls\" = \"1\"\n\"example/util\" = { path = \"../util\" }");
         try cx.package(util_dir, "util", "0.0.7", "");
         r = try cx.runReg(withpath, &.{"lock"});
         var text = try cx.lockOf(withpath);
         const entries = try cx.entries(text);
-        const want_local = try c.parseJson(a, "{\"name\":\"local\",\"version\":\"0.3.0\",\"source\":\"path\",\"path\":\"local\",\"deps\":[\"tls\",\"util\"]}");
-        const want_util = try c.parseJson(a, "{\"name\":\"util\",\"version\":\"0.0.7\",\"source\":\"path\",\"path\":\"util\"}");
+        const want_local = try c.parseJson(a, "{\"name\":\"example/local\",\"version\":\"0.3.0\",\"source\":\"path\",\"path\":\"local\",\"deps\":[\"example/tls\",\"example/util\"]}");
+        const want_util = try c.parseJson(a, "{\"name\":\"example/util\",\"version\":\"0.0.7\",\"source\":\"path\",\"path\":\"util\"}");
         cx.ok("a path dependency is locked with source path, its version and path, and no file", r.code == 0 and
-            (if (entries.get("local")) |v| js.eql(v, want_local) else false) and (if (entries.get("util")) |v| js.eql(v, want_util) else false), try cx.fmt("exit {d} {s}", .{ r.code, r.stderr }));
+            (if (entries.get("example/local")) |v| js.eql(v, want_local) else false) and (if (entries.get("example/util")) |v| js.eql(v, want_util) else false), try cx.fmt("exit {d} {s}", .{ r.code, r.stderr }));
         {
-            const tls_v = if (entries.get("tls")) |v| c.getStr(v, "version") orelse "" else "";
-            const core_v = if (entries.get("http_core")) |v| c.getStr(v, "version") orelse "" else "";
+            const tls_v = if (entries.get("example/tls")) |v| c.getStr(v, "version") orelse "" else "";
+            const core_v = if (entries.get("example/http_core")) |v| c.getStr(v, "version") orelse "" else "";
             var names = std.ArrayList([]const u8).init(a);
             for (entries.keys()) |k| try names.append(k);
             std.mem.sort([]const u8, names.items, {}, c.lessStr);
             const joined = try std.mem.join(a, ",", names.items);
-            cx.ok("a path dependency's own requirements are resolved from the registry", std.mem.eql(u8, tls_v, "1.1.0") and std.mem.eql(u8, core_v, "1.2.5") and std.mem.eql(u8, joined, "http_core,local,tls,util"), joined);
+            cx.ok("a path dependency's own requirements are resolved from the registry", std.mem.eql(u8, tls_v, "1.1.0") and std.mem.eql(u8, core_v, "1.2.5") and std.mem.eql(u8, joined, "example/http_core,example/local,example/tls,example/util"), joined);
         }
-        cx.ok("lock reports the path dependencies", std.mem.eql(u8, r.stdout, "adding http_core 1.2.5\nadding local 0.3.0\nadding tls 1.1.0\nadding util 0.0.7\nlocked 4 packages for mojo 1.0.0\n"), r.stdout);
+        cx.ok("lock reports the path dependencies", std.mem.eql(u8, r.stdout, "adding example/http_core 1.2.5\nadding example/local 0.3.0\nadding example/tls 1.1.0\nadding example/util 0.0.7\nlocked 4 packages for mojo 1.0.0\n"), r.stdout);
         r = try cx.run(withpath, &.{"tree"});
-        cx.ok("tree draws path dependencies with their paths", r.code == 0 and std.mem.eql(u8, r.stdout, "app 0.1.0\n└── local 0.3.0 (local)\n    ├── tls 1.1.0\n    │   └── http_core 1.2.5\n    └── util 0.0.7 (util)\n"), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
-        try cx.package(local_dir, "local", "0.3.1", "tls = \"1\"\nutil = { path = \"../util\" }");
+        cx.ok("tree draws path dependencies with their paths", r.code == 0 and std.mem.eql(u8, r.stdout, "example/app 0.1.0\n└── example/local 0.3.0 (local)\n    ├── example/tls 1.1.0\n    │   └── example/http_core 1.2.5\n    └── example/util 0.0.7 (util)\n"), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+        try cx.package(local_dir, "local", "0.3.1", "\"example/tls\" = \"1\"\n\"example/util\" = { path = \"../util\" }");
         r = try cx.runReg(withpath, &.{"lock"});
         text = try cx.lockOf(withpath);
-        cx.ok("a path dependency's new version is locked", r.code == 0 and has(r.stdout, "updating local 0.3.0 -> 0.3.1\n") and has(text orelse "", "\"version\": \"0.3.1\""), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+        cx.ok("a path dependency's new version is locked", r.code == 0 and has(r.stdout, "updating example/local 0.3.0 -> 0.3.1\n") and has(text orelse "", "\"version\": \"0.3.1\""), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
         try cx.package(util_dir, "notutil", "0.0.7", "");
         r = try cx.runReg(withpath, &.{"lock"});
-        cx.ok("a path dependency whose mopm.toml names another package is refused", r.code == 1 and has(r.stderr, "util/mopm.toml names the package notutil, but local/mopm.toml calls it util"), r.stderr);
-        const nodir = try cx.project("nopath", "gone = { path = \"gone\" }");
+        cx.ok("a path dependency whose mopm.toml names another package is refused", r.code == 1 and has(r.stderr, "util/mopm.toml names the package example/notutil, but local/mopm.toml calls it example/util"), r.stderr);
+        const nodir = try cx.project("nopath", "\"example/gone\" = { path = \"gone\" }");
         r = try cx.runReg(nodir, &.{"lock"});
         cx.ok("a path dependency without a mopm.toml is refused", r.code == 1 and has(r.stderr, "no gone/mopm.toml") and (try cx.lockOf(nodir)) == null, r.stderr);
     }
 
-    try cx.writeLock(app, try std.mem.replaceOwned(u8, a, expected, "\"lock_version\": 1", "\"lock_version\": 99"));
+    try cx.writeLock(app, try std.mem.replaceOwned(u8, a, expected, "\"lock_version\": 3", "\"lock_version\": 99"));
     r = try cx.runReg(app, &.{"lock"});
     cx.ok("a lock from a newer mopm is refused", r.code == 1 and has(r.stderr, "Update mopm."), r.stderr);
 
+    // A lock of version 1 or 2 predates namespaces: tree and sync --locked refuse it, lock writes the version 3 lock.
+    for ([_][]const u8{ "1", "2" }) |old| {
+        try cx.writeLock(app, try std.mem.replaceOwned(u8, a, expected, "\"lock_version\": 3", try cx.fmt("\"lock_version\": {s}", .{old})));
+        const why = try cx.fmt("mopm.lock predates namespaces (lock_version {s}); run 'mopm lock'\n", .{old});
+        r = try cx.run(app, &.{"tree"});
+        cx.ok(try cx.fmt("tree refuses a version {s} lock, saying it predates namespaces", .{old}), r.code == 1 and has(r.stderr, why), r.stderr);
+        r = try cx.run(app, &.{ "sync", "--locked" });
+        cx.ok(try cx.fmt("sync --locked refuses a version {s} lock, saying it predates namespaces", .{old}), r.code == 1 and has(r.stderr, why), r.stderr);
+        r = try cx.runReg(app, &.{"lock"});
+        cx.ok(try cx.fmt("lock takes a version {s} lock for no lock and writes the version 3 lock", .{old}), r.code == 0 and std.mem.eql(u8, (try cx.lockOf(app)) orelse "", expected), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+    }
+
     const Refusal = struct { name: []const u8, deps: []const u8, wants: []const []const u8 };
-    const bad_sum = try cx.fmt("the index says sha256 {s}", .{try digest(a, "linux-64", "mojo-badsum-1.0.0-mojo1.0.0_0.conda")});
+    const bad_sum = try cx.fmt("the index says sha256 {s}", .{try digest(a, "linux-64", "mojo-example.badsum-1.0.0-mojo1.0.0_0.conda")});
     const tampered = try cx.fmt("repodata.json says sha256 {s}", .{try digest(a, "linux-64", "tampered")});
     const refusals = [_]Refusal{
-        .{ .name = "missing", .deps = "nosuch = \"1\"", .wants = &.{"nosuch (required by mopm.toml) is not in the registry's index"} },
-        .{ .name = "yanked", .deps = "http_client = \"=0.3.0\"", .wants = &.{"0.3.0 was yanked: crashes on empty body"} },
-        .{ .name = "taken_down", .deps = "tls = \"=1.2.0\"", .wants = &.{"1.2.0 was taken down (malware)"} },
-        .{ .name = "compiler", .deps = "http_client = \"=0.4.1\"", .wants = &.{ "is built for mojo 1.0.0", "0.4.1 (mojo 1.1.0)" } },
-        .{ .name = "conflict", .deps = "http_client = \"0.4\"\nhttp_core = \"2\"", .wants = &.{ "no version of http_core satisfies every requirement on it", ">=1.2,<2 (from http_client 0.4.0)", "2 (from mopm.toml)" } },
-        .{ .name = "no_match", .deps = "http_core = \"3\"", .wants = &.{"no version of http_core matches 3 (from mopm.toml)"} },
-        .{ .name = "pre_release", .deps = "legacy = \">=2.0.0-rc1\"", .wants = &.{ "no version of legacy matches >=2.0.0-rc1 (from mopm.toml)", "2.0.0-rc1 (ignored: not MAJOR.MINOR.PATCH)", "mopm lock: warning: the index lists legacy 2.0.0-rc1, which is not a MAJOR.MINOR.PATCH version; it is ignored\n" } },
-        .{ .name = "four_parts", .deps = "legacy = \"=1.2.3\"", .wants = &.{ "no version of legacy matches =1.2.3 (from mopm.toml)", "1.2.3.4 (ignored: not MAJOR.MINOR.PATCH)", "mopm lock: warning: the index lists legacy 1.2.3.4, which is not a MAJOR.MINOR.PATCH version; it is ignored\n" } },
-        .{ .name = "badsum", .deps = "badsum = \"1\"", .wants = &.{ bad_sum, tampered } },
+        .{ .name = "missing", .deps = "\"example/nosuch\" = \"1\"", .wants = &.{"example/nosuch (required by mopm.toml) is not in the registry's index"} },
+        .{ .name = "yanked", .deps = "\"example/http_client\" = \"=0.3.0\"", .wants = &.{"0.3.0 was yanked: crashes on empty body"} },
+        .{ .name = "taken_down", .deps = "\"example/tls\" = \"=1.2.0\"", .wants = &.{"1.2.0 was taken down (malware)"} },
+        .{ .name = "compiler", .deps = "\"example/http_client\" = \"=0.4.1\"", .wants = &.{ "is built for mojo 1.0.0", "0.4.1 (mojo 1.1.0)" } },
+        .{ .name = "conflict", .deps = "\"example/http_client\" = \"0.4\"\n\"example/http_core\" = \"2\"", .wants = &.{ "no version of example/http_core satisfies every requirement on it", ">=1.2,<2 (from example/http_client 0.4.0)", "2 (from mopm.toml)" } },
+        .{ .name = "no_match", .deps = "\"example/http_core\" = \"3\"", .wants = &.{"no version of example/http_core matches 3 (from mopm.toml)"} },
+        .{ .name = "pre_release", .deps = "\"example/legacy\" = \">=2.0.0-rc1\"", .wants = &.{ "no version of example/legacy matches >=2.0.0-rc1 (from mopm.toml)", "2.0.0-rc1 (ignored: not MAJOR.MINOR.PATCH)", "mopm lock: warning: the index lists example/legacy 2.0.0-rc1, which is not a MAJOR.MINOR.PATCH version; it is ignored\n" } },
+        .{ .name = "four_parts", .deps = "\"example/legacy\" = \"=1.2.3\"", .wants = &.{ "no version of example/legacy matches =1.2.3 (from mopm.toml)", "1.2.3.4 (ignored: not MAJOR.MINOR.PATCH)", "mopm lock: warning: the index lists example/legacy 1.2.3.4, which is not a MAJOR.MINOR.PATCH version; it is ignored\n" } },
+        .{ .name = "badsum", .deps = "\"example/badsum\" = \"1\"", .wants = &.{ bad_sum, tampered } },
     };
     for (refusals) |refusal| {
         const d = try cx.project(try cx.fmt("refuse_{s}", .{refusal.name}), refusal.deps);

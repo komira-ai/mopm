@@ -100,7 +100,7 @@ export interface GroupReader {
  */
 export type View =
   | { kind: 'api' }
-  /** The repodata of one subdir, built over every package. */
+  /** The repodata of one repodata directory (src/channel-paths.ts), built over that channel's packages. */
   | { kind: 'build'; gate: 'repodata'; subdir: string }
   /** One package's sparse-index file. */
   | { kind: 'build'; gate: 'index' }
@@ -108,6 +108,7 @@ export type View =
   | { kind: 'build'; gate: 'takedowns' };
 
 export const API_VIEW: View = { kind: 'api' };
+/** The repodata build of one repodata directory: `<subdir>` (the root) or `<namespace>/<subdir>`; `subdir` holds that directory. */
 export const repodataView = (subdir: string): View => ({ kind: 'build', gate: 'repodata', subdir });
 export const INDEX_VIEW: View = { kind: 'build', gate: 'index' };
 export const TAKEDOWNS_VIEW: View = { kind: 'build', gate: 'takedowns' };
