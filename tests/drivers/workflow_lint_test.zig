@@ -590,7 +590,8 @@ test "a step does not name secrets.* or interpolate an expression" {
 
 // ---- the region of a cdk command --------------------------------------------------
 
-const cdk_no_region = "runs cdk with no AWS_REGION or AWS_DEFAULT_REGION in its env, its job's or the workflow's";
+const cdk_no_region = "runs cdk with no AWS_REGION in its env, its job's or the workflow's";
+const cdk_other_region = "runs cdk with AWS_DEFAULT_REGION set";
 
 /// A workflow whose one step runs `script`, with `top`, `job` and `step` added as the workflow's, the job's and the step's
 /// keys (each "" or YAML at its own indentation, with its trailing newline).
@@ -613,7 +614,7 @@ test "service-ci.yml as it was, with only CDK_DEFAULT_REGION set for the stacks 
     const now = try tree.read(a, ".github/workflows/service-ci.yml");
     const fixed =
         \\        env:
-        \\          AWS_DEFAULT_REGION: us-east-1
+        \\          AWS_REGION: us-east-1
         \\          AWS_EC2_METADATA_DISABLED: 'true'
         \\        run: |
         \\          export CDK_DEFAULT_ACCOUNT=
@@ -629,8 +630,8 @@ test "service-ci.yml as it was, with only CDK_DEFAULT_REGION set for the stacks 
     try c.expectLines("service-ci.yml", try lint(a, "service-ci.yml", old), &.{"service-ci.yml: stacks step 7: " ++ cdk_no_region});
 }
 
-test "a step that runs cdk sets the region the AWS SDK reads, not CDK_DEFAULT_REGION" {
-    const region = "        env:\n          AWS_DEFAULT_REGION: us-east-1\n";
+test "a step that runs cdk sets AWS_REGION, not CDK_DEFAULT_REGION" {
+    const region = "        env:\n          AWS_REGION: us-east-1\n";
     // CDK_DEFAULT_REGION alone, in the step's env or exported by the script, is replaced by cdk
     try expectCdk("", "", "        env:\n          CDK_DEFAULT_REGION: us-east-1\n", "npx cdk synth", &.{"ci.yml: j step 0: " ++ cdk_no_region});
     try expectCdk("", "", "", "export CDK_DEFAULT_REGION=us-east-1; npx cdk synth", &.{cdk_no_region});
@@ -641,16 +642,22 @@ test "a step that runs cdk sets the region the AWS SDK reads, not CDK_DEFAULT_RE
     try expectCdk("", "", "", "true | cdk ls", &.{cdk_no_region});
     try expectCdk("", "", "", "(cdk ls)", &.{cdk_no_region});
     // set but empty is unset to the SDK; null too
-    try expectCdk("", "", "        env:\n          AWS_DEFAULT_REGION: ''\n", "npx cdk synth", &.{cdk_no_region});
+    try expectCdk("", "", "        env:\n          AWS_REGION: ''\n", "npx cdk synth", &.{cdk_no_region});
     try expectCdk("", "", "        env:\n          AWS_REGION:\n", "npx cdk synth", &.{cdk_no_region});
     // a near name is not the variable
     try expectCdk("", "", "        env:\n          AWS_DEFAULT_REGIONS: us-east-1\n", "npx cdk synth", &.{cdk_no_region});
     // either variable, in the step's, the job's or the workflow's env, from a value or a secret
     try expectCdk("", "", region, "npx cdk synth", &.{});
-    try expectCdk("", "", "        env:\n          AWS_REGION: us-east-1\n", "npx cdk synth", &.{});
-    try expectCdk("", "", "        env:\n          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}\n", "npx cdk deploy --all", &.{});
-    try expectCdk("", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n", "", "npx cdk synth", &.{});
+    try expectCdk("", "", "        env:\n          AWS_REGION: ${{ secrets.AWS_REGION }}\n", "npx cdk deploy --all", &.{});
+    try expectCdk("", "    env:\n      AWS_REGION: us-east-1\n", "", "npx cdk synth", &.{});
     try expectCdk("env:\n  AWS_REGION: us-east-1\n", "", "", "npx cdk synth", &.{});
+    // AWS_DEFAULT_REGION alone does not pin the region (a runner's AWS_REGION wins): refused twice, no AWS_REGION and the other variable; beside AWS_REGION it is a second variable
+    try expectCdk("", "", "        env:\n          AWS_DEFAULT_REGION: us-east-1\n", "npx cdk synth", &.{ cdk_no_region, cdk_other_region });
+    try expectCdk("", "", "        env:\n          AWS_REGION: us-east-1\n          AWS_DEFAULT_REGION: us-east-1\n", "npx cdk synth", &.{cdk_other_region});
+    try expectCdk("", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n", "        env:\n          AWS_REGION: us-east-1\n", "npx cdk synth", &.{cdk_other_region});
+    try expectCdk("env:\n  AWS_DEFAULT_REGION: us-east-1\n", "", "        env:\n          AWS_REGION: us-east-1\n", "npx cdk synth", &.{cdk_other_region});
+    try expectCdk("", "", "        env:\n          AWS_REGION: us-east-1\n          AWS_DEFAULT_REGION: ''\n", "npx cdk synth", &.{});
+    try expectCdk("", "", "        env:\n          AWS_DEFAULT_REGION: us-east-1\n", "echo no cdk here", &.{});
     // not the cdk command line: other words ending in cdk, its output directory, a comment
     try expectCdk("", "", "", "npm i aws-cdk lib", &.{});
     try expectCdk("", "", "", "ls cdk.out/beta", &.{});
