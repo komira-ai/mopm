@@ -1440,9 +1440,6 @@ zig_test(  # buck-only: both lints over the fixtures, against the table in the t
     **_TOOLS
 )
 
-# AGENTS.md, the rules every change is written and reviewed against: its shared core (between the marker lines) is
-# tests/agents/shared_core.md byte for byte, that copy hashes to tests/agents/shared_core.sha256, and CLAUDE.md imports AGENTS.md
-# (tests/drivers/agents_check.zig). Each rule of the check is also shown failing on edited text.
 zig_test(  # buck-only: tools/buck2 pins a buck2 release whose RE client reports cas_ttl_secs, not ttl 0 (2026-11-01 or later)
     name = "buck2_pin",
     src = "tests/drivers/buck2_pin_test.zig",
@@ -1450,6 +1447,9 @@ zig_test(  # buck-only: tools/buck2 pins a buck2 release whose RE client reports
     **_TOOLS
 )
 
+# AGENTS.md, the rules every change is written and reviewed against: its shared core (between the marker lines) is
+# tests/agents/shared_core.md byte for byte, that copy hashes to tests/agents/shared_core.sha256, and CLAUDE.md imports AGENTS.md
+# (tests/drivers/agents_check.zig). Each rule of the check is also shown failing on edited text.
 zig_test(  # buck-only: AGENTS.md's shared core against its hashed copy, and CLAUDE.md's import of AGENTS.md
     name = "agents",
     src = "tests/drivers/agents_check_test.zig",
