@@ -5,8 +5,8 @@
 # No install, no script, no network. The policy is the "buildrules" key of package.json.
 
 load(":buildrules.bzl", "npm_package")
-load("@buildrules//rules/node:modules.bzl", "node_tree_test")
-load("//vendor/buildrules_coverage:jest_cover.bzl", "jest_coverage_floor", "jest_test")
+load("@buildrules//rules/node:modules.bzl", "jest_test", "node_tree_test")
+load("@buildrules//rules/coverage:jest_cover.bzl", "jest_coverage_floor")
 
 _NODE = "//tools/node:node"
 
@@ -94,6 +94,7 @@ npm_package(
 # npm_package's `:test` is a pass marker and does not write one, so the floor reads this run instead.
 jest_test(
     name = "coverage_run",
+    coverage = True,
     data = _TEST_DATA,
     modules = ":node_modules",
     node = _NODE,
@@ -107,7 +108,7 @@ jest_test(
     ],
 )
 
-# The lines and branches of the package's own code that the tests reach (jest --coverage), held to coverage_floor.txt (vendor/buildrules_coverage/README.md).
+# The lines and branches of the package's own code that the tests reach (jest --coverage), held to coverage_floor.txt (buildrules' rules/coverage/README.md).
 jest_coverage_floor(coverage = ":coverage_run")
 
 # service-ci.yml's `test -f dist/<page>` for each page the site job names.

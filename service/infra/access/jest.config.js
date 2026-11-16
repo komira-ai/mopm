@@ -4,7 +4,7 @@ module.exports = {
   workerIdleMemoryLimit: '1GB',
   testEnvironment: 'node',
   roots: ['<rootDir>/test'],
-  // The package's own code, for jest --coverage (vendor/buildrules_coverage/README.md).
+  // The package's own code, for jest --coverage (buildrules' rules/coverage/README.md, `jest_test(coverage = True)`).
   collectCoverageFrom: ['bin/**/*.ts', 'lib/**/*.ts'],
   testMatch: ['**/*.test.ts'],
   transform: { '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json' }] },

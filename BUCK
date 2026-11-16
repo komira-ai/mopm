@@ -15,11 +15,8 @@
 # `buck-only` on its first line has no counterpart in
 # build.zig and is left out of the parity comparison.
 
-load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module")
-# zig_test is the pinned buildrules rule plus the ZigTestInfo that zig_coverage reads (vendor/buildrules_coverage/README.md).
-load("//vendor/buildrules_coverage:zig_test.bzl", "zig_test")
-load("//vendor/buildrules_coverage:zig_cover.bzl", "zig_coverage")
-load("//vendor/buildrules_coverage:tools.bzl", "cov_tools")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//ci:workflow_lint.bzl", "actionlint_check")
 load("//:buildrules.bzl", "cargo_workspace")
@@ -1129,6 +1126,7 @@ _LINT_DOTFILES = [
 ]
 
 _LINT_PACKAGES = [
+    "ci",
     "service/api",
     "service/config",
     "service/infra/access",
@@ -1343,10 +1341,7 @@ zig_exe(  # buck-only: tools/conda_measure.zig, built so the farm compiles it; i
 )
 
 # ---- Coverage: the lines the unit tests reach, held to a floor per package ------------------------------------------------
-# (vendor/buildrules_coverage/README.md says what each figure is, what it leaves out, and how a floor is written.)
-
-# The tools of a coverage run (zig_cover, cov_floor, cov_summary, the launcher), built here until the buildrules pin has them.
-cov_tools()
+# (buildrules' rules/coverage/README.md says what each figure is, what it leaves out, and how a floor is written.)
 
 # Each package: the unit tests of its sources run again under kcov (the same compile and environment), and `<package>_coverage_floor`
 # holds the lines they reach to coverage/<package>.txt, as a minimum: a fall below the floor fails, a figure above it passes and a hint says the floor may be raised.
@@ -1445,23 +1440,9 @@ zig_coverage(
     ],
 )
 
-# Every package's floor, in one target: `./buck2 build //:coverage_floors`.
-filegroup(
+# Every package's floor, in one target: `./buck2 build //:coverage_floors`. The floors themselves are collected in //ci:coverage_floors
+# (ci/BUCK): buildrules' coverage rules make a floor visible to the `ci` package only.
+alias(
     name = "coverage_floors",
-    srcs = {
-        "agents": ":agents_coverage_floor",
-        "apt_publish": ":apt_publish_coverage_floor",
-        "build_parity": ":build_parity_coverage_floor",
-        "channels": ":channels_coverage_floor",
-        "cli": ":cli_coverage_floor",
-        "core": ":core_coverage_floor",
-        "drivers": ":drivers_coverage_floor",
-        "fake_registry": ":fake_registry_coverage_floor",
-        "group_e2e": ":group_e2e_coverage_floor",
-        "service_api": "//service/api:coverage_floor",
-        "service_infra_access": "//service/infra/access:coverage_floor",
-        "service_infra_dns": "//service/infra/dns:coverage_floor",
-        "service_infra_stacks": "//service/infra/stacks:coverage_floor",
-        "site": "//site:coverage_floor",
-    },
+    actual = "//ci:coverage_floors",
 )
