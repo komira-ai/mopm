@@ -1,7 +1,7 @@
 module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/test'],
-  // The package's own code, for jest --coverage (vendor/buildrules_coverage/README.md).
+  // The package's own code, for jest --coverage (buildrules' rules/coverage/README.md, `jest_test(coverage = True)`).
   collectCoverageFrom: ['src/**/*.ts', 'tools/**/*.ts'],
   testMatch: ['**/*.test.ts'],
   // TypeScript first: a stray compiled test/x.js must never shadow test/x.ts.

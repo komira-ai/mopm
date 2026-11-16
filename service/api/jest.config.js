@@ -5,7 +5,7 @@ module.exports = {
   testEnvironment: 'node',
   setupFiles: ['<rootDir>/test/fc-seed.ts'],
   roots: ['<rootDir>/test'],
-  // The package's own code, for jest --coverage (vendor/buildrules_coverage/README.md).
+  // The package's own code, for jest --coverage (buildrules' rules/coverage/README.md, `jest_test(coverage = True)`).
   collectCoverageFrom: ['src/**/*.ts'],
   testMatch: ['**/*.test.ts'],
   transform: { '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json' }] },
