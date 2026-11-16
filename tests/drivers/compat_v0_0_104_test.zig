@@ -11,7 +11,10 @@
 //! clients send, and that the registry's TypeScript tests replay, so both registries are held to the same requests.
 //!
 //! The set: three packages at 1.0.0, `alpha` with a readme of quotes, backslashes and non-ASCII text, `beta` with an empty readme,
-//! `gamma` with none.
+//! `gamma` with none. The previous release knows only flat names (`alpha`, plan.json version 1, `/api/v1`); the current client
+//! and registry know full names (`example/alpha`, plan.json version 2, `/api/v2`). The previous client therefore publishes to the
+//! current registry's version 1 routes, which still serve flat names; the current client sends everything to `/api/v2`, which the
+//! previous registry does not have (it answers `route_not_found`), so the current client cannot publish to it, and says so.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -31,7 +34,9 @@ const NewClient = inproc.Client(gp);
 const contains = inproc.contains;
 const expectContains = inproc.expectContains;
 
+/// The names of the previous release, and the full names of the current one.
 const names: []const []const u8 = &.{ "alpha", "beta", "gamma" };
+const full_names: []const []const u8 = &.{ inproc.namespace ++ "/alpha", inproc.namespace ++ "/beta", inproc.namespace ++ "/gamma" };
 const readmes: []const ?[]const u8 = &.{ "# Alpha \"quoted\"\nline \u{e9} \u{65e5}\u{672c} \u{1f600} \\ end\n", "", null };
 /// The previous fake registry refuses an empty readme (a text of 0 bytes is "empty or too long" to it, registry/fake/groups.zig at the
 /// tag; the hosted registry took it), so the set it is given has none: `beta` has no readme and `gamma` a short one.
@@ -136,10 +141,10 @@ fn golden(a: Allocator, dir: []const u8, name: []const u8) ![]u8 {
     return readRooted(a, try std.fmt.allocPrint(a, "{s}/{s}/{s}", .{ goldens, dir, name }));
 }
 
-/// The first create request and the last commit request a run sent.
-fn createOf(seen: []const inproc.Seen) ?inproc.Seen {
+/// The first create request (`POST <api>/groups`, `api` being `/api/v1` or `/api/v2`) and the last commit request a run sent.
+fn createOf(seen: []const inproc.Seen, api: []const u8) ?inproc.Seen {
     for (seen) |s| {
-        if (s.method == .POST and std.mem.eql(u8, s.path, "/api/v1/groups")) return s;
+        if (s.method == .POST and std.mem.startsWith(u8, s.path, api) and std.mem.eql(u8, s.path[api.len..], "/groups")) return s;
     }
     return null;
 }
@@ -185,10 +190,10 @@ fn runOld(w: *OldNew, dir: std.fs.Dir) !OldRan {
     return .{ .result = result, .err = console.err.items, .from = from };
 }
 
-/// Every member of the set is published at 1.0.0.
-fn expectPublished(w: anytype) !void {
-    for (names) |name| {
-        const r = try w.get(try std.fmt.allocPrint(w.a, "/api/v1/packages/{s}/1.0.0", .{name}));
+/// Every member of `members` is published at 1.0.0.
+fn expectPublished(w: anytype, members: []const []const u8) !void {
+    for (members) |name| {
+        const r = try w.get(try std.fmt.allocPrint(w.a, "{s}/packages/{s}/1.0.0", .{ w.apiPath(), name }));
         try std.testing.expectEqual(@as(u16, 200), r.status);
         try std.testing.expectEqualStrings("published", inproc.stringKey(r.value, "state") orelse "(none)");
     }
@@ -210,44 +215,55 @@ test "the previous client publishes to this registry what the current client pub
     defer dir.cleanup();
     try inproc.stageNamed(a, dir.dir, names, "1.0.0", readmes);
 
-    // The previous client, inline as it always sent them, to this registry.
+    // The previous client, inline as it always sent them, to this registry's version 1 routes.
     var from_old: OldNew = undefined;
     try OldNew.open(a, &from_old, names);
     defer from_old.close();
     const r_old = try runOld(&from_old, dir.dir);
     try std.testing.expectEqual(@as(?old.Result, .published), r_old.result);
-    try expectPublished(&from_old);
+    try expectPublished(&from_old, names);
     try std.testing.expectEqualStrings(readmes[0].?, (try from_old.versionReadme("alpha", "1.0.0")).?);
     try std.testing.expectEqualStrings("", (try from_old.versionReadme("beta", "1.0.0")).?);
     try std.testing.expect((try from_old.versionReadme("gamma", "1.0.0")) == null);
     try std.testing.expectEqualStrings(readmes[0].?, (try from_old.packageReadme("alpha")).?);
 
-    // The current client, readmes as objects, to another instance of this registry (it lists the capability).
+    // The current client, full names and readmes as objects, to another instance of this registry (it lists the capability).
     var dir2 = std.testing.tmpDir(.{});
     defer dir2.cleanup();
-    try inproc.stageNamed(a, dir2.dir, names, "1.0.0", readmes);
+    try inproc.stageNamed(a, dir2.dir, full_names, "1.0.0", readmes);
     var from_new: NewNew = undefined;
-    try NewNew.open(a, &from_new, names);
+    try NewNew.open(a, &from_new, full_names);
     defer from_new.close();
     const r_new = try NewClient.run(&from_new, dir2.dir, false);
     try std.testing.expectEqual(@as(?gp.Result, .published), r_new.result);
-    try expectPublished(&from_new);
+    try expectPublished(&from_new, full_names);
     // The objects form: the alpha readme travels as an object, the empty one inline.
     try expectContains(commitOf(from_new.seen.items).?.body, "\"readme\":{\"sha256\":\"");
     try expectContains(commitOf(from_new.seen.items).?.body, "\"readme\":\"\"");
 
-    // The two registries serve the same facts for every member. The clocks of the two instances are their own, so the index record's
-    // `published_at` is blanked (servedFacts); nothing else is normalised.
-    for (names) |name| {
+    // The two registries serve the same readmes for every member. The index record and the channel file differ by design (a flat name in
+    // index version 1 and the flat channel, a full name in index version 2 and the channel of its namespace), and so do the bytes each
+    // client staged (they carry the member's name): each record names its member and the sha256 of the bytes its client uploaded, and
+    // each channel serves those bytes.
+    for (names, full_names) |name, full| {
         const x = try inproc.servedFacts(&from_old, name, "1.0.0");
-        const y = try inproc.servedFacts(&from_new, name, "1.0.0");
-        for (x, y) |fx, fy| try std.testing.expectEqualStrings(fx, fy);
+        const y = try inproc.servedFacts(&from_new, full, "1.0.0");
+        try std.testing.expectEqualStrings(x[0], y[0]);
+        try std.testing.expectEqualStrings(x[1], y[1]);
+        try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "the bytes of {s} 1.0.0", .{name}), x[3]);
+        try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "the bytes of {s} 1.0.0", .{full}), y[3]);
+        try expectContains(x[2], try std.fmt.allocPrint(a, "\"name\":\"{s}\"", .{name}));
+        try expectContains(y[2], try std.fmt.allocPrint(a, "\"name\":\"{s}\"", .{full}));
+        try expectContains(x[2], try sha256Of(a, x[3]));
+        try expectContains(y[2], try sha256Of(a, y[3]));
+        try expectContains(x[2], "\"v\":1");
+        try expectContains(y[2], "\"v\":2");
     }
 
     // The requests of each client are the ones the fixtures hold (which the TypeScript registry replays).
-    try std.testing.expectEqualStrings(try golden(a, "released-client-v0.0.104", "create.json"), createOf(from_old.seen.items).?.body);
+    try std.testing.expectEqualStrings(try golden(a, "released-client-v0.0.104", "create.json"), createOf(from_old.seen.items, "/api/v1").?.body);
     try std.testing.expectEqualStrings(try golden(a, "released-client-v0.0.104", "commit.json"), commitOf(from_old.seen.items).?.body);
-    try std.testing.expectEqualStrings(try golden(a, "new-client", "create.json"), createOf(from_new.seen.items).?.body);
+    try std.testing.expectEqualStrings(try golden(a, "new-client", "create.json"), createOf(from_new.seen.items, "/api/v2").?.body);
     try std.testing.expectEqualStrings(try golden(a, "new-client", "commit.json"), commitOf(from_new.seen.items).?.body);
 }
 
@@ -272,53 +288,58 @@ test "the previous client refuses an oversized set before any request, as it alw
     try std.testing.expectEqual(@as(usize, 0), w.seen.items.len);
 }
 
-test "the current client publishes a small set inline to the previous registry, which sees no readme object and no readme declaration" {
+test "the current client cannot publish to the previous registry: it sends everything to /api/v2, which that registry does not serve, and nothing is uploaded" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
     try verifySnapshot(a);
 
+    // The previous registry holds the flat packages of the same names; the current client asks for full names.
     var w: NewOld = undefined;
     try NewOld.open(a, &w, names);
     defer w.close();
     var dir = std.testing.tmpDir(.{});
     defer dir.cleanup();
-    try inproc.stageNamed(a, dir.dir, names, "1.0.0", readmes_nonempty);
+    try inproc.stageNamed(a, dir.dir, full_names, "1.0.0", readmes_nonempty);
 
     const r = try NewClient.run(&w, dir.dir, false);
-    try std.testing.expectEqual(@as(?gp.Result, .published), r.result);
-    try expectPublished(&w);
+    try std.testing.expectEqual(@as(?gp.Result, .no_group_publish), r.result);
+    try expectContains(r.err, "the registry at " ++ inproc.api_v2_url ++ " has no group publish (POST /groups answered HTTP 404); nothing was uploaded\n");
 
-    // The previous registry's /health lists no features: the first request is that read, and what follows is the inline form.
-    try std.testing.expectEqualStrings("/api/v1/health", w.seen.items[r.from].path);
-    const health = try w.get("/api/v1/health");
-    try std.testing.expect(!contains(health.body, "features"));
-    const create = createOf(w.seen.items).?;
-    try std.testing.expect(!contains(create.body, "\"readme\""));
-    const commit = commitOf(w.seen.items).?;
-    try expectContains(commit.body, "\"readme\":\"# Alpha");
-    try expectContains(commit.body, "\"readme\":\"# gamma");
-    try std.testing.expect(!contains(commit.body, "\"readme\":{"));
-    // Every upload it received is a package file: three PUTs, none the size of a readme.
-    var puts: usize = 0;
-    for (w.seen.items[r.from..]) |s| {
-        if (s.method != .PUT) continue;
-        puts += 1;
-        try std.testing.expect(contains(s.body, "the bytes of "));
+    // Two requests: the read of /api/v2/health (no features: it answers route_not_found) and the create, which answers the same. No upload, no commit.
+    try std.testing.expectEqual(@as(usize, 2), w.seen.items.len - r.from);
+    try std.testing.expectEqual(std.http.Method.GET, w.seen.items[r.from].method);
+    try std.testing.expectEqualStrings("/api/v2/health", w.seen.items[r.from].path);
+    try std.testing.expectEqual(std.http.Method.POST, w.seen.items[r.from + 1].method);
+    try std.testing.expectEqualStrings("/api/v2/groups", w.seen.items[r.from + 1].path);
+    try std.testing.expectEqual(@as(usize, 0), w.seenCount(.PUT, r.from, ""));
+    try std.testing.expect(commitOf(w.seen.items) == null);
+    const health = try w.get("/api/v2/health");
+    try std.testing.expectEqual(@as(u16, 404), health.status);
+    try expectContains(health.body, "route_not_found");
+    // The previous registry published nothing: none of the flat packages has a version.
+    for (names) |name| {
+        const v = try w.get(try std.fmt.allocPrint(a, "/api/v1/packages/{s}/1.0.0", .{name}));
+        try std.testing.expectEqual(@as(u16, 404), v.status);
     }
-    try std.testing.expectEqual(names.len, puts);
-    // The bytes it sent are the bytes the current client sends inline for this set to the current registry with objects switched off.
+
+    // What the current client sent the previous registry is what it sends the current one with readme objects switched off: the
+    // create request carries no readme.
+    const create = createOf(w.seen.items, "/api/v2").?;
+    try std.testing.expect(!contains(create.body, "\"readme\""));
     var dir2 = std.testing.tmpDir(.{});
     defer dir2.cleanup();
-    try inproc.stageNamed(a, dir2.dir, names, "1.0.0", readmes_nonempty);
+    try inproc.stageNamed(a, dir2.dir, full_names, "1.0.0", readmes_nonempty);
     var same: NewNew = undefined;
-    try NewNew.open(a, &same, names);
+    try NewNew.open(a, &same, full_names);
     defer same.close();
     _ = try same.fx.call(.POST, "/_fake/readme_objects", "{\"enabled\":false}", null);
     const r2 = try NewClient.run(&same, dir2.dir, false);
     try std.testing.expectEqual(@as(?gp.Result, .published), r2.result);
-    try std.testing.expectEqualStrings(createOf(same.seen.items).?.body, create.body);
-    try std.testing.expectEqualStrings(commitOf(same.seen.items).?.body, commit.body);
+    try std.testing.expectEqualStrings(createOf(same.seen.items, "/api/v2").?.body, create.body);
+    try expectContains(commitOf(same.seen.items).?.body, "\"readme\":\"# Alpha");
+    try expectContains(commitOf(same.seen.items).?.body, "\"readme\":\"# gamma");
+    try expectPublished(&same, full_names);
 }
 
 test "the current client refuses an oversized set after the read of /health alone when the previous registry is the one it publishes to" {
@@ -332,14 +353,15 @@ test "the current client refuses an oversized set after the read of /health alon
     defer w.close();
     var dir = std.testing.tmpDir(.{});
     defer dir.cleanup();
-    try inproc.stageSet(a, dir.dir, "rdb", "1.0.0", try inproc.bigTexts(a, "rdb", big_count, big_readme_len));
+    const members = try inproc.namesOf(a, inproc.namespace ++ "/rdb", big_count);
+    try inproc.stageNamed(a, dir.dir, members, "1.0.0", try inproc.bigTexts(a, inproc.namespace ++ "/rdb", big_count, big_readme_len));
 
     const r = try NewClient.run(&w, dir.dir, false);
     try std.testing.expectEqual(@as(?gp.Result, null), r.result);
     try expectContains(r.err, "the commit request of the 100 members to upload is ");
     try expectContains(r.err, "the registry does not take readmes as objects");
-    // Only the read of /health: no create, no upload, no commit, no state.json.
+    // Only the read of /api/v2/health: no create, no upload, no commit, no state.json.
     try std.testing.expectEqual(@as(usize, 1), w.seen.items.len - r.from);
-    try std.testing.expectEqualStrings("/api/v1/health", w.seen.items[r.from].path);
+    try std.testing.expectEqualStrings("/api/v2/health", w.seen.items[r.from].path);
     try std.testing.expect(!inproc.fileExists(dir.dir, "state.json"));
 }

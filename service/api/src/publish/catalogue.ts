@@ -57,6 +57,21 @@ export const PUBLISH_REASONS: Record<string, readonly string[]> = {
   group_conflict: ['number_held', 'group_failed', 'open_cap', 'supersede_cap', 'takeover_blocked', 'number_taken', 'overlap_refused'],
 };
 
+/**
+ * `/api/v1` once names are in namespaces (docs/design/namespaces.md section 8): creating a flat package is refused with
+ * `name_reserved` and this hint in place of the catalogue's, so a released mopm tells its user to update rather than to
+ * choose another name. The fake registry answers the same (registry/fake/ns_errors.zig).
+ */
+export const FLAT_CREATION_HINT = 'package names are in namespaces now; update mopm';
+
+/** The hint of a refused flat creation (an error whose detail says `flat_creation`), or undefined for every other error. */
+export const flatCreationHint = (code: string, detail: Record<string, string>): string | undefined =>
+  code === 'name_reserved' && detail.flat_creation === 'refused' ? FLAT_CREATION_HINT : undefined;
+
+/** A refused flat creation on `/api/v1`. */
+export const flatCreationRefused = (name: string) =>
+  new RegistryError('name_reserved', `'${name}' is reserved.`, { name, flat_creation: 'refused' });
+
 export interface ErrorView {
   status: number;
   body: { error: { code: string; message: string; hint: string; reason?: string } };
@@ -75,10 +90,11 @@ export function errorView(err: unknown): ErrorView {
   }
   const entry = PUBLISH_CATALOGUE[code] ?? PUBLISH_CATALOGUE.internal_error!;
   if (!PUBLISH_CATALOGUE[code]) code = 'internal_error';
+  const hint = flatCreationHint(code, detail) ?? render(entry.hint, detail);
   const reason = err instanceof PublishError && err.reason !== undefined && PUBLISH_REASONS[code]?.includes(err.reason) ? err.reason : undefined;
   return {
     status: entry.status,
-    body: { error: { code, message: render(entry.message, detail), hint: render(entry.hint, detail), ...(reason !== undefined ? { reason } : {}) } },
+    body: { error: { code, message: render(entry.message, detail), hint, ...(reason !== undefined ? { reason } : {}) } },
     ...(retryAfter !== undefined ? { retryAfter } : {}),
   };
 }

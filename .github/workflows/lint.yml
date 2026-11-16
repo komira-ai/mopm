@@ -1,6 +1,6 @@
 # The repository's own lints, on a GitHub-hosted runner for every pull request (forks
 # included) and for every push to main. They are the Zig tests behind the Buck2 targets
-# //:hygiene, //:workflows, //:autopin_workflows, //:lint_selftest and //:agents (plus //:actionlint, the pinned actionlint over every workflow), run here with the Zig ci.yml installs.
+# //:hygiene, //:workflows, //:autopin_workflows, //:lint_selftest, //:agents and //:api_gen_test (plus //:actionlint, the pinned actionlint over every workflow), run here with the Zig ci.yml installs.
 # This job holds no secret, no id-token and a read-only token, so a fork's pull request
 # gets the same check as a branch of this repository; farm.yml runs the same targets on
 # the farm when it is configured, but is neither required nor run for a fork.
@@ -55,6 +55,12 @@ jobs:
       - name: buck2 pin (tools/buck2 names a release whose RE client reports a TTL, not 0)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/buck2_pin_test.zig
+      - name: registry API outputs (openapi-v2.yaml, the service's types and the CLI's client are what the v2 protos make)
+        if: ${{ !cancelled() }}
+        run: zig test tools/api_gen_test.zig
+      - name: registry client lint (every API operation has a generated command; hand-written commands call the registry only through the generated client)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/registry_client_lint_test.zig
       - name: actionlint (strict YAML parse and workflow check of every workflow; the pinned release, sha256-verified)
         if: ${{ !cancelled() }}
         run: |

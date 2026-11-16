@@ -87,7 +87,7 @@
     {
       "request": {
         "method": "GET",
-        "path": "/api/v2/packages",
+        "path": "/api/v3/packages",
         "query": {},
         "headers": {}
       },

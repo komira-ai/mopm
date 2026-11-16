@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CloudFrontInvalidator, S3Channel, SqsFifoQueue, SqsQueueDepth, type HttpFn, type HttpResponse } from '../../src/publish/aws';
+import { CloudFrontInvalidator, S3Channel, sqsId, SqsFifoQueue, SqsQueueDepth, type HttpFn, type HttpResponse } from '../../src/publish/aws';
 
 const CREDS = { accessKeyId: 'AKIDTEST', secretAccessKey: 'secret', sessionToken: 'SESSION' };
 const NOW = new Date('2026-10-14T12:00:00Z');
@@ -91,6 +91,37 @@ describe('S3Channel', () => {
 
   const listing = (...keys: string[]) => ({ status: 200, body: `<?xml version="1.0"?><ListBucketResult><KeyCount>${keys.length}</KeyCount>${keys.map((k) => `<Contents><Key>${k}</Key></Contents>`).join('')}</ListBucketResult>` });
 
+  const page = (entries: Array<[string, number]>, next?: string) => ({
+    status: 200,
+    body:
+      `<?xml version="1.0"?><ListBucketResult><IsTruncated>${next ? 'true' : 'false'}</IsTruncated>` +
+      entries.map(([k, n]) => `<Contents><Key>${k}</Key><LastModified>x</LastModified><Size>${n}</Size></Contents>`).join('') +
+      (next ? `<NextContinuationToken>${next}</NextContinuationToken>` : '') +
+      '</ListBucketResult>',
+  });
+
+  test('list: follows the continuation token to the last page, signed, and gives every key with its size in key order', async () => {
+    const t = fakeHttp(page([['linux-64/mojo-b-1.conda', 20]], 'tok&amp;1'), page([['linux-64/mojo-a&amp;b-1.conda', 10]]));
+    expect(await new S3Channel('bkt', opts(t.http)).list('linux-64/mojo-')).toEqual([
+      { key: 'linux-64/mojo-a&b-1.conda', size: 10 },
+      { key: 'linux-64/mojo-b-1.conda', size: 20 },
+    ]);
+    expect(t.seen.map((s) => s.url)).toEqual([
+      'https://bkt.s3.us-east-1.amazonaws.com/?list-type=2&prefix=linux-64%2Fmojo-',
+      'https://bkt.s3.us-east-1.amazonaws.com/?list-type=2&prefix=linux-64%2Fmojo-&continuation-token=tok%261',
+    ]);
+    expect(t.seen.every((s) => s.method === 'GET' && s.headers.authorization!.includes('AWS4-HMAC-SHA256'))).toBe(true);
+  });
+
+  test('list: an empty prefix listing is empty; a failure, an entry without a size and a truncated page without a token all throw', async () => {
+    expect(await new S3Channel('bkt', opts(fakeHttp(page([])).http)).list('index/')).toEqual([]);
+    await expect(new S3Channel('bkt', opts(fakeHttp({ status: 403, body: '<Error/>' }).http)).list('index/')).rejects.toThrow('s3 answered 403: list index/: <Error/>');
+    const noSize = { status: 200, body: '<ListBucketResult><Contents><Key>a</Key></Contents></ListBucketResult>' };
+    await expect(new S3Channel('bkt', opts(fakeHttp(noSize).http)).list('')).rejects.toThrow('s3 answered 200: list : an entry without a key or a size');
+    const noToken = { status: 200, body: '<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>' };
+    await expect(new S3Channel('bkt', opts(fakeHttp(noToken).http)).list('x')).rejects.toThrow('s3 answered 200: list x: truncated without a continuation token');
+  });
+
   test('getExact on 403 lists with the exact key as the prefix, one key at most, signed; an empty listing is absent', async () => {
     const t = fakeHttp({ status: 403, body: '<Error/>' }, listing());
     expect(await new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).toBeUndefined();
@@ -149,6 +180,27 @@ describe('SqsFifoQueue', () => {
     });
     expect(signedHeaders(r.headers)).toEqual(expect.arrayContaining(['content-type', 'host', 'x-amz-target']));
     expect(r.headers.authorization).toContain('/us-east-1/sqs/aws4_request');
+  });
+
+  test('a deduplication id of 128 characters or fewer is sent unchanged; a longer one as a fixed-length digest, equal ids equal and different ids different', async () => {
+    const sentIds = async (...ids: string[]) => {
+      const { http, seen } = fakeHttp({ status: 200, body: '{}' });
+      const q = new SqsFifoQueue(QUEUE_URL, opts(http));
+      for (const dedupId of ids) await q.send({ body: 'b', groupId: 'g', dedupId });
+      return seen.map((r) => JSON.parse(r.body as string).MessageDeduplicationId as string);
+    };
+    const edge = 'a'.repeat(128);
+    const long1 = `rebuild:1.2.3:${'n'.repeat(104)}:7:${'m'.repeat(20)}`;
+    const long2 = `${long1}x`;
+    const [a, b, c, d, e] = await sentIds(edge, long1, long1, long2, 'pub_1');
+    expect(a).toBe(edge);
+    expect(e).toBe('pub_1');
+    expect(b).toBe(`sha256:${createHash('sha256').update(long1).digest('hex')}`);
+    expect(b).toHaveLength(71);
+    expect(c).toBe(b);
+    expect(d).not.toBe(b);
+    expect(d).toHaveLength(71);
+    expect(sqsId('a'.repeat(129))).toHaveLength(71);
   });
 
   test('a refusal is an error (the caller\'s request then fails, or the validator message is retried)', async () => {

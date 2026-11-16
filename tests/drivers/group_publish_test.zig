@@ -1,8 +1,9 @@
-//! End-to-end tests of `mopm publish --staged` and `mopm yank --group` against the fake registry (spec/staged-set.md).
+//! End-to-end tests of `mopm publish --staged` and `mopm group yank|unyank|status` against the fake registry (spec/staged-set.md).
 //!
 //! Run by Buck2 (//:group_publish): MOPM, MOPM_FAKE_REGISTRY and MOPM_ENV_PROBE are the built programs. Each check prints
-//! `ok` or `FAIL`. Every scenario is a staged set of three packages, a, b and c (b needs a, c needs b: the plan lists them in
-//! that order), published to the fake registry through one group.
+//! `ok` or `FAIL`. Every scenario is a staged set of three packages of the namespace `example`, grp_a, grp_b and grp_c (b needs a,
+//! c needs b: the plan lists them in that order), published to the fake registry through one group. `example` is the user
+//! namespace of the account that publishes them; each package is made with PUT /api/v2/packages/<namespace>/<name>.
 //!
 //! What can go red, and why:
 //! - a chain published through one group must end with all three versions served, in the index and in the report, and
@@ -67,14 +68,16 @@ fn sha256Hex(a: Allocator, bytes: []const u8) ![]u8 {
     return a.dupe(u8, &std.fmt.bytesToHex(digest, .lower));
 }
 
+/// `mojo-<namespace>.<name>-<version>-...` for the member whose name is the full name `<namespace>/<name>`.
 fn filenameOf(a: Allocator, m: Member) ![]u8 {
-    return std.fmt.allocPrint(a, "mojo-{s}-{s}-mojo1.0.0_0.conda", .{ m.name, m.version });
+    const at = std.mem.indexOfScalar(u8, m.name, '/').?;
+    return std.fmt.allocPrint(a, "mojo-{s}.{s}-{s}-mojo1.0.0_0.conda", .{ m.name[0..at], m.name[at + 1 ..], m.version });
 }
 
 /// Writes a staged directory: the files below `noarch/` and a plan.json that lists the members in the order given.
 fn stage(a: Allocator, dir: []const u8, members: []const Member) !void {
     var plan = std.ArrayList(u8).init(a);
-    try plan.appendSlice("{\"version\":1,\"members\":[");
+    try plan.appendSlice("{\"version\":2,\"members\":[");
     for (members, 0..) |m, i| {
         if (i != 0) try plan.append(',');
         if (!std.mem.eql(u8, m.action, "upload")) {
@@ -92,7 +95,7 @@ fn stage(a: Allocator, dir: []const u8, members: []const Member) !void {
     try h.writeFile(try h.join(a, &.{ dir, "plan.json" }), plan.items);
 }
 
-const names = [_][]const u8{ "grp_a", "grp_b", "grp_c" };
+const names = [_][]const u8{ "example/grp_a", "example/grp_b", "example/grp_c" };
 
 /// The three members of a scenario at `version`; `b_bytes` lets one scenario make b's file a rejected one.
 fn chain(version: []const u8, b_bytes: []const u8) [3]Member {
@@ -119,7 +122,7 @@ const World = struct {
 
     /// The state of `name` `version` as the registry serves it, or "absent".
     fn stateOf(w: World, name: []const u8, version: []const u8) ![]const u8 {
-        const r = try h.request(w.a, "GET", w.fake.base, try std.fmt.allocPrint(w.a, "/api/v1/packages/{s}/{s}", .{ name, version }), null, null);
+        const r = try h.request(w.a, "GET", w.fake.base, try std.fmt.allocPrint(w.a, "/api/v2/packages/{s}/{s}", .{ name, version }), null, null);
         if (r.status != 200) return "absent";
         return h.jsonString(try h.parseJson(w.a, r.body), "state") orelse "unknown";
     }
@@ -187,12 +190,12 @@ fn publishAChain(w: World) !void {
     w.rep.check("before the run none of the three versions is served", (try w.visible("1.0.0")) == 0, "something is visible");
     const r = try w.publish(staged, &.{});
     w.rep.check("a three-package chain is published through one group and the run ends 0", r.code == 0 and h.contains(r.stdout, "published group grp_") and
-        h.contains(r.stdout, "grp_a 1.0.0 grp_b 1.0.0 grp_c 1.0.0"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        h.contains(r.stdout, "example/grp_a 1.0.0 example/grp_b 1.0.0 example/grp_c 1.0.0"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     w.rep.check("then all three versions are published", try w.allIn("1.0.0", "published"), "not all published");
-    const idx = try h.request(a, "GET", w.fake.base, "/index/gr/p_/grp_b", null, null);
+    const idx = try h.request(a, "GET", w.fake.base, "/index/v2/ex/am/example/grp_b", null, null);
     w.rep.check("the sparse index lists a member with the sha256 of the file in the plan", idx.status == 200 and h.contains(idx.body, "\"version\":\"1.0.0\"") and
         h.contains(idx.body, try sha256Hex(a, "the bytes of b")), idx.body);
-    const ch = try h.request(a, "GET", w.fake.base, "/channel/noarch/mojo-grp_c-1.0.0-mojo1.0.0_0.conda", null, null);
+    const ch = try h.request(a, "GET", w.fake.base, "/channel/example/noarch/mojo-example.grp_c-1.0.0-mojo1.0.0_0.conda", null, null);
     w.rep.check("the channel serves a member's file, byte for byte", ch.status == 200 and std.mem.eql(u8, ch.body, "the bytes of c"), "wrong bytes");
 
     const report = try w.reportJson(staged);
@@ -200,7 +203,7 @@ fn publishAChain(w: World) !void {
     w.rep.check("report.json names the run, the group, and each member as published", h.jsonString(report, "outcome") != null and
         std.mem.eql(u8, h.jsonString(report, "outcome").?, "published") and std.mem.eql(u8, h.jsonString(report, "group_id") orelse "", id) and
         std.mem.startsWith(u8, id, "grp_") and (h.jsonString(report, "run_id") orelse "").len == 16 and
-        std.mem.eql(u8, World.memberOutcome(report, "grp_a"), "published") and std.mem.eql(u8, World.memberOutcome(report, "grp_c"), "published"), "the report is not as expected");
+        std.mem.eql(u8, World.memberOutcome(report, "example/grp_a"), "published") and std.mem.eql(u8, World.memberOutcome(report, "example/grp_c"), "published"), "the report is not as expected");
     const state = try w.stateJson(staged);
     w.rep.check("state.json names the group and says it was committed", state.object.get("committed").?.bool and state.object.get("uploaded").?.array.items.len == 3, "the state is not as expected");
 
@@ -216,12 +219,12 @@ fn aRejectedMember(w: World) !void {
     try stage(a, staged, &members);
     const r = try w.publish(staged, &.{});
     w.rep.check("a group with a rejected member ends 1 and names the member and the code", r.code == 1 and h.contains(r.stderr, "is rejected: path_not_allowed") and
-        h.contains(r.stderr, "(member grp_b)") and h.contains(r.stderr, "none of its members is published"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        h.contains(r.stderr, "(member example/grp_b)") and h.contains(r.stderr, "none of its members is published"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     w.rep.check("and none of the three versions is served", (try w.visible("1.1.0")) == 0, "a member is visible");
     const report = try w.reportJson(staged);
     w.rep.check("report.json names the rejected member and says the others were not published", std.mem.eql(u8, h.jsonString(report, "outcome") orelse "", "failed") and
-        std.mem.eql(u8, World.memberOutcome(report, "grp_b"), "rejected") and std.mem.eql(u8, World.memberOutcome(report, "grp_a"), "not_published") and
-        std.mem.eql(u8, World.memberOutcome(report, "grp_c"), "not_published"), "the report is not as expected");
+        std.mem.eql(u8, World.memberOutcome(report, "example/grp_b"), "rejected") and std.mem.eql(u8, World.memberOutcome(report, "example/grp_a"), "not_published") and
+        std.mem.eql(u8, World.memberOutcome(report, "example/grp_c"), "not_published"), "the report is not as expected");
 
     // The numbers are free again: the same versions, with a b that is accepted, are another group and go through.
     const fixed = try w.dir("rejected_fixed");
@@ -257,7 +260,7 @@ fn aFailedPutThenARerun(w: World) !void {
     // --retries 0: this scenario is about the resume, so the failed PUT must end the run (the next scenario retries it).
     const r = try w.publish(staged, &.{ "--retries", "0" });
     const id = try w.groupId(staged);
-    w.rep.check("a failed PUT ends the run 1, says which file, and says to run the same command again", r.code == 1 and h.contains(r.stderr, "uploading mojo-grp_b-1.3.0-mojo1.0.0_0.conda failed") and
+    w.rep.check("a failed PUT ends the run 1, says which file, and says to run the same command again", r.code == 1 and h.contains(r.stderr, "uploading mojo-example.grp_b-1.3.0-mojo1.0.0_0.conda failed") and
         h.contains(r.stderr, "run the same command again to resume group grp_") and h.contains(r.stderr, id), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     w.rep.check("nothing is published, and the state names the group with one file stored", (try w.visible("1.3.0")) == 0 and id.len > 0 and
         (try w.stateJson(staged)).object.get("uploaded").?.array.items.len == 1, "the state is not as expected");
@@ -276,7 +279,7 @@ fn transientFailuresAreRetried(w: World) !void {
     _ = try w.fake.control(a, "/put_fault", "{\"after\":1}");
     const r1 = try w.publish(put, &.{});
     w.rep.check("a PUT answered 503 once is repeated, and the one run publishes the chain", r1.code == 0 and try w.allIn("1.6.0", "published") and
-        h.contains(r1.stdout, "uploaded mojo-grp_b-1.6.0") and !h.contains(r1.stderr, "failed"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r1.code, r1.stdout, r1.stderr }));
+        h.contains(r1.stdout, "uploaded mojo-example.grp_b-1.6.0") and !h.contains(r1.stderr, "failed"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r1.code, r1.stdout, r1.stderr }));
 
     // The poll for the group's state fails once with 503: asked again, and the run still ends 0.
     const poll = try w.dir("retried_poll");
@@ -333,15 +336,15 @@ fn rateLimited(w: World) !void {
     const r2 = try w.publish(staged, &.{});
     const id = try w.groupId(staged);
     w.rep.check("a 429 on the commit stops the run there", r2.code == 1 and h.contains(r2.stderr, "HTTP 429") and h.contains(r2.stderr, "retry after 30 seconds") and
-        h.contains(r2.stdout, "uploaded mojo-grp_c-1.5.0") and !h.contains(r2.stdout, "committed group"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r2.code, r2.stdout, r2.stderr }));
-    const group = try w.api("GET", try std.fmt.allocPrint(a, "/api/v1/groups/{s}", .{id}), null);
+        h.contains(r2.stdout, "uploaded mojo-example.grp_c-1.5.0") and !h.contains(r2.stdout, "committed group"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r2.code, r2.stdout, r2.stderr }));
+    const group = try w.api("GET", try std.fmt.allocPrint(a, "/api/v2/groups/{s}", .{id}), null);
     w.rep.check("the group is open, nothing is published, and the report says pending", group.status == 200 and
         std.mem.eql(u8, h.jsonString(try h.parseJson(a, group.body), "status") orelse "", "open") and (try w.visible("1.5.0")) == 0 and
         std.mem.eql(u8, h.jsonString(try w.reportJson(staged), "outcome") orelse "", "rate_limited") and
-        std.mem.eql(u8, World.memberOutcome(try w.reportJson(staged), "grp_a"), "pending"), group.body);
+        std.mem.eql(u8, World.memberOutcome(try w.reportJson(staged), "example/grp_a"), "pending"), group.body);
 
     // A group that is not visible cannot be yanked.
-    const yank = try w.m.run(&.{ "yank", "--group", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "too early" }, w.token);
+    const yank = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "too early" }, w.token);
     w.rep.check("a yank of a group that is not visible is refused with the registry's reason", yank.code == 1 and h.contains(yank.stderr, "cannot be yanked or unyanked now"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ yank.code, yank.stdout, yank.stderr }));
 
     const again = try w.publish(staged, &.{});
@@ -397,7 +400,7 @@ fn treeHoldsNo(a: Allocator, dir: []const u8, token: []const u8) !bool {
 /// The compiler `mopm test` runs and the test binary it lists with `--skip-all` each get an environment without the token
 /// (`mopm run` is checked above). One stand-in plays both: `mojo build` leaves a copy of it as the test binary, so a single
 /// `mopm test` starts two programs, and each appends a line saying what it was given. `mopm sync` starts no program; it
-/// is given the token in its environment, and what it prints is compared whole against the text the fixture implies, and no file it writes (the environment, the kept
+/// is given the token in its environment, as is the `mopm lock` before it, and what each prints is compared whole against the text the fixture implies, and no file they write (the lock, the environment, the kept
 /// packages, the cache of the toolchain) holds it.
 fn theTokenIsInNoTestEnvironmentAndNoSyncFile(w: World, probe: []const u8) !void {
     const a = w.a;
@@ -420,26 +423,34 @@ fn theTokenIsInNoTestEnvironmentAndNoSyncFile(w: World, probe: []const u8) !void
     w.rep.check("mopm test starts the compiler and the test binary, and neither has MOPM_TOKEN in its environment", (try probeSawNoToken(seen, "build", a)) and
         (try probeSawNoToken(seen, "--skip-all", a)) and !h.contains(seen, w.token) and !h.contains(t.text, w.token), try std.fmt.allocPrint(a, "{s}\n{s}", .{ seen, t.text }));
 
-    // `mopm sync`: a project with no dependency is locked with no registry; the stand-in toolchain is served by the fake registry.
+    // `mopm lock`, then `mopm sync`: a project with no dependency is locked with no registry; the stand-in toolchain is served by the fake registry.
     const sync_dir = try w.dir("proj_sync");
     try std.fs.cwd().makePath(sync_dir);
-    try h.writeFile(try h.join(a, &.{ sync_dir, "mopm.toml" }), "[package]\nname = \"probe_sync\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
+    try h.writeFile(try h.join(a, &.{ sync_dir, "mopm.toml" }), "[package]\nname = \"example/probe_sync\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
     const tc = try cp.fakeToolchain(a, w.fake_dir, w.fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ w.work, "toolchain.json" }), "T");
     const cache = try h.join(a, &.{ w.work, "probe_cache" });
     var sync_env = try h.cloneEnv(a, &w.m.env);
     try sync_env.put("MOPM_TOKEN", w.token);
+    const lock_err = try h.join(a, &.{ w.work, "probe_lock_stderr.txt" });
+    const l = try h.run(a, &.{ w.m.exe, "lock" }, &sync_env, .{ .cwd = sync_dir, .capture = .stdout, .stderr_path = lock_err });
+    const l_err = try std.fs.cwd().readFileAlloc(a, lock_err, 1 << 20);
+    w.rep.check("mopm lock, with MOPM_TOKEN in its environment, locks the project and prints exactly the summary line and nothing on standard error", l.code == 0 and
+        std.mem.eql(u8, l.text, "locked 0 packages for mojo 1.0.0\n") and l_err.len == 0 and !h.contains(l.text, w.token), try std.fmt.allocPrint(a, "{d}\nstdout: {s}\nstderr: {s}", .{ l.code, l.text, l_err }));
+    // The stand-in's closure is not the one the lock pins, so the lock is written again with no closure recorded.
+    const lock_path = try h.join(a, &.{ sync_dir, "mopm.lock" });
+    _ = try cp.unpinToolchain(a, lock_path);
     const sync_err = try h.join(a, &.{ w.work, "probe_sync_stderr.txt" });
     const s = try h.run(a, &.{ w.m.exe, "sync", "--toolchain", tc.closure, "--cache", cache }, &sync_env, .{ .cwd = sync_dir, .capture = .stdout, .stderr_path = sync_err });
     const s_err = try std.fs.cwd().readFileAlloc(a, sync_err, 1 << 20);
-    // What sync prints, built from the fixture: the lock it writes first, one "downloading" line per toolchain file, in the closure's order, then the
-    // summary line of a project with no dependency.
+    // What sync prints, built from the fixture: one "downloading" line per toolchain file, in the closure's order, then the
+    // summary line of a project with no dependency. The lock is current, so sync does not print the "locked" line.
     var want_out = std.ArrayList(u8).init(a);
-    try want_out.writer().print("locked 0 packages for mojo 1.0.0\n", .{});
     for (tc.files) |f| try want_out.writer().print("downloading {s} ({d} bytes)\n", .{ f.file_name, f.bytes.len });
     try want_out.writer().print("installed 0 packages for {s} (mojo 1.0.0, {d} toolchain files) into .mopm/env\n", .{ cp.hostSubdir(), tc.files.len });
     w.rep.check("mopm sync, with MOPM_TOKEN in its environment, installs the environment", s.code == 0 and std.mem.eql(u8, s.text, want_out.items), s.text);
     w.rep.check("and it prints exactly that on standard output and nothing on standard error", std.mem.eql(u8, s.text, want_out.items) and s_err.len == 0, try std.fmt.allocPrint(a, "stdout: {s}\nstderr: {s}", .{ s.text, s_err }));
-    w.rep.check("and no file it writes (.mopm, the cache) holds the token", try treeHoldsNo(a, try h.join(a, &.{ sync_dir, ".mopm" }), w.token) and try treeHoldsNo(a, cache, w.token), "a file holds the token");
+    w.rep.check("and no file it writes (the lock, .mopm, the cache) holds the token", !h.contains(try std.fs.cwd().readFileAlloc(a, lock_path, 1 << 20), w.token) and
+        try treeHoldsNo(a, try h.join(a, &.{ sync_dir, ".mopm" }), w.token) and try treeHoldsNo(a, cache, w.token), "a file holds the token");
 }
 
 fn yankAndUnyank(w: World) !void {
@@ -447,24 +458,35 @@ fn yankAndUnyank(w: World) !void {
     const staged = try w.dir("chain");
     const id = try w.groupId(staged);
     // One member is yanked by hand first.
-    const by_hand = try w.api("PUT", "/api/v1/packages/grp_b/1.0.0/yank", "{\"yanked\":true,\"reason\":\"by hand\"}");
+    const by_hand = try w.api("PUT", "/api/v2/packages/example/grp_b/1.0.0/yank", "{\"yanked\":true,\"reason\":\"by hand\"}");
     w.rep.check("a member is yanked by hand", by_hand.status == 200, by_hand.body);
-    const y = try w.m.run(&.{ "yank", "--group", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build", "--wait", "60" }, w.token);
-    w.rep.check("mopm yank --group yanks the group's versions and waits for the registry", y.code == 0 and h.contains(y.stdout, "is yanked (2 versions)"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ y.code, y.stdout, y.stderr }));
+    const y = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build" }, w.token);
+    w.rep.check("mopm group yank starts the yank of the group's versions", y.code == 0 and h.contains(y.stdout, "yank:\n  state: yanking\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ y.code, y.stdout, y.stderr }));
+    // The fake registry answers the stage a group is in, then moves it one stage (its getGroup, registry/fake/groups.zig); `mopm group yank` no
+    // longer waits (the old `yank --group --wait` did): the first read shows the yank running, the second shows it at rest.
+    const running = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group status first shows the yank still running, with nothing changed yet", running.code == 0 and h.contains(running.stdout, "  state: yanking\n") and h.contains(running.stdout, "  yanked_members: 0\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ running.code, running.stdout, running.stderr }));
+    const st = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group status shows the yank at rest with the two versions it changed", st.code == 0 and h.contains(st.stdout, "  state: yanked\n") and h.contains(st.stdout, "  yanked_members: 2\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ st.code, st.stdout, st.stderr }));
     w.rep.check("all three are yanked, and the group says so", try w.allIn("1.0.0", "yanked") and
-        std.mem.eql(u8, h.jsonString((try h.parseJson(a, (try w.api("GET", try std.fmt.allocPrint(a, "/api/v1/groups/{s}", .{id}), null)).body)).object.get("yank").?, "state") orelse "", "yanked"), "not all yanked");
-    const repeat = try w.m.run(&.{ "yank", "--group", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build" }, w.token);
-    w.rep.check("a yank of a group already yanked is done at once", repeat.code == 0 and h.contains(repeat.stdout, "is already yanked"), repeat.stdout);
-    const u = try w.m.run(&.{ "yank", "--group", id, "--registry", w.fake.base, "--config-dir", w.conf, "--unyank", "--wait", "60" }, w.token);
-    w.rep.check("mopm yank --group --unyank restores the group's versions", u.code == 0 and h.contains(u.stdout, "is restored (2 versions it had yanked)"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ u.code, u.stdout, u.stderr }));
-    w.rep.check("the two the group yanked are published again, and the one yanked by hand stays yanked", std.mem.eql(u8, try w.stateOf("grp_a", "1.0.0"), "published") and
-        std.mem.eql(u8, try w.stateOf("grp_c", "1.0.0"), "published") and std.mem.eql(u8, try w.stateOf("grp_b", "1.0.0"), "yanked"), "the states are not as expected");
-    const none = try w.m.run(&.{ "yank", "--group", "grp_00000000000000000000000000000000", "--registry", w.fake.base, "--config-dir", w.conf, "--unyank" }, w.token);
-    w.rep.check("a group that does not exist is the registry's error", none.code == 1 and h.contains(none.stderr, "There is no such group"), none.stderr);
-    const bare = try w.m.run(&.{ "yank", "--group", id, "--registry", dead, "--config-dir", w.conf }, w.token);
-    w.rep.check("a yank with no reason is refused before any request", bare.code == 2 and h.contains(bare.stderr, "needs --reason") and !h.contains(bare.stderr, "cannot reach"), bare.stderr);
-    const unplaced = try w.m.run(&.{ "yank", "--group", id, "--reason", "x" }, w.token);
-    w.rep.check("a yank with no --registry is refused: there is no default", unplaced.code == 2 and h.contains(unplaced.stderr, "--registry is required"), unplaced.stderr);
+        std.mem.eql(u8, h.jsonString((try h.parseJson(a, (try w.api("GET", try std.fmt.allocPrint(a, "/api/v2/groups/{s}", .{id}), null)).body)).object.get("yank").?, "state") orelse "", "yanked"), "not all yanked");
+    const repeat = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "broken build", "--json" }, w.token);
+    w.rep.check("a yank of a group already yanked answers the group as it is, as JSON with --json", repeat.code == 0 and
+        std.mem.eql(u8, h.jsonString((try h.parseJson(a, repeat.stdout)).object.get("yank").?, "state") orelse "", "yanked"), repeat.stdout);
+    const u = try w.m.run(&.{ "group", "unyank", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group unyank starts the restore", u.code == 0 and h.contains(u.stdout, "  state: unyanking\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ u.code, u.stdout, u.stderr }));
+    const restoring = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group status first shows the restore still running", restoring.code == 0 and h.contains(restoring.stdout, "  state: unyanking\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ restoring.code, restoring.stdout, restoring.stderr }));
+    const restored = try w.m.run(&.{ "group", "status", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("mopm group status shows the group restored", restored.code == 0 and h.contains(restored.stdout, "  state: restored\n"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ restored.code, restored.stdout, restored.stderr }));
+    w.rep.check("the two the group yanked are published again, and the one yanked by hand stays yanked", std.mem.eql(u8, try w.stateOf("example/grp_a", "1.0.0"), "published") and
+        std.mem.eql(u8, try w.stateOf("example/grp_c", "1.0.0"), "published") and std.mem.eql(u8, try w.stateOf("example/grp_b", "1.0.0"), "yanked"), "the states are not as expected");
+    const none = try w.m.run(&.{ "group", "unyank", "grp_00000000000000000000000000000000", "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("a group that does not exist is the registry's error, with its code", none.code == 1 and h.contains(none.stderr, "There is no such group") and h.contains(none.stderr, "  code: "), none.stderr);
+    const bare = try w.m.run(&.{ "group", "yank", id, "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
+    w.rep.check("a yank with no reason is the registry's refusal", bare.code == 1 and h.contains(bare.stderr, "reason"), bare.stderr);
+    const usage = try w.m.run(&.{ "group", "yank", "--registry", w.fake.base, "--config-dir", w.conf, "--reason", "x" }, w.token);
+    w.rep.check("a yank with no group id is a usage error before any request", usage.code == 2 and h.contains(usage.stderr, "usage: mopm group yank <group_id>"), usage.stderr);
 }
 
 fn refusalsBeforeAnyRequest(w: World) !void {
@@ -491,7 +513,7 @@ fn refusalsBeforeAnyRequest(w: World) !void {
     w.rep.check("--dry-run still refuses a registry that is not one", r.code == 1 and h.contains(r.stderr, "--registry nowhere"), r.stderr);
 
     // A file that changed since the plan, a plan that refuses a member, a plan with nothing to upload.
-    try h.writeFile(try h.join(a, &.{ staged, "noarch", "mojo-grp_b-2.0.0-mojo1.0.0_0.conda" }), "THE BYTES OF B");
+    try h.writeFile(try h.join(a, &.{ staged, "noarch", "mojo-example.grp_b-2.0.0-mojo1.0.0_0.conda" }), "THE BYTES OF B");
     r = try w.m.run(&.{ "publish", "--staged", staged, "--registry", dead, "--config-dir", w.conf }, "mopm_unused");
     w.rep.check("a file that is not the one in the plan is refused before any request", r.code == 1 and h.contains(r.stderr, "has the sha256") and h.contains(r.stderr, "nothing was sent") and
         !h.contains(r.stderr, "cannot reach"), r.stderr);
@@ -501,14 +523,14 @@ fn refusalsBeforeAnyRequest(w: World) !void {
         .{ .name = names[1], .version = "2.0.0", .bytes = "", .action = "refuse", .reason = "the version is yanked" },
     });
     r = try w.m.run(&.{ "publish", "--staged", refusing, "--registry", dead, "--config-dir", w.conf }, "mopm_unused");
-    w.rep.check("a plan that refuses a member stops the whole run before any request", r.code == 1 and h.contains(r.stderr, "the plan refuses grp_b 2.0.0: the version is yanked") and
+    w.rep.check("a plan that refuses a member stops the whole run before any request", r.code == 1 and h.contains(r.stderr, "the plan refuses example/grp_b 2.0.0: the version is yanked") and
         !h.contains(r.stderr, "cannot reach"), r.stderr);
     const skipping = try w.dir("skipping");
     try stage(a, skipping, &.{.{ .name = names[0], .version = "2.0.0", .bytes = "", .action = "skip", .reason = "already published" }});
     r = try w.m.run(&.{ "publish", "--staged", skipping, "--registry", dead, "--config-dir", w.conf }, null);
     const report = try w.reportJson(skipping);
     w.rep.check("a plan with nothing to upload ends 0 and the report names the skipped member", r.code == 0 and h.contains(r.stdout, "nothing to publish") and
-        std.mem.eql(u8, World.memberOutcome(report, "grp_a"), "skipped"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        std.mem.eql(u8, World.memberOutcome(report, "example/grp_a"), "skipped"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
 
     // A state from another plan, a state from another registry, no login.
     const other = try w.dir("other_plan");
@@ -561,7 +583,7 @@ fn writeBigReadmes(w: World, staged: []const u8, big: bool) !void {
     const text = try w.a.alloc(u8, 60000);
     @memset(text, 0x01);
     for (0..big_count) |i| {
-        const name = try std.fmt.allocPrint(w.a, "big{d}", .{i});
+        const name = try std.fmt.allocPrint(w.a, "example/big{d}", .{i});
         try h.writeFile(try h.join(w.a, &.{ staged, try std.fmt.allocPrint(w.a, "{s}.md", .{name}) }), if (big) text else try std.fmt.allocPrint(w.a, "# {s}\n", .{name}));
     }
 }
@@ -573,25 +595,25 @@ fn writeBigReadmes(w: World, staged: []const u8, big: bool) !void {
 fn anOversizedCommit(w: World) !void {
     const a = w.a;
     _ = try w.fake.control(a, "/readme_objects", "{\"enabled\":false}");
-    // Sixteen names this account owns, and a token for them, made with a fresh session (earlier scenarios moved the clock).
-    const session = h.jsonString(try w.fake.control(a, "/session", "{\"handle\":\"group-user\"}"), "token") orelse "";
+    // Sixteen packages this account owns, and a token for them, made with a fresh session (earlier scenarios moved the clock).
+    const session = h.jsonString(try w.fake.control(a, "/session", "{\"handle\":\"example\"}"), "token") orelse "";
     var quoted = std.ArrayList(u8).init(a);
     for (0..big_count) |i| {
-        const name = try std.fmt.allocPrint(a, "big{d}", .{i});
-        const r = try h.request(a, "POST", w.fake.base, try std.fmt.allocPrint(a, "/api/v1/packages/{s}/claim", .{name}), "{}", session);
-        w.rep.check(try std.fmt.allocPrint(a, "{s} is claimed", .{name}), r.status == 201, r.body);
+        const name = try std.fmt.allocPrint(a, "example/big{d}", .{i});
+        const r = try h.request(a, "PUT", w.fake.base, try std.fmt.allocPrint(a, "/api/v2/packages/{s}", .{name}), null, session);
+        w.rep.check(try std.fmt.allocPrint(a, "{s} is created", .{name}), r.status == 201, r.body);
         try quoted.writer().print("{s}\"{s}\"", .{ if (i == 0) "" else ",", name });
     }
-    const made = try h.request(a, "POST", w.fake.base, "/api/v1/me/tokens", try std.fmt.allocPrint(a, "{{\"name\":\"big\",\"scopes\":[\"publish\"],\"packages\":[{s}],\"expires_in_days\":7}}", .{quoted.items}), session);
+    const made = try h.request(a, "POST", w.fake.base, "/api/v2/me/tokens", try std.fmt.allocPrint(a, "{{\"name\":\"big\",\"scopes\":[\"publish\"],\"packages\":[{s}],\"expires_in_days\":7}}", .{quoted.items}), session);
     const token = if (made.status == 201) (h.jsonString(try h.parseJson(a, made.body), "token") orelse "") else "";
     w.rep.check("a token that may publish the sixteen is made", token.len > 0, made.body);
 
     // The staged set: sixteen members, each with one file and a readme.
     const staged = try w.dir("oversized");
     var plan = std.ArrayList(u8).init(a);
-    try plan.appendSlice("{\"version\":1,\"members\":[");
+    try plan.appendSlice("{\"version\":2,\"members\":[");
     for (0..big_count) |i| {
-        const m = Member{ .name = try std.fmt.allocPrint(a, "big{d}", .{i}), .version = "1.0.0", .bytes = try std.fmt.allocPrint(a, "the bytes of big{d}", .{i}) };
+        const m = Member{ .name = try std.fmt.allocPrint(a, "example/big{d}", .{i}), .version = "1.0.0", .bytes = try std.fmt.allocPrint(a, "the bytes of big{d}", .{i}) };
         const filename = try filenameOf(a, m);
         try h.writeFile(try h.join(a, &.{ staged, "noarch", filename }), m.bytes);
         try plan.writer().print(
@@ -606,14 +628,14 @@ fn anOversizedCommit(w: World) !void {
     const first = try w.dir("oversized_first");
     try h.writeFile(try h.join(a, &.{ first, "plan.json" }), plan.items);
     for (0..big_count) |i| {
-        const name = try filenameOf(a, .{ .name = try std.fmt.allocPrint(a, "big{d}", .{i}), .version = "1.0.0", .bytes = "" });
+        const name = try filenameOf(a, .{ .name = try std.fmt.allocPrint(a, "example/big{d}", .{i}), .version = "1.0.0", .bytes = "" });
         try h.writeFile(try h.join(a, &.{ first, "noarch", name }), try h.readFile(a, try h.join(a, &.{ staged, "noarch", name })));
     }
     try writeBigReadmes(w, first, true);
     try h.writeFile(try h.join(a, &.{ first, "report.json" }), "the report of an earlier run");
 
     const refusal = "the commit request of the 16 members to upload is ";
-    const cutoff = "; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: big";
+    const cutoff = "; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: example/big";
     const modes = [_][]const []const u8{ &.{}, &.{"--dry-run"}, &.{"--no-commit"} };
     for ([_][]const u8{ "first run", "resume" }) |when| {
         const resuming = std.mem.eql(u8, when, "resume");
@@ -658,7 +680,7 @@ fn anOversizedCommit(w: World) !void {
 }
 
 fn groupStatus(w: World, id: []const u8) ![]const u8 {
-    const r = try w.api("GET", try std.fmt.allocPrint(w.a, "/api/v1/groups/{s}", .{id}), null);
+    const r = try w.api("GET", try std.fmt.allocPrint(w.a, "/api/v2/groups/{s}", .{id}), null);
     return h.jsonString(try h.parseJson(w.a, r.body), "status") orelse "(none)";
 }
 
@@ -674,13 +696,13 @@ fn stageThenCommit(w: World) !void {
     w.rep.check("--no-commit uploads the set and ends 0, saying the group and the plan digest", r.code == 0 and h.contains(r.stdout, "staged group grp_") and
         h.contains(r.stdout, "open, 3 file(s) held, not committed") and h.contains(r.stdout, digest) and !h.contains(r.stdout, "published group"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     w.rep.check("the registry holds the group open, and serves none of the three versions", std.mem.eql(u8, try groupStatus(w, id), "open") and (try w.visible("3.0.0")) == 0, "the group is not open or a member is visible");
-    const ch = try h.request(a, "GET", w.fake.base, "/channel/noarch/mojo-grp_c-3.0.0-mojo1.0.0_0.conda", null, null);
-    const idx = try h.request(a, "GET", w.fake.base, "/index/gr/p_/grp_b", null, null);
+    const ch = try h.request(a, "GET", w.fake.base, "/channel/example/noarch/mojo-example.grp_c-3.0.0-mojo1.0.0_0.conda", null, null);
+    const idx = try h.request(a, "GET", w.fake.base, "/index/v2/ex/am/example/grp_b", null, null);
     w.rep.check("and neither the channel nor the index serves a staged file", ch.status != 200 and !h.contains(idx.body, "\"3.0.0\""), "a staged file is readable");
     const report = try w.reportJson(staged);
     w.rep.check("report.json says the run is staged, names the group, the digest and the open status", std.mem.eql(u8, h.jsonString(report, "outcome") orelse "", "staged") and
         std.mem.eql(u8, h.jsonString(report, "group_id") orelse "", id) and std.mem.eql(u8, h.jsonString(report, "plan_sha256") orelse "", digest) and
-        std.mem.eql(u8, h.jsonString(report, "group_status") orelse "", "open") and std.mem.eql(u8, World.memberOutcome(report, "grp_a"), "staged"), "the report is not as expected");
+        std.mem.eql(u8, h.jsonString(report, "group_status") orelse "", "open") and std.mem.eql(u8, World.memberOutcome(report, "example/grp_a"), "staged"), "the report is not as expected");
     const state = try w.stateJson(staged);
     w.rep.check("state.json keeps the group, marks it staged and not committed, and lists the three files", state.object.get("staged").?.bool and !state.object.get("committed").?.bool and
         state.object.get("uploaded").?.array.items.len == 3, "the state is not as expected");
@@ -783,7 +805,7 @@ fn refusalsOfStaging(w: World) !void {
     w.rep.check("--no-commit on a published set is refused and publishes nothing new", r.code == 1 and h.contains(r.stderr, "not open: --no-commit stages a group before its commit"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     r = try w.publish(staged, &.{"--abort"});
     w.rep.check("--abort on a published group is refused, points at yank, and the set stays published", r.code == 1 and h.contains(r.stderr, "it was committed, so it cannot be aborted") and
-        h.contains(r.stderr, "mopm yank --group") and try w.allIn("6.0.0", "published") and std.mem.eql(u8, try w.groupId(staged), id), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        h.contains(r.stderr, "mopm group yank") and try w.allIn("6.0.0", "published") and std.mem.eql(u8, try w.groupId(staged), id), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
 
     // A state of another plan is refused by --abort as by every other run.
     const other = try w.dir("staged_other_plan");
@@ -800,7 +822,7 @@ fn exists(path: []const u8) bool {
 
 // ------------------------------------------------------------------- the test
 
-test "mopm publish --staged and mopm yank --group against the fake registry" {
+test "mopm publish --staged and mopm group yank against the fake registry" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -822,13 +844,13 @@ test "mopm publish --staged and mopm yank --group against the fake registry" {
     var fake = try h.Fake.start(a, fake_exe, fake_dir);
     defer fake.close();
 
-    // An account that owns the three names, and a token that may publish and yank them.
-    const session = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"group-user\"}"), "token") orelse "";
+    // The account `example` (its user namespace is `example`) creates the three packages, and makes a token that may publish and yank them.
+    const session = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"example\"}"), "token") orelse "";
     for (names) |n| {
-        const r = try h.request(a, "POST", fake.base, try std.fmt.allocPrint(a, "/api/v1/packages/{s}/claim", .{n}), "{}", session);
-        report.check(try std.fmt.allocPrint(a, "{s} is claimed", .{n}), r.status == 201, r.body);
+        const r = try h.request(a, "PUT", fake.base, try std.fmt.allocPrint(a, "/api/v2/packages/{s}", .{n}), null, session);
+        report.check(try std.fmt.allocPrint(a, "{s} is created", .{n}), r.status == 201, r.body);
     }
-    const made = try h.request(a, "POST", fake.base, "/api/v1/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"grp_a\",\"grp_b\",\"grp_c\"],\"expires_in_days\":7}", session);
+    const made = try h.request(a, "POST", fake.base, "/api/v2/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"example/grp_a\",\"example/grp_b\",\"example/grp_c\"],\"expires_in_days\":7}", session);
     const token = if (made.status == 201) (h.jsonString(try h.parseJson(a, made.body), "token") orelse "") else "";
     report.check("an API token that may publish and yank the three is made", token.len > 0, made.body);
 

@@ -6,10 +6,11 @@ import type { Client, Result, SearchQuery } from '../src/api';
 import { appView, healthBanner } from '../src/app';
 import { serialize } from '../src/doc';
 import { fromResponse, networkError } from '../src/errors';
+import type { FullName } from '../src/routes';
 import type { Health, PackageList } from '../src/types';
 import { hrefs, html, packageFixture, sdoc, text, versionFixture } from './view-helpers';
 
-type Call = ['getHealth'] | ['searchPackages', SearchQuery] | ['getPackage', string] | ['getVersion', string, string];
+type Call = ['getHealth'] | ['searchPackages', SearchQuery] | ['getPackage', FullName] | ['getVersion', FullName, string];
 
 /** A client that records each call and answers with `answer` (or a network failure when there is none). */
 function fake(answer: Partial<{ search: Result<PackageList>; pkg: Result<unknown>; version: Result<unknown> }> = {}) {
@@ -41,18 +42,18 @@ const HOST = 'mopm.dev';
 const EMPTY: PackageList = { packages: [], next_cursor: null };
 
 describe('search', () => {
-  test('a q over 64 characters after trimming makes no call and says why', async () => {
+  test('a q over 104 characters after trimming makes no call and says why', async () => {
     const { api, calls } = fake({ search: ok(EMPTY) });
-    const view = await appView(sdoc, '/search', `?q=${'a'.repeat(65)}`, api, HOST);
+    const view = await appView(sdoc, '/search', `?q=${'a'.repeat(105)}`, api, HOST);
     expect(calls).toEqual([]);
-    expect(text(html(view))).toContain('at most 64 characters');
-    expect(view.searchQ).toBe('a'.repeat(65));
+    expect(text(html(view))).toContain('at most 104 characters');
+    expect(view.searchQ).toBe('a'.repeat(105));
   });
 
-  test('a q of 64 characters is sent, trimmed, with the sort and cursor', async () => {
+  test('a q of 104 characters is sent, trimmed, with the sort and cursor', async () => {
     const { api, calls } = fake({ search: ok(EMPTY) });
-    await appView(sdoc, '/search', `?q=%20${'a'.repeat(64)}%20&sort=updated&cursor=abc`, api, HOST);
-    expect(calls).toEqual([['searchPackages', { q: 'a'.repeat(64), sort: 'updated', cursor: 'abc' }]]);
+    await appView(sdoc, '/search', `?q=%20${'a'.repeat(104)}%20&sort=updated&cursor=abc`, api, HOST);
+    expect(calls).toEqual([['searchPackages', { q: 'a'.repeat(104), sort: 'updated', cursor: 'abc' }]]);
   });
 
   test('an empty q is not sent; the address is normalised', async () => {
@@ -71,30 +72,33 @@ describe('search', () => {
   });
 });
 
+const KOMIRA: FullName = { namespace: 'komira-ai', name: 'json' };
+const refused = (code: string, status = 400) => fromResponse(status, JSON.stringify({ error: { code, message: 'Not valid.', hint: '' } }), 'req-4');
+
 describe('package', () => {
-  test('one getPackage call with the route name, and the package view', async () => {
+  test('one getPackage call with the route namespace and name, and the package view', async () => {
     const { api, calls } = fake({ pkg: ok(packageFixture()) });
-    const view = await appView(sdoc, '/packages/http_client', '', api, HOST);
-    expect(calls).toEqual([['getPackage', 'http_client']]);
-    expect(html(view)).toContain('<h1>http_client</h1>');
-    expect(html(view)).toContain('<code>https://conda.mopm.dev/</code>');
+    const view = await appView(sdoc, '/packages/komira-ai/json', '', api, HOST);
+    expect(calls).toEqual([['getPackage', KOMIRA]]);
+    expect(html(view)).toContain('<span class="ns">komira-ai/</span><span>json</span></h1>');
+    expect(html(view)).toContain('https://conda.mopm.dev/komira-ai/');
   });
 
   test('the host picks the channel the view shows', async () => {
     const { api } = fake({ pkg: ok(packageFixture()) });
-    expect(html(await appView(sdoc, '/packages/http_client', '', api, 'beta.mopm.dev'))).toContain('<code>https://conda.beta.mopm.dev/</code>');
+    expect(html(await appView(sdoc, '/packages/komira-ai/json', '', api, 'beta.mopm.dev'))).toContain('https://conda.beta.mopm.dev/komira-ai/');
   });
 
-  test('not found: the package-not-found view, noindex', async () => {
-    const { api } = fake({ pkg: notFound('package_not_found') });
-    const view = await appView(sdoc, '/packages/zz_absent', '', api, HOST);
+  test.each(['package_not_found', 'namespace_not_found'])('%s: the package-not-found view, noindex', async (code) => {
+    const { api } = fake({ pkg: notFound(code) });
+    const view = await appView(sdoc, '/packages/komira-ai/zz_absent', '', api, HOST);
     expect(view.title).toBe('Package not found');
     expect(view.noindex).toBe(true);
   });
 
   test('another failure: the error view with the request id', async () => {
     const { api } = fake({ pkg: fromResponse(500, JSON.stringify({ error: { code: 'internal_error', message: 'x', hint: '' } }), 'req-5') });
-    const out = html(await appView(sdoc, '/packages/http_client', '', api, HOST));
+    const out = html(await appView(sdoc, '/packages/komira-ai/json', '', api, HOST));
     expect(out).toContain('role="alert"');
     expect(out).toContain('<code>req-5</code>');
   });
@@ -103,34 +107,41 @@ describe('package', () => {
 describe('version', () => {
   test('one getVersion call; the address is the version as published', async () => {
     const { api, calls } = fake({ version: ok(versionFixture('version detail')) });
-    const view = await appView(sdoc, '/packages/http_client/0.4.0', '', api, HOST);
-    expect(calls).toEqual([['getVersion', 'http_client', '0.4.0']]);
-    expect(view.canonicalPath).toBe('/packages/http_client/0.4.0');
+    const view = await appView(sdoc, '/packages/komira-ai/json/1.1.0', '', api, HOST);
+    expect(calls).toEqual([['getVersion', KOMIRA, '1.1.0']]);
+    expect(view.canonicalPath).toBe('/packages/komira-ai/json/1.1.0');
   });
 
-  test('package_not_found: "Package not found"', async () => {
-    const { api } = fake({ version: notFound('package_not_found') });
-    const view = await appView(sdoc, '/packages/zz_absent/1.0.0', '', api, HOST);
+  test.each(['package_not_found', 'namespace_not_found'])('%s: "Package not found", and the way on is a search for the name in every namespace', async (code) => {
+    const { api } = fake({ version: notFound(code) });
+    const view = await appView(sdoc, '/packages/komira-ai/zz_absent/1.0.0', '', api, HOST);
     expect(view.title).toBe('Package not found');
+    expect(view.noindex).toBe(true);
     expect(hrefs(html(view))).toContain('/search?q=zz_absent');
+    expect(text(html(view))).toContain('komira-ai/zz_absent');
   });
 
   test('version_not_found: "Version not found", with a link to the package', async () => {
     const { api } = fake({ version: notFound('version_not_found') });
-    const view = await appView(sdoc, '/packages/http_client/9.9.9', '', api, HOST);
+    const view = await appView(sdoc, '/packages/komira-ai/json/9.9.9', '', api, HOST);
     expect(view.title).toBe('Version not found');
     expect(view.noindex).toBe(true);
-    expect(hrefs(html(view))).toContain('/packages/http_client');
+    expect(hrefs(html(view))).toContain('/packages/komira-ai/json');
   });
 
-  // routes.ts sends the API only names and versions its grammar accepts, so these answers mean the site's grammar and
-  // the API's disagree. Retrying cannot help, so the reader gets the not-found page (noindex, no Retry).
+  // routes.ts sends the API only namespaces, names and versions its grammar accepts, so these answers mean the site's
+  // grammar and the API's disagree (or the namespace is one nobody can hold). Retrying cannot help, so the reader gets
+  // the not-found page (noindex, no Retry).
   test.each([
-    ['/packages/http_client/1.0.0', 'invalid_version', 'Version not found'],
-    ['/packages/http_client/1.0.0', 'invalid_name', 'Package not found'],
-    ['/packages/http_client', 'invalid_name', 'Package not found'],
-  ])('%s answered 400 %s: "%s", noindex, no Retry', async (path, code, title) => {
-    const bad = fromResponse(400, JSON.stringify({ error: { code, message: 'Not valid.', hint: '' } }), 'req-4');
+    ['/packages/komira-ai/json/1.0.0', 400, 'invalid_version', 'Version not found'],
+    ['/packages/komira-ai/json/1.0.0', 400, 'invalid_name', 'Package not found'],
+    ['/packages/komira-ai/json/1.0.0', 400, 'invalid_namespace', 'Package not found'],
+    ['/packages/komira-ai/json/1.0.0', 403, 'namespace_reserved', 'Package not found'],
+    ['/packages/komira-ai/json', 400, 'invalid_name', 'Package not found'],
+    ['/packages/komira-ai/json', 400, 'invalid_namespace', 'Package not found'],
+    ['/packages/noarch/json', 403, 'namespace_reserved', 'Package not found'],
+  ])('%s answered %i %s: "%s", noindex, no Retry', async (path, status, code, title) => {
+    const bad = refused(code, status);
     const { api } = fake({ version: bad, pkg: bad });
     const view = await appView(sdoc, path, '', api, HOST);
     expect(view.title).toBe(title);
@@ -140,21 +151,32 @@ describe('version', () => {
   });
 
   test('another 400 (invalid_request) is still the error view', async () => {
-    const bad = fromResponse(400, JSON.stringify({ error: { code: 'invalid_request', message: 'x', hint: '' } }), 'req-4');
+    const bad = refused('invalid_request');
     const { api } = fake({ version: bad, pkg: bad });
-    expect((await appView(sdoc, '/packages/http_client/1.0.0', '', api, HOST)).title).toBe('Something went wrong');
-    expect((await appView(sdoc, '/packages/http_client', '', api, HOST)).title).toBe('Something went wrong');
+    expect((await appView(sdoc, '/packages/komira-ai/json/1.0.0', '', api, HOST)).title).toBe('Something went wrong');
+    expect((await appView(sdoc, '/packages/komira-ai/json', '', api, HOST)).title).toBe('Something went wrong');
+  });
+
+  test('a 403 that is not namespace_reserved is still the error view', async () => {
+    const bad = refused('forbidden', 403);
+    const { api } = fake({ version: bad, pkg: bad });
+    expect((await appView(sdoc, '/packages/komira-ai/json/1.0.0', '', api, HOST)).title).toBe('Something went wrong');
+    expect((await appView(sdoc, '/packages/komira-ai/json', '', api, HOST)).title).toBe('Something went wrong');
   });
 
   test('a network failure: the error view, not a not-found', async () => {
     const { api } = fake();
-    const view = await appView(sdoc, '/packages/http_client/1.0.0', '', api, HOST);
+    const view = await appView(sdoc, '/packages/komira-ai/json/1.0.0', '', api, HOST);
     expect(view.title).toBe('Something went wrong');
   });
 });
 
 describe('no call at all', () => {
-  test.each(['/', '/packages/Foo', '/packages/a', '/packages/x/v1', '/packages/xy/1.0', '/packages/xy/1.0rc1', '/packages/xy/1.0.0.0', '/app.html', '/search/x'])('%s is not an app route', async (path) => {
+  test.each([
+    '/', '/packages/Foo', '/packages/a', '/packages/komira-ai/json/v1', '/packages/xy/1.0', '/packages/komira-ai/json/1.0', '/packages/komira-ai/json/1.0rc1',
+    '/packages/komira-ai/json/1.0.0.0', '/packages/Komira-AI/json', '/packages/komira--ai/json', '/packages/-komira/json', '/packages/komira-ai/Json',
+    `/packages/${'a'.repeat(40)}/json`, '/packages/komira-ai/json/1.0.0/x', '/app.html', '/search/x',
+  ])('%s is not an app route', async (path) => {
     const { api, calls } = fake();
     const view = await appView(sdoc, path, '', api, HOST);
     expect(calls).toEqual([]);
@@ -163,7 +185,7 @@ describe('no call at all', () => {
   });
 
   test('a host outside the table (no client): the unknown-host view', async () => {
-    const view = await appView(sdoc, '/packages/http_client', '', null, 'evil-mopm.invalid');
+    const view = await appView(sdoc, '/packages/komira-ai/json', '', null, 'evil-mopm.invalid');
     expect(view.title).toBe('Registry unavailable');
     expect(html(view)).toContain('<code>evil-mopm.invalid</code>');
   });

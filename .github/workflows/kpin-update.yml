@@ -370,6 +370,12 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
             git status --short --untracked-files=all -- toolchain src/core/toolchain
           fi
+      # toolchain/mojo-<version>.std-modules.txt and src/core/toolchain/std-modules.txt: the top-level modules of the Mojo
+      # standard library, which no package's import name may be (docs/design/namespaces.md, section 1.1), read from each
+      # version's pinned mojo-compiler after checking its sha256 and size. They change only with a mojo-compiler pin,
+      # which the solve step's closure files already count as a change; a failure is exit 1, with the reason on stderr.
+      - name: Read the standard library's modules from each pinned mojo-compiler
+        run: ./zig-out/bin/mopm-closure --std-modules src/core/toolchain toolchain
       - name: Open the pull request from toolchain/weekly-<run id>, close the older ones
         # Only for a run of the default branch, as above.
         if: steps.solve.outputs.changed == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)

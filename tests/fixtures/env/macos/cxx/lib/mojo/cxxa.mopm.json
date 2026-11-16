@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "name": "cxxa",
+  "schema": 2,
+  "name": "example/cxxa",
   "version": "1.0.0",
   "native": [
     {

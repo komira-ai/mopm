@@ -10,8 +10,8 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { Construct } from 'constructs';
 // The site's own route grammar: the edge router below is generated from it, so the router and the app shell accept the
-// same names, versions and docs slugs (site/src/routes.ts imports nothing).
-import { DOC_SLUG, NAME, NAME_SEPARATORS, VERSION, VERSION_MAX } from '../../../../site/src/routes';
+// same namespaces, names, versions and docs slugs (site/src/routes.ts imports nothing).
+import { DOC_SLUG, NAME, NAME_SEPARATORS, NAMESPACE, NAMESPACE_MAX, VERSION, VERSION_MAX } from '../../../../site/src/routes';
 import { StageConfig, siteBucketName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 
@@ -60,17 +60,44 @@ export const PERMISSIONS_POLICY = 'camera=(), microphone=(), geolocation=(), pay
  * every stage runs the same code. site/test/fixtures/routes.json holds the vectors it must satisfy
  * (test/site-router.test.ts runs it over every one).
  *
+ * A package is `/packages/<namespace>/<name>`, a version `/packages/<namespace>/<name>/<version>`; a name the registry
+ * would normalise is redirected (301) to its normalised spelling, the namespace never (nothing normalises it). A
+ * one-segment address, `/packages/<name>` of the names before namespaces or `/packages/<namespace>`, and a flat
+ * `/packages/<name>/<version>` are redirected (302, not 301: they name no package now, and what a search answers
+ * changes as packages are published) to a search: for the name in every namespace, or for the namespace's packages
+ * (site/src/routes.ts flatSearchPath, which says which). A name starts with a letter and a version with a digit, so
+ * `/packages/<a>/<b>` is never both a package and a flat version.
+ *
  * Order matters: the package routes come before the file check, because a version route ends in what looks like an
- * extension (`/packages/x/1.0.0`).
+ * extension (`/packages/x/y/1.0.0`).
  */
 export const SPA_ROUTER_SOURCE = `var NAME = /${NAME.source}/;
+var NAMESPACE = /${NAMESPACE.source}/;
+var NAMESPACE_MAX = ${NAMESPACE_MAX};
 var VERSION = /${VERSION.source}/;
 var VERSION_MAX = ${VERSION_MAX};
 var SEPARATORS = /${NAME_SEPARATORS.source}/g;
 var DOC_SLUG = /${DOC_SLUG.source}/;
 
+function normalise(n) {
+  return n.toLowerCase().replace(SEPARATORS, '_');
+}
+
 function canonical(n) {
-  return NAME.test(n) && n.toLowerCase().replace(SEPARATORS, '_') === n;
+  return NAME.test(n) && normalise(n) === n;
+}
+
+function namespace(s) {
+  return s.length <= NAMESPACE_MAX && NAMESPACE.test(s);
+}
+
+function version(v) {
+  return v.length <= VERSION_MAX && VERSION.test(v);
+}
+
+function redirect(code, location) {
+  return { statusCode: code, statusDescription: code === 301 ? 'Moved Permanently' : 'Found',
+    headers: { location: { value: location } } };
 }
 
 function query(qs) {
@@ -90,14 +117,18 @@ function handler(event) {
   var p = uri.split('/');
   if (p[1] === 'packages') {
     if (p.length === 3) {
-      if (canonical(p[2])) { r.uri = '/app.html'; return r; }
-      var n = p[2].toLowerCase().replace(SEPARATORS, '_');
-      if (n !== p[2] && NAME.test(n)) {
-        return { statusCode: 301, statusDescription: 'Moved Permanently',
-          headers: { location: { value: '/packages/' + n + query(r.querystring) } } };
-      }
+      if (canonical(p[2])) return redirect(302, '/search?q=' + p[2]);
+      if (namespace(p[2])) return redirect(302, '/search?q=' + p[2] + '%2F');
+      var flat = normalise(p[2]);
+      if (NAME.test(flat)) return redirect(302, '/search?q=' + flat);
     }
-    if (p.length === 4 && canonical(p[2]) && p[3].length <= VERSION_MAX && VERSION.test(p[3])) {
+    if (p.length === 4 && canonical(p[2]) && version(p[3])) return redirect(302, '/search?q=' + p[2]);
+    if (p.length === 4 && namespace(p[2])) {
+      if (canonical(p[3])) { r.uri = '/app.html'; return r; }
+      var n = normalise(p[3]);
+      if (n !== p[3] && NAME.test(n)) return redirect(301, '/packages/' + p[2] + '/' + n + query(r.querystring));
+    }
+    if (p.length === 5 && namespace(p[2]) && canonical(p[3]) && version(p[4])) {
       r.uri = '/app.html';
       return r;
     }

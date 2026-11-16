@@ -1,0 +1,31 @@
+usage: mopm api exchange-oidc-token --body <file> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Exchange a CI identity token for a registry token (one step of 'mopm publish --oidc').
+
+The token is valid for 10 minutes, may only publish (or, with `purpose: stage`, only stage), and only for the
+package versions named in the request (one, or the `packages` list), each a full name. The CI identity must
+match a trusted publisher of the package's namespace: its repository
+and owner ids (the owner id is the namespace's GitHub id), workflow file and (when the publisher names one)
+environment, the ref it runs on (`refs/heads/main` unless the
+publisher names another) and the event that started it (a push or a
+manual dispatch). The call mints a token and creates nothing: a package that does not exist is created with
+`createPackage`, which the token minted for the namespace may do, and the token names that namespace. A CI identity token can be exchanged once; a second
+exchange of the same token is refused as `oidc_token_invalid`.
+
+`purpose` is optional: `publish` (the default, the token this call has always minted) or `stage`. A `stage` token
+has the one scope `stage`: the same packages, versions, namespace and life as the `publish` token of the same request,
+but it can only prepare a group (`createGroup`, `getGroup`, `abortGroup`); `commitGroup`, `commitPublish`, `setYanked`
+and `yankGroup` refuse it as `scope_missing`. Any other `purpose` is
+`invalid_request`, before the CI identity token is spent.
+
+options:
+  --body <file>
+      the request body, JSON (`-`: standard input), as `OidcExchangeRequest` of spec/api/openapi-v2.yaml
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends POST /api/v2/auth/oidc/exchange (exchangeOidcToken).

@@ -12,7 +12,7 @@ const stage = @import("stage_cmd.zig");
 const Net = gp.Net;
 const Console = gp.Console;
 
-const health_objects = "{\"status\":\"ok\",\"features\":[\"group_readme_objects\"]}";
+const health_objects = "{\"status\":\"ok\",\"stage\":\"beta\",\"api_version\":\"v2\",\"read_only\":false,\"features\":[\"group_readme_objects\"]}";
 
 /// A registry that answers /health with `health` (or fails it) and finds no version of any package.
 const Registry = struct {
@@ -49,7 +49,7 @@ const Registry = struct {
 
 fn runWith(fx: st.Fx, reg: *Registry, out: []const u8) !struct { code: u8, out: []const u8, err: []const u8 } {
     var console = Console.init(fx.a, null);
-    const code = try stage.run(.{ .arena = fx.a, .net = reg.net(), .console = &console, .api_url = st.api, .flags = try fx.flags(out, &.{}) });
+    const code = try stage.run(.{ .arena = fx.a, .net = reg.net(), .console = &console, .api_v2_url = st.api, .flags = try fx.flags(out, &.{}) });
     return .{ .code = code, .out = console.out.items, .err = console.err.items };
 }
 
@@ -77,7 +77,7 @@ test "readmes too large for the commit request inline are staged when /health li
     try std.testing.expectEqual(@as(usize, 1), objects.healthReads());
     try std.testing.expect(fx.exists("objects/plan.json"));
     // The readmes are staged as files, as for a set that fits.
-    try std.testing.expect(fx.exists("objects/pkg_0/README.md"));
+    try std.testing.expect(fx.exists("objects/example/pkg_0/README.md"));
 }
 
 test "a set that fits inline does not ask /health, and one that does not stops when /health cannot be read" {

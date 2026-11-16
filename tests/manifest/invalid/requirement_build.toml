@@ -1,6 +1,6 @@
 [package]
-name = "a"
+name = "example/demo"
 version = "0.1.0"
 
 [dependencies]
-util = { version = "1.0.0+linux" }
+"example/util" = { version = "1.0.0+linux" }

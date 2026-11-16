@@ -5,7 +5,7 @@ import type { GroupStore } from '../src/group-store';
 import { MemoryStore } from '../src/memory-store';
 import { Metrics } from '../src/metrics';
 import type { RawVersionPort } from '../src/raw-port';
-import type { Store } from '../src/store';
+import type { RowDeleter, Store } from '../src/store';
 import type { VersionRecord } from '../src/types';
 import { audit, FakeDocClient, rec } from './helpers';
 
@@ -16,7 +16,7 @@ import { audit, FakeDocClient, rec } from './helpers';
  */
 export interface Rig {
   label: string;
-  store: Store & GroupStore & { raw: RawVersionPort };
+  store: Store & GroupStore & RowDeleter & { raw: RawVersionPort };
   /** The fake DynamoDB client under the store (the DynamoDB rig only): to see exactly what was sent, and to interleave writers. */
   doc?: FakeDocClient;
   /** Log lines of the funnel (errors, with the group id). */

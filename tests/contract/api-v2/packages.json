@@ -1,0 +1,925 @@
+{
+  "cases": [
+    {
+      "name": "search by name prefix in every namespace",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "q": "json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "packages": [
+            {
+              "name": "alice/json",
+              "latest": "1.0.0",
+              "description": null,
+              "updated_at": "2026-11-02T09:00:00.000Z"
+            },
+            {
+              "name": "komira-ai/json",
+              "latest": "1.1.0",
+              "description": null,
+              "updated_at": "2026-11-10T08:30:00.000Z"
+            },
+            {
+              "name": "komira-ai/jsonschema",
+              "latest": null,
+              "description": null,
+              "updated_at": "2026-11-14T12:00:00.000Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "search one namespace",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "q": "komira-ai/"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "packages": [
+            {
+              "name": "komira-ai/json",
+              "latest": "1.1.0",
+              "description": null,
+              "updated_at": "2026-11-10T08:30:00.000Z"
+            },
+            {
+              "name": "komira-ai/jsonschema",
+              "latest": null,
+              "description": null,
+              "updated_at": "2026-11-14T12:00:00.000Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "search one namespace by name prefix",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "q": "komira-ai/jsons"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "packages": [
+            {
+              "name": "komira-ai/jsonschema",
+              "latest": null,
+              "description": null,
+              "updated_at": "2026-11-14T12:00:00.000Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "search, first page of one",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "q": "json",
+          "limit": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "packages": [
+            {
+              "name": "alice/json",
+              "latest": "1.0.0",
+              "description": null,
+              "updated_at": "2026-11-02T09:00:00.000Z"
+            }
+          ],
+          "next_cursor": "eyJrIjoibmFtZSIsImFmdGVyIjoiYWxpY2UvanNvbiJ9"
+        }
+      }
+    },
+    {
+      "name": "search, last page, a package with no version",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "q": "komira-ai/",
+          "cursor": "eyJrIjoibmFtZSIsImFmdGVyIjoiYWxpY2UvanNvbiJ9",
+          "limit": 20
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "packages": [
+            {
+              "name": "komira-ai/jsonschema",
+              "latest": null,
+              "description": null,
+              "updated_at": "2026-11-14T12:00:00.000Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "package info",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "state": "active",
+          "namespace": {
+            "namespace": "komira-ai",
+            "kind": "org",
+            "github_id": 77,
+            "login": "komira-ai"
+          },
+          "latest": "1.1.0",
+          "repository": null,
+          "license": null,
+          "description": null,
+          "created_at": "2026-11-01T08:00:00.000Z",
+          "versions": [
+            {
+              "version": "1.1.0",
+              "state": "published",
+              "published_at": "2026-11-10T08:30:00.000Z"
+            },
+            {
+              "version": "1.0.0",
+              "state": "yanked",
+              "published_at": "2026-11-03T10:00:00.000Z",
+              "yank_reason": "wrong license text"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "package info with homepage, keywords and the latest readme",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "alice/json",
+          "state": "active",
+          "namespace": {
+            "namespace": "alice",
+            "kind": "user",
+            "github_id": 1001,
+            "login": "Alice"
+          },
+          "latest": "0.3.0",
+          "repository": "https://github.com/alice/json",
+          "license": "Apache-2.0",
+          "description": "A JSON parser for Mojo.",
+          "homepage": "https://alice.example/json",
+          "keywords": [
+            "json",
+            "parser"
+          ],
+          "readme": "# json\n\nParse JSON.\n",
+          "created_at": "2026-11-01T08:00:00.000Z",
+          "versions": [
+            {
+              "version": "0.3.0",
+              "state": "published",
+              "published_at": "2026-11-05T15:00:00.000Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "package that has no version yet",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "alice/json",
+          "state": "claimed",
+          "namespace": {
+            "namespace": "alice",
+            "kind": "user",
+            "github_id": 1001,
+            "login": "Alice"
+          },
+          "latest": null,
+          "repository": null,
+          "license": null,
+          "description": null,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "versions": []
+        }
+      }
+    },
+    {
+      "name": "create a package",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "alice/json",
+          "state": "claimed",
+          "namespace": {
+            "namespace": "alice",
+            "kind": "user",
+            "github_id": 1001,
+            "login": "Alice"
+          },
+          "latest": null,
+          "repository": null,
+          "license": null,
+          "description": null,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "versions": []
+        }
+      }
+    },
+    {
+      "name": "create a package that exists",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "state": "claimed",
+          "namespace": {
+            "namespace": "komira-ai",
+            "kind": "org",
+            "github_id": 77,
+            "login": "komira-ai"
+          },
+          "latest": null,
+          "repository": null,
+          "license": null,
+          "description": null,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "versions": []
+        }
+      }
+    },
+    {
+      "name": "list versions",
+      "operationId": "listVersions",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "versions": [
+            {
+              "version": "1.1.0",
+              "state": "published",
+              "published_at": "2026-11-10T08:30:00.000Z"
+            },
+            {
+              "version": "1.0.0",
+              "state": "published",
+              "published_at": "2026-11-03T10:00:00.000Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "version detail",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "version": "1.1.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096,
+              "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "provenance": {
+            "kind": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "version detail with the mopm.toml display fields",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "version": "1.1.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096,
+              "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "description": "A JSON parser for Mojo.",
+          "license": "Apache-2.0",
+          "repository": "https://github.com/komira-ai/json",
+          "homepage": "https://komira.example/json",
+          "keywords": [
+            "json",
+            "parser"
+          ],
+          "readme": "# json\n\nParse JSON.\n",
+          "provenance": {
+            "kind": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "version detail with a source_commit",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "version": "1.1.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096,
+              "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "source_commit": "9f2c4b7e1d0a83c5b6e7f8091a2b3c4d5e6f7081",
+          "provenance": {
+            "kind": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "version detail of a version a group published",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "version": "1.1.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096,
+              "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "group_id": "grp_598a7e4a7e56109c58051a434f3be338",
+          "provenance": {
+            "kind": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "version detail published through a CI identity",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "version": "1.1.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096,
+              "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "provenance": {
+            "kind": "oidc",
+            "repository": "komira-ai/json",
+            "workflow_ref": "komira-ai/json/.github/workflows/release.yml@refs/heads/main"
+          }
+        }
+      }
+    },
+    {
+      "name": "yanked version keeps its files and says why",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "version": "1.1.0",
+          "state": "yanked",
+          "yank_reason": "crashes on empty input",
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096,
+              "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "provenance": {
+            "kind": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "tombstoned version has no url",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "version": "1.1.0",
+          "state": "tombstoned",
+          "yank_reason": null,
+          "tombstone": {
+            "reason_code": "malware",
+            "date": "2026-11-12"
+          },
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "provenance": {
+            "kind": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "a package answered with a flat name",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "json",
+          "state": "active",
+          "namespace": {
+            "namespace": "komira-ai",
+            "kind": "org",
+            "github_id": 77,
+            "login": "komira-ai"
+          },
+          "latest": "1.1.0",
+          "repository": null,
+          "license": null,
+          "description": null,
+          "created_at": "2026-11-01T08:00:00.000Z",
+          "versions": [
+            {
+              "version": "1.1.0",
+              "state": "published",
+              "published_at": "2026-11-10T08:30:00.000Z"
+            },
+            {
+              "version": "1.0.0",
+              "state": "yanked",
+              "published_at": "2026-11-03T10:00:00.000Z",
+              "yank_reason": "wrong license text"
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a package answered without its namespace",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "state": "active",
+          "latest": "1.1.0",
+          "repository": null,
+          "license": null,
+          "description": null,
+          "created_at": "2026-11-01T08:00:00.000Z",
+          "versions": [
+            {
+              "version": "1.1.0",
+              "state": "published",
+              "published_at": "2026-11-10T08:30:00.000Z"
+            },
+            {
+              "version": "1.0.0",
+              "state": "yanked",
+              "published_at": "2026-11-03T10:00:00.000Z",
+              "yank_reason": "wrong license text"
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a version answered with a flat name",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "json",
+          "version": "1.1.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096,
+              "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "provenance": {
+            "kind": "none"
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a package created answered 202, which the operation does not declare",
+      "operationId": "createPackage",
+      "request": {
+        "path": {
+          "namespace": "alice",
+          "name": "json"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "alice/json",
+          "state": "claimed",
+          "namespace": {
+            "namespace": "alice",
+            "kind": "user",
+            "github_id": 1001,
+            "login": "Alice"
+          },
+          "latest": null,
+          "repository": null,
+          "license": null,
+          "description": null,
+          "created_at": "2026-11-14T12:00:00.000Z",
+          "versions": []
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a search with a limit over 100",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "q": "json",
+          "limit": 101
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "packages": [
+            {
+              "name": "alice/json",
+              "latest": "1.0.0",
+              "description": null,
+              "updated_at": "2026-11-02T09:00:00.000Z"
+            }
+          ],
+          "next_cursor": "eyJrIjoibmFtZSIsImFmdGVyIjoiYWxpY2UvanNvbiJ9"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a search sorted by something the API does not offer",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "q": "json",
+          "limit": 1,
+          "sort": "stars"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "packages": [
+            {
+              "name": "alice/json",
+              "latest": "1.0.0",
+              "description": null,
+              "updated_at": "2026-11-02T09:00:00.000Z"
+            }
+          ],
+          "next_cursor": "eyJrIjoibmFtZSIsImFmdGVyIjoiYWxpY2UvanNvbiJ9"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a search result with a flat name",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "q": "komira-ai/"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "packages": [
+            {
+              "name": "json",
+              "latest": "1.1.0",
+              "description": null,
+              "updated_at": "2026-11-10T08:30:00.000Z"
+            },
+            {
+              "name": "komira-ai/jsonschema",
+              "latest": null,
+              "description": null,
+              "updated_at": "2026-11-14T12:00:00.000Z"
+            }
+          ],
+          "next_cursor": null
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

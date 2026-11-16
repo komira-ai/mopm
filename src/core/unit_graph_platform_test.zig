@@ -23,14 +23,14 @@ fn put(dir: std.fs.Dir, path: []const u8, bytes: []const u8) !void {
 
 fn pinnedGraph(a: Allocator, dir: []const u8, subdir: []const u8, l: lock.Lock, why: *[]const u8) !Graph {
     var diag: manifest.Diagnostic = .{};
-    const m = try manifest.parse(a, "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n", &diag);
+    const m = try manifest.parse(a, "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n", &diag);
     return build(a, .{ .dir = dir, .m = m, .members = &.{}, .l = l, .subdir = subdir, .mojo = "1.0.0" }, why);
 }
 
-/// A version 2 lock with no packages whose closures are `recorded`, as `(subdir, hash)` pairs in lock order.
+/// A lock with no packages whose closures are `recorded`, as `(subdir, hash)` pairs in lock order.
 fn lockRecording(a: Allocator, recorded: []const [2][]const u8, why: *[]const u8) !lock.Lock {
     var text = std.ArrayList(u8).init(a);
-    try text.appendSlice("{\"lock_version\": 2, \"mojo\": [\"1.0.0\"], \"toolchain\": {\"1.0.0\": {");
+    try text.appendSlice("{\"lock_version\": 3, \"mojo\": [\"1.0.0\"], \"toolchain\": {\"1.0.0\": {");
     for (recorded, 0..) |r, i| try text.writer().print("{s}\"{s}\": \"{s}\"", .{ if (i == 0) "" else ", ", r[0], r[1] });
     try text.appendSlice("}}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": []}\n");
     return lock.parse(a, text.items, why);
@@ -49,7 +49,7 @@ fn emptyApp(dir: std.fs.Dir) !void {
 
 /// What `mopm plan --unit-graph` prints above the units for a package with none: the toolchain of one platform.
 fn toolchainGolden(a: Allocator, tc: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(a, "{{\n  \"unit_graph\": 2,\n  \"package\": \"app@1.0.0\",\n  \"mojo\": \"1.0.0\",\n  \"toolchain\": {{{s}\n  }},\n  \"units\": []\n}}\n", .{tc});
+    return std.fmt.allocPrint(a, "{{\n  \"unit_graph\": 6,\n  \"package\": \"example/app@1.0.0\",\n  \"mojo\": \"1.0.0\",\n  \"toolchain\": {{{s}\n  }},\n  \"units\": []\n}}\n", .{tc});
 }
 
 test "golden: the toolchain of the unit graph on each platform mopm pins, byte for byte" {
@@ -57,7 +57,7 @@ test "golden: the toolchain of the unit graph on each platform mopm pins, byte f
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const want = [_]struct { subdir: []const u8, tc: []const u8 }{
-        .{ .subdir = "linux-64", .tc =
+        .{ .subdir = "linux-64", .tc = 
         \\
         \\    "mojo": "1.0.0",
         \\    "subdir": "linux-64",
@@ -70,7 +70,7 @@ test "golden: the toolchain of the unit graph on each platform mopm pins, byte f
         \\      {"name": "mojo-compiler", "version": "1.0.0", "url": "https://conda.modular.com/max/linux-64/mojo-compiler-1.0.0-release.conda", "sha256": "4394c6146d47ec7794a9a3ed5775ae158f59f83f8e1aed59408b17c4909821b3", "size": 68511359}
         \\    ]
         },
-        .{ .subdir = "linux-aarch64", .tc =
+        .{ .subdir = "linux-aarch64", .tc = 
         \\
         \\    "mojo": "1.0.0",
         \\    "subdir": "linux-aarch64",
@@ -83,7 +83,7 @@ test "golden: the toolchain of the unit graph on each platform mopm pins, byte f
         \\      {"name": "mojo-compiler", "version": "1.0.0", "url": "https://conda.modular.com/max/linux-aarch64/mojo-compiler-1.0.0-release.conda", "sha256": "da1772742c54f1f8f7b883e6338b1fe5de4592f2c882220dcceae623cc661e57", "size": 66479788}
         \\    ]
         },
-        .{ .subdir = "osx-arm64", .tc =
+        .{ .subdir = "osx-arm64", .tc = 
         \\
         \\    "mojo": "1.0.0",
         \\    "subdir": "osx-arm64",
@@ -113,7 +113,7 @@ test "golden: the toolchain of the unit graph on each platform mopm pins, byte f
         };
         // The whole graph names the same toolchain and holds the package's units.
         try std.testing.expectEqualStrings(w.subdir, g.toolchain.subdir);
-        try std.testing.expect(g.find("app@1.0.0#mojo1.0.0/lib") != null);
+        try std.testing.expect(g.find("example/app@1.0.0#mojo1.0.0/lib") != null);
     }
 }
 

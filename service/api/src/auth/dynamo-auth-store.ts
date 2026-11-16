@@ -8,6 +8,8 @@ export interface AuthTables {
   tokens: string;
   device_logins: string;
   trusted_publishers: string;
+  namespaces: string;
+  namespace_members: string;
 }
 
 export const authTablesFor = (stage: string): AuthTables => ({
@@ -15,6 +17,8 @@ export const authTablesFor = (stage: string): AuthTables => ({
   tokens: `mopm-${stage}-tokens`,
   device_logins: `mopm-${stage}-device_logins`,
   trusted_publishers: `mopm-${stage}-trusted_publishers`,
+  namespaces: `mopm-${stage}-namespaces`,
+  namespace_members: `mopm-${stage}-namespace_members`,
 });
 
 /** The tokens table's index by account (service/infra/stacks/lib/data-stack.ts): partition github_id, sort id. */
@@ -80,7 +84,8 @@ export class DynamoAuthStore implements AuthStore {
   async getUser(github_id: number): Promise<UserRecord | undefined> {
     const r = await this.doc.send(new GetCommand({ TableName: this.tables.users, Key: { github_id: String(github_id) } }));
     if (!r.Item) return undefined;
-    return { ...strip(r.Item, 'github_id_num'), github_id: r.Item.github_id_num } as UserRecord;
+    // A row written when logins still recorded `orgs` keeps that attribute; it is not read.
+    return { ...strip(r.Item, 'github_id_num', 'orgs'), github_id: r.Item.github_id_num } as UserRecord;
   }
 
   async putToken(rec: TokenRecord): Promise<void> {

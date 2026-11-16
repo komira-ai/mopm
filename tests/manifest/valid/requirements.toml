@@ -1,17 +1,17 @@
 # Each form of version requirement (spec/mopm-toml.md, "Version requirements").
 [package]
-name = "reqs"
+name = "example/reqs"
 version = "0.1.0"
 
 [dependencies]
-caret = "1.2"
-explicit_caret = "^0.4.1"
-tilde = "~1.2"
-exact = "=0.0.3"
-ranged = ">=1.2, <1.5"
-anything = "*"
-wild = "1.*"
-pre = { version = ">=2.0.0-rc.1" }
+"example/caret" = "1.2"
+"example/explicit_caret" = "^0.4.1"
+"example/tilde" = "~1.2"
+"example/exact" = "=0.0.3"
+"example/ranged" = ">=1.2, <1.5"
+"example/anything" = "*"
+"example/wild" = "1.*"
+"example/pre" = { version = ">=2.0.0-rc.1" }
 
 [dev-dependencies]
-spaced = " >= 1 , < 2 "
+"example/spaced" = " >= 1 , < 2 "

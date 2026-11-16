@@ -1,0 +1,22 @@
+usage: mopm package version <namespace>/<name> <version> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Show one version of a package: its state, files and dependencies.
+
+A yanked version is returned with `state: yanked` and its reason. A
+tombstoned version is returned with `state: tombstoned`, the reason
+code and the sha256 of each file, but no `url`.
+
+arguments:
+  <namespace>/<name>
+      The namespace of the package, a GitHub login in lower case.
+      Normalised package name, the part of the full name after the `/`.
+  <version>
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends GET /api/v2/packages/{namespace}/{name}/{version} (getVersion).

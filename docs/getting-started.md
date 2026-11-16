@@ -92,17 +92,26 @@ it or pass `--prefix`.
 ## 2. Start a package: `new` and `init`
 
 ```sh
-mopm new my_pkg --lib        # a library in a new directory my_pkg (the default kind)
-mopm new my_app --bin        # a program
-cd existing_dir && mopm init [--lib|--bin] [--name <name>]    # in the current directory
+mopm new alice/my_pkg --lib  # a library in a new directory my_pkg (the default kind)
+mopm new alice/my_app --bin  # a program
+cd existing_dir && mopm init [--lib|--bin] [--name <namespace>/<name>]    # in the current directory
+mopm new my_pkg               # the same as mopm new alice/my_pkg, when mopm login stored the namespace alice
 ```
 
-A new library contains `mopm.toml`, `src/<name>/__init__.mojo`, `tests/test_<...>.mojo`, a README and a
+A package name is a full name, `<namespace>/<name>`: the namespace is your GitHub login (here `alice`), or an
+organization's, and the name is what Mojo code imports. A bare name (`mopm new my_pkg`, or `mopm init` with no
+`--name`, which takes the directory's name) gets the namespace that `mopm login` stored for the registry, read from
+`credentials.json` (`--registry` and `--config-dir` choose which, as for `login`); a full name never reads it and
+works offline. A bare name asks the registry for its configuration (whose API URL keys the entry) only when some
+login stored a namespace; with none it asks nothing and is refused: `mopm new json needs a namespace: run 'mopm login'
+(your GitHub login is your namespace) or name it, as in 'mopm new <your login>/json'` (`mopm init --name` for the
+init forms). A new library contains
+`mopm.toml`, `src/<name>/__init__.mojo`, `tests/test_<...>.mojo`, a README and a
 `.gitignore`. Its manifest:
 
 ```toml
 [package]
-name = "my_pkg"
+name = "alice/my_pkg"
 version = "0.1.0"
 
 [toolchain]
@@ -120,11 +129,12 @@ A `--bin` package adds `bins = [{ name = "my_app", path = "src/main.mojo" }]` to
 ## 3. Dependencies: `add`, `remove`, `lock`, `update`, `tree`, `sync`
 
 ```sh
-mopm add http_client            # newest version that fits, written as ^X.Y.Z; then lock
-mopm add http_client@0.4        # with a requirement
-mopm add test_util --dev        # into [dev-dependencies]
-mopm add helper --path ../helper
-mopm remove http_client
+mopm add example/http_client          # newest version that fits, written as ^X.Y.Z; then lock
+mopm add example/http_client@0.4      # with a requirement
+mopm add example/test_util --dev      # into [dev-dependencies]
+mopm add alice/helper --path ../helper
+mopm add http_client                  # refused: a bare name has no namespace; mopm names the packages it knows by that name
+mopm remove example/http_client
 mopm lock                       # resolve mopm.toml against the registry's index, write mopm.lock
 mopm update [pkg...]            # move the named packages (all, with none) to the newest that fit
 mopm tree                       # draw the dependency graph in mopm.lock
@@ -154,6 +164,15 @@ records the toolchain closure it was made for, and `sync` refuses a different on
 
 Because a compiled Mojo package is tied to one compiler, a dependency is only chosen if it has a build for
 your exact Mojo. If none does, `mopm lock` says which versions have builds and for which Mojo.
+
+A dependency named without a namespace is refused. `mopm add json` asks the registry for the packages with that name
+(`GET /packages?q=json&limit=100`, at most 5 whose name part is `json`) and says so:
+`dependency 'json' has no namespace: write it as <namespace>/json; packages named json on prod: komira-ai/json, alice/json
+(as in 'mopm add komira-ai/json')`, or `...; no package on prod is named json`. If the registry cannot be read, the
+message is `dependency 'json' has no namespace: write it as <namespace>/<name>, as in 'mopm add <namespace>/<name>'`.
+mopm never adds one of the suggestions itself. A `[package] name` without a namespace in `mopm.toml` is refused by
+`lock`, `update`, `sync`, `tree`, `add` and `remove` with the namespace you are logged in with:
+`package name 'json' has no namespace: write name = "alice/json" (alice is your namespace), or another namespace you publish in`.
 
 Note: the hosted registry is new and its catalogue is small, so `mopm add` of a registry package may have
 nothing to find yet (the package list is on mopm.dev). Path dependencies
@@ -254,16 +273,53 @@ You need an account on the registry, a `.mojoc` built by the Mojo version you na
 the display fields you want.
 
 ```sh
-mopm login                                   # device login through GitHub; stores credentials.json (0600)
-mopm whoami
+mopm login                                   # device login through GitHub; stores credentials.json (0600) and your namespace
+mopm whoami                                  # your handle, GitHub id and namespaces on the registry
 
 mojo precompile -I <dep dirs> src/my_pkg -o my_pkg.mojoc    # build the .mojoc yourself (see below)
 
-mopm pack    --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc          # writes dist/<subdir>/mojo-my_pkg-<v>-mojo1.0.0_0.conda
+mopm pack    --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc          # writes dist/<subdir>/mojo-<namespace>.my_pkg-<v>-mojo1.0.0_0.conda
 mopm publish --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc --dry-run # pack and show what would be sent
 mopm publish --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc            # publish to prod
 mopm publish ... --registry beta                                       # prod (default), gamma, beta, or a URL
 ```
+
+`mopm login` then asks the registry who you are (`GET /me`) and stores your user namespace beside the token: it prints
+`Logged in to prod as alice; your namespace is alice.` When your GitHub login cannot be a namespace (another account
+holds it, it is reserved, or it is not a valid namespace) it says so and stores none. If the registry cannot be asked,
+the token is stored all the same and mopm warns `mopm: could not read your namespace from prod; 'mopm whoami' shows it`.
+`mopm whoami` is a generated command (one call of `GET /me`; `mopm whoami --help` lists its flags). It prints the
+registry's answer as `key: value` lines: the handle, the GitHub id, then `namespaces:` with an entry for each (its
+namespace, kind `user` or `org`, role `owner` or `member`, and its packages), and `unavailable_namespace` when your
+GitHub login cannot be a namespace. `--json` prints the answer as JSON.
+
+An organization's namespace is shared by its members. An admin of the GitHub organization registers it once, and
+the registry then manages its members itself:
+
+```sh
+mopm org create komira-ai                    # an active GitHub admin of komira-ai; you become its first owner
+mopm org add komira-ai alice                 # alice (her mopm username) may publish in komira-ai
+mopm org add komira-ai bob --role owner      # bob may also manage the members
+mopm org remove komira-ai alice              # alice is refused from the next request on
+mopm org list komira-ai                      # the members and their roles
+```
+
+`mopm org create` needs a stored login. It prints `To register the GitHub organization komira-ai on prod, open
+<verification_uri> and enter the code <user_code>`, and waits while you approve on GitHub; the approval asks GitHub for
+the `read:org` scope for that one step, and the registry discards the token. The GitHub account that approves must be
+the one you are logged in as, and an active admin of the organization whose current login is the namespace; otherwise
+the registry answers `not_org_admin` or `github_account_mismatch`. An organization that restricts OAuth apps must
+approve the mopm registry first. GitHub is asked only then: afterwards members are the registry's own list, a person
+leaving the GitHub organization is not removed from it, and an owner runs `mopm org remove`. A member is named by their
+mopm username, which is their lower-case GitHub login and exists after their first `mopm login`. `add` sets the role
+(`--role owner|member`, `member` when not given), so `mopm org add <org> <user>` makes an owner a member. The last owner
+cannot be removed or demoted. `add`, `remove` and `list` are generated commands, one call of the registry's API each
+(`mopm org add --help`) and take `--registry`, `--config-dir` and `--json`; `create` takes `--registry` and
+`--config-dir`.
+
+`mopm publish` first makes the package: it sends `PUT /packages/<namespace>/<name>` with no body, after reading the
+token and before any upload. A 201 prints `created <full name> on <registry>`; a 200 (the package exists) prints nothing;
+any other answer is printed and the run ends with exit status 1. `--dry-run` sends nothing.
 
 `--mojoc` takes `[<subdir>=]<file>`, repeatable; the subdir is `noarch` (the default), `linux-64`,
 `linux-aarch64` or `osx-arm64`. In CI set `MOPM_TOKEN` instead of logging in, or, inside a GitHub Actions job
@@ -284,7 +340,7 @@ uses to build a library for a build farm.
 
 ```toml
 [package]
-name = "http_client"             # import name and registry name: lowercase letters, digits, underscore
+name = "example/http_client"     # <namespace>/<name>; the name is the import name: lowercase letters, digits, underscore
 version = "0.4.0"                # MAJOR.MINOR.PATCH, nothing else
 description = "HTTP/1.1 client"  # optional display fields: description, license, repository
 license = "Apache-2.0"           #   (checked to be strings), and readme (a Markdown file of at most 64 KiB)
@@ -293,12 +349,12 @@ readme = "README.md"
 mojo = ["1.0.0", "1.1.0"]        # exact compilers this package builds for (or use [toolchain] below)
 
 [dependencies]
-http_core = "1.2"                # caret: >=1.2.0, <2.0.0
-tls = { version = "0.9" }
-local_util = { path = "../local_util" }   # a path or a version, not both; a path cannot be published
+"example/http_core" = "1.2"      # full names, quoted; caret: >=1.2.0, <2.0.0
+"example/tls" = { version = "0.9" }
+"example/local_util" = { path = "../local_util" }   # a path or a version, not both; a path cannot be published
 
 [dev-dependencies]
-mopm_test = "0.1"
+"example/mopm_test" = "0.1"
 
 [native-dependencies]
 zlib = { version = ">=1.2", kind = "shared", mode = "link" }
@@ -317,7 +373,7 @@ tests = ["tests"]
 [package.metadata.some_tool]     # settings for other tools: mopm preserves, never reads
 ```
 
-Use either `[package] mojo` (a list of exact versions; gives a version 2 lock) or `[toolchain] mojo` (the
+Use either `[package] mojo` (a list of exact versions) or `[toolchain] mojo` (the
 older form, a version or a list read as alternatives, locked for the first that resolves; what `mopm new`
 writes), never both. Version requirements follow cargo: `"1.2"`, `"~1.2"`, `"=1.2.3"`, `">=1.2, <1.5"`,
 `"*"`. mopm refuses keys and tables it does not know, so a typo is an error; `mopm metadata` shows exactly how
@@ -329,13 +385,15 @@ archive of each platform with `--native <id>=<subdir>:<file>` (see [configuratio
 
 ### Registries and credentials
 
-- `--registry prod|gamma|beta|<url>` on `login`, `logout`, `whoami`, `publish`, `lock`, `update`, `sync`,
+- `--registry prod|gamma|beta|<url>` on `login`, `logout`, `whoami`, `org`, `publish`, `lock`, `update`, `sync`,
   `add` and `remove`. The default is `prod` (`https://api.mopm.dev`). A URL must be `https`, or plain `http`
   to `127.0.0.1`, `[::1]` or `localhost` with a port (for a local or test registry).
 - Credentials are in `credentials.json` under `$XDG_CONFIG_HOME/mopm`, else `~/.config/mopm`; override with
   `--config-dir <dir>`. `MOPM_TOKEN`, when set, wins over a stored login for `publish`.
-- The channel for a project is the registry's channel (`https://conda.mopm.dev/` for prod). The lock records
-  it, and only the root project's choice counts.
+- The channel root for a project is the registry's (`https://conda.mopm.dev/` for prod); each namespace is its own
+  channel below it (`https://conda.mopm.dev/komira-ai/`). The lock records the root, and only the root project's
+  choice counts. A lock written before packages had namespaces (`lock_version` 1 or 2) is rewritten by `mopm lock`;
+  `mopm sync --locked` refuses it.
 
 ### Environment variables
 
@@ -359,7 +417,7 @@ The [examples page](examples.md) walks through six complete packages (a library,
 **A library with a test, from nothing**
 
 ```sh
-mopm new greeter --lib
+mopm new alice/greeter --lib
 cd greeter
 mopm sync                           # the Mojo toolchain into .mopm/env (no dependencies yet)
 mopm test                           # builds tests/test_*.mojo and runs each test in its own process
@@ -376,12 +434,12 @@ mopm test --retries 2 --deny-flaky --junit report.xml
 
 ```toml
 [package]
-name = "app"
+name = "alice/app"
 version = "0.1.0"
 [toolchain]
 mojo = "1.0.0"
 [dependencies]
-crypto = "0.3"          # ships libcrypto_native.so.1
+"example/crypto" = "0.3"          # ships libcrypto_native.so.1
 ```
 
 ```sh
@@ -401,7 +459,7 @@ mopm test --retries 3 --format json | jq '.tests[] | select(.status=="flaky") | 
 ```sh
 mopm lock
 mopm plan --unit-graph --locked --mojo 1.0.0 -o graph.json
-mopm unit build --unit 'greeter@0.1.0#mojo1.0.0/lib' --graph graph.json --out out --toolchain <toolchain dir>
+mopm unit build --unit 'example/greeter@0.1.0#mojo1.0.0/lib' --graph graph.json --out out --toolchain <toolchain dir>
 ```
 
 ## 9. Where to go next

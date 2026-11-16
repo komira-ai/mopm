@@ -1,0 +1,13 @@
+usage: mopm token list [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+List the API tokens of the account.
+
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends GET /api/v2/me/tokens (listTokens) with the token 'mopm login' stored, or $MOPM_TOKEN.

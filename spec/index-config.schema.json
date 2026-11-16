@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mopm.dev/schema/index-config-1.json",
+  "$id": "https://mopm.dev/schema/index-config-2.json",
   "title": "mopm index config (/index/config.json)",
   "description": "Read first by the CLI. A CLI that does not know index_version refuses the index.",
   "type": "object",
@@ -15,6 +15,16 @@
     "index_version": {
       "type": "integer",
       "minimum": 1
+    },
+    "index_versions": {
+      "type": "array",
+      "description": "Every index version served, sorted. When absent it is [index_version]. A client that reads version 2 refuses a registry whose list lacks 2.",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
     },
     "stage": {
       "enum": [
@@ -35,9 +45,21 @@
         }
       ]
     },
+    "api_v2_url": {
+      "type": "string",
+      "description": "The API root of version 2, ending in /api/v2, on the rules of api_url.",
+      "anyOf": [
+        {
+          "pattern": "^https://[^/]+/api/v2$"
+        },
+        {
+          "pattern": "^http://(127\\.0\\.0\\.1|\\[::1\\]|localhost):([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])/api/v2$"
+        }
+      ]
+    },
     "channel_url": {
       "type": "string",
-      "description": "Base URL ending in '/': https conda.<host>, or loopback http (port required, any path) for local and test registries only.",
+      "description": "Base URL ending in '/'; a namespace's channel is channel_url followed by <namespace>/. https conda.<host>, or loopback http (port required, any path) for local and test registries only.",
       "anyOf": [
         {
           "pattern": "^https://conda\\.[^/]+/$"

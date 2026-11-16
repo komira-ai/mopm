@@ -1,6 +1,6 @@
 {
   "package": {
-    "name": "cxx_natives",
+    "name": "example/cxx_natives",
     "version": "1.0.0",
     "description": null,
     "license": null,

@@ -3,5 +3,5 @@ build:
 run:
 repl-preload:
 diagnostics:
-  [run] static_only: staticpkg ships only libarch.a (native arch); mojo run cannot load an archive: use mopm build or ask for a shared flavour
-  [repl] static_only: staticpkg ships only libarch.a (native arch); mojo repl cannot load an archive: use mopm build or ask for a shared flavour
+  [run] static_only: example/staticpkg ships only libarch.a (native arch); mojo run cannot load an archive: use mopm build or ask for a shared flavour
+  [repl] static_only: example/staticpkg ships only libarch.a (native arch); mojo repl cannot load an archive: use mopm build or ask for a shared flavour

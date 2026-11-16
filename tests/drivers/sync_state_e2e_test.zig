@@ -40,8 +40,9 @@ test "a project moved to another path installs again for the new path, from the 
     const t = try c.toolchain("channel/toolchain", "toolchain.json", "T");
     const cache = try h.join(a, &.{ c.work, "cache" });
     const flags = [_][]const u8{ "--registry", c.fake.base, "--toolchain", t.closure, "--cache", cache };
-    const app = try c.project("app", "phfile = \"1\"");
+    const app = try c.project("app", "\"example/phfile\" = \"1\"");
 
+    try c.standInLock(app);
     var r = try c.run(app, &(.{"sync"} ++ flags));
     const before_prefix = c.read(app, ".mopm/env/share/ph/prefix.txt") orelse "";
     rep.check("the first sync writes the environment's own path into the placeholder file", r.code == 0 and
@@ -100,7 +101,7 @@ test "a stamped environment that no longer matches its stamp is repaired; no sta
     // A changed native library of a locked package.
     try h.writeFile(c.path(&.{ b.env_dir, "lib/libgreet.so" }), "tampered\n");
     r = try c.run(b.app, try c.cat(&.{ &.{ "sync", "--locked" }, b.with_t }));
-    rep.same("a changed native library: stderr names both hashes", try c.fmt("mopm sync: .mopm/env does not match its stamp (lib/libgreet.so of mojo-greet 1.0.0 has sha256 {s}; mopm.lock pins {s}; refused); installing it again\n", .{ try cp.sha256Hex(a, "tampered\n"), try cp.sha256Hex(a, lib_bytes) }), r.stderr);
+    rep.same("a changed native library: stderr names both hashes", try c.fmt("mopm sync: .mopm/env does not match its stamp (lib/libgreet.so of mojo-example.greet 1.0.0 has sha256 {s}; mopm.lock pins {s}; refused); installing it again\n", .{ try cp.sha256Hex(a, "tampered\n"), try cp.sha256Hex(a, lib_bytes) }), r.stderr);
     rep.check("a changed native library is the pinned one again", r.code == 0 and std.mem.eql(u8, try c.fingerprint(b.env_dir), b.print), c.detail(r));
 
     // No stamp, then a garbled one: a plain install with nothing on stderr.
@@ -186,7 +187,7 @@ test "the legacy pixi layout beside .mopm/env is never read, moved or deleted, w
     const t = try c.toolchain("channel/toolchain", "toolchain.json", "T");
     const t2 = try c.toolchain("channel/toolchain2", "toolchain2.json", "T2");
     const cache = try h.join(a, &.{ c.work, "cache" });
-    const app = try c.project("app", "greet = \"1\"");
+    const app = try c.project("app", "\"example/greet\" = \"1\"");
     const dot = c.path(&.{ app, ".mopm" });
     try fs.cwd().makePath(c.path(&.{ dot, ".pixi/envs/default/bin" }));
     try fs.cwd().makePath(c.path(&.{ dot, "channel/noarch" }));
@@ -201,6 +202,7 @@ test "the legacy pixi layout beside .mopm/env is never read, moved or deleted, w
     try h.writeFile(c.path(&.{ dot, "channel/noarch/repodata.json" }), "{\"packages\": {}}\n");
     const legacy = try legacySnapshot(c, app);
 
+    try c.standInLock(app);
     var r = try c.run(app, &.{ "sync", "--registry", c.fake.base, "--toolchain", t.closure, "--cache", cache });
     rep.check("sync installs the environment next to the legacy layout", r.code == 0 and h.contains(r.stdout, "installed 1 packages for") and c.exists(dot, "env/conda-meta/mopm-stamp"), c.detail(r));
     rep.check("after a successful sync the legacy files are byte for byte and mode for mode what they were", std.mem.eql(u8, legacy, try legacySnapshot(c, app)), try legacySnapshot(c, app));

@@ -8,7 +8,7 @@
 //! `mopm sync` made in the current directory (`.mopm/env`), if it is there. A
 //! flag beats an environment variable; an empty variable counts as unset.
 //!
-//! The closure is every `<prefix>/lib/mojo/<name>.mopm.json`: the environment
+//! The closure is every `<prefix>/lib/mojo/<import name>.mopm.json`: the environment
 //! was installed from a lock, so what is installed is the closure. Files are
 //! read in name order so the plan does not depend on directory order.
 
@@ -89,7 +89,7 @@ fn lessThan(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.lessThan(u8, a, b);
 }
 
-/// Paths of every `<prefix>/lib/mojo/<name>.mopm.json`, sorted by name.
+/// Paths of every `<prefix>/lib/mojo/<import name>.mopm.json`, sorted by name.
 /// `error.NotAMojoEnv` if `<prefix>/lib/mojo` is not a directory.
 pub fn listMetadata(arena: Allocator, prefix: []const u8) ![]const []const u8 {
     const dir_path = try std.fs.path.join(arena, &.{ prefix, "lib", "mojo" });

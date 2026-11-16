@@ -54,6 +54,44 @@ describe('golden repodata', () => {
   });
 });
 
+describe('conda names of a namespace channel', () => {
+  const file = (filename: string): FileRef => ({ subdir: 'linux-64', filename, sha256: hex('b'), size: 321, url: `https://conda.example.invalid/komira-ai/linux-64/${filename}` });
+  const nsRec = (over: Partial<VersionRecord> = {}) =>
+    rec({
+      name: 'komira-ai/http_client',
+      version: '0.4.0',
+      files: [file('mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda')],
+      deps: [{ name: 'komira-ai/http_core', range: '>=1.2,<2' }, { name: 'acme/crypto' }],
+      ...over,
+    });
+  const entry = (r: VersionRecord) => JSON.parse(buildRepodataJson('linux-64', [r]))['packages.conda'];
+
+  test('the entry of a full name is named mojo-<namespace>.<name>, under its file name', () => {
+    const e = entry(nsRec());
+    expect(Object.keys(e)).toEqual(['mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda']);
+    expect(e['mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda'].name).toBe('mojo-komira-ai.http_client');
+    expect(e['mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda'].sha256).toBe(hex('b'));
+  });
+
+  test('a dependency on a full name is its conda name, with the range when it has one and without when it has none', () => {
+    const e = entry(nsRec())['mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda'];
+    expect(e.depends).toEqual(['mojo-acme.crypto', 'mojo-compiler ==1.0.0', 'mojo-komira-ai.http_core >=1.2,<2']);
+  });
+
+  test('a flat name keeps mojo-<name>, for the entry and for a dependency on a flat name', () => {
+    const r = rec({ name: 'tls', version: '1.0.0', deps: [{ name: 'http_core', range: '~1.2' }, { name: 'crypto' }] });
+    const e = entry(r)['mojo-tls-1.0.0-mojo1.0.0_0.conda'];
+    expect(e.name).toBe('mojo-tls');
+    expect(e.depends).toEqual(['mojo-compiler ==1.0.0', 'mojo-crypto', 'mojo-http_core ~1.2']);
+  });
+
+  test('a yanked version of a full name is listed under removed by its file name', () => {
+    const doc = JSON.parse(buildRepodataJson('linux-64', [nsRec({ state: 'yanked', yank_reason: 'no' })]));
+    expect(doc['packages.conda']).toEqual({});
+    expect(doc.removed).toEqual(['mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda']);
+  });
+});
+
 describe('canonicalJson', () => {
   test('sorts keys at every depth and drops undefined', () => {
     expect(canonicalJson({ b: 1, a: { d: [{ z: 1, y: 2 }], c: undefined } })).toBe('{"a":{"d":[{"y":2,"z":1}]},"b":1}');

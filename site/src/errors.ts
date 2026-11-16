@@ -25,6 +25,10 @@ const BY_CODE: Readonly<Record<string, ErrorKind>> = Object.freeze(
     invalid_request: 'invalid',
     invalid_name: 'invalid',
     invalid_version: 'invalid',
+    invalid_namespace: 'invalid',
+    // 403: a namespace nobody can hold. It names nothing, as an invalid one does.
+    namespace_reserved: 'invalid',
+    namespace_not_found: 'notFound',
     package_not_found: 'notFound',
     version_not_found: 'notFound',
     route_not_found: 'notFound',

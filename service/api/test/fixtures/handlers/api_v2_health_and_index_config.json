@@ -1,0 +1,60 @@
+{
+  "description": "An event with no headers (the gateway may omit them) is served: /api/v2/health answers with api_version v2, and with the stage's two domains in the environment /index/config.json is served from them.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_API_DOMAIN": "api.beta.mopm.dev",
+    "MOPM_CHANNEL_DOMAIN": "conda.beta.mopm.dev"
+  },
+  "dynamo": [],
+  "invocations": [
+    {
+      "event": "events/apigw_get_v2_health_headerless.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-v2-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v2",
+            "stage": "beta"
+          }
+        }
+      }
+    },
+    {
+      "event": "events/apigw_get_index_config_headerless.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "public, max-age=60",
+            "etag": "\"ee841147e536b9ae717fb08fea0fa49ca7d160fabe5af789246ce7f5a7e04071\"",
+            "x-mopm-request-id": "req-index-config"
+          },
+          "body_json": {
+            "stage": "beta"
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

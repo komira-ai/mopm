@@ -20,6 +20,8 @@ export class Scenario {
     readonly env: GroupEnv,
     readonly specs: Array<Partial<Spec>>,
     readonly githubId = 1,
+    /** `v2`: the members have full names, and the group is made and committed through /api/v2 (the environment is built with `v2`). */
+    readonly api: 'v1' | 'v2' = 'v1',
   ) {}
 
   get names(): string[] {
@@ -31,7 +33,7 @@ export class Scenario {
     this.pkgs = this.specs.map((s) => pkg({ subdir: 'noarch', ...s }));
     this.token = await this.env.account(this.githubId, 'octocat', [...new Set(this.names)]);
     const members = this.pkgs.map((p) => ({ name: p.name, version: p.version, files: [{ subdir: p.subdir, filename: p.filename, sha256: p.sha256, size: p.bytes.length }] }));
-    const r = await this.env.create(this.token, members);
+    const r = await this.env.create(this.token, members, {}, this.api);
     expect([200, 201]).toContain(r.statusCode);
     this.created = json(r);
     this.gid = this.created!.group_id;
@@ -41,7 +43,7 @@ export class Scenario {
   /** POST /groups again with the same request (a group that ended opens again with the next attempt). */
   async recreate() {
     const members = this.pkgs.map((p) => ({ name: p.name, version: p.version, files: [{ subdir: p.subdir, filename: p.filename, sha256: p.sha256, size: p.bytes.length }] }));
-    const r = await this.env.create(this.token, members);
+    const r = await this.env.create(this.token, members, {}, this.api);
     if (r.statusCode === 200 || r.statusCode === 201) this.created = json(r);
     return r;
   }
@@ -67,7 +69,7 @@ export class Scenario {
   }
 
   commit(body: unknown = this.commitBody(), token = this.token) {
-    return this.env.call('POST', `/api/v1/groups/${this.gid}/commit`, token, body);
+    return this.env.call('POST', `/api/${this.api}/groups/${this.gid}/commit`, token, body);
   }
 
   /** create, upload, commit: the group is validating and its job is on the queue. */

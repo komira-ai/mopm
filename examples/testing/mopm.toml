@@ -1,5 +1,5 @@
 [package]
-name = "mathkit"
+name = "example/mathkit"
 version = "0.1.0"
 
 [toolchain]

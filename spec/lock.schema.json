@@ -1,53 +1,82 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mopm.dev/schema/lock-1.json",
+  "$id": "https://mopm.dev/schema/lock-3.json",
   "title": "mopm.lock",
-  "description": "The resolved closure of a project. JSON. Written by mopm, committed, never edited by hand. Semantic rules that JSON Schema cannot express are in spec/lock.md and checked by the //:contract target (tests/drivers/contract.zig).",
+  "description": "The resolved closure of a project, lock_version 3. JSON. Written by mopm, committed, never edited by hand. A lock_version 1 or 2 file predates namespaces and is reported stale. Semantic rules that JSON Schema cannot express are in spec/lock.md and checked by the //:contract target (tests/drivers/contract.zig).",
+  "$defs": {
+    "FullName": {
+      "description": "<namespace>/<name>: the namespace is a GitHub login in lower case, at most 39 characters; the name is what Mojo code imports.",
+      "type": "string",
+      "maxLength": 104,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*/[a-z][a-z0-9_]{1,63}$"
+    },
+    "MojoVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([a-z0-9.]*)$" }
+  },
   "type": "object",
-  "required": ["lock_version", "toolchain", "channels", "packages"],
+  "required": ["lock_version", "mojo", "toolchain", "channels", "packages"],
   "properties": {
-    "lock_version": { "const": 1 },
+    "lock_version": { "const": 3 },
+    "mojo": {
+      "description": "The Mojo versions locked, sorted as byte strings, with no repeats. mopm sync installs the builds for the first.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/MojoVersion" }
+    },
     "toolchain": {
+      "description": "The closure hash of mopm's pinned toolchain for each locked Mojo version (the keys) and subdir (the inner keys). A Mojo version mopm pins no toolchain for has no entry.",
       "type": "object",
-      "required": ["mojo"],
-      "properties": {
-        "mojo": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([a-z0-9.]*)$" }
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },
     "channels": {
-      "description": "The channels packages may come from: the root project's set, nothing else. Each ends with '/' and may carry a path; https, or loopback http (127.0.0.1, [::1], localhost, port required) for local and test registries only.",
+      "description": "The channel roots packages may come from: the root project's set, nothing else. Each ends with '/' and may carry a path; https, or loopback http (127.0.0.1, [::1], localhost, port required) for local and test registries only.",
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
       "items": { "type": "string", "pattern": "^(https://[^/]+|http://(127\\.0\\.0\\.1|\\[::1\\]|localhost):([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))/([^?#\\s]*/)?$" }
     },
     "packages": {
+      "description": "One entry per package version per subdir, sorted by name, then version, then subdir.",
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "version", "build", "subdir", "channel", "url", "sha256", "size", "mojo"],
+        "required": ["name", "version"],
         "properties": {
-          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$" },
+          "name": { "$ref": "#/$defs/FullName" },
           "version": {
             "type": "string",
             "pattern": "^(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc|dev)(0|[1-9][0-9]*))?$"
           },
-          "build": { "type": "string", "pattern": "^[A-Za-z0-9_.]+$" },
+          "source": { "description": "Present only on a path dependency.", "const": "path" },
+          "path": { "description": "A path dependency's directory, relative to the project.", "type": "string", "minLength": 1 },
           "subdir": { "enum": ["linux-64", "linux-aarch64", "osx-arm64", "noarch"] },
-          "channel": { "type": "string", "pattern": "^(https://[^/]+|http://(127\\.0\\.0\\.1|\\[::1\\]|localhost):([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))/([^?#\\s]*/)?$" },
-          "url": { "type": "string", "pattern": "^(https://[^/]+|http://(127\\.0\\.0\\.1|\\[::1\\]|localhost):([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))/.+\\.conda$" },
-          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "size": { "type": "integer", "minimum": 1 },
-          "mojo": {
-            "description": "The Mojo version this build was made with.",
+          "channel": {
+            "description": "A root of channels followed by the package's namespace and '/'.",
             "type": "string",
-            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([a-z0-9.]*)$"
+            "pattern": "^(https://[^/]+|http://(127\\.0\\.0\\.1|\\[::1\\]|localhost):([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))/([^?#\\s]*/)?$"
+          },
+          "artifacts": {
+            "description": "The builds, keyed by the Mojo version each was built with; every key is in mojo.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["build", "url", "sha256", "size"],
+              "properties": {
+                "build": { "type": "string", "pattern": "^[A-Za-z0-9_.]+$" },
+                "url": { "description": "<channel><subdir>/mojo-<namespace>.<name>-<version>-<build>.conda", "type": "string", "pattern": "^(https://[^/]+|http://(127\\.0\\.0\\.1|\\[::1\\]|localhost):([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))/.+\\.conda$" },
+                "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "size": { "type": "integer", "minimum": 1 }
+              }
+            }
           },
           "deps": {
-            "description": "Names of direct Mojo dependencies; each must be in packages.",
+            "description": "Full names of direct Mojo dependencies; each must be in packages.",
             "type": "array",
             "uniqueItems": true,
-            "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$" }
+            "items": { "$ref": "#/$defs/FullName" }
           },
           "loads": {
             "description": "Conda names of the system libraries the package loads at run time, sorted; each is pinned in system_libs for the entry's subdir.",
@@ -77,7 +106,10 @@
               }
             }
           }
-        }
+        },
+        "if": { "required": ["source"] },
+        "then": { "required": ["path"] },
+        "else": { "required": ["subdir", "channel", "artifacts"] }
       }
     },
     "system_libs": {

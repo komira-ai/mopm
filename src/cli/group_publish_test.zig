@@ -75,7 +75,7 @@ pub const Script = struct {
         }
         const step = s.steps[idx];
         if (step.method != method or !std.mem.endsWith(u8, url, step.suffix)) {
-            s.mismatch = try std.fmt.allocPrint(s.seen.allocator,"request {d} was {s} {s}; the script has {s} ...{s}", .{ s.next, @tagName(method), url, @tagName(step.method), step.suffix });
+            s.mismatch = try std.fmt.allocPrint(s.seen.allocator, "request {d} was {s} {s}; the script has {s} ...{s}", .{ s.next, @tagName(method), url, @tagName(step.method), step.suffix });
             return error.ConnectionRefused;
         }
         s.clock += step.advance_clock;
@@ -117,28 +117,29 @@ const url_a = "http://127.0.0.1:1/put/a";
 const url_b = "http://127.0.0.1:1/put/b";
 const url_c = "http://127.0.0.1:1/put/c";
 
-/// A staged directory of three packages a, b, c (in that order) whose files have the bytes `a-bytes`, `b-bytes`, `c-bytes`.
-fn stage(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8) !plan_mod.Plan {
+/// A staged directory of three packages acme/pa, acme/pb, acme/pc (in that order) whose files have the bytes `a-bytes`, `b-bytes`, `c-bytes`.
+pub fn stage(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8) !plan_mod.Plan {
     return stageWith(a, tmp, extra, false);
 }
 
-/// With `readme`, package a names a readme, `R.md`, which holds `# a readme`.
+/// With `readme`, package acme/pa names a readme, `R.md`, which holds `# a readme`.
 fn stageWith(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8, readme: bool) !plan_mod.Plan {
-    const names = [_][]const u8{ "a", "b", "c" };
+    const names = [_][]const u8{ "pa", "pb", "pc" };
     var members = std.ArrayList(u8).init(a);
     for (names, 0..) |n, i| {
         if (i != 0) try members.append(',');
-        const bytes = try std.fmt.allocPrint(a, "{s}-bytes", .{n});
-        const filename = try std.fmt.allocPrint(a, "mojo-{s}-1.0.0-x.conda", .{n});
+        // The bytes name the member by its last letter (`a-bytes` for pa): 7 bytes each, as the plans of these tests say.
+        const bytes = try std.fmt.allocPrint(a, "{s}-bytes", .{n[1..]});
+        const filename = try std.fmt.allocPrint(a, "mojo-acme.{s}-1.0.0-x.conda", .{n});
         try tmp.dir.makePath("noarch");
         try tmp.dir.writeFile(try std.fmt.allocPrint(a, "noarch/{s}", .{filename}), bytes);
         try members.writer().print(
-            "{{\"name\":\"{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",{s}\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
+            "{{\"name\":\"acme/{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",{s}\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
             .{ n, sha_x, if (readme and i == 0) "\"readme\":\"R.md\"," else "", filename, try core.install.sha256Hex(a, bytes), bytes.len },
         );
     }
     if (readme) try tmp.dir.writeFile("R.md", "# a readme\n");
-    const text = try std.fmt.allocPrint(a, "{{\"version\":1,\"members\":[{s}{s}]}}", .{ members.items, extra });
+    const text = try std.fmt.allocPrint(a, "{{\"version\":2,\"members\":[{s}{s}]}}", .{ members.items, extra });
     try tmp.dir.writeFile(plan_mod.plan_name, text);
     const parsed = try plan_mod.parsePlan(a, text);
     try std.testing.expectEqualStrings("a plan", if (parsed == .ok) "a plan" else parsed.bad);
@@ -146,12 +147,12 @@ fn stageWith(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8, readme: 
 }
 
 pub fn createAnswer(comptime status: []const u8, comptime uploaded: [3]bool) []const u8 {
-    const names = [_][]const u8{ "a", "b", "c" };
+    const names = [_][]const u8{ "pa", "pb", "pc" };
     const urls = [_][]const u8{ url_a, url_b, url_c };
     comptime var out: []const u8 = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"" ++ status ++ "\",\"attempt\":1,\"deadline_at\":\"2026-10-23T00:00:00Z\",\"members\":[";
     inline for (names, urls, uploaded, 0..) |n, u, up, i| {
         if (i != 0) out = out ++ ",";
-        out = out ++ "{\"name\":\"" ++ n ++ "\",\"version\":\"1.0.0\",\"action\":\"new\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-" ++ n ++ "-1.0.0-x.conda\",\"upload_id\":\"upl_" ++ n ++ "\",\"uploaded\":" ++
+        out = out ++ "{\"name\":\"acme/" ++ n ++ "\",\"version\":\"1.0.0\",\"action\":\"new\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-acme." ++ n ++ "-1.0.0-x.conda\",\"upload_id\":\"upl_" ++ n ++ "\",\"uploaded\":" ++
             (if (up) "true" else "false") ++ (if (up) "" else ",\"put_url\":\"" ++ u ++ "\",\"put_headers\":{\"content-length\":\"7\",\"x-amz-checksum-sha256\":\"abc=\"}") ++ "}]}";
     }
     return out ++ "]}";
@@ -160,9 +161,12 @@ pub fn createAnswer(comptime status: []const u8, comptime uploaded: [3]bool) []c
 const create_new = createAnswer("open", .{ false, false, false });
 pub const group_status = struct {
     pub fn of(comptime status: []const u8) []const u8 {
-        return "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"" ++ status ++ "\",\"attempt\":1}";
+        return "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"" ++ status ++ "\",\"attempt\":1" ++ group_rest ++ "}";
     }
 };
+
+/// The fields every `Group` of the contract carries besides the id, status and attempt (and `failure`).
+const group_rest = ",\"created_at\":\"2026-10-22T00:00:00Z\",\"deadline_at\":\"2026-10-23T00:00:00Z\",\"member_count\":0,\"members\":[]";
 
 pub const err_404 = "{\"error\":{\"code\":\"route_not_found\",\"message\":\"There is no such operation.\",\"hint\":\"x\"}}";
 
@@ -180,7 +184,7 @@ pub fn publisherWith(a: Allocator, tmp: *std.testing.TmpDir, plan: plan_mod.Plan
         .dir = tmp.dir,
         .plan = plan,
         .commit_body = commit_body,
-        .api_url = "http://127.0.0.1:1/api/v1",
+        .api_url = "http://127.0.0.1:1/api/v2",
         .token = "mopm_test_token",
         .wait_secs = 30,
         .state = .{ .registry = "http://127.0.0.1:1/api/v1", .plan_sha256 = plan.sha256 },
@@ -206,7 +210,7 @@ test "a chain of three is created, uploaded in order, committed and waited for a
     const a = st.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const plan = try stage(a, &tmp, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
+    const plan = try stage(a, &tmp, ",{\"name\":\"acme/pd\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
     var script = newScript(a, &.{
         .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
         .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
@@ -227,11 +231,11 @@ test "a chain of three is created, uploaded in order, committed and waited for a
 
     // The create asks for the three uploads, in the plan's order, and not for the skipped one.
     const create_body = script.seen.items[0].body.?;
-    const ia = std.mem.indexOf(u8, create_body, "\"name\":\"a\"").?;
-    const ib = std.mem.indexOf(u8, create_body, "\"name\":\"b\"").?;
-    const ic = std.mem.indexOf(u8, create_body, "\"name\":\"c\"").?;
+    const ia = std.mem.indexOf(u8, create_body, "\"name\":\"acme/pa\"").?;
+    const ib = std.mem.indexOf(u8, create_body, "\"name\":\"acme/pb\"").?;
+    const ic = std.mem.indexOf(u8, create_body, "\"name\":\"acme/pc\"").?;
     try std.testing.expect(ia < ib and ib < ic);
-    try std.testing.expect(!contains(create_body, "\"name\":\"d\""));
+    try std.testing.expect(!contains(create_body, "\"name\":\"acme/pd\""));
     try expectContains(create_body, "\"size\":7");
 
     // The PUTs are in dependency order, carry the bytes of the plan and no token; the API calls carry the token.
@@ -248,11 +252,11 @@ test "a chain of three is created, uploaded in order, committed and waited for a
     }
     // The commit names every upload member and its manifest, and nothing else.
     const commit_body = script.seen.items[4].body.?;
-    try expectContains(commit_body, "\"name\":\"c\",\"manifest_sha256\":\"" ++ sha_x ++ "\"");
-    try std.testing.expect(!contains(commit_body, "\"name\":\"d\""));
+    try expectContains(commit_body, "\"name\":\"acme/pc\",\"manifest_sha256\":\"" ++ sha_x ++ "\"");
+    try std.testing.expect(!contains(commit_body, "\"name\":\"acme/pd\""));
     try std.testing.expectEqual(@as(u64, 2), script.slept);
-    try expectContains(console.out.items, "published group " ++ gid ++ ": a 1.0.0 b 1.0.0 c 1.0.0");
-    try expectContains(console.out.items, "skipped d 2.0.0: already published");
+    try expectContains(console.out.items, "published group " ++ gid ++ ": acme/pa 1.0.0 acme/pb 1.0.0 acme/pc 1.0.0");
+    try expectContains(console.out.items, "skipped acme/pd 2.0.0: already published");
     // No token anywhere in what was said.
     try std.testing.expect(!contains(console.out.items, "mopm_test_token") and !contains(console.err.items, "mopm_test_token"));
 
@@ -473,7 +477,7 @@ test "a rerun asks for the same group and sends only the files the registry does
     const result = p.run();
     try std.testing.expectEqual(Result.failed, result);
     try std.testing.expectEqual(@as(u8, 1), p.finish(result));
-    try expectContains(console.err.items, "uploading mojo-b-1.0.0-x.conda failed: the storage answered HTTP 503; run the same command again to resume group " ++ gid);
+    try expectContains(console.err.items, "uploading mojo-acme.pb-1.0.0-x.conda failed: the storage answered HTTP 503; run the same command again to resume group " ++ gid);
     try std.testing.expectEqual(@as(usize, 0), first.count(.GET));
     try std.testing.expect(!contains(first.seen.items[first.seen.items.len - 1].url, "commit"));
     const kept = (try plan_mod.loadState(a, tmp.dir)).ok;
@@ -685,7 +689,7 @@ test "a 4xx other than 429 is final: the PUT is not repeated, though the next tr
         try std.testing.expectEqual(Result.failed, p.run());
         try std.testing.expectEqual(@as(usize, 2), script.count(.PUT));
         try std.testing.expectEqual(@as(u64, 0), script.slept);
-        try expectContains(console.err.items, try std.fmt.allocPrint(a, "uploading mojo-b-1.0.0-x.conda failed: the storage answered HTTP {d}; run the same command again to resume group " ++ gid, .{status}));
+        try expectContains(console.err.items, try std.fmt.allocPrint(a, "uploading mojo-acme.pb-1.0.0-x.conda failed: the storage answered HTTP {d}; run the same command again to resume group " ++ gid, .{status}));
         try std.testing.expect(!contains(script.seen.items[script.seen.items.len - 1].url, "commit"));
     }
 }
@@ -798,19 +802,19 @@ test "a rejected member ends the group: it is named, and none is published" {
     const a = st.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const plan = try stage(a, &tmp, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"skip\"}");
+    const plan = try stage(a, &tmp, ",{\"name\":\"acme/pd\",\"version\":\"2.0.0\",\"action\":\"skip\"}");
     var script = newScript(a, &.{
         .{ .method = .POST, .suffix = "/groups", .status = 201, .body = createAnswer("open", .{ true, true, true }) },
         .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
         .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("validating") },
-        .{ .method = .GET, .suffix = gid, .status = 200, .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"rejected\",\"failure\":{\"code\":\"path_not_allowed\",\"message\":\"bin/tool is not an allowed path\",\"member\":\"b\"}}" },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"rejected\",\"attempt\":1" ++ group_rest ++ ",\"failure\":{\"code\":\"path_not_allowed\",\"message\":\"bin/tool is not an allowed path\",\"member\":\"acme/pb\"}}" },
     });
     var console = Console.init(a, null);
     var p = publisher(a, &tmp, plan, &script, &console);
     const result = p.run();
     try std.testing.expectEqual(Result.failed, result);
     try std.testing.expectEqual(@as(u8, 1), p.finish(result));
-    try expectContains(console.err.items, "group " ++ gid ++ " is rejected: path_not_allowed: bin/tool is not an allowed path (member b)");
+    try expectContains(console.err.items, "group " ++ gid ++ " is rejected: path_not_allowed: bin/tool is not an allowed path (member acme/pb)");
     try expectContains(console.err.items, "none of its members is published");
     try std.testing.expect(!contains(console.out.items, "published group"));
     const report = try std.json.parseFromSliceLeaky(std.json.Value, a, try tmp.dir.readFileAlloc(a, plan_mod.report_name, 1 << 16), .{});
@@ -824,7 +828,7 @@ test "a rejected member ends the group: it is named, and none is published" {
     try std.testing.expectEqualStrings("skipped", members[3].object.get("outcome").?.string);
 
     // A group that ended with no member to blame, and one that ended with no reason at all.
-    inline for (.{ "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"expired\",\"failure\":{\"code\":\"deadline_passed\",\"message\":\"too late\"}}", group_status.of("aborted") }) |body| {
+    inline for (.{ "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"expired\",\"attempt\":1" ++ group_rest ++ ",\"failure\":{\"code\":\"deadline_passed\",\"message\":\"too late\"}}", group_status.of("aborted") }) |body| {
         var s2 = newScript(a, &.{
             .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("validating", .{ true, true, true }) },
             .{ .method = .GET, .suffix = gid, .status = 200, .body = body },
@@ -882,6 +886,34 @@ test "the run gives up waiting, and says how to go on" {
     try std.testing.expectEqualStrings("pending", report.object.get("members").?.array.items[0].object.get("outcome").?.string);
 }
 
+test "a group status this mopm does not know is waited on, and an answer without a required field is refused" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("validating", .{ true, true, true }) },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("paused") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.wait_secs = 2;
+    try std.testing.expectEqual(Result.timed_out, p.run());
+    try expectContains(console.err.items, "group " ++ gid ++ " is unknown and still in progress, not failed");
+
+    // A group answer that leaves out `members`, which the contract requires, is not one this mopm reads.
+    var script2 = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("validating", .{ true, true, true }) },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"visible\",\"attempt\":1,\"created_at\":\"2026-10-22T00:00:00Z\",\"deadline_at\":\"2026-10-23T00:00:00Z\",\"member_count\":0}" },
+    });
+    var console2 = Console.init(a, null);
+    var q = publisher(a, &tmp, plan, &script2, &console2);
+    try std.testing.expectEqual(Result.failed, q.run());
+    try expectContains(console2.err.items, "the registry's answer to GET /groups/" ++ gid ++ " is not one this mopm reads");
+}
+
 test "the create is repeated while the registry reserves, and an answer that is wrong is refused" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
@@ -915,10 +947,10 @@ test "the create is repeated while the registry reserves, and an answer that is 
         .{ .body = "not json", .want = "not one this mopm reads" },
         .{ .body = "{\"group_id\":\"nope\",\"status\":\"open\"}", .want = "a group id that is not one" },
         .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"failed\",\"members\":[]}", .want = "does not know how to continue" },
-        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"open\",\"members\":[]}", .want = "no reservation for a 1.0.0" },
-        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"open\",\"members\":[{\"name\":\"a\",\"version\":\"1.0.0\",\"files\":[]}]}", .want = "no upload for noarch/mojo-a-1.0.0-x.conda" },
-        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"open\",\"members\":[{\"name\":\"a\",\"version\":\"1.0.0\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-a-1.0.0-x.conda\",\"upload_id\":\"u\",\"uploaded\":false}]}]}", .want = "gave no upload URL" },
-        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"open\",\"members\":[{\"name\":\"a\",\"version\":\"1.0.0\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-a-1.0.0-x.conda\",\"upload_id\":\"u\",\"uploaded\":false,\"put_url\":\"http://example.com/x\"}]}]}", .want = "neither https nor loopback http" },
+        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"open\",\"members\":[]}", .want = "no reservation for acme/pa 1.0.0" },
+        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"open\",\"members\":[{\"name\":\"acme/pa\",\"version\":\"1.0.0\",\"files\":[]}]}", .want = "no upload for noarch/mojo-acme.pa-1.0.0-x.conda" },
+        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"open\",\"members\":[{\"name\":\"acme/pa\",\"version\":\"1.0.0\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-acme.pa-1.0.0-x.conda\",\"upload_id\":\"u\",\"uploaded\":false}]}]}", .want = "gave no upload URL" },
+        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"open\",\"members\":[{\"name\":\"acme/pa\",\"version\":\"1.0.0\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-acme.pa-1.0.0-x.conda\",\"upload_id\":\"u\",\"uploaded\":false,\"put_url\":\"http://example.com/x\"}]}]}", .want = "neither https nor loopback http" },
     };
     for (bad_answers) |c| {
         var s3 = newScript(a, &.{.{ .method = .POST, .suffix = "/groups", .status = 201, .body = c.body }});
@@ -946,7 +978,7 @@ test "a file that changed after the plan was checked is not uploaded, and neithe
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const plan = try stage(a, &tmp, "");
-    try tmp.dir.writeFile("noarch/mojo-b-1.0.0-x.conda", "b-bytes!");
+    try tmp.dir.writeFile("noarch/mojo-acme.pb-1.0.0-x.conda", "b-bytes!");
     var script = newScript(a, &.{
         .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
         .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
@@ -1087,7 +1119,7 @@ test "a readme goes with the commit as it was checked; one deleted or changed du
     defer tmp.cleanup();
     _ = try stageWith(a, &tmp, "", true);
     const checked = try okOf(try gp.checkedPlan(a, tmp.dir, "staged", false));
-    const sent_readme = "{\"name\":\"a\",\"manifest_sha256\":\"" ++ sha_x ++ "\",\"readme\":\"# a readme\\n\"}";
+    const sent_readme = "{\"name\":\"acme/pa\",\"manifest_sha256\":\"" ++ sha_x ++ "\",\"readme\":\"# a readme\\n\"}";
     // The readme is deleted, then rewritten, while the run is under way (as the registry answers the create).
     for ([_]?[]const u8{ null, "# another readme, with \"quotes\" that the check never saw\n" }) |now| {
         var script = newScript(a, &.{
@@ -1136,11 +1168,11 @@ pub const Readmes = struct { units: usize, pad: usize, extra: usize };
 
 fn fixtureEntries(a: Allocator, count: usize, r: Readmes) ![]plan_mod.CommitEntry {
     const entries = try a.alloc(plan_mod.CommitEntry, count);
-    for (entries, 0..) |*e, i| e.* = .{ .name = try std.fmt.allocPrint(a, "m{d}", .{i}), .manifest_sha256 = sha_x, .readme = try readmeText(a, r.units, r.pad + if (i == 0) r.extra else 0) };
+    for (entries, 0..) |*e, i| e.* = .{ .name = try std.fmt.allocPrint(a, "acme/m{d}", .{i}), .manifest_sha256 = sha_x, .readme = try readmeText(a, r.units, r.pad + if (i == 0) r.extra else 0) };
     return entries;
 }
 
-/// A staged directory of `count` upload members m0.. with the readmes `r`, then `extra_members` (JSON members, each
+/// A staged directory of `count` upload members acme/m0.. with the readmes `r`, then `extra_members` (JSON members, each
 /// starting with a comma).
 pub fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, r: Readmes, extra_members: []const u8) !plan_mod.Plan {
     var members = std.ArrayList(u8).init(a);
@@ -1148,17 +1180,17 @@ pub fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, r: Rea
     const sha = try core.install.sha256Hex(a, "m-bytes");
     for (0..count) |i| {
         if (i != 0) try members.append(',');
-        const filename = try std.fmt.allocPrint(a, "mojo-m{d}-1.0.0-x.conda", .{i});
+        const filename = try std.fmt.allocPrint(a, "mojo-acme.m{d}-1.0.0-x.conda", .{i});
         try tmp.dir.writeFile(try std.fmt.allocPrint(a, "noarch/{s}", .{filename}), "m-bytes");
         const readme = try readmeText(a, r.units, r.pad + if (i == 0) r.extra else 0);
         try std.testing.expect(readme.len <= plan_mod.max_readme_bytes);
         try tmp.dir.writeFile(try std.fmt.allocPrint(a, "R{d}.md", .{i}), readme);
         try members.writer().print(
-            "{{\"name\":\"m{d}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"readme\":\"R{d}.md\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":7}}]}}",
+            "{{\"name\":\"acme/m{d}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"readme\":\"R{d}.md\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":7}}]}}",
             .{ i, sha_x, i, filename, sha },
         );
     }
-    const text = try std.fmt.allocPrint(a, "{{\"version\":1,\"members\":[{s}{s}]}}", .{ members.items, extra_members });
+    const text = try std.fmt.allocPrint(a, "{{\"version\":2,\"members\":[{s}{s}]}}", .{ members.items, extra_members });
     try tmp.dir.writeFile(plan_mod.plan_name, text);
     const parsed = try plan_mod.parsePlan(a, text);
     try std.testing.expectEqualStrings("a plan", if (parsed == .ok) "a plan" else parsed.bad);
@@ -1186,7 +1218,7 @@ pub fn allHeld(a: Allocator, count: usize) ![]const u8 {
     try out.writer().print("{{\"group_id\":\"{s}\",\"status\":\"open\",\"attempt\":1,\"members\":[", .{gid});
     for (0..count) |i| {
         if (i != 0) try out.append(',');
-        try out.writer().print("{{\"name\":\"m{d}\",\"version\":\"1.0.0\",\"action\":\"new\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"mojo-m{d}-1.0.0-x.conda\",\"upload_id\":\"u{d}\",\"uploaded\":true}}]}}", .{ i, i, i });
+        try out.writer().print("{{\"name\":\"acme/m{d}\",\"version\":\"1.0.0\",\"action\":\"new\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"mojo-acme.m{d}-1.0.0-x.conda\",\"upload_id\":\"u{d}\",\"uploaded\":true}}]}}", .{ i, i, i });
     }
     try out.appendSlice("]}");
     return out.items;
@@ -1226,7 +1258,7 @@ test "an escaping-heavy commit request exactly at the limit as the function rece
     defer over_tmp.cleanup();
     _ = try stageReadmes(a, &over_tmp, limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, "");
     const why = try badOf(try gp.checkedPlan(a, over_tmp.dir, "staged", false));
-    try expectContains(why, "which can take 6225921 bytes in the event the registry's function is invoked with; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: m0 (");
+    try expectContains(why, "which can take 6225921 bytes in the event the registry's function is invoked with; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: acme/m0 (");
     try std.testing.expect(std.mem.endsWith(u8, why, "Shorten them or publish fewer packages in one group"));
     // An --abort sends no readme: it reads the plan and goes on to end the group state.json names.
     const aborting = try okOf(try gp.checkedPlan(a, over_tmp.dir, "staged", true));
@@ -1263,7 +1295,7 @@ test "a resume of a set over the limit is refused the same way, and its state.js
     defer tmp.cleanup();
     const over = try stageReadmes(a, &tmp, limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, "");
     // What a --no-commit run leaves: the group open, a file of it held.
-    try plan_mod.saveState(a, tmp.dir, .{ .registry = "http://127.0.0.1:1/api/v1", .plan_sha256 = over.sha256, .group_id = gid, .attempt = 1, .staged = true, .uploaded = &.{"m0/noarch/mojo-m0-1.0.0-x.conda"} });
+    try plan_mod.saveState(a, tmp.dir, .{ .registry = "http://127.0.0.1:1/api/v1", .plan_sha256 = over.sha256, .group_id = gid, .attempt = 1, .staged = true, .uploaded = &.{"acme/m0/noarch/mojo-acme.m0-1.0.0-x.conda"} });
     const before = try tmp.dir.readFileAlloc(a, plan_mod.state_name, 1 << 20);
     for (0..2) |_| {
         try expectContains(try badOf(try gp.checkedPlan(a, tmp.dir, "staged", false)), "which can take 6225921 bytes in the event");
@@ -1283,7 +1315,7 @@ test "only the members to upload count toward the limit, and a refused member is
     var skips = std.ArrayList(u8).init(a);
     for (0..5) |i| {
         try tmp.dir.writeFile(try std.fmt.allocPrint(a, "S{d}.md", .{i}), big);
-        try skips.writer().print(",{{\"name\":\"s{d}\",\"version\":\"1.0.0\",\"action\":\"skip\",\"reason\":\"already published\",\"readme\":\"S{d}.md\"}}", .{ i, i });
+        try skips.writer().print(",{{\"name\":\"acme/s{d}\",\"version\":\"1.0.0\",\"action\":\"skip\",\"reason\":\"already published\",\"readme\":\"S{d}.md\"}}", .{ i, i });
     }
     _ = try stageReadmes(a, &tmp, limit_members, at, skips.items);
     const checked = try okOf(try gp.checkedPlan(a, tmp.dir, "staged", false));
@@ -1293,8 +1325,8 @@ test "only the members to upload count toward the limit, and a refused member is
     // A refused member stops the run with its own reason, before the size of an oversized set is looked at.
     var refusing = std.testing.tmpDir(.{});
     defer refusing.cleanup();
-    _ = try stageReadmes(a, &refusing, limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"refuse\",\"reason\":\"yanked\"}");
-    try std.testing.expectEqualStrings("the plan refuses d 2.0.0: yanked; nothing was sent", try badOf(try gp.checkedPlan(a, refusing.dir, "staged", false)));
+    _ = try stageReadmes(a, &refusing, limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, ",{\"name\":\"acme/pd\",\"version\":\"2.0.0\",\"action\":\"refuse\",\"reason\":\"yanked\"}");
+    try std.testing.expectEqualStrings("the plan refuses acme/pd 2.0.0: yanked; nothing was sent", try badOf(try gp.checkedPlan(a, refusing.dir, "staged", false)));
 }
 
 test "the bytes a body takes in the function's event: each kind of character, and base64 when it is the larger" {
@@ -1386,18 +1418,18 @@ test "a staged directory whose plan cannot be used stops the run before any requ
 
     var refusing = std.testing.tmpDir(.{});
     defer refusing.cleanup();
-    _ = try stageWith(a, &refusing, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"refuse\",\"reason\":\"yanked\"}", false);
-    try std.testing.expectEqualStrings("the plan refuses d 2.0.0: yanked; nothing was sent", try badOf(try gp.checkedPlan(a, refusing.dir, "staged", false)));
+    _ = try stageWith(a, &refusing, ",{\"name\":\"acme/pd\",\"version\":\"2.0.0\",\"action\":\"refuse\",\"reason\":\"yanked\"}", false);
+    try std.testing.expectEqualStrings("the plan refuses acme/pd 2.0.0: yanked; nothing was sent", try badOf(try gp.checkedPlan(a, refusing.dir, "staged", false)));
 
     var refusing_bare = std.testing.tmpDir(.{});
     defer refusing_bare.cleanup();
-    _ = try stageWith(a, &refusing_bare, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"refuse\"}", false);
-    try std.testing.expectEqualStrings("the plan refuses d 2.0.0; nothing was sent", try badOf(try gp.checkedPlan(a, refusing_bare.dir, "staged", false)));
+    _ = try stageWith(a, &refusing_bare, ",{\"name\":\"acme/pd\",\"version\":\"2.0.0\",\"action\":\"refuse\"}", false);
+    try std.testing.expectEqualStrings("the plan refuses acme/pd 2.0.0; nothing was sent", try badOf(try gp.checkedPlan(a, refusing_bare.dir, "staged", false)));
 
     var changed = std.testing.tmpDir(.{});
     defer changed.cleanup();
     _ = try stageWith(a, &changed, "", false);
-    try changed.dir.writeFile("noarch/mojo-a-1.0.0-x.conda", "changed");
+    try changed.dir.writeFile("noarch/mojo-acme.pa-1.0.0-x.conda", "changed");
     try expectContains(try badOf(try gp.checkedPlan(a, changed.dir, "staged", false)), "has the sha256");
     // An --abort of a set whose files changed still reads its plan.
     try std.testing.expectEqual(@as(usize, 3), (try okOf(try gp.checkedPlan(a, changed.dir, "staged", true))).plan.members.len);
@@ -1423,7 +1455,7 @@ test "a PUT that cannot be made, and a poll that cannot be read" {
     var console = Console.init(a, null);
     var p = publisher(a, &tmp, plan, &script, &console);
     try std.testing.expectEqual(Result.failed, p.run());
-    try expectContains(console.err.items, "uploading mojo-a-1.0.0-x.conda failed: ConnectionRefused; run the same command again to resume group " ++ gid);
+    try expectContains(console.err.items, "uploading mojo-acme.pa-1.0.0-x.conda failed: ConnectionRefused; run the same command again to resume group " ++ gid);
 
     var unreadable = newScript(a, &.{
         .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("validating", .{ true, true, true }) },
@@ -1441,7 +1473,7 @@ test "a refused member is never published, and the report says so" {
     const a = st.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const plan = try stage(a, &tmp, ",{\"name\":\"d\",\"version\":\"3.0.0\",\"action\":\"refuse\",\"reason\":\"yanked\"},{\"name\":\"e\",\"version\":\"3.0.0\",\"action\":\"refuse\"}");
+    const plan = try stage(a, &tmp, ",{\"name\":\"acme/pd\",\"version\":\"3.0.0\",\"action\":\"refuse\",\"reason\":\"yanked\"},{\"name\":\"acme/pe\",\"version\":\"3.0.0\",\"action\":\"refuse\"}");
     var script = newScript(a, &.{.{ .method = .GET, .suffix = "/x", .status = 200 }});
     var console = Console.init(a, null);
     var p = publisher(a, &tmp, plan, &script, &console);
@@ -1497,11 +1529,11 @@ test "the bytes of a file are held while it is uploaded and not after: a set of 
         try files.writer().print("{{\"subdir\":\"noarch\",\"filename\":\"f{d}.conda\",\"sha256\":\"{s}\",\"size\":{d}}}", .{ i, try core.install.sha256Hex(a, bytes), bytes.len });
         try answers.writer().print("{{\"subdir\":\"noarch\",\"filename\":\"f{d}.conda\",\"upload_id\":\"upl_{d}\",\"uploaded\":false,\"put_url\":\"http://127.0.0.1:1/put/{d}\",\"put_headers\":{{}}}}", .{ i, i, i });
     }
-    const text = try std.fmt.allocPrint(a, "{{\"version\":1,\"members\":[{{\"name\":\"m\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{s}]}}]}}", .{ sha_x, files.items });
+    const text = try std.fmt.allocPrint(a, "{{\"version\":2,\"members\":[{{\"name\":\"acme/mm\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{s}]}}]}}", .{ sha_x, files.items });
     try tmp.dir.writeFile(plan_mod.plan_name, text);
     const parsed = try plan_mod.parsePlan(a, text);
     try std.testing.expectEqualStrings("a plan", if (parsed == .ok) "a plan" else parsed.bad);
-    const created = try std.fmt.allocPrint(a, "{{\"group_id\":\"{s}\",\"status\":\"open\",\"attempt\":1,\"deadline_at\":\"2026-10-23T00:00:00Z\",\"members\":[{{\"name\":\"m\",\"version\":\"1.0.0\",\"action\":\"new\",\"files\":[{s}]}}]}}", .{ gid, answers.items });
+    const created = try std.fmt.allocPrint(a, "{{\"group_id\":\"{s}\",\"status\":\"open\",\"attempt\":1,\"deadline_at\":\"2026-10-23T00:00:00Z\",\"members\":[{{\"name\":\"acme/mm\",\"version\":\"1.0.0\",\"action\":\"new\",\"files\":[{s}]}}]}}", .{ gid, answers.items });
 
     var counted = std.heap.GeneralPurposeAllocator(.{ .enable_memory_limit = true }){};
     var script = newScript(a, &.{
@@ -1540,7 +1572,7 @@ const oidc_jwt = "head.payload.sig-secret";
 const oidc_identity = "{\"value\":\"" ++ oidc_jwt ++ "\"}";
 const oidc_minted = "mopm_group_token_secret";
 const oidc_exchange_ok = "{\"token\":\"" ++ oidc_minted ++ "\",\"token_kind\":\"publish\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"packages\":[]}";
-const oidc_api = "http://127.0.0.1:1/api/v1";
+const oidc_api = "http://127.0.0.1:1/api/v2";
 
 /// The registry token of a commit or one-shot `--oidc` run, through the code the command runs (`group_stage_token.token`, asking
 /// for no purpose); a notice would be a failure here, so the notes sink refuses one.
@@ -1549,6 +1581,11 @@ const NoNotes = struct {
         return error.UnexpectedNotice;
     }
 };
+
+test "the notes sink of an --oidc token run refuses any notice" {
+    var notes = NoNotes{};
+    try std.testing.expectError(error.UnexpectedNotice, notes.writeAll("a notice"));
+}
 
 fn oidcToken(arena: Allocator, net: gp.Net, act: core.ci_oidc.Actions, api_url: []const u8, audience_stage: []const u8, uploads: []const plan_mod.Member) anyerror!core.ci_oidc.Result {
     var notes = NoNotes{};
@@ -1566,7 +1603,7 @@ test "--oidc covers a staged set of three with one identity request and one exch
     const a = st.allocator();
     var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
-    const plan = try stage(a, &tmp, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
+    const plan = try stage(a, &tmp, ",{\"name\":\"acme/pd\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
     var script = newScript(a, &.{
         .{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = oidc_identity },
         .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = 200, .body = oidc_exchange_ok },
@@ -1606,7 +1643,7 @@ test "--oidc covers a staged set of three with one identity request and one exch
     const ex = script.seen.items[1];
     try std.testing.expect(ex.token == null);
     try std.testing.expectEqualStrings(
-        "{\"jwt\":\"" ++ oidc_jwt ++ "\",\"packages\":[{\"name\":\"a\",\"version\":\"1.0.0\"},{\"name\":\"b\",\"version\":\"1.0.0\"},{\"name\":\"c\",\"version\":\"1.0.0\"}]}",
+        "{\"jwt\":\"" ++ oidc_jwt ++ "\",\"packages\":[{\"name\":\"acme/pa\",\"version\":\"1.0.0\"},{\"name\":\"acme/pb\",\"version\":\"1.0.0\"},{\"name\":\"acme/pc\",\"version\":\"1.0.0\"}]}",
         ex.body.?,
     );
 
@@ -1666,9 +1703,9 @@ test "--oidc: each member is listed at its own version, in the plan's order" {
     defer st.deinit();
     const a = st.allocator();
     const members = [_]plan_mod.Member{
-        .{ .name = "zeta", .version = "0.0.3", .action = .upload },
-        .{ .name = "alpha", .version = "2.1.0-rc.1", .action = .upload },
-        .{ .name = "mid", .version = "10.0.0", .action = .upload },
+        .{ .name = "acme/zeta", .version = "0.0.3", .action = .upload },
+        .{ .name = "acme/alpha", .version = "2.1.0-rc.1", .action = .upload },
+        .{ .name = "acme/mid", .version = "10.0.0", .action = .upload },
     };
     var script = newScript(a, &.{
         .{ .method = .GET, .suffix = "audience=gamma.mopm.dev", .status = 200, .body = oidc_identity },
@@ -1677,7 +1714,7 @@ test "--oidc: each member is listed at its own version, in the plan's order" {
     const got = try oidcToken(a, script.net(), oidc_actions, oidc_api, "gamma", &members);
     try std.testing.expectEqualStrings(oidc_minted, got.ok);
     try std.testing.expectEqualStrings(
-        "{\"jwt\":\"" ++ oidc_jwt ++ "\",\"packages\":[{\"name\":\"zeta\",\"version\":\"0.0.3\"},{\"name\":\"alpha\",\"version\":\"2.1.0-rc.1\"},{\"name\":\"mid\",\"version\":\"10.0.0\"}]}",
+        "{\"jwt\":\"" ++ oidc_jwt ++ "\",\"packages\":[{\"name\":\"acme/zeta\",\"version\":\"0.0.3\"},{\"name\":\"acme/alpha\",\"version\":\"2.1.0-rc.1\"},{\"name\":\"acme/mid\",\"version\":\"10.0.0\"}]}",
         script.seen.items[1].body.?,
     );
 }
@@ -1732,7 +1769,7 @@ test "--no-commit uploads every file and stops with the group open: no commit, n
     const a = st.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const plan = try stage(a, &tmp, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
+    const plan = try stage(a, &tmp, ",{\"name\":\"acme/pd\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
     var script = newScript(a, &.{
         .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
         .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
@@ -1985,7 +2022,7 @@ test "--abort of a group that already ended is not an error, and one that was co
     try std.testing.expectEqual(Result.failed, r2);
     try std.testing.expectEqual(@as(u8, 1), q.finish(r2));
     try expectContains(c2.err.items, "is validating: it was committed, so it cannot be aborted");
-    try expectContains(c2.err.items, "mopm yank --group " ++ gid);
+    try expectContains(c2.err.items, "mopm group yank " ++ gid);
     // And it did not forget the group.
     try std.testing.expectEqualStrings(gid, (try plan_mod.loadState(a, tmp.dir)).ok.group_id);
 }
@@ -2105,4 +2142,117 @@ test "--no-commit and --abort are flags without a value, and they refuse each ot
 
 test "--oidc: the identity-token cap is the group member cap, so no set a group can hold is refused by the exchange" {
     try std.testing.expectEqual(plan_mod.max_members, core.ci_oidc.max_packages);
+}
+
+// ------------------------------------------------------- the packages of a new group are created first
+
+const put_pa = Script.Step{ .method = .PUT, .suffix = "/api/v2/packages/acme/pa", .status = 201, .body = "{\"name\":\"acme/pa\"}" };
+const put_pb = Script.Step{ .method = .PUT, .suffix = "/api/v2/packages/acme/pb", .status = 201, .body = "{\"name\":\"acme/pb\"}" };
+const put_pc = Script.Step{ .method = .PUT, .suffix = "/api/v2/packages/acme/pc", .status = 201, .body = "{\"name\":\"acme/pc\"}" };
+
+test "a new group's packages are created in plan order with the token and no body, each says created, and a skipped member gets no request" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, ",{\"name\":\"acme/pd\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
+    var script = newScript(a, &.{ put_pa, put_pb, put_pc });
+    var console = Console.init(a, null);
+    try std.testing.expect(try gp.createPackages(a, script.net(), &console, "http://127.0.0.1:1/api/v2", "mopm_test_token", "beta", try plan.uploads(a)));
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 3), script.seen.items.len);
+    const want = [_][]const u8{ "http://127.0.0.1:1/api/v2/packages/acme/pa", "http://127.0.0.1:1/api/v2/packages/acme/pb", "http://127.0.0.1:1/api/v2/packages/acme/pc" };
+    for (script.seen.items, want) |x, url| {
+        try std.testing.expectEqual(std.http.Method.PUT, x.method);
+        try std.testing.expectEqualStrings(url, x.url);
+        try std.testing.expectEqualStrings("mopm_test_token", x.token.?);
+        try std.testing.expectEqual(@as(usize, 0), if (x.body) |b| b.len else 0);
+        try std.testing.expect(!x.content_type_set);
+    }
+    try std.testing.expectEqualStrings("created acme/pa on beta\ncreated acme/pb on beta\ncreated acme/pc on beta\n", console.out.items);
+    try std.testing.expectEqualStrings("", console.err.items);
+}
+
+test "a refused package creation stops the set before the next package and before any group" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const refusals = [_]struct { status: u16, body: []const u8, err: []const u8 }{
+        .{
+            .status = 403,
+            .body = "{\"error\":{\"code\":\"not_namespace_member\",\"message\":\"You are not a member of the namespace 'acme'.\",\"hint\":\"Ask an owner to add you.\"}}",
+            .err = "mopm: You are not a member of the namespace 'acme'.\n  hint: Ask an owner to add you.\n  request id: req-test\n",
+        },
+        .{
+            .status = 400,
+            .body = "{\"error\":{\"code\":\"invalid_namespace\",\"message\":\"'acme' is not a valid namespace.\",\"hint\":\"Use lower case.\"}}",
+            .err = "mopm: 'acme' is not a valid namespace.\n  hint: Use lower case.\n  request id: req-test\n",
+        },
+    };
+    for (refusals) |r| {
+        // The first package is created, the second is refused; the third and the group are never asked for.
+        var script = newScript(a, &.{
+            put_pa,
+            .{ .method = .PUT, .suffix = "/api/v2/packages/acme/pb", .status = r.status, .body = r.body },
+            put_pc,
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        });
+        var console = Console.init(a, null);
+        try std.testing.expect(!(try gp.createPackages(a, script.net(), &console, "http://127.0.0.1:1/api/v2", "mopm_test_token", "beta", try plan.uploads(a))));
+        try std.testing.expect(script.mismatch == null);
+        try std.testing.expectEqual(@as(usize, 2), script.seen.items.len);
+        try std.testing.expectEqual(@as(usize, 0), script.count(.POST));
+        try std.testing.expectEqualStrings("created acme/pa on beta\n", console.out.items);
+        try std.testing.expectEqualStrings(r.err, console.err.items);
+    }
+}
+
+test "a request that fails before any answer stops the creation of packages and says which request" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{.{ .method = .PUT, .suffix = "/api/v2/packages/acme/pa", .status = 0, .err = error.InvalidUri }});
+    var console = Console.init(a, null);
+    try std.testing.expect(!(try gp.createPackages(a, script.net(), &console, "http://127.0.0.1:1/api/v2", "mopm_test_token", "beta", try plan.uploads(a))));
+    try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+    try std.testing.expectEqualStrings("", console.out.items);
+    try std.testing.expectEqualStrings("mopm: PUT /packages/acme/pa: InvalidUri\n", console.err.items);
+}
+
+test "packages the registry already has answer 200, say nothing, and the group is then created and published" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .PUT, .suffix = "/api/v2/packages/acme/pa", .status = 200, .body = "{\"name\":\"acme/pa\"}" },
+        .{ .method = .PUT, .suffix = "/api/v2/packages/acme/pb", .status = 200, .body = "{\"name\":\"acme/pb\"}" },
+        .{ .method = .PUT, .suffix = "/api/v2/packages/acme/pc", .status = 200, .body = "{\"name\":\"acme/pc\"}" },
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 200 },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    try std.testing.expect(try gp.createPackages(a, script.net(), &console, "http://127.0.0.1:1/api/v2", "mopm_test_token", "beta", try plan.uploads(a)));
+    try std.testing.expectEqualStrings("", console.out.items);
+    try std.testing.expectEqualStrings("", console.err.items);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 9), script.seen.items.len);
+    // The first request after the three package requests is the group's.
+    try std.testing.expectEqual(std.http.Method.POST, script.seen.items[3].method);
+    try std.testing.expect(std.mem.endsWith(u8, script.seen.items[3].url, "/groups"));
 }

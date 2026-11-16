@@ -153,10 +153,43 @@ fn addSchemaProblems(a: Allocator, list: *Problems, root: Value, schema: Value, 
 
 // ------------------------------------------------------------ the lock rules
 
+/// The import name of a full name: the part after the `/`.
+fn importOf(full: []const u8) []const u8 {
+    const slash = std.mem.indexOfScalar(u8, full, '/') orelse return full;
+    return full[slash + 1 ..];
+}
+
+/// The namespace of a full name: the part before the `/`, empty for a bare name.
+fn namespaceOf(full: []const u8) []const u8 {
+    const slash = std.mem.indexOfScalar(u8, full, '/') orelse return "";
+    return full[0..slash];
+}
+
+/// Whether `full` is `<namespace>/<name>` with a namespace of at most 39 characters (the schema's pattern says the rest).
+fn isFull(full: []const u8) bool {
+    const ns = namespaceOf(full);
+    return ns.len >= 1 and ns.len <= 39 and importOf(full).len >= 1;
+}
+
+/// The channel root of `channel`, which is `<root><namespace>/`; null when it has that shape for no root.
+fn rootOf(channel: []const u8, ns: []const u8) ?[]const u8 {
+    if (ns.len == 0 or channel.len <= ns.len + 1 or channel[channel.len - 1] != '/') return null;
+    const body = channel[0 .. channel.len - 1];
+    if (!std.mem.endsWith(u8, body, ns)) return null;
+    const root = body[0 .. body.len - ns.len];
+    return if (root.len > 0 and root[root.len - 1] == '/') root else null;
+}
+
 /// The rules of spec/lock.md that the schema cannot express. `doc` has
-/// passed the schema.
+/// passed the schema, except in the one case of a stale `lock_version`.
 pub fn lockProblems(a: Allocator, doc: Value) !Problems {
     var out = Problems.init(a);
+    if (getInt(doc, "lock_version")) |lv| {
+        if (lv == 1 or lv == 2) {
+            try problem(a, &out, "mopm.lock predates namespaces (lock_version {d}); run 'mopm lock'", .{lv});
+            return out;
+        }
+    }
     const pk = getArr(doc, "packages");
     // Strictly sorted by (name, version, subdir): that is, sorted and unique.
     var k: usize = 1;
@@ -168,30 +201,76 @@ pub fn lockProblems(a: Allocator, doc: Value) !Problems {
             break;
         }
     }
+    // The locked Mojo versions: sorted as byte strings, with no repeats.
+    var mojos = std.StringHashMap(void).init(a);
+    const mojo_list = getArr(doc, "mojo");
+    for (mojo_list, 0..) |m, i| {
+        if (m != .string) continue;
+        try mojos.put(m.string, {});
+        if (i > 0 and mojo_list[i - 1] == .string and !std.mem.lessThan(u8, mojo_list[i - 1].string, m.string)) {
+            try out.append("mojo is not sorted with no repeats");
+            break;
+        }
+    }
+    // A toolchain closure names a locked Mojo version.
+    if (get(doc, "toolchain")) |tc| {
+        if (tc == .object) {
+            var tit = tc.object.iterator();
+            while (tit.next()) |e| {
+                if (!mojos.contains(e.key_ptr.*)) try problem(a, &out, "toolchain names mojo {s}, which mojo does not list", .{e.key_ptr.*});
+            }
+        }
+    }
     var channels = std.StringHashMap(void).init(a);
     for (getArr(doc, "channels")) |c| if (c == .string) try channels.put(c.string, {});
     var names = std.StringHashMap(void).init(a);
     for (pk) |p| try names.put(getStr(p, "name") orelse "", {});
-    const toolchain_mojo = getStr(get(doc, "toolchain") orelse .null, "mojo") orelse "";
     var chans_of = std.StringHashMap(std.StringHashMap(void)).init(a);
     var soname_owner = std.StringHashMap([]const u8).init(a);
+    var import_owner = std.StringHashMap([]const u8).init(a);
     for (pk) |p| {
         const name = getStr(p, "name") orelse "";
-        const channel = getStr(p, "channel") orelse "";
-        if (!channels.contains(channel)) try problem(a, &out, "{s}: channel {s} is not in channels", .{ name, channel });
-        const want = try std.fmt.allocPrint(a, "{s}{s}/mojo-{s}-{s}-{s}.conda", .{
-            channel, getStr(p, "subdir") orelse "", name, getStr(p, "version") orelse "", getStr(p, "build") orelse "",
-        });
-        if (!std.mem.eql(u8, getStr(p, "url") orelse "", want)) try problem(a, &out, "{s}: url is not {s}", .{ name, want });
-        const built = getStr(p, "mojo") orelse "";
-        if (!std.mem.eql(u8, built, toolchain_mojo)) {
-            try problem(a, &out, "{s}: built with mojo {s}, toolchain is {s}", .{ name, built, toolchain_mojo });
+        if (!isFull(name)) try problem(a, &out, "{s}: name is not a full name <namespace>/<name>", .{name});
+        // One package per import name.
+        const imp = try import_owner.getOrPut(importOf(name));
+        if (!imp.found_existing) imp.value_ptr.* = name;
+        if (!std.mem.eql(u8, imp.value_ptr.*, name)) {
+            try problem(a, &out, "{s} and {s} have the same import name {s}", .{ imp.value_ptr.*, name, importOf(name) });
         }
         for (getArr(p, "deps")) |d| {
-            if (d != .string or !names.contains(d.string)) try problem(a, &out, "{s}: dep {s} is not in packages", .{ name, if (d == .string) d.string else "?" });
+            if (d != .string or !names.contains(d.string)) {
+                try problem(a, &out, "{s}: dep {s} is not in packages", .{ name, if (d == .string) d.string else "?" });
+            } else if (!isFull(d.string)) {
+                try problem(a, &out, "{s}: dep {s} is not a full name", .{ name, d.string });
+            }
+        }
+        // A path dependency has no file to pin and no loads.
+        if (getStr(p, "source") != null) continue;
+        const channel = getStr(p, "channel") orelse "";
+        const subdir = getStr(p, "subdir") orelse "";
+        const version = getStr(p, "version") orelse "";
+        const ns = namespaceOf(name);
+        const root = rootOf(channel, ns);
+        if (root == null or !channels.contains(root.?)) try problem(a, &out, "{s}: channel {s} is not a listed channel followed by {s}/", .{ name, channel, ns });
+        const conda = try condaOf(a, name);
+        // Each artifact's Mojo version is in mojo; the keys are sorted with no repeats.
+        if (get(p, "artifacts")) |arts| {
+            if (arts == .object) {
+                var prev_key: ?[]const u8 = null;
+                var ait = arts.object.iterator();
+                while (ait.next()) |e| {
+                    const key = e.key_ptr.*;
+                    if (!mojos.contains(key)) try problem(a, &out, "{s}: artifact for mojo {s}, which mojo does not list", .{ name, key });
+                    if (prev_key) |pv| {
+                        if (!std.mem.lessThan(u8, pv, key)) try problem(a, &out, "{s}: artifacts are not sorted by mojo version with no repeats", .{name});
+                    }
+                    prev_key = key;
+                    const want = try std.fmt.allocPrint(a, "{s}{s}/{s}-{s}-{s}.conda", .{ channel, subdir, conda, version, getStr(e.value_ptr.*, "build") orelse "" });
+                    if (!std.mem.eql(u8, getStr(e.value_ptr.*, "url") orelse "", want)) try problem(a, &out, "{s}: url is not {s}", .{ name, want });
+                }
+            }
         }
         // Every library the package loads is pinned for its subdir (system_libs).
-        const subdir = getStr(p, "subdir") orelse "";
         const pinned: []const Value = if (get(doc, "system_libs")) |sl| getArr(sl, subdir) else &.{};
         for (getArr(p, "loads")) |n| {
             var found = false;
@@ -202,7 +281,7 @@ pub fn lockProblems(a: Allocator, doc: Value) !Problems {
         }
         const gop = try chans_of.getOrPut(name);
         if (!gop.found_existing) gop.value_ptr.* = std.StringHashMap(void).init(a);
-        try gop.value_ptr.put(channel, {});
+        try gop.value_ptr.put(root orelse channel, {});
         for (getArr(p, "native")) |n| {
             const soname = getStr(n, "soname") orelse continue;
             const owner = try soname_owner.getOrPut(soname);
@@ -237,10 +316,29 @@ pub fn lockProblems(a: Allocator, doc: Value) !Problems {
 
 // -------------------------------------------------------- the index rules
 
+/// The full name `<namespace>/<name>` an example file's stem `<namespace>.<name>` stands for: `.` is in neither part
+/// of a full name, and `/` cannot be in a file name.
+pub fn fullNameOfStem(a: Allocator, stem: []const u8) ![]const u8 {
+    const dot = std.mem.indexOfScalar(u8, stem, '.') orelse return a.dupe(u8, stem);
+    return std.fmt.allocPrint(a, "{s}/{s}", .{ stem[0..dot], stem[dot + 1 ..] });
+}
+
+/// The conda name `mojo-<namespace>.<name>` of a full name.
+fn condaOf(a: Allocator, full: []const u8) ![]const u8 {
+    const slash = std.mem.indexOfScalar(u8, full, '/') orelse return std.fmt.allocPrint(a, "mojo-{s}", .{full});
+    return std.fmt.allocPrint(a, "mojo-{s}.{s}", .{ full[0..slash], full[slash + 1 ..] });
+}
+
 /// An index package file: newline-delimited records. `stem` is the file name
-/// without its extension.
+/// without its extension, `<namespace>.<name>` for the package `<namespace>/<name>`.
+/// Every record's `name` is that full name and each file is named
+/// `mojo-<namespace>.<name>-<version>-<build>.conda`, with a url ending in
+/// `/<namespace>/<subdir>/<filename>`. A stem without a `.` is a version 1 file:
+/// the name is flat and the url ends in `/<subdir>/<filename>`.
 pub fn indexProblems(a: Allocator, stem: []const u8, text: []const u8, schema: Value) !Problems {
     var out = Problems.init(a);
+    const full = try fullNameOfStem(a, stem);
+    const conda = try condaOf(a, full);
     if (!std.mem.endsWith(u8, text, "\n")) try out.append("file does not end with a newline (truncated?)");
     var lines = std.ArrayList([]const u8).init(a);
     var it = std.mem.splitScalar(u8, text, '\n');
@@ -258,8 +356,23 @@ pub fn indexProblems(a: Allocator, stem: []const u8, text: []const u8, schema: V
         };
         try addSchemaProblems(a, &out, schema, schema, rec, "line {d}: ", .{n});
         const name = getStr(rec, "name");
-        if (name == null or !std.mem.eql(u8, name.?, stem)) {
-            try problem(a, &out, "line {d}: name {s} differs from the file name {s}", .{ n, name orelse "(none)", stem });
+        if (name == null or !std.mem.eql(u8, name.?, full)) {
+            try problem(a, &out, "line {d}: name {s} differs from the file's package {s}", .{ n, name orelse "(none)", full });
+        }
+        if (get(rec, "version") != null and get(rec, "build") != null and get(rec, "files") != null) {
+            const want = try std.fmt.allocPrint(a, "{s}-{s}-{s}.conda", .{ conda, getStr(rec, "version") orelse "", getStr(rec, "build") orelse "" });
+            for (getArr(rec, "files")) |f| {
+                const fname = getStr(f, "filename") orelse continue;
+                if (!std.mem.eql(u8, fname, want)) try problem(a, &out, "line {d}: file {s} is not named {s}", .{ n, fname, want });
+                if (getStr(f, "url")) |url| {
+                    const subdir = getStr(f, "subdir") orelse "";
+                    const tail = if (std.mem.indexOfScalar(u8, full, '/')) |slash|
+                        try std.fmt.allocPrint(a, "/{s}/{s}/{s}", .{ full[0..slash], subdir, fname })
+                    else
+                        try std.fmt.allocPrint(a, "/{s}/{s}", .{ subdir, fname });
+                    if (!std.mem.endsWith(u8, url, tail)) try problem(a, &out, "line {d}: url {s} does not end with {s}", .{ n, url, tail });
+                }
+            }
         }
         if (getStr(rec, "version")) |ver| {
             if (versions.contains(ver)) try problem(a, &out, "line {d}: version {s} repeats", .{ n, ver });

@@ -1,4 +1,4 @@
-// URL routes of the site, and the name and version grammar they accept.
+// URL routes of the site, and the namespace, name and version grammar they accept.
 //
 // The site stack's edge router (a CloudFront Function in front of the bucket, service/infra/stacks/lib/site-stack.ts)
 // is generated from the expressions below, so it and parseRoute accept the same names and versions:
@@ -6,8 +6,15 @@
 // (service/infra/stacks/test/site-router.test.ts). Path segments are matched as they arrive (still percent-encoded): a
 // valid name or version contains no character that needs encoding, so any '%' fails.
 
-/** The registry's package name (spec Name, router NAME): 2 to 64 characters. */
+/** The registry's package name (spec Name, router NAME): 2 to 64 characters. In a full name, the import name. */
 export const NAME = /^[a-z][a-z0-9_]{1,63}$/;
+/**
+ * A namespace (spec Namespace, router NAMESPACE): a GitHub login in lower case, letters, digits and single hyphens. The
+ * spec caps it at NAMESPACE_MAX characters, which the pattern does not say, so every check also tests the length.
+ * Nothing normalises a namespace: 'Komira-AI' is no namespace, and the API answers it with invalid_namespace.
+ */
+export const NAMESPACE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+export const NAMESPACE_MAX = 39;
 /**
  * The registry's version grammar (spec Version): MAJOR.MINOR.PATCH, no leading zeros, no suffix. One version has one
  * spelling, so '1.0' or '1.0.0.0' is not a version route (the API would refuse it). The server caps the length at
@@ -22,6 +29,10 @@ export const NAME_SEPARATORS = /[-._]+/g;
 
 export function isName(s: string): boolean {
   return NAME.test(s);
+}
+
+export function isNamespace(s: string): boolean {
+  return s.length <= NAMESPACE_MAX && NAMESPACE.test(s);
 }
 
 export function isVersion(s: string): boolean {
@@ -42,24 +53,72 @@ export function isCanonicalName(s: string): boolean {
   return isName(s) && normaliseName(s) === s;
 }
 
+/** A package's name, `<namespace>/<name>` (spec FullName), in its two parts. */
+export interface FullName {
+  namespace: string;
+  name: string;
+}
+
+/** `<namespace>/<name>` as the registry spells it. */
+export function fullName(f: FullName): string {
+  return `${f.namespace}/${f.name}`;
+}
+
+/**
+ * The two parts of a full name the site may build a path from: a namespace, one '/', and a canonical name. Anything else
+ * (a flat name, a second '/', a name the registry would normalise) is null, and a page shows the string as text.
+ */
+export function splitFullName(s: string): FullName | null {
+  const slash = s.indexOf('/');
+  if (slash < 0) return null;
+  const namespace = s.slice(0, slash);
+  const name = s.slice(slash + 1);
+  return isNamespace(namespace) && isCanonicalName(name) ? { namespace, name } : null;
+}
+
 export type Route =
   | { kind: 'search' }
-  | { kind: 'package'; name: string }
-  | { kind: 'version'; name: string; version: string };
+  | ({ kind: 'package' } & FullName)
+  | ({ kind: 'version'; version: string } & FullName);
 
 /**
  * The app-shell view for a path, or null when the path is not an app route (the edge router must never send it to the
- * shell).
+ * shell). A package is `/packages/<namespace>/<name>`, a version `/packages/<namespace>/<name>/<version>`. The flat
+ * addresses of the names before namespaces, `/packages/<name>` and `/packages/<name>/<version>`, are no app route: the
+ * edge router sends them to a search for the name (flatSearchPath). A name starts with a letter and a version with a
+ * digit, so `/packages/<a>/<b>` is never both a package and a flat version.
  */
 export function parseRoute(path: string): Route | null {
   if (path === '/search') return { kind: 'search' };
   const parts = path.split('/');
   // parts[0] is the empty string before the leading '/'.
+  if (parts[0] !== '' || parts[1] !== 'packages' || (parts.length !== 4 && parts.length !== 5)) return null;
+  const [, , namespace, name] = parts;
+  if (!isNamespace(namespace) || !isCanonicalName(name)) return null;
+  if (parts.length === 4) return { kind: 'package', namespace, name };
+  return isVersion(parts[4]) ? { kind: 'version', namespace, name, version: parts[4] } : null;
+}
+
+/**
+ * Where the edge router sends a one-segment package address, or a flat version address of the names before namespaces,
+ * or null when the path is neither (the router passes it to the bucket, which answers 404):
+ *  - `/packages/<name>` (a canonical name) and `/packages/<name>/<version>`: a search for the name in every namespace.
+ *    A flat name became `<namespace>/<name>` with the same name, so the search lists it.
+ *  - `/packages/<namespace>` that is no canonical name ('komira-ai'): the namespace's packages.
+ *  - any other spelling that normalises to a name ('HTTP-Client'): a search for the normalised name.
+ * A segment that is both a name and a namespace ('json') is read as the name, as the flat address meant.
+ */
+export function flatSearchPath(path: string): string | null {
+  const parts = path.split('/');
   if (parts[0] !== '' || parts[1] !== 'packages') return null;
-  if (parts.length === 3 && isCanonicalName(parts[2])) return { kind: 'package', name: parts[2] };
-  if (parts.length === 4 && isCanonicalName(parts[2]) && isVersion(parts[3])) {
-    return { kind: 'version', name: parts[2], version: parts[3] };
+  if (parts.length === 3) {
+    const s = parts[2];
+    if (isCanonicalName(s)) return searchPath({ q: s });
+    if (isNamespace(s)) return namespaceSearchPath(s);
+    const n = normaliseName(s);
+    return isName(n) ? searchPath({ q: n }) : null;
   }
+  if (parts.length === 4 && isCanonicalName(parts[2]) && isVersion(parts[3])) return searchPath({ q: parts[2] });
   return null;
 }
 
@@ -81,10 +140,15 @@ export function searchPath(p: SearchParams = {}): string {
   return s ? `/search?${s}` : '/search';
 }
 
-export function packagePath(name: string): string {
-  return `/packages/${encodeURIComponent(name)}`;
+export function packagePath(f: FullName): string {
+  return `/packages/${encodeURIComponent(f.namespace)}/${encodeURIComponent(f.name)}`;
 }
 
-export function versionPath(name: string, version: string): string {
-  return `/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}`;
+export function versionPath(f: FullName, version: string): string {
+  return `${packagePath(f)}/${encodeURIComponent(version)}`;
+}
+
+/** The search that lists one namespace's packages ('/search?q=komira-ai%2F'). */
+export function namespaceSearchPath(namespace: string): string {
+  return searchPath({ q: `${namespace}/` });
 }

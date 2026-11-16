@@ -1,15 +1,25 @@
 import { canonicalJson } from './canonical-json';
+import { splitFullName } from './names';
 import { compareVersions } from './version';
 import type { FileRef, VersionRecord } from './types';
 
 /**
- * Pure builders for the static sparse index (spec/index.md): one package's NDJSON file, the takedown log
+ * Pure builders for the static sparse index (spec/index.md): one package's NDJSON file, the takedown logs
  * and the per-stage config. Nothing here reads a store, a queue or a bucket; the caller passes rows in and
  * gets bytes out. Output is a function of the row contents alone: the order of the input rows does not
  * matter, keys are sorted, and nothing time-dependent is written.
+ *
+ * Two index versions are written side by side (spec/index.md, "Version 1"): version 1 holds the packages of flat
+ * names (`/index/<aa>/<bb>/<name>`, records `v` 1), version 2 the packages of full names
+ * (`/index/v2/<aa>/<bb>/<namespace>/<name>`, records `v` 2). A package is in exactly one of them, chosen by its name.
  */
 
+/** The version of `config.json`'s `index_version`: 1, which released CLIs read. Version 2 is announced by `index_versions`. */
 export const INDEX_VERSION = 1;
+/** The index version of a package of full names. */
+export const INDEX_VERSION_V2 = 2;
+/** Every index version served, sorted (`config.json`'s `index_versions`). */
+export const INDEX_VERSIONS: readonly number[] = [INDEX_VERSION, INDEX_VERSION_V2];
 /** The oldest CLI the registry supports. A larger value would lock out released CLIs. */
 export const MIN_CLI_VERSION = '0.0.1';
 
@@ -19,15 +29,31 @@ const BY_FILE = (a: FileRef, b: FileRef) => cmp(a.subdir, b.subdir) || cmp(a.fil
 /** Code-unit order, independent of the process locale. */
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** The key, under the channel bucket, of a package's file: `index/<aa>/<bb>/<name>`. Derived from the name, never parsed back. */
-export function indexKey(name: string): string {
-  if (!NAME.test(name)) throw new Error(`index: '${name}' is not a package name`);
-  const padded = name.slice(0, 4).padEnd(4, '_');
-  return `index/${padded.slice(0, 2)}/${padded.slice(2, 4)}/${name}`;
+/** `aa/bb` of a sharded path: the first four characters of `s`, padded on the right with `_`. */
+function shard(s: string): string {
+  const padded = s.slice(0, 4).padEnd(4, '_');
+  return `${padded.slice(0, 2)}/${padded.slice(2, 4)}`;
 }
 
-/** The key of the takedown log. */
+/**
+ * The key, under the channel bucket, of a package's file: `index/<aa>/<bb>/<name>` for a flat name (version 1), and
+ * `index/v2/<aa>/<bb>/<namespace>/<name>` for a full name (version 2, sharded by the namespace). Derived from the name,
+ * never parsed back.
+ */
+export function indexKey(name: string): string {
+  const full = splitFullName(name);
+  if (full) return `index/v2/${shard(full.namespace)}/${full.namespace}/${full.name}`;
+  if (!NAME.test(name)) throw new Error(`index: '${name}' is not a package name`);
+  return `index/${shard(name)}/${name}`;
+}
+
+/** The index version a package's file and records are written in: 2 for a full name, 1 for a flat one. */
+export const indexVersionOf = (name: string): number => (splitFullName(name) ? INDEX_VERSION_V2 : INDEX_VERSION);
+
+/** The key of the version 1 takedown log (flat names). */
 export const TAKEDOWNS_KEY = 'index/takedowns.json';
+/** The key of the version 2 takedown log (full names). */
+export const TAKEDOWNS_V2_KEY = 'index/v2/takedowns.json';
 
 /** The key of the config file. Served from code, never written to the bucket. */
 export const CONFIG_KEY = 'index/config.json';
@@ -49,7 +75,7 @@ function recordOf(r: VersionRecord) {
   if (r.state === 'yanked' && !r.yank_reason) throw new Error(`index: ${r.name} ${r.version}: yanked without a reason`);
   if (r.state === 'tombstoned' && !r.tombstone) throw new Error(`index: ${r.name} ${r.version}: tombstoned without a tombstone`);
   return {
-    v: INDEX_VERSION,
+    v: indexVersionOf(r.name),
     name: r.name,
     version: r.version,
     build: r.build,
@@ -102,13 +128,17 @@ export function buildPackageIndex(name: string, rows: readonly VersionRecord[]):
 }
 
 /**
- * `index/takedowns.json` from every row of the registry: one entry per tombstoned version that still has
- * its files (the sha256 values a lock can be explained by), sorted by date, then name, then numeric version.
- * Ends in a newline. With no takedown it is the empty log, which is also the seed of a fresh stage.
+ * A takedown log from every row of the registry: one entry per tombstoned version that still has its files (the sha256
+ * values a lock can be explained by), sorted by date, then name, then numeric version. Ends in a newline. With no takedown
+ * it is the empty log, which is also the seed of a fresh stage.
+ *
+ * `version` picks the log: 1 (`index/takedowns.json`) lists the flat names, 2 (`index/v2/takedowns.json`) the full names;
+ * each log holds only its own version's names, so each reader sees the names it can resolve.
  */
-export function buildTakedowns(rows: readonly VersionRecord[]): string {
+export function buildTakedowns(rows: readonly VersionRecord[], version: number = INDEX_VERSION): string {
+  if (version !== INDEX_VERSION && version !== INDEX_VERSION_V2) throw new Error(`index: no takedown log of version ${version}`);
   const list = rows
-    .filter((r) => r.state === 'tombstoned' && r.files.length > 0)
+    .filter((r) => r.state === 'tombstoned' && r.files.length > 0 && indexVersionOf(r.name) === version)
     .map((r) => {
       if (!r.tombstone) throw new Error(`index: ${r.name} ${r.version}: tombstoned without a tombstone`);
       return {
@@ -120,7 +150,7 @@ export function buildTakedowns(rows: readonly VersionRecord[]): string {
       };
     })
     .sort((a, b) => cmp(a.date, b.date) || cmp(a.name, b.name) || compareVersions(a.version, b.version));
-  return canonicalJson({ index_version: INDEX_VERSION, takedowns: list }) + '\n';
+  return canonicalJson({ index_version: version, takedowns: list }) + '\n';
 }
 
 export type IndexStage = 'beta' | 'gamma' | 'prod';
@@ -138,8 +168,9 @@ export interface IndexConfigInput {
 const HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 /**
- * `index/config.json` for one stage, from stage configuration. `api_url` ends in `/api/v1` and
- * `channel_url` in `/` (clients join paths onto it). Ends in a newline.
+ * `index/config.json` for one stage, from stage configuration. `api_url` ends in `/api/v1`, `api_v2_url` in `/api/v2`
+ * and `channel_url` in `/` (clients join paths onto it; a namespace's channel is `channel_url` + `<namespace>/`).
+ * `index_version` stays 1, which released CLIs read; `index_versions` lists both served versions. Ends in a newline.
  */
 export function buildIndexConfig(c: IndexConfigInput): string {
   if (!['beta', 'gamma', 'prod'].includes(c.stage)) throw new Error(`index config: unknown stage '${c.stage}'`);
@@ -150,8 +181,10 @@ export function buildIndexConfig(c: IndexConfigInput): string {
   return (
     canonicalJson({
       index_version: INDEX_VERSION,
+      index_versions: INDEX_VERSIONS,
       stage: c.stage,
       api_url: `https://${c.apiDomain}/api/v1`,
+      api_v2_url: `https://${c.apiDomain}/api/v2`,
       channel_url: `https://${c.channelDomain}/`,
       min_cli_version: MIN_CLI_VERSION,
       read_only: c.readOnly,

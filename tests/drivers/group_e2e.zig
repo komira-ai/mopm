@@ -3,7 +3,7 @@
 //!
 //!     mopm-group-e2e --stage beta|gamma [--registry <name|url>] --mopm <exe> --work <dir> --run-id <n> --attempt <n>
 //!                    --mojo-env <prefix> [--toolchain <closure.json> --cache <dir>]
-//!                    [--summary <file>] [--wait-seconds <n>]
+//!                    [--summary <file>] [--wait-seconds <n>] [--namespace <namespace>]
 //!
 //! The token is the environment variable MOPM_E2E_TOKEN (the job maps the repository secret MOPM_E2E_GROUP_TOKEN to
 //! it on this one step). It reaches one child, `mopm publish --staged`, as MOPM_TOKEN, as a person's CI would give it,
@@ -15,11 +15,16 @@
 //! --mojo-env names the Mojo environment that precompiles the packages and builds the README program (the job makes it with
 //! `mopm sync --locked` in tests/mojo_env). `mopm sync --overlay` makes the environment of the consumer by itself, the Mojo
 //! toolchain included; it needs no option on a runner with a network. --toolchain and --cache are forwarded to that sync
-//! (`mopm sync --toolchain <closure.json> --cache <dir>`), for a machine with no network, where the closure is a stand-in. The e2e account owns a fixed set of throwaway packages (zz_e2e_core, zz_e2e_mid, zz_e2e_app; the
-//! package name pattern has no hyphen, so the namespace is spelled zz_e2e_*), and the token lists exactly those. A
+//! (`mopm sync --toolchain <closure.json> --cache <dir>`), for a machine with no network, where the closure is a stand-in. The e2e account owns a namespace (`zz-e2e`, or the one --namespace names) and, in it, a fixed set of throwaway
+//! packages (zz-e2e/zz_e2e_core, zz-e2e/zz_e2e_mid, zz-e2e/zz_e2e_app), and the token lists exactly those. Every request goes to
+//! the registry's `/api/v2` with full names, `<namespace>/<name>`; the run creates the packages that are not there yet, with
+//! `PUT /api/v2/packages/<namespace>/<name>`, before it publishes them (`mopm publish --staged` sends the same PUT for each member of a
+//! new group, and the registry answers 200 for a package the run made). A
 //! version is never deleted, so every run uses numbers no run has used: MAJOR is the case, MINOR the run id of the
 //! workflow run and PATCH its attempt.
 //!
+//!   0  the packages    The packages of the chain are created in the namespace (the first one before the probe, the others
+//!                      once the probe says groups are on); a package that is there already is as good.
 //!   1  the switch      A group is created for a version nobody ever commits (the expiry probe). If the registry answers
 //!                      `route_not_found` the stage's groups switch is off for this actor and the run SKIPs. The probe
 //!                      is the one expiry check a run can make: a deadline is hours away, so the probe group stays
@@ -66,6 +71,10 @@ pub const token_env = "MOPM_E2E_TOKEN";
 /// The repository secret the job maps to it (named in the SKIP line).
 pub const secret_name = "MOPM_E2E_GROUP_TOKEN";
 
+/// The namespace of the e2e account's packages, when --namespace names none.
+pub const default_namespace = "zz-e2e";
+
+/// The import names of the packages; the full name of one is `<namespace>/<import name>`.
 pub const pkg_core = "zz_e2e_core";
 pub const pkg_mid = "zz_e2e_mid";
 pub const pkg_app = "zz_e2e_app";
@@ -145,11 +154,19 @@ pub fn toolEnv(a: Allocator, parent: *const std.process.EnvMap) !std.process.Env
     return env;
 }
 
-/// The path of a package in the sparse index (spec/index.md): the first two characters, the next two, then the name.
-pub fn indexPath(arena: Allocator, name: []const u8) ![]u8 {
+/// The full name of the package `import` in `namespace`.
+pub fn fullName(arena: Allocator, namespace: []const u8, import: []const u8) ![]u8 {
+    return std.fmt.allocPrint(arena, "{s}/{s}", .{ namespace, import });
+}
+
+/// The path of a package in the sparse index, version 2 (spec/index.md): the first two characters of its namespace, the next two
+/// (padded with `_`), then the full name.
+pub fn indexPath(arena: Allocator, full: []const u8) ![]u8 {
+    const namespace = core.names.namespaceOf(full);
     var pad: [4]u8 = .{ '_', '_', '_', '_' };
-    @memcpy(pad[0..@min(name.len, 4)], name[0..@min(name.len, 4)]);
-    return std.fmt.allocPrint(arena, "index/{s}/{s}/{s}", .{ pad[0..2], pad[2..4], name });
+    const n = @min(namespace.len, 4);
+    @memcpy(pad[0..n], namespace[0..n]);
+    return std.fmt.allocPrint(arena, "index/v2/{s}/{s}/{s}", .{ pad[0..2], pad[2..4], full });
 }
 
 const token_separators = " \t\r\n,";
@@ -185,10 +202,10 @@ pub fn depOf(name: []const u8) ?[]const u8 {
 
 /// The mopm.toml of a member at `version`: a path dependency on the member below it, which the package keeps as a requirement
 /// for that version or a newer one of the same major.
-pub fn memberToml(a: Allocator, name: []const u8, version: []const u8) ![]u8 {
-    const head = try std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\nmojo = [\"{s}\"]\n\n[dependencies]\n", .{ name, version, compiler });
+pub fn memberToml(a: Allocator, namespace: []const u8, name: []const u8, version: []const u8) ![]u8 {
+    const head = try std.fmt.allocPrint(a, "[package]\nname = \"{s}/{s}\"\nversion = \"{s}\"\nmojo = [\"{s}\"]\n\n[dependencies]\n", .{ namespace, name, version, compiler });
     const dep = depOf(name) orelse return head;
-    return std.fmt.allocPrint(a, "{s}{s} = {{ path = \"../{s}\", version = \"^{s}\" }}\n", .{ head, dep, dep, version });
+    return std.fmt.allocPrint(a, "{s}\"{s}/{s}\" = {{ path = \"../{s}\", version = \"^{s}\" }}\n", .{ head, namespace, dep, dep, version });
 }
 
 /// The Mojo source of a member (src/<name>/__init__.mojo): each package adds one to the one below it.
@@ -215,19 +232,20 @@ pub fn readmeProgram(text: []const u8) ?[]const u8 {
     return body[0..end];
 }
 
-/// Writes the workspace of `names` at `version` under `ws`: for each member its mopm.toml, README.md and source.
-pub fn writeWorkspace(a: Allocator, ws: []const u8, version: []const u8, names: []const []const u8) !void {
+/// Writes the workspace of `names` (import names) of `namespace` at `version` under `ws`: for each member its mopm.toml, README.md and
+/// source.
+pub fn writeWorkspace(a: Allocator, namespace: []const u8, ws: []const u8, version: []const u8, names: []const []const u8) !void {
     for (names) |name| {
         const dir = try std.fs.path.join(a, &.{ ws, name });
-        try h.writeFile(try std.fs.path.join(a, &.{ dir, "mopm.toml" }), try memberToml(a, name, version));
+        try h.writeFile(try std.fs.path.join(a, &.{ dir, "mopm.toml" }), try memberToml(a, namespace, name, version));
         try h.writeFile(try std.fs.path.join(a, &.{ dir, "README.md" }), try readmeOf(a, name));
         try h.writeFile(try std.fs.path.join(a, &.{ dir, "src", name, "__init__.mojo" }), sourceOf(name));
     }
 }
 
 /// Builds the `.mojoc` of the three members of `ws`, each after the ones below it, with `<mojo_env>/bin/mojo`, into
-/// `<art>/<subdir>/<name>.mojoc` (the layout `mopm stage --artifacts` reads). Null when they are built, else what went wrong.
-pub fn precompileAll(a: Allocator, mojo_env: []const u8, parent: *const std.process.EnvMap, ws: []const u8, art: []const u8) !?[]const u8 {
+/// `<art>/<subdir>/<namespace>/<name>.mojoc` (the layout `mopm stage --artifacts` reads). Null when they are built, else what went wrong.
+pub fn precompileAll(a: Allocator, mojo_env: []const u8, parent: *const std.process.EnvMap, namespace: []const u8, ws: []const u8, art: []const u8) !?[]const u8 {
     var env = try toolEnv(a, parent);
     try env.put("MODULAR_HOME", try std.fmt.allocPrint(a, "{s}/share/max", .{mojo_env}));
     const mojo = try std.fs.path.join(a, &.{ mojo_env, "bin", "mojo" });
@@ -243,8 +261,8 @@ pub fn precompileAll(a: Allocator, mojo_env: []const u8, parent: *const std.proc
         const ran = try h.run(a, argv.items, &env, .{ .cwd = try std.fs.path.join(a, &.{ ws, name, "src" }) });
         if (ran.code != 0 or ran.signaled) return try std.fmt.allocPrint(a, "mojo precompile {s} ended {d}: {s}", .{ name, ran.code, tailOf(ran.text) });
         try dep_flags.append(try std.fmt.allocPrint(a, "-I{s}", .{out_dir}));
-        const staged = try std.fs.path.join(a, &.{ art, subdir, try std.fmt.allocPrint(a, "{s}.mojoc", .{name}) });
-        try std.fs.cwd().makePath(try std.fs.path.join(a, &.{ art, subdir }));
+        const staged = try std.fs.path.join(a, &.{ art, subdir, namespace, try std.fmt.allocPrint(a, "{s}.mojoc", .{name}) });
+        try std.fs.cwd().makePath(try std.fs.path.join(a, &.{ art, subdir, namespace }));
         try std.fs.cwd().copyFile(out, std.fs.cwd(), staged, .{});
     }
     return null;
@@ -329,7 +347,7 @@ fn excerpt(s: []const u8) []const u8 {
 
 /// The last 400 bytes of the output of a program: where it says why it stopped.
 fn tailOf(s: []const u8) []const u8 {
-    return s[s.len -| 400 ..];
+    return s[s.len -| 400..];
 }
 
 // ---- the package files ----------------------------------------------------------------------------------------------
@@ -412,6 +430,8 @@ pub const Opts = struct {
     /// The registry's base URL, without a trailing slash (https://api.beta.mopm.dev).
     base: []const u8,
     stage: []const u8,
+    /// The namespace of the e2e account's packages.
+    namespace: []const u8 = default_namespace,
     /// The value of MOPM_E2E_TOKEN: one token, or a token for each stage (`tokenFor` says how). Empty: the secret is not set, and
     /// the run SKIPs.
     token: []const u8,
@@ -441,7 +461,7 @@ pub const Opts = struct {
     sync_cache: ?[]const u8 = null,
     /// The Mojo environment (`bin/mojo`, `lib/mojo`) that precompiles the packages. Null is a failed check: nothing here creates one.
     mojo_env: ?[]const u8 = null,
-    /// Packages already built: `<dir>/linux-64/<name>.mojoc` for the three. Then none is precompiled.
+    /// Packages already built: `<dir>/linux-64/<namespace>/<name>.mojoc` for the three. Then none is precompiled.
     prebuilt: ?[]const u8 = null,
     /// Lays the Mojo toolchain into the environment `mopm sync` made, for a sync whose toolchain closure is a stand-in that installs no compiler.
     after_sync: ?*const fn (Allocator, []const u8) anyerror!void = null,
@@ -495,7 +515,12 @@ const Cx = struct {
     }
 
     fn url(self: *Cx, path: []const u8) ![]u8 {
-        return std.fmt.allocPrint(self.a, "{s}/api/v1{s}", .{ self.o.base, path });
+        return std.fmt.allocPrint(self.a, "{s}/api/v2{s}", .{ self.o.base, path });
+    }
+
+    /// The full name of the package `import` in this run's namespace.
+    fn full(self: *Cx, import: []const u8) ![]u8 {
+        return fullName(self.a, self.o.namespace, import);
     }
 
     fn parent(self: *Cx) *const std.process.EnvMap {
@@ -633,13 +658,23 @@ fn eventually(cx: *Cx, comptime Ctx: type, ctx: Ctx, comptime f: fn (*Cx, Ctx, *
 
 // ---- the steps ------------------------------------------------------------------------------------------------------
 
+/// Step 0. Makes each of `imports` a package of the namespace, with `PUT /packages/<namespace>/<name>` (201 made, 200 already there).
+/// A refusal is a failed check and the run goes on: the step that needs the package says what is wrong.
+fn packagesStep(cx: *Cx, imports: []const []const u8) !void {
+    for (imports) |import| {
+        const full_name = try cx.full(import);
+        const ans = try cx.api(.PUT, try std.fmt.allocPrint(cx.a, "/packages/{s}", .{full_name}), null);
+        cx.check(try std.fmt.allocPrint(cx.a, "packages: {s} is a package of the namespace", .{full_name}), ans.status == 201 or ans.status == 200, try std.fmt.allocPrint(cx.a, "HTTP {d}: {s}", .{ ans.status, excerpt(ans.body) }));
+    }
+}
+
 /// Step 1. False when the stage's groups switch is off for this actor.
 fn probeStep(cx: *Cx) !bool {
     const bytes = "expiry probe: this group is never uploaded or committed\n";
     const probe = Pkg{
-        .name = pkg_core,
+        .name = try cx.full(pkg_core),
         .version = probe_version,
-        .file_name = try std.fmt.allocPrint(cx.a, "mojo-{s}-{s}-mojo{s}_0.conda", .{ pkg_core, probe_version, compiler }),
+        .file_name = try std.fmt.allocPrint(cx.a, "mojo-{s}.{s}-{s}-mojo{s}_0.conda", .{ cx.o.namespace, pkg_core, probe_version, compiler }),
         .bytes = bytes,
         .sha256 = try cx.a.dupe(u8, &sha256Hex(bytes)),
         .manifest_sha256 = "",
@@ -690,7 +725,7 @@ fn toolchain(cx: *Cx) !?[]const u8 {
     return null;
 }
 
-/// The `.mojoc` of the three packages (`<dir>/linux-64/<name>.mojoc`): the ones given, or built once with the toolchain. Null (a
+/// The `.mojoc` of the three packages (`<dir>/linux-64/<namespace>/<name>.mojoc`): the ones given, or built once with the toolchain. Null (a
 /// failed check says why) when they cannot be had.
 fn artifacts(cx: *Cx) !?[]const u8 {
     if (cx.art) |p| return p;
@@ -703,8 +738,8 @@ fn artifacts(cx: *Cx) !?[]const u8 {
     const mojo = (try toolchain(cx)) orelse return null;
     const ws = try cx.join(&.{ cx.o.work, "ws_build" });
     const art = try cx.join(&.{ cx.o.work, "art" });
-    try writeWorkspace(cx.a, ws, "0.0.1", &members);
-    const why = try precompileAll(cx.a, mojo, cx.parent(), ws, art);
+    try writeWorkspace(cx.a, cx.o.namespace, ws, "0.0.1", &members);
+    const why = try precompileAll(cx.a, mojo, cx.parent(), cx.o.namespace, ws, art);
     cx.check("packages: mojo precompile builds the three packages", why == null, why orelse "");
     if (why != null) {
         cx.stop = true;
@@ -740,7 +775,7 @@ fn stageStep(cx: *Cx, label: []const u8, ws: []const u8, art: []const u8, out: [
     var why: []const u8 = "";
     if (ok) for (names, plan.members) |name, m| {
         const one = m.files.len == 1;
-        if (!std.mem.eql(u8, m.name, name) or !std.mem.eql(u8, m.action, "upload") or !one or !std.mem.eql(u8, m.files[0].subdir, subdir) or m.manifest_sha256.len != 64) {
+        if (!std.mem.eql(u8, m.name, try cx.full(name)) or !std.mem.eql(u8, m.action, "upload") or !one or !std.mem.eql(u8, m.files[0].subdir, subdir) or m.manifest_sha256.len != 64) {
             ok = false;
             why = m.name;
             break;
@@ -775,7 +810,19 @@ fn stageStep(cx: *Cx, label: []const u8, ws: []const u8, art: []const u8, out: [
 
 /// A project that depends on nothing yet, named `consumer`, in `dir`.
 fn writeConsumer(cx: *Cx, dir: []const u8) !void {
-    try h.writeFile(try cx.join(&.{ dir, "mopm.toml" }), "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"" ++ compiler ++ "\"\n\n[dependencies]\n");
+    try h.writeFile(try cx.join(&.{ dir, "mopm.toml" }), "[package]\nname = \"example/consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"" ++ compiler ++ "\"\n\n[dependencies]\n");
+}
+
+/// Rewrites the lock at `path` with an empty `toolchain` object, so that no closure is recorded for a stand-in closure to disagree with.
+fn unpinToolchain(cx: *Cx, path: []const u8) !void {
+    const text = try h.readFile(cx.a, path);
+    var v = (try std.json.parseFromSlice(std.json.Value, cx.a, text, .{})).value;
+    if (v != .object or v.object.get("toolchain") == null) return error.NotALock;
+    try v.object.put("toolchain", .{ .object = std.json.ObjectMap.init(cx.a) });
+    var out = std.ArrayList(u8).init(cx.a);
+    try std.json.stringify(v, .{ .whitespace = .indent_2 }, out.writer());
+    try out.append('\n');
+    try h.writeFile(path, out.items);
 }
 
 /// Step 2b. A fresh project locks and installs the staged set (`--overlay`) before the registry holds any of it, and builds and
@@ -795,7 +842,14 @@ fn overlayStep(cx: *Cx, label: []const u8, staged: []const u8, pkgs: []const Pkg
     const mopm = cx.o.mopm orelse return lock_text;
     var sync_argv = std.ArrayList([]const u8).init(cx.a);
     try sync_argv.appendSlice(&.{ mopm, "sync", "--locked", "--overlay", staged, "--registry", cx.o.base });
-    if (cx.o.sync_toolchain) |f| try sync_argv.appendSlice(&.{ "--toolchain", f });
+    if (cx.o.sync_toolchain) |f| {
+        try sync_argv.appendSlice(&.{ "--toolchain", f });
+        // `mopm add` recorded mopm's pinned closure in the lock, which a stand-in closure disagrees with: sync it from a lock with none.
+        unpinToolchain(cx, try cx.join(&.{ dir, "mopm.lock" })) catch |e| {
+            cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the stand-in toolchain syncs from a lock that records no closure", .{label}), @errorName(e));
+            return lock_text;
+        };
+    }
     if (cx.o.sync_cache) |d| try sync_argv.appendSlice(&.{ "--cache", d });
     ran = try cx.toolRun(dir, sync_argv.items);
     const want = try std.fmt.allocPrint(cx.a, "read {d} packages from the staged set", .{pkgs.len});
@@ -927,7 +981,7 @@ fn chainStep(cx: *Cx) !?Chain {
     const ver = try versionOf(cx.a, .chain, cx.o.run_id, cx.o.attempt);
     const ws = try cx.join(&.{ cx.o.work, "ws_chain" });
     const staged = try cx.join(&.{ cx.o.work, "staged_chain" });
-    try writeWorkspace(cx.a, ws, ver, &members);
+    try writeWorkspace(cx.a, cx.o.namespace, ws, ver, &members);
     const pkgs = (try stageStep(cx, L, ws, art, staged, &members)) orelse return null;
     const overlay_lock = try overlayStep(cx, L, staged, pkgs);
     cx.stop = false;
@@ -1048,7 +1102,8 @@ fn channelStep(cx: *Cx, label: []const u8, pkgs: []const Pkg) !void {
 const ChannelFile = struct { channel: []const u8, p: Pkg };
 
 fn channelHas(cx: *Cx, cf: ChannelFile, why: *[]const u8) !bool {
-    const repodata_url = try std.fmt.allocPrint(cx.a, "{s}{s}/repodata.json", .{ cf.channel, subdir });
+    const namespace = core.names.namespaceOf(cf.p.name);
+    const repodata_url = try std.fmt.allocPrint(cx.a, "{s}{s}/{s}/repodata.json", .{ cf.channel, namespace, subdir });
     const rd = try cx.send(.GET, repodata_url, null, false);
     if (rd.status != 200) {
         why.* = "repodata.json is not served";
@@ -1066,7 +1121,7 @@ fn channelHas(cx: *Cx, cf: ChannelFile, why: *[]const u8) !bool {
         why.* = "repodata.json lists another sha256";
         return false;
     }
-    const file = try cx.send(.GET, try std.fmt.allocPrint(cx.a, "{s}{s}/{s}", .{ cf.channel, subdir, cf.p.file_name }), null, false);
+    const file = try cx.send(.GET, try std.fmt.allocPrint(cx.a, "{s}{s}/{s}/{s}", .{ cf.channel, namespace, subdir, cf.p.file_name }), null, false);
     if (file.status != 200) {
         why.* = "the file is not served";
         return false;
@@ -1110,9 +1165,9 @@ fn lockCheck(cx: *Cx, label: []const u8, pkgs: []const Pkg, text: []const u8, do
     }
     var app_deps_mid = false;
     for (l.packages) |lp| {
-        if (std.mem.eql(u8, lp.name, pkg_app)) {
+        if (std.mem.eql(u8, lp.name, try cx.full(pkg_app))) {
             for (lp.deps) |d| {
-                if (std.mem.eql(u8, d, pkg_mid)) app_deps_mid = true;
+                if (std.mem.eql(u8, d, try cx.full(pkg_mid))) app_deps_mid = true;
             }
         }
     }
@@ -1139,9 +1194,10 @@ fn lockStep(cx: *Cx, chain: Chain) !void {
 
 const lock_same_name = "lock: the lock the staged set made is, byte for byte, the lock the registry gives once the set is published";
 
-fn isMember(name: []const u8) bool {
+/// Whether the package with the full name `full` is one of the chain's (by its import name).
+fn isMember(full: []const u8) bool {
     for (members) |m| {
-        if (std.mem.eql(u8, m, name)) return true;
+        if (std.mem.eql(u8, m, core.names.importName(full))) return true;
     }
     return false;
 }
@@ -1221,7 +1277,7 @@ fn rejectedStep(cx: *Cx) !void {
     const names = members[0..2];
     const ws = try cx.join(&.{ cx.o.work, "ws_rejected" });
     const staged = try cx.join(&.{ cx.o.work, "staged_rejected" });
-    try writeWorkspace(cx.a, ws, ver, names);
+    try writeWorkspace(cx.a, cx.o.namespace, ws, ver, names);
     const staged_pkgs = (try stageStep(cx, L, ws, art, staged, names)) orelse return;
     const bad_bytes = try std.fmt.allocPrint(cx.a, "this is not a conda package: {s} {s}\n", .{ pkg_mid, ver });
     try replaceStaged(cx, staged, 1, staged_pkgs[1].file_name, bad_bytes);
@@ -1243,13 +1299,13 @@ fn rejectedStep(cx: *Cx) !void {
     cx.check("rejected: the group ends rejected", std.mem.eql(u8, status, "rejected"), try std.fmt.allocPrint(cx.a, "status {s}", .{status}));
     if (g != null and g.?.failure != null) {
         const f = g.?.failure.?;
-        cx.check("rejected: the failure names the member that is not a package", f.member != null and std.mem.eql(u8, f.member.?, pkg_mid) and f.code.len > 0, try std.fmt.allocPrint(cx.a, "code {s}, member {s}", .{ f.code, f.member orelse "(none)" }));
+        cx.check("rejected: the failure names the member that is not a package", f.member != null and std.mem.eql(u8, f.member.?, try cx.full(pkg_mid)) and f.code.len > 0, try std.fmt.allocPrint(cx.a, "code {s}, member {s}", .{ f.code, f.member orelse "(none)" }));
     } else {
         cx.check("rejected: the failure names the member that is not a package", false, "no failure on the group");
     }
     var reported = false;
     if (res.report) |r| {
-        reported = r.members.len == 2 and std.mem.eql(u8, r.members[1].name, pkg_mid) and std.mem.eql(u8, r.members[1].outcome, "rejected") and !std.mem.eql(u8, r.members[0].outcome, "published");
+        reported = r.members.len == 2 and std.mem.eql(u8, r.members[1].name, try cx.full(pkg_mid)) and std.mem.eql(u8, r.members[1].outcome, "rejected") and !std.mem.eql(u8, r.members[0].outcome, "published");
     }
     cx.check("rejected: report.json names the rejected member and publishes none", reported, "report.json lacks the rejected member");
     // The good sibling is as invisible as the bad one: in the API, the index and the channel.
@@ -1262,7 +1318,7 @@ fn rejectedStep(cx: *Cx) !void {
     const cfg = try registry.load(cx.a, cx.o.base, "0.0.1+dev");
     switch (cfg) {
         .ok => |c| {
-            const rd = try cx.send(.GET, try std.fmt.allocPrint(cx.a, "{s}{s}/repodata.json", .{ c.channel_url, subdir }), null, false);
+            const rd = try cx.send(.GET, try std.fmt.allocPrint(cx.a, "{s}{s}/{s}/repodata.json", .{ c.channel_url, cx.o.namespace, subdir }), null, false);
             const listed = std.mem.indexOf(u8, rd.body, pkgs[0].file_name) != null;
             cx.check("rejected: the good sibling is not in the channel's repodata", rd.status == 200 and !listed, try std.fmt.allocPrint(cx.a, "HTTP {d}", .{rd.status}));
         },
@@ -1355,8 +1411,10 @@ fn walk(cx: *Cx) !bool {
     cx.check("health: the stage answers as the stage under test", same_stage, try std.fmt.allocPrint(cx.a, "HTTP {d}: {s}", .{ health.status, excerpt(health.body) }));
     if (!same_stage) return false;
 
+    try packagesStep(cx, members[0..1]);
     if (!try probeStep(cx)) return true;
     if (cx.stop) return false;
+    try packagesStep(cx, members[1..]);
 
     const chain = try chainStep(cx);
     if (chain) |c| {
@@ -1394,7 +1452,7 @@ pub fn appendTo(path: []const u8, text: []const u8) !void {
 
 // ---- the command line -----------------------------------------------------------------------------------------------
 
-const usage = "usage: mopm-group-e2e --stage beta|gamma --mopm <exe> --work <dir> --run-id <n> --attempt <n> --mojo-env <prefix> [--toolchain <closure.json> --cache <dir>] [--registry <name|url>] [--summary <file>] [--wait-seconds <n>]\n";
+const usage = "usage: mopm-group-e2e --stage beta|gamma --mopm <exe> --work <dir> --run-id <n> --attempt <n> --mojo-env <prefix> [--toolchain <closure.json> --cache <dir>] [--registry <name|url>] [--summary <file>] [--wait-seconds <n>] [--namespace <namespace>]\n";
 
 /// The command line, flag by flag; null when it is not one this program takes.
 pub const Args = struct {
@@ -1407,6 +1465,8 @@ pub const Args = struct {
     attempt: u64,
     summary: ?[]const u8 = null,
     wait_seconds: u64 = 600,
+    /// `--namespace`: the namespace of the e2e account's packages.
+    namespace: []const u8 = default_namespace,
     mojo_env: ?[]const u8 = null,
     /// `--toolchain` and `--cache`, forwarded to `mopm sync`.
     toolchain: ?[]const u8 = null,
@@ -1440,6 +1500,12 @@ pub fn parseArgs(argv: []const []const u8) ?Args {
             out.summary = value;
         } else if (std.mem.eql(u8, flag, "--wait-seconds")) {
             out.wait_seconds = std.fmt.parseInt(u64, value, 10) catch return null;
+        } else if (std.mem.eql(u8, flag, "--namespace")) {
+            // A namespace is valid when a package of it has a full name.
+            var probe: [96]u8 = undefined;
+            const as_full = std.fmt.bufPrint(&probe, "{s}/zz", .{value}) catch return null;
+            if (!core.names.isFullName(as_full)) return null;
+            out.namespace = value;
         } else if (std.mem.eql(u8, flag, "--toolchain")) {
             out.toolchain = value;
         } else if (std.mem.eql(u8, flag, "--cache")) {
@@ -1472,6 +1538,7 @@ pub fn main() !void {
     const result = try run(a, &rep, .{
         .base = base,
         .stage = args.stage,
+        .namespace = args.namespace,
         .token = env.get(token_env) orelse "",
         .mopm = args.mopm,
         .work = args.work,

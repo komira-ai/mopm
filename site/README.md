@@ -5,13 +5,13 @@ bundler, no runtime dependencies.
 
 The prerendered pages (`/`, `/docs/`, `/docs/<slug>/`, `404.html`) work without scripts; the home page's "Recently
 updated" list is the one part a script fills (one `searchPackages?sort=updated` call), and without scripts it
-links to the package list instead. Copy buttons are added by the script too, so without it a command is plain text. `/search`,
-`/packages/<name>` and `/packages/<name>/<version>` share one shell, `app.html`, which `src/main.ts` fills from one
-API call (`src/app.ts` picks the call and the view).
+links to the package list instead. Copy buttons are added by the script too, so without it a command is plain text.
+`/search`, `/packages/<namespace>/<name>` and `/packages/<namespace>/<name>/<version>` share one shell, `app.html`,
+which `src/main.ts` fills from one call to the registry API version 2 (`src/app.ts` picks the call and the view).
 
 | module | what it does |
 |---|---|
-| `src/routes.ts` | URL routes, the package name and version grammar, path builders |
+| `src/routes.ts` | URL routes, the namespace, package name and version grammar, full names, path builders, the search a flat address is sent to |
 | `src/host.ts` | the API and conda channel for the hostname a page is served on (three known hosts, nothing else) |
 | `src/api.ts`, `src/errors.ts`, `src/decode.ts`, `src/types.ts` | the read API client: one simple CORS GET per call, error mapping, runtime decoding |
 | `src/doc.ts` | the Doc port: element and text nodes through a tag and attribute allowlist (`h()`); DOM and string backends |
@@ -38,7 +38,7 @@ API call (`src/app.ts` picks the call and the view).
 4. **One artifact for every stage.** Nothing stage-specific is compiled in: the API host comes from the page's
    hostname (`src/host.ts`).
 5. **No live calls in tests.** `test/setup.ts` makes the global `fetch` throw; the client takes `fetch` as a
-   parameter, and tests replay the API contract fixtures (`tests/contract/api/` at the repository root).
+   parameter, and tests replay the API contract fixtures of version 2 (`tests/contract/api-v2/` at the repository root).
 
 ## Scripts
 
@@ -100,10 +100,13 @@ or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.m
   the new pages under the old distribution settings (no CSP, router or 404 page): fix forward by deploying again; a
   rollback does not restore the placeholder.
 - **Edge router.** A CloudFront Function on viewer-request, generated from the grammar in `src/routes.ts`: `/` is
-  `index.html`; `/search`, `/packages/<name>` and `/packages/<name>/<version>` (a valid, normalised name and a valid
-  version) are `app.html`; `/docs`, `/docs/` and `/docs/<slug>[/]` are the docs page's `index.html`; a package name
-  that normalises to a different valid name gets a 301 to the normalised path, query kept. Everything else goes to
-  the bucket as it is.
+  `index.html`; `/search`, `/packages/<namespace>/<name>` and `/packages/<namespace>/<name>/<version>` (a valid
+  namespace, a valid, normalised name and a valid version) are `app.html`; `/docs`, `/docs/` and `/docs/<slug>[/]` are
+  the docs page's `index.html`; a name under a valid namespace that normalises to a different valid name gets a 301 to
+  the normalised path, query kept (a namespace is never normalised). A one-segment `/packages/<x>` and a flat
+  `/packages/<name>/<version>`, the addresses of the names before namespaces, get a 302 to a search: for the name in
+  every namespace, or for a namespace's packages when `<x>` is a namespace and no name (`src/routes.ts`
+  `flatSearchPath`). Everything else goes to the bucket as it is.
 - **Not found.** A missing key (403 or 404 from the bucket) gets `404.html` with status 404; nothing is answered with
   the home page. These are distribution-wide error responses, an interim choice until the API is served from this
   distribution (`docs/design/mopm-dev.md`, §4.1).

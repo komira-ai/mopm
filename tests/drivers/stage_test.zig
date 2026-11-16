@@ -1,8 +1,9 @@
 //! End-to-end tests of `mopm stage` against the fake registry, and of `mopm publish --staged` on what it writes.
 //!
 //! Run by Buck2 (//:stage): MOPM and MOPM_FAKE_REGISTRY are the built programs. Each check prints `ok` or `FAIL`. The
-//! workspace is three packages, written in an order and with names that sort the other way from their dependencies:
-//! stg_z is the base, stg_m needs it, stg_a needs stg_m.
+//! workspace is three packages of the namespace `example` (the user namespace of the account that publishes them), written
+//! in an order and with names that sort the other way from their dependencies: example/stg_z is the base, example/stg_m
+//! needs it, example/stg_a needs example/stg_m.
 //!
 //! What can go red, and why:
 //! - `mopm stage` must order the set by dependency (z, m, a), write a plan that `publish --staged --dry-run` reads without
@@ -62,25 +63,24 @@ const World = struct {
 
     /// A member of the workspace `ws` at `version`, with its `[dependencies]` lines, and the artifact `art` holds for it.
     fn member(w: World, ws: []const u8, art: []const u8, name: []const u8, version: []const u8, deps: []const u8, mojoc: []const u8) !void {
-        const manifest = try std.fmt.allocPrint(w.a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}", .{ name, version, deps });
+        const manifest = try std.fmt.allocPrint(w.a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}", .{ name, version, deps });
         try h.writeFile(try w.path(&.{ w.work, ws, "src", name, "mopm.toml" }), manifest);
         try h.writeFile(try w.path(&.{ w.work, ws, "src", name, "README.md" }), try std.fmt.allocPrint(w.a, "# {s}\n", .{name}));
-        try h.writeFile(try w.path(&.{ w.work, art, "noarch", try std.fmt.allocPrint(w.a, "{s}.mojoc", .{name}) }), mojoc);
+        try h.writeFile(try w.path(&.{ w.work, art, "noarch", "example", try std.fmt.allocPrint(w.a, "{s}.mojoc", .{name}) }), mojoc);
     }
 
     fn chain(w: World, ws: []const u8, art: []const u8, version: []const u8, z_mojoc: []const u8) !void {
         try w.member(ws, art, "stg_z", version, "", z_mojoc);
-        try w.member(ws, art, "stg_m", version, "stg_z = { path = \"../stg_z\", version = \"1\" }\n", "the mojoc of m");
-        try w.member(ws, art, "stg_a", version, "stg_m = { path = \"../stg_m\", version = \"^1.0\" }\n", "the mojoc of a");
+        try w.member(ws, art, "stg_m", version, "\"example/stg_z\" = { path = \"../stg_z\", version = \"1\" }\n", "the mojoc of m");
+        try w.member(ws, art, "stg_a", version, "\"example/stg_m\" = { path = \"../stg_m\", version = \"^1.0\" }\n", "the mojoc of a");
     }
 
     fn stage(w: World, ws: []const u8, art: []const u8, out: []const u8, extra: []const []const u8) !Out {
         const base = [_][]const u8{
-            "stage",            "--workspace-root", try w.path(&.{ w.work, ws }),
-            "--artifacts",      try w.path(&.{ w.work, art }),
-            "--compiler",       "1.0.0",
-            "--out",            try w.path(&.{ w.work, out }),
-            "--registry",       w.fake.base,
+            "stage",       "--workspace-root",            try w.path(&.{ w.work, ws }),
+            "--artifacts", try w.path(&.{ w.work, art }), "--compiler",
+            "1.0.0",       "--out",                       try w.path(&.{ w.work, out }),
+            "--registry",  w.fake.base,
         };
         const argv = try std.mem.concat(w.a, []const u8, &.{ &base, extra });
         // No token: staging reads none.
@@ -88,7 +88,7 @@ const World = struct {
     }
 
     fn stateOf(w: World, name: []const u8, version: []const u8) ![]const u8 {
-        const r = try h.request(w.a, "GET", w.fake.base, try std.fmt.allocPrint(w.a, "/api/v1/packages/{s}/{s}", .{ name, version }), null, null);
+        const r = try h.request(w.a, "GET", w.fake.base, try std.fmt.allocPrint(w.a, "/api/v2/packages/example/{s}/{s}", .{ name, version }), null, null);
         if (r.status != 200) return "absent";
         return h.jsonString(try h.parseJson(w.a, r.body), "state") orelse "unknown";
     }
@@ -97,13 +97,16 @@ const World = struct {
         return h.parseJson(w.a, try h.readFile(w.a, try w.path(&.{ w.work, out, "plan.json" })));
     }
 
-    fn action(plan_: std.json.Value, name: []const u8) []const u8 {
+    /// The action of the member whose import name is `import`, in the namespace `example`.
+    fn action(plan_: std.json.Value, import: []const u8) []const u8 {
         for (plan_.object.get("members").?.array.items) |m| {
-            if (std.mem.eql(u8, h.jsonString(m, "name") orelse "", name)) return h.jsonString(m, "action") orelse "";
+            const name = h.jsonString(m, "name") orelse "";
+            if (std.mem.startsWith(u8, name, "example/") and std.mem.eql(u8, name["example/".len..], import)) return h.jsonString(m, "action") orelse "";
         }
         return "(none)";
     }
 
+    /// The members' full names in plan order, joined with commas.
     fn order(w: World, plan_: std.json.Value) ![]const u8 {
         var list = std.ArrayList([]const u8).init(w.a);
         for (plan_.object.get("members").?.array.items) |m| try list.append(h.jsonString(m, "name") orelse "");
@@ -126,13 +129,13 @@ fn stageAndPublishAChain(w: World) !void {
     w.rep.check("a chain is staged with no token, and the run ends 0", r.code == 0 and h.contains(r.stdout, "staged 3 members") and
         h.contains(r.stdout, "3 to upload, 0 skipped, 0 refused"), try w.text(r));
     const p = try w.plan("set");
-    w.rep.check("the plan lists the base first and the top last, though the names sort the other way", std.mem.eql(u8, try w.order(p), "stg_z,stg_m,stg_a"), try w.order(p));
+    w.rep.check("the plan lists the base first and the top last, though the names sort the other way", std.mem.eql(u8, try w.order(p), "example/stg_z,example/stg_m,example/stg_a"), try w.order(p));
     w.rep.check("every member is an upload, with its package file and its readme in the set", std.mem.eql(u8, World.action(p, "stg_z"), "upload") and
-        w.exists(&.{ w.work, "set", "noarch", "mojo-stg_z-1.0.0-mojo1.0.0_0.conda" }) and w.exists(&.{ w.work, "set", "stg_a", "README.md" }), "the set is not as expected");
+        w.exists(&.{ w.work, "set", "noarch", "mojo-example.stg_z-1.0.0-mojo1.0.0_0.conda" }) and w.exists(&.{ w.work, "set", "example", "stg_a", "README.md" }), "the set is not as expected");
 
     const dry = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set" }), "--registry", w.fake.base, "--config-dir", w.conf, "--dry-run" }, null);
     w.rep.check("the staged plan is read by publish --staged --dry-run, which reads no token and, for a set with readmes, only config.json and GET /health", dry.code == 0 and h.contains(dry.stdout, "would create one group of 3 members (3 files)") and
-        h.contains(dry.stdout, "stg_z 1.0.0") and h.contains(dry.stdout, "would send the readmes as uploaded objects") and
+        h.contains(dry.stdout, "example/stg_z 1.0.0") and h.contains(dry.stdout, "would send the readmes as uploaded objects") and
         h.contains(dry.stdout, "dry run: nothing was created or uploaded; the registry was only read (its config.json and GET /health)"), try w.text(dry));
 
     const pub_ = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set" }), "--registry", w.fake.base, "--config-dir", w.conf, "--wait", "60" }, w.token);
@@ -143,7 +146,7 @@ fn stageAndPublishAChain(w: World) !void {
     const again = try w.stage("ws", "art", "set_again", &.{});
     const p2 = try w.plan("set_again");
     w.rep.check("staging it again skips all three: same bytes, nothing to upload", again.code == 0 and h.contains(again.stdout, "0 to upload, 3 skipped, 0 refused") and
-        std.mem.eql(u8, World.action(p2, "stg_a"), "skip") and !w.exists(&.{ w.work, "set_again", "noarch", "mojo-stg_a-1.0.0-mojo1.0.0_0.conda" }), try w.text(again));
+        std.mem.eql(u8, World.action(p2, "stg_a"), "skip") and !w.exists(&.{ w.work, "set_again", "noarch", "mojo-example.stg_a-1.0.0-mojo1.0.0_0.conda" }), try w.text(again));
     const idle = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set_again" }), "--registry", w.fake.base, "--config-dir", w.conf }, w.token);
     w.rep.check("and publish --staged of that set has nothing to publish", idle.code == 0 and h.contains(idle.stdout, "nothing to publish"), try w.text(idle));
 }
@@ -155,53 +158,53 @@ fn theRegistryDecides(w: World) !void {
     var r = try w.stage("ws", "art_changed", "set_changed", &.{});
     var p = try w.plan("set_changed");
     w.rep.check("a published version with other bytes is refused: the run ends 1, and the plan refuses only that member", r.code == 1 and
-        h.contains(r.stderr, "stg_z 1.0.0 is already published with different bytes") and std.mem.eql(u8, World.action(p, "stg_z"), "refuse") and
+        h.contains(r.stderr, "example/stg_z 1.0.0 is already published with different bytes") and std.mem.eql(u8, World.action(p, "stg_z"), "refuse") and
         std.mem.eql(u8, World.action(p, "stg_m"), "skip"), try w.text(r));
     const pub_ = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set_changed" }), "--registry", dead, "--config-dir", w.conf }, "mopm_unused");
-    w.rep.check("and publish --staged refuses that set before it sends a request", pub_.code == 1 and h.contains(pub_.stderr, "the plan refuses stg_z 1.0.0") and
+    w.rep.check("and publish --staged refuses that set before it sends a request", pub_.code == 1 and h.contains(pub_.stderr, "the plan refuses example/stg_z 1.0.0") and
         !h.contains(pub_.stderr, "cannot reach"), try w.text(pub_));
 
     // A yanked version, even with the same bytes.
-    const yank = try h.request(a, "PUT", w.fake.base, "/api/v1/packages/stg_m/1.0.0/yank", "{\"yanked\":true,\"reason\":\"broken build\"}", w.token);
+    const yank = try h.request(a, "PUT", w.fake.base, "/api/v2/packages/example/stg_m/1.0.0/yank", "{\"yanked\":true,\"reason\":\"broken build\"}", w.token);
     w.rep.check("a member is yanked", yank.status == 200, yank.body);
     r = try w.stage("ws", "art", "set_yanked", &.{});
     p = try w.plan("set_yanked");
-    w.rep.check("a yanked version is refused with its reason", r.code == 1 and h.contains(r.stderr, "stg_m 1.0.0 is yanked: broken build") and
+    w.rep.check("a yanked version is refused with its reason", r.code == 1 and h.contains(r.stderr, "example/stg_m 1.0.0 is yanked: broken build") and
         std.mem.eql(u8, World.action(p, "stg_m"), "refuse"), try w.text(r));
-    const restore = try h.request(a, "PUT", w.fake.base, "/api/v1/packages/stg_m/1.0.0/yank", "{\"yanked\":false}", w.token);
+    const restore = try h.request(a, "PUT", w.fake.base, "/api/v2/packages/example/stg_m/1.0.0/yank", "{\"yanked\":false}", w.token);
     w.rep.check("the member is restored", restore.status == 200, restore.body);
 
     // A burned version.
-    _ = try w.fake.control(a, "/tombstone", "{\"name\":\"stg_a\",\"version\":\"1.0.0\",\"reason_code\":\"malware\"}");
+    _ = try w.fake.control(a, "/tombstone", "{\"name\":\"example/stg_a\",\"version\":\"1.0.0\",\"reason_code\":\"malware\"}");
     r = try w.stage("ws", "art", "set_burned", &.{});
     p = try w.plan("set_burned");
-    w.rep.check("a burned version is refused, and the message says to bump the version", r.code == 1 and h.contains(r.stderr, "stg_a 1.0.0 was taken down") and
+    w.rep.check("a burned version is refused, and the message says to bump the version", r.code == 1 and h.contains(r.stderr, "example/stg_a 1.0.0 was taken down") and
         h.contains(r.stderr, "bump the version") and std.mem.eql(u8, World.action(p, "stg_a"), "refuse"), try w.text(r));
 
     // Naming a package stages it and what it needs only: stg_m and stg_z are the same bytes, so both skip.
     r = try w.stage("ws", "art", "set_named", &.{"stg_m"});
     p = try w.plan("set_named");
-    w.rep.check("naming stg_m stages stg_m and stg_z only, and both are skipped", r.code == 0 and std.mem.eql(u8, try w.order(p), "stg_z,stg_m") and
+    w.rep.check("naming stg_m stages stg_m and stg_z only, and both are skipped", r.code == 0 and std.mem.eql(u8, try w.order(p), "example/stg_z,example/stg_m") and
         std.mem.eql(u8, World.action(p, "stg_m"), "skip"), try w.text(r));
 }
 
 fn aCycleAndDeterminism(w: World) !void {
     const a = w.a;
     // A cycle: nothing staged.
-    try w.member("cyc", "art_cyc", "stg_p", "0.1.0", "stg_q = { path = \"../stg_q\", version = \"0.1\" }\n", "p");
-    try w.member("cyc", "art_cyc", "stg_q", "0.1.0", "stg_p = { path = \"../stg_p\", version = \"0.1\" }\n", "q");
+    try w.member("cyc", "art_cyc", "stg_p", "0.1.0", "\"example/stg_q\" = { path = \"../stg_q\", version = \"0.1\" }\n", "p");
+    try w.member("cyc", "art_cyc", "stg_q", "0.1.0", "\"example/stg_p\" = { path = \"../stg_p\", version = \"0.1\" }\n", "q");
     const cyc = try w.stage("cyc", "art_cyc", "set_cycle", &.{});
-    w.rep.check("a cycle ends 1, names the packages, and stages nothing", cyc.code == 1 and h.contains(cyc.stderr, "stg_p, stg_q form a cycle") and
+    w.rep.check("a cycle ends 1, names the packages, and stages nothing", cyc.code == 1 and h.contains(cyc.stderr, "example/stg_p, example/stg_q form a cycle") and
         !w.exists(&.{ w.work, "set_cycle" }), try w.text(cyc));
 
     // The same workspace twice: the same bytes, a plan with no loopback address in it, and packages with none either.
     try w.chain("ws2", "art2", "0.2.0", "the mojoc of z");
-    try w.member("ws2", "art2", "stg_m", "0.2.0", "stg_z = { path = \"../stg_z\", version = \"0.2\" }\n", "the mojoc of m");
-    try w.member("ws2", "art2", "stg_a", "0.2.0", "stg_m = { path = \"../stg_m\", version = \"0.2\" }\n", "the mojoc of a");
+    try w.member("ws2", "art2", "stg_m", "0.2.0", "\"example/stg_z\" = { path = \"../stg_z\", version = \"0.2\" }\n", "the mojoc of m");
+    try w.member("ws2", "art2", "stg_a", "0.2.0", "\"example/stg_m\" = { path = \"../stg_m\", version = \"0.2\" }\n", "the mojoc of a");
     const one = try w.stage("ws2", "art2", "set_one", &.{});
     const two = try w.stage("ws2", "art2", "set_two", &.{});
     var same = one.code == 0 and two.code == 0;
-    const files = [_][]const u8{ "plan.json", "noarch/mojo-stg_z-0.2.0-mojo1.0.0_0.conda", "noarch/mojo-stg_m-0.2.0-mojo1.0.0_0.conda", "noarch/mojo-stg_a-0.2.0-mojo1.0.0_0.conda" };
+    const files = [_][]const u8{ "plan.json", "noarch/mojo-example.stg_z-0.2.0-mojo1.0.0_0.conda", "noarch/mojo-example.stg_m-0.2.0-mojo1.0.0_0.conda", "noarch/mojo-example.stg_a-0.2.0-mojo1.0.0_0.conda" };
     var local = false;
     for (files) |f| {
         const x = try h.readFile(a, try w.path(&.{ w.work, "set_one", f }));
@@ -211,30 +214,30 @@ fn aCycleAndDeterminism(w: World) !void {
     }
     w.rep.check("staging one workspace twice gives the same bytes, plan and packages", same, try w.text(one));
     w.rep.check("and no loopback address, lock entry or path is in the plan or the packages", !local, "something local was packed");
-    const m = try h.readFile(a, try w.path(&.{ w.work, "set_one", "noarch", "mojo-stg_m-0.2.0-mojo1.0.0_0.conda" }));
-    w.rep.check("a dependency keeps its version requirement in the package", h.contains(m, "\"name\":\"stg_z\",\"range\":\">=0.2,<0.3\""), "the requirement is gone");
+    const m = try h.readFile(a, try w.path(&.{ w.work, "set_one", "noarch", "mojo-example.stg_m-0.2.0-mojo1.0.0_0.conda" }));
+    w.rep.check("a dependency keeps its version requirement in the package", h.contains(m, "\"name\":\"example/stg_z\",\"range\":\">=0.2,<0.3\""), "the requirement is gone");
 }
 
 /// A member with a `[native.<id>]` static library: staged from the archive beside its `.mojoc`, and published as staged.
 fn aNativeMember(w: World) !void {
     const archive = "!<arch>\nthe archive of stg_n\n";
-    try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" }), "[package]\nname = \"stg_n\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.stg_n]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libstg\"\n");
+    try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" }), "[package]\nname = \"example/stg_n\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.stg_n]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libstg\"\n");
     try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "README.md" }), "# stg_n\n");
-    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "stg_n.mojoc" }), "the mojoc of n");
+    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "example", "stg_n.mojoc" }), "the mojoc of n");
     var r = try w.stage("wsn", "artn", "set_n_missing", &.{});
-    w.rep.check("a native member with no archive is refused, naming the member and the file it expected", r.code == 1 and h.contains(r.stderr, "stg_n: native library 'stg_n' has no archive for linux-64") and
-        h.contains(r.stderr, "stg_n.native/libstg_n.a") and !w.exists(&.{ w.work, "set_n_missing" }), try w.text(r));
-    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "stg_n.native", "libstg_n.a" }), archive);
+    w.rep.check("a native member with no archive is refused, naming the member and the file it expected", r.code == 1 and h.contains(r.stderr, "example/stg_n: native library 'stg_n' has no archive for linux-64") and
+        h.contains(r.stderr, "example/stg_n.native/libstg_n.a") and !w.exists(&.{ w.work, "set_n_missing" }), try w.text(r));
+    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "example", "stg_n.native", "libstg_n.a" }), archive);
     r = try w.stage("wsn", "artn", "set_n", &.{});
     w.rep.check("a native member is staged from its archive", r.code == 0 and h.contains(r.stdout, "1 to upload"), try w.text(r));
-    const conda_file = try h.readFile(w.a, try w.path(&.{ w.work, "set_n", "linux-64", "mojo-stg_n-1.0.0-mojo1.0.0_0.conda" }));
+    const conda_file = try h.readFile(w.a, try w.path(&.{ w.work, "set_n", "linux-64", "mojo-example.stg_n-1.0.0-mojo1.0.0_0.conda" }));
     w.rep.check("and the package holds the archive and declares the static native", h.contains(conda_file, "lib/libstg_n.a") and h.contains(conda_file, "stg_n"), "the archive is not in the package");
-    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artn", "linux-64", "stg_n.mojoc" })});
-    const native_arg = try std.fmt.allocPrint(w.a, "stg_n=linux-64:{s}", .{try w.path(&.{ w.work, "artn", "linux-64", "stg_n.native", "libstg_n.a" })});
+    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artn", "linux-64", "example", "stg_n.mojoc" })});
+    const native_arg = try std.fmt.allocPrint(w.a, "stg_n=linux-64:{s}", .{try w.path(&.{ w.work, "artn", "linux-64", "example", "stg_n.native", "libstg_n.a" })});
     const manifest_arg = try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" });
     const out_arg = try w.path(&.{ w.work, "packed_n" });
     const by_pack = try w.m.run(&.{ "pack", "--compiler", "1.0.0", "--mojoc", mojoc_arg, "--native", native_arg, "--manifest", manifest_arg, "-o", out_arg }, null);
-    const packed_bytes = if (by_pack.code == 0) try h.readFile(w.a, try w.path(&.{ w.work, "packed_n", "linux-64", "mojo-stg_n-1.0.0-mojo1.0.0_0.conda" })) else "";
+    const packed_bytes = if (by_pack.code == 0) try h.readFile(w.a, try w.path(&.{ w.work, "packed_n", "linux-64", "mojo-example.stg_n-1.0.0-mojo1.0.0_0.conda" })) else "";
     w.rep.check("the staged package is byte for byte the one mopm pack makes from the same files", by_pack.code == 0 and std.mem.eql(u8, packed_bytes, conda_file), try w.text(by_pack));
     const pub_ = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set_n" }), "--registry", w.fake.base, "--config-dir", w.conf, "--wait", "60" }, w.token);
     w.rep.check("publish --staged publishes the native member", pub_.code == 0 and std.mem.eql(u8, try w.stateOf("stg_n", "1.0.0"), "published"), try w.text(pub_));
@@ -244,23 +247,23 @@ fn aNativeMember(w: World) !void {
 /// publishes.
 fn aBinsMember(w: World) !void {
     const manifest_path = try w.path(&.{ w.work, "wsb", "src", "stg_b", "mopm.toml" });
-    try h.writeFile(manifest_path, "[package]\nname = \"stg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{ name = \"ring_bench\", path = \"bench/ring.mojo\" }, { name = \"agg_bench\", path = \"bench/agg.mojo\" }]\n");
+    try h.writeFile(manifest_path, "[package]\nname = \"example/stg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{ name = \"ring_bench\", path = \"bench/ring.mojo\" }, { name = \"agg_bench\", path = \"bench/agg.mojo\" }]\n");
     try h.writeFile(try w.path(&.{ w.work, "wsb", "src", "stg_b", "README.md" }), "# stg_b\n");
-    try h.writeFile(try w.path(&.{ w.work, "artb", "linux-64", "stg_b.mojoc" }), "the mojoc of b");
+    try h.writeFile(try w.path(&.{ w.work, "artb", "linux-64", "example", "stg_b.mojoc" }), "the mojoc of b");
     var r = try w.stage("wsb", "artb", "set_b_missing", &.{});
-    w.rep.check("a member whose program source is missing is refused, naming the member and the program", r.code == 1 and h.contains(r.stderr, "stg_b: [targets] bin 'ring_bench': cannot read") and
+    w.rep.check("a member whose program source is missing is refused, naming the member and the program", r.code == 1 and h.contains(r.stderr, "example/stg_b: [targets] bin 'ring_bench': cannot read") and
         !w.exists(&.{ w.work, "set_b_missing" }), try w.text(r));
     try h.writeFile(try w.path(&.{ w.work, "wsb", "src", "stg_b", "bench", "ring.mojo" }), "def main(): print(\"ring\")\n");
     try h.writeFile(try w.path(&.{ w.work, "wsb", "src", "stg_b", "bench", "agg.mojo" }), "def main(): print(\"agg\")\n");
     r = try w.stage("wsb", "artb", "set_b", &.{});
     w.rep.check("a member with programs is staged", r.code == 0 and h.contains(r.stdout, "1 to upload"), try w.text(r));
-    const conda_file = try h.readFile(w.a, try w.path(&.{ w.work, "set_b", "linux-64", "mojo-stg_b-1.0.0-mojo1.0.0_0.conda" }));
+    const conda_file = try h.readFile(w.a, try w.path(&.{ w.work, "set_b", "linux-64", "mojo-example.stg_b-1.0.0-mojo1.0.0_0.conda" }));
     w.rep.check("and the package holds the source of each program, below lib/mojo/stg_b.bins", h.contains(conda_file, "lib/mojo/stg_b.bins/ring_bench.mojo") and
         h.contains(conda_file, "lib/mojo/stg_b.bins/agg_bench.mojo") and h.contains(conda_file, "def main(): print(\"ring\")"), "a program is not in the package");
-    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artb", "linux-64", "stg_b.mojoc" })});
+    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artb", "linux-64", "example", "stg_b.mojoc" })});
     const out_arg = try w.path(&.{ w.work, "packed_b" });
     const by_pack = try w.m.run(&.{ "pack", "--compiler", "1.0.0", "--mojoc", mojoc_arg, "--manifest", manifest_path, "-o", out_arg }, null);
-    const packed_bytes = if (by_pack.code == 0) try h.readFile(w.a, try w.path(&.{ w.work, "packed_b", "linux-64", "mojo-stg_b-1.0.0-mojo1.0.0_0.conda" })) else "";
+    const packed_bytes = if (by_pack.code == 0) try h.readFile(w.a, try w.path(&.{ w.work, "packed_b", "linux-64", "mojo-example.stg_b-1.0.0-mojo1.0.0_0.conda" })) else "";
     w.rep.check("the staged package is byte for byte the one mopm pack makes from the same files", by_pack.code == 0 and std.mem.eql(u8, packed_bytes, conda_file), try w.text(by_pack));
     const pub_ = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set_b" }), "--registry", w.fake.base, "--config-dir", w.conf, "--wait", "60" }, w.token);
     w.rep.check("publish --staged publishes the member with programs", pub_.code == 0 and std.mem.eql(u8, try w.stateOf("stg_b", "1.0.0"), "published"), try w.text(pub_));
@@ -297,18 +300,14 @@ test "mopm stage against the fake registry" {
     var fake = try h.Fake.start(a, fake_exe, try h.join(a, &.{ work, "fake" }));
     defer fake.close();
 
-    const session = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"stage-user\"}"), "token") orelse "";
-    for (names) |n| {
-        const r = try h.request(a, "POST", fake.base, try std.fmt.allocPrint(a, "/api/v1/packages/{s}/claim", .{n}), "{}", session);
-        report.check(try std.fmt.allocPrint(a, "{s} is claimed", .{n}), r.status == 201, r.body);
+    const session = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"example\"}"), "token") orelse "";
+    for (names ++ [_][]const u8{ "stg_n", "stg_b" }) |n| {
+        const r = try h.request(a, "PUT", fake.base, try std.fmt.allocPrint(a, "/api/v2/packages/example/{s}", .{n}), null, session);
+        report.check(try std.fmt.allocPrint(a, "example/{s} is created", .{n}), r.status == 201, r.body);
     }
-    const claim_n = try h.request(a, "POST", fake.base, "/api/v1/packages/stg_n/claim", "{}", session);
-    report.check("stg_n is claimed", claim_n.status == 201, claim_n.body);
-    const claim_b = try h.request(a, "POST", fake.base, "/api/v1/packages/stg_b/claim", "{}", session);
-    report.check("stg_b is claimed", claim_b.status == 201, claim_b.body);
-    const made = try h.request(a, "POST", fake.base, "/api/v1/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"stg_z\",\"stg_m\",\"stg_a\",\"stg_n\",\"stg_b\"],\"expires_in_days\":1}", session);
+    const made = try h.request(a, "POST", fake.base, "/api/v2/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"example/stg_z\",\"example/stg_m\",\"example/stg_a\",\"example/stg_n\",\"example/stg_b\"],\"expires_in_days\":1}", session);
     const token = if (made.status == 201) (h.jsonString(try h.parseJson(a, made.body), "token") orelse "") else "";
-    report.check("an API token that may publish and yank the three is made", token.len > 0, made.body);
+    report.check("an API token that may publish and yank the five is made", token.len > 0, made.body);
 
     const w = World{ .a = a, .rep = &report, .m = m, .fake = fake, .work = work, .conf = try h.join(a, &.{ work, "conf" }), .token = token };
     try stageAndPublishAChain(w);

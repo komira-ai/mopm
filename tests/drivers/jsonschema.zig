@@ -14,7 +14,9 @@
 //!   minItems, maxItems, uniqueItems, minLength, maxLength (in code points),
 //!   minimum, maximum, pattern (regex.zig; `search`), allOf, anyOf, oneOf,
 //!   if/then/else, dependentRequired, $ref (a local "#/..." JSON pointer into
-//!   the document given as the root).
+//!   the document given as the root, such as "#/$defs/FullName"). `$defs` holds
+//!   named schemas for `$ref` to point at; it asserts nothing itself, and
+//!   `checkSchema` walks every schema in it.
 //! Annotations accepted and not asserted: $schema, $id, $comment, title,
 //!   description, default, examples, example, deprecated, readOnly,
 //!   writeOnly, externalDocs, format (like the Python library, `format` is
@@ -31,7 +33,7 @@ const Allocator = std.mem.Allocator;
 pub const Errors = std.ArrayList([]const u8);
 
 const Keyword = enum {
-    @"type",
+    type,
     @"enum",
     @"const",
     required,
@@ -54,11 +56,12 @@ const Keyword = enum {
     @"else",
     dependentRequired,
     @"$ref",
+    @"$defs",
 };
 
 const annotations = [_][]const u8{
-    "$schema", "$id",         "$comment",  "title",     "description", "default",
-    "examples", "example",    "deprecated", "readOnly", "writeOnly",   "externalDocs",
+    "$schema",  "$id",     "$comment",   "title",    "description", "default",
+    "examples", "example", "deprecated", "readOnly", "writeOnly",   "externalDocs",
     "format",
 };
 
@@ -111,7 +114,7 @@ fn isCount(v: Value) bool {
 
 fn checkKeyword(a: Allocator, kw: Keyword, v: Value, where: []const u8) anyerror!void {
     switch (kw) {
-        .@"type" => switch (v) {
+        .type => switch (v) {
             .string => |s| try checkTypeName(s, where),
             .array => |arr| for (arr.items) |t| {
                 if (t != .string) return bad("{s}: type names are strings", .{where});
@@ -153,6 +156,14 @@ fn checkKeyword(a: Allocator, kw: Keyword, v: Value, where: []const u8) anyerror
             var it = v.object.iterator();
             while (it.next()) |e| {
                 if (e.value_ptr.* != .array) return bad("{s}: dependentRequired maps names to arrays", .{where});
+            }
+        },
+        .@"$defs" => {
+            if (v != .object) return bad("{s}: $defs is an object", .{where});
+            var it = v.object.iterator();
+            while (it.next()) |e| {
+                const sub = try std.fmt.allocPrint(a, "{s}/{s}", .{ where, e.key_ptr.* });
+                try checkSchema(a, e.value_ptr.*, sub);
             }
         },
         .@"$ref" => if (v != .string or !std.mem.startsWith(u8, v.string, "#")) {
@@ -292,7 +303,7 @@ pub const Validator = struct {
             const kw = std.meta.stringToEnum(Keyword, e.key_ptr.*) orelse continue; // an annotation (checkSchema refused the rest)
             const v = e.value_ptr.*;
             switch (kw) {
-                .@"type" => {
+                .type => {
                     var ok = false;
                     switch (v) {
                         .string => |s| ok = typeIs(s, inst),
@@ -402,6 +413,7 @@ pub const Validator = struct {
                     }
                 },
                 .then, .@"else" => {}, // applied by "if"
+                .@"$defs" => {}, // only the target of a "$ref"
                 .dependentRequired => if (inst == .object) {
                     var dit = v.object.iterator();
                     while (dit.next()) |de| {
@@ -439,6 +451,16 @@ fn count(a: Allocator, schema: []const u8, inst: []const u8) !usize {
     const v = Validator{ .a = a, .root = s };
     return (try v.errors(s, try parse(a, inst))).items.len;
 }
+
+const PATH_OR_REGISTRY =
+    \\{"if":{"required":["source"]},"then":{"required":["path"]},"else":{"required":["subdir","channel","artifacts"]}}
+;
+
+const SCHEMA_TWO =
+    \\{"$defs":{"F":{"type":"string","pattern":"^[a-z]+/[a-z]+$"}},
+    \\ "if":{"properties":{"schema":{"const":2}}},
+    \\ "then":{"properties":{"name":{"$ref":"#/$defs/F"},"deps":{"items":{"properties":{"name":{"$ref":"#/$defs/F"}}}}}}}
+;
 
 const Case = struct { schema: []const u8, inst: []const u8, bad_count: usize };
 
@@ -490,6 +512,20 @@ test "jsonschema: each keyword accepts what it should and refuses what it should
         .{ .schema = "{\"dependentRequired\":{\"a\":[\"b\"]}}", .inst = "{\"a\":1}", .bad_count = 1 },
         .{ .schema = "{\"dependentRequired\":{\"a\":[\"b\"]}}", .inst = "{\"b\":1}", .bad_count = 0 },
         .{ .schema = "{\"properties\":{\"a\":{\"$ref\":\"#/properties/b\"},\"b\":{\"type\":\"string\"}}}", .inst = "{\"a\":1}", .bad_count = 1 },
+        .{ .schema = "{\"$defs\":{\"N\":{\"type\":\"string\",\"pattern\":\"^[a-z]+/[a-z]+$\"}},\"properties\":{\"n\":{\"$ref\":\"#/$defs/N\"}}}", .inst = "{\"n\":\"a/b\"}", .bad_count = 0 },
+        .{ .schema = "{\"$defs\":{\"N\":{\"type\":\"string\",\"pattern\":\"^[a-z]+/[a-z]+$\"}},\"properties\":{\"n\":{\"$ref\":\"#/$defs/N\"}}}", .inst = "{\"n\":\"ab\"}", .bad_count = 1 },
+        .{ .schema = "{\"$defs\":{\"N\":{\"type\":\"string\"}},\"properties\":{\"l\":{\"items\":{\"$ref\":\"#/$defs/N\"}}}}", .inst = "{\"l\":[\"a\",1]}", .bad_count = 1 },
+        .{ .schema = "{\"$defs\":{\"N\":{\"type\":\"string\"}},\"type\":\"object\"}", .inst = "1", .bad_count = 1 },
+        // The lock schema's path/registry split: if/then/else on one entry.
+        .{ .schema = PATH_OR_REGISTRY, .inst = "{\"source\":\"path\",\"path\":\"p\"}", .bad_count = 0 },
+        .{ .schema = PATH_OR_REGISTRY, .inst = "{\"source\":\"path\"}", .bad_count = 1 },
+        .{ .schema = PATH_OR_REGISTRY, .inst = "{\"subdir\":\"s\",\"channel\":\"c\"}", .bad_count = 1 },
+        .{ .schema = PATH_OR_REGISTRY, .inst = "{\"subdir\":\"s\",\"channel\":\"c\",\"artifacts\":{}}", .bad_count = 0 },
+        // The metadata schema's name rule: if on a document, then on nested members.
+        .{ .schema = SCHEMA_TWO, .inst = "{\"schema\":2,\"name\":\"ab\",\"deps\":[{\"name\":\"x/y\"}]}", .bad_count = 1 },
+        .{ .schema = SCHEMA_TWO, .inst = "{\"schema\":2,\"name\":\"a/b\",\"deps\":[{\"name\":\"x\"}]}", .bad_count = 1 },
+        .{ .schema = SCHEMA_TWO, .inst = "{\"schema\":2,\"name\":\"a/b\",\"deps\":[{\"name\":\"x/y\"}]}", .bad_count = 0 },
+        .{ .schema = SCHEMA_TWO, .inst = "{\"schema\":1,\"name\":\"ab\",\"deps\":[{\"name\":\"x\"}]}", .bad_count = 0 },
         .{ .schema = "{\"format\":\"uri\",\"description\":\"d\",\"x-note\":1,\"type\":\"string\"}", .inst = "\"not a uri\"", .bad_count = 0 },
     };
     for (cases) |c| {
@@ -510,7 +546,7 @@ test "jsonschema: a keyword that is not implemented is refused loudly, wherever 
         "{\"properties\":{\"a\":{\"patternProperties\":{}}}}",
         "{\"anyOf\":[{\"type\":\"string\"},{\"contains\":{}}]}",
         "{\"properties\":{\"a\":{\"not\":{}}}}",
-        "{\"$defs\":{}}",
+        "{\"$defs\":{\"A\":{\"multipleOf\":2}}}",
         "{\"prefixItems\":[]}",
         "{\"exclusiveMinimum\":1}",
         "{\"items\":{\"unevaluatedProperties\":false}}",
@@ -526,7 +562,7 @@ test "jsonschema: a keyword that is not implemented is refused loudly, wherever 
         }
     }
     // A wrongly shaped value is refused too.
-    for ([_][]const u8{ "{\"type\":\"strng\"}", "{\"required\":\"a\"}", "{\"minLength\":-1}", "{\"pattern\":\"(?=a)\"}", "{\"allOf\":[]}" }) |text| {
+    for ([_][]const u8{ "{\"type\":\"strng\"}", "{\"required\":\"a\"}", "{\"minLength\":-1}", "{\"pattern\":\"(?=a)\"}", "{\"allOf\":[]}", "{\"$defs\":[]}", "{\"$defs\":{\"A\":{\"type\":\"strng\"}}}" }) |text| {
         if (checkSchema(a, try parse(a, text), "(test)")) |_| {
             std.debug.print("schema {s} was accepted\n", .{text});
             return error.TestUnexpectedResult;

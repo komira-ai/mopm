@@ -70,6 +70,42 @@ export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> =
 /** The claim operation of spec/api/openapi.yaml: reserve a free package name for the caller. The literal `claim` wins over `{version}`. */
 export const CLAIM_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> = [{ method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/claim' }];
 /**
+ * The operations of spec/api/openapi-v2.yaml (`/api/v2`), one gateway route each. They are explicit, not a greedy `/api/v2/{proxy+}`:
+ * a request the contract does not list never reaches the handler, and the route inventory (spec-gateway.test.ts) reads this list.
+ * The handler is the same function as `/api/v1`'s. `/packages/{namespace}/{name}/versions` and `/packages/{namespace}/{name}/{version}`
+ * are two routes: the literal segment wins over the parameter.
+ */
+export const V2_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> = [
+  { method: apigw.HttpMethod.GET, path: '/api/v2/health' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/auth/device' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/auth/device/poll' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/auth/oidc/exchange' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/me' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/me/tokens' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/me/tokens' },
+  { method: apigw.HttpMethod.DELETE, path: '/api/v2/me/tokens/{token_id}' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/namespaces' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/namespaces/poll' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/namespaces/{namespace}' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/namespaces/{namespace}/members' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v2/namespaces/{namespace}/members/{user}' },
+  { method: apigw.HttpMethod.DELETE, path: '/api/v2/namespaces/{namespace}/members/{user}' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/packages' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/packages/{namespace}/{name}' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v2/packages/{namespace}/{name}' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/packages/{namespace}/{name}/versions' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/packages/{namespace}/{name}/{version}' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/packages/{namespace}/{name}/{version}/files' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/packages/{namespace}/{name}/{version}/publish' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v2/packages/{namespace}/{name}/{version}/yank' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/publishes/{publish_id}' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/groups' },
+  { method: apigw.HttpMethod.GET, path: '/api/v2/groups/{group_id}' },
+  { method: apigw.HttpMethod.DELETE, path: '/api/v2/groups/{group_id}' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/groups/{group_id}/commit' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v2/groups/{group_id}/yank' },
+];
+/**
  * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no
  * UpdateItem. (The tokens table, including the last-used mark, is granted by AUTH_GRANTS.) A new version is a transaction of two PutItems (version + audit).
  * A claim is a transaction of three PutItems (package + owner + audit), each created only if its key is absent: hence PutItem on packages and
@@ -82,7 +118,7 @@ export const WRITE_GRANTS: Array<{ sid: string; actions: string[]; tables: strin
   { sid: 'ReadSwitches', actions: ['dynamodb:GetItem'], tables: ['config'] },
 ];
 
-/** The environment variable the handler reads its configured CI publishers from. The code refuses to load it on any stage but beta and prod (prod: rows that act for an account only). */
+/** The environment variable the handler reads its configured CI publishers from. The code refuses to load it on any stage but beta and prod (prod: rows that act for an account, `acts_for`, or publish in a namespace, `namespace`). */
 export const CI_PUBLISHERS_ENV = 'CI_PUBLISHERS';
 /**
  * The CI identity the BETA stage trusts by configuration (config as code): the komira repository's release workflow, on
@@ -154,6 +190,12 @@ export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
  * - users: read and upsert a row at login.
  * - device_logins: start (PutItem), poll (GetItem), record the poll and consume (UpdateItem).
  * - trusted_publishers: read only; nothing in the Lambda registers publishers yet.
+ * - namespaces: read one (GetItem), create one at login or at the registration of an organization (PutItem, conditional on
+ *   the key being absent; a member change rewrites an organization's row with its member revision raised, conditional on the
+ *   revision it read), and list an account's (Query on its by_github_id index). No UpdateItem is granted.
+ * - namespace_members: read one (GetItem), add or change one (PutItem; a removal is a row written back as removed), list a
+ *   namespace's members (Query) and an account's memberships (Query on its by_member index). A member change is a
+ *   TransactWriteItems of PutItems, which IAM authorizes as PutItem on each table.
  * - owners: read, and Query on its by_github_id index (POST /me/tokens lists the packages the account owns). The table is
  *   also in READ_TABLES; an index is a separate resource, so the index ARN is granted here.
  */
@@ -163,6 +205,8 @@ export const AUTH_GRANTS: Record<string, { actions: string[]; indexes?: string[]
   device_logins: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'] },
   trusted_publishers: { actions: ['dynamodb:GetItem', 'dynamodb:Query'] },
   owners: { actions: ['dynamodb:GetItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
+  namespaces: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
+  namespace_members: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], indexes: ['by_member'] },
 };
 
 /** `GET /index/config.json` is built from code by the API Lambda; every other file under /index/ is read from the bucket by the reader. */
@@ -386,6 +430,8 @@ export class ApiStack extends Stack {
     for (const r of AUTH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     for (const r of PUBLISH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     for (const r of CLAIM_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
+    // /api/v2: explicit per-operation routes to the same handler (V2_ROUTES).
+    for (const r of V2_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     // The CLI sends no token: neither index route has an authorizer. The literal route wins over the greedy one.
     const configRoutes = this.api.addRoutes({ path: '/index/config.json', methods: [apigw.HttpMethod.GET], integration });
     const readerRoutes = this.api.addRoutes({

@@ -125,9 +125,9 @@ export function webHref(raw: string): SafeHref | null {
 }
 
 /**
- * A file's download link: only an https URL on the conda channel of the site the page is served on (`channel` is
- * condaBase(location.hostname)), with no credentials in it. Anything else, including a URL on another stage's
- * channel, is null and the page shows the file name as text.
+ * A file's download link: only an https URL in the conda channel `channel` (the package's namespace channel on the site
+ * the page is served on, snippet.ts namespaceChannel), with no credentials in it. Anything else, including a URL on
+ * another stage's channel or in another namespace's, is null and the page shows the file name as text.
  */
 export function channelFileHref(raw: string, channel: string | null): SafeHref | null {
   if (channel === null || raw.replace(STRIP, '') !== raw) return null;
@@ -139,6 +139,7 @@ export function channelFileHref(raw: string, channel: string | null): SafeHref |
   }
   const c = new URL(channel);
   if (u.protocol !== 'https:' || u.host !== c.host || u.username !== '' || u.password !== '') return null;
+  if (!u.pathname.startsWith(c.pathname)) return null;
   return u.href as SafeHref;
 }
 

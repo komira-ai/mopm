@@ -3,7 +3,8 @@
 //! the pinned Mojo one, which the farm cannot download. Run by Buck2 as //:sync_e2e on every pull request; MOPM and
 //! MOPM_FAKE_REGISTRY are the built programs. Each check prints `ok` or `FAIL`.
 //!
-//! The fake serves a package greet 1.0.0 (a real .conda: lib/mojo/greet.mopm.json and a library), the stand-in
+//! The fake serves a package example/greet 1.0.0 (a real .conda named mojo-example.greet-1.0.0-<build>.conda, in the
+//! channel of its namespace: lib/mojo/greet.mopm.json and a library), the stand-in
 //! toolchain T (`mojo` and `mojo-compiler` 1.0.0), a mirror of T (the same bytes under another url), a second
 //! toolchain T2 (other bytes), and a package broken 1.0.0 whose payload ends in the middle of its second file. Downloads
 //! are counted by the fake (`/_fake/served`), never by time.
@@ -51,7 +52,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
 
     const greet = try fx.packageOf(a, c.subdir, "greet", &.{});
     try c.publish("greet", greet);
-    const greet_file = "mojo-greet-1.0.0-" ++ build_tag ++ ".conda";
+    const greet_file = fx.conda_prefix ++ "greet-1.0.0-" ++ build_tag ++ ".conda";
     const tc = try c.toolchain("channel/toolchain", "toolchain.json", "T");
     const mirror = try c.toolchain("channel/mirror", "mirror.json", "T");
     const tc2 = try c.toolchain("channel/toolchain2", "toolchain2.json", "T2");
@@ -61,21 +62,31 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
     const with_t2 = [_][]const u8{ "--toolchain", tc2.closure, "--cache", cache };
 
     // ------------------------------------------------ the first sync
-    const app = try c.project("app", "greet = \"1\"");
+    const app = try c.project("app", "\"example/greet\" = \"1\"");
+    const env_dir = c.path(&.{ app, ".mopm/env" });
+    // A sync with no lock locks first, recording mopm's pinned toolchain closure; the stand-in's closure is another one,
+    // so that sync refuses before any download and installs nothing.
     var before = try c.served();
     var r = try c.run(app, &(.{"sync"} ++ reg ++ with_t));
-    const env_dir = c.path(&.{ app, ".mopm/env" });
-    rep.check("sync locks, downloads and installs greet and the toolchain, with no pixi on PATH", r.code == 0 and
+    rep.check("a sync that locks records the pinned toolchain closure and refuses another toolchain before any download", r.code == 1 and
+        h.contains(r.stderr, "mopm sync: mopm.lock records toolchain closure ") and
+        h.contains(r.stderr, try c.fmt(" for mojo {s} on {s}; the toolchain to install has closure ", .{ mojo, c.subdir })) and
+        h.contains(r.stderr, "; run 'mopm lock' (or pass the --toolchain file it was locked with)\n") and
+        try c.served() - before == 0 and !c.exists(app, ".mopm/env"), c.detail(r));
+    try c.standInLock(app);
+    before = try c.served();
+    r = try c.run(app, &(.{"sync"} ++ reg ++ with_t));
+    rep.check("sync of a lock that records no closure downloads and installs greet and the stand-in toolchain, with no pixi on PATH", r.code == 0 and
         h.contains(r.stdout, try c.fmt("installed 1 packages for {s} (mojo {s}, 2 toolchain files) into .mopm/env\n", .{ c.subdir, mojo })), c.detail(r));
     rep.check("the first sync downloads the locked file and the two toolchain files, once each", try c.served() - before == 3, try c.fmt("{d} downloads", .{try c.served() - before}));
     for ([_][]const u8{ "lib/mojo/greet.mopm.json", "lib/libgreet.so", "share/mopm-fake-toolchain/mojo.txt", "share/mopm-fake-toolchain/mojo-compiler.txt" }) |p| {
         rep.check(try c.fmt("installed: {s}", .{p}), c.exists(env_dir, p), try c.names(env_dir));
     }
     {
-        const rec = c.read(env_dir, "conda-meta/mojo-greet-1.0.0-" ++ build_tag ++ ".json") orelse "";
+        const rec = c.read(env_dir, "conda-meta/" ++ fx.conda_prefix ++ "greet-1.0.0-" ++ build_tag ++ ".json") orelse "";
         const v = h.parseJson(a, rec) catch std.json.Value{ .null = {} };
         rep.check("the locked package's conda-meta record names its pinned sha256 and its url", std.mem.eql(u8, h.jsonString(v, "sha256") orelse "", try cp.sha256Hex(a, greet)) and
-            std.mem.eql(u8, h.jsonString(v, "url") orelse "", try c.fmt("{s}/channel/{s}/{s}", .{ fake.base, c.subdir, greet_file })), rec);
+            std.mem.eql(u8, h.jsonString(v, "url") orelse "", try c.fmt("{s}/channel/{s}/{s}/{s}", .{ fake.base, fx.ns, c.subdir, greet_file })), rec);
         for (tc.files) |f| {
             const t = c.read(env_dir, try c.fmt("conda-meta/{s}-{s}-{s}.json", .{ f.name, mojo, cp.fake_build })) orelse "";
             const tv = h.parseJson(a, t) catch std.json.Value{ .null = {} };
@@ -120,7 +131,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
     // ------------------------------------------------ a mirror
     // T's url serves nothing now: only the mirror can supply its bytes.
     try fs.cwd().rename(c.path(&.{ fake_dir, "channel/toolchain" }), c.path(&.{ fake_dir, "channel/toolchain-away" }));
-    const app_m = try c.project("app_m", "greet = \"1\"");
+    const app_m = try c.project("app_m", "\"example/greet\" = \"1\"");
     try fs.cwd().copyFile(c.path(&.{ app, "mopm.lock" }), fs.cwd(), c.path(&.{ app_m, "mopm.lock" }), .{});
     const cache_m = try h.join(a, &.{ work, "cache-m" });
     before = try c.served();
@@ -149,7 +160,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
     const flipped_greet = try a.dupe(u8, greet);
     flipped_greet[flipped_greet.len / 2] ^= 0x01;
     const longer_greet = try std.mem.concat(a, u8, &.{ greet, "\x00" });
-    const greet_served = try c.fmt("channel/{s}/{s}", .{ c.subdir, greet_file });
+    const greet_served = try c.fmt("channel/{s}/{s}/{s}", .{ fx.ns, c.subdir, greet_file });
     const t2_url = try c.fmt("{s}/{s}", .{ fake.base, t2_mojo.served });
     const greet_url = try c.fmt("{s}/{s}", .{ fake.base, greet_served });
     const tampers = [_]Tamper{
@@ -184,16 +195,18 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
 
     // ------------------------------------------------ an unpack that fails in the middle
     try c.publish("broken", try fx.brokenPackage(a, c.subdir));
-    _ = try c.project("app", "greet = \"1\"\nbroken = \"1\"");
+    _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/broken\" = \"1\"");
+    try c.standInLock(app);
     r = try c.run(app, &(.{"sync"} ++ reg ++ with_t2));
-    rep.check("an unpack that fails in the middle fails the sync, saying the environment is as it was", r.code == 1 and h.contains(r.stderr, "mopm sync: cannot install into .mopm/env: mojo-broken-1.0.0-" ++ build_tag ++ ".conda: ") and
+    rep.check("an unpack that fails in the middle fails the sync, saying the environment is as it was", r.code == 1 and h.contains(r.stderr, "mopm sync: cannot install into .mopm/env: " ++ fx.conda_prefix ++ "broken-1.0.0-" ++ build_tag ++ ".conda: ") and
         h.contains(r.stderr, "; the environment is as it was\n"), c.detail(r));
     rep.check("the interrupted unpack leaves the environment as it was", std.mem.eql(u8, c.read(env_dir, "conda-meta/mopm-stamp") orelse "", stamp2) and
         std.mem.eql(u8, try c.fingerprint(env_dir), print2), "the environment changed");
     rep.check("the interrupted unpack leaves no temporary directory beside the environment", std.mem.eql(u8, try c.names(c.path(&.{ app, ".mopm" })), beside), try c.names(c.path(&.{ app, ".mopm" })));
 
     // A temporary directory a killed sync left behind goes with the next install.
-    _ = try c.project("app", "greet = \"1\"");
+    _ = try c.project("app", "\"example/greet\" = \"1\"");
+    try c.standInLock(app);
     try fs.cwd().makePath(c.path(&.{ app, ".mopm/.env.tmp-0123456789ab/lib" }));
     try h.writeFile(c.path(&.{ app, ".mopm/.env.tmp-0123456789ab/lib/half" }), "half");
     r = try c.run(app, &(.{"sync"} ++ reg ++ with_t));

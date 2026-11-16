@@ -170,3 +170,51 @@ describe('configureAuth: the stage gate in the handler wiring', () => {
     for (const stage of ['gamma', 'prod'] as const) expect(configureAuth(stage, doc, env())!.oidc).toBeDefined();
   });
 });
+
+describe('parseCiPublishers: a row that publishes in a namespace', () => {
+  const NS_ENTRY = { ...ENTRY, environment: 'prod', namespace: 'komira-ai' };
+
+  test('prod and beta load a row with a namespace, and keep it', () => {
+    expect(parseCiPublishers('prod', json([NS_ENTRY]))).toEqual([NS_ENTRY]);
+    expect(parseCiPublishers('beta', json([{ ...ENTRY, namespace: 'komira-ai' }]))[0]!.namespace).toBe('komira-ai');
+  });
+
+  test('prod accepts a mix of a namespace row and an acts_for row', () => {
+    const rows = parseCiPublishers('prod', json([NS_ENTRY, { ...PROD_ENTRY, repository_id: '5' }]));
+    expect(rows.map((r) => [r.namespace, r.acts_for])).toEqual([['komira-ai', undefined], [undefined, '15257031']]);
+  });
+
+  test('prod refuses a row with neither acts_for nor a namespace, naming both', () => {
+    expect(() => parseCiPublishers('prod', json([{ ...ENTRY, environment: 'prod' }]))).toThrow(
+      "CI_PUBLISHERS is not valid: entry 0: the prod stage trusts only rows that carry 'acts_for' or 'namespace'; this row has neither",
+    );
+  });
+
+  test('a row with both acts_for and a namespace is refused on beta and on prod', () => {
+    for (const stage of ['beta', 'prod']) {
+      expect(() => parseCiPublishers(stage, json([{ ...NS_ENTRY, acts_for: '15257031' }]))).toThrow("entry 0: 'acts_for' and 'namespace' are exclusive");
+    }
+  });
+
+  test('beta still loads a row with neither', () => {
+    expect(parseCiPublishers('beta', json([ENTRY]))[0]).not.toHaveProperty('namespace');
+  });
+
+  test.each([['index'], ['quarantine'], ['native-mirror'], ['linux-64'], ['noarch'], ['Komira'], ['-komira'], ['a--b'], [''], ['x'.repeat(40)], [7], [null], [['komira-ai']]])(
+    'a namespace of %j is refused: not a valid, non-reserved namespace',
+    (namespace) => {
+      expect(() => parseCiPublishers('prod', json([{ ...NS_ENTRY, namespace }]))).toThrow("entry 0: 'namespace' is missing or malformed");
+    },
+  );
+
+  test('gamma refuses a namespace row, as every row', () => {
+    expect(() => parseCiPublishers('gamma', json([NS_ENTRY]))).toThrow(/beta stage only/);
+  });
+
+  test('the handler wiring starts on prod with a namespace row and stops on a prod row with neither', () => {
+    const doc = new FakeAuthDoc({});
+    const env = (v: unknown) => ({ MOPM_OAUTH_SECRET_NAME: 'mopm/x/github-oauth', [CI_PUBLISHERS_ENV]: json(v) });
+    expect(configureAuth('prod', doc, env([NS_ENTRY]))!.oidc).toBeDefined();
+    expect(() => configureAuth('prod', doc, env([{ ...ENTRY, environment: 'prod' }]))).toThrow(/'acts_for' or 'namespace'/);
+  });
+});

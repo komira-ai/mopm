@@ -1,5 +1,5 @@
 [package]
-name = "pinned"
+name = "example/pinned"
 version = "0.1.0"
 mojo = ["1.0.0"]
 
