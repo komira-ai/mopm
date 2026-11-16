@@ -310,7 +310,7 @@ fn account(c: *Ctx) ![]const u8 {
         const out = try child.stdout.?.reader().readAllAlloc(a, 1 << 20);
         const err = try child.stderr.?.reader().readAllAlloc(a, 1 << 20);
         const term = try child.wait();
-        const ok = term == .Exited and term.Exited == 0 and code != null and h.contains(out, "Logged in to beta as beta-user.");
+        const ok = term == .Exited and term.Exited == 0 and code != null and h.hasLine(out, "Logged in to beta as beta-user; your namespace is beta-user.");
         c.rep.check("login: a device login approved on the registry stores the account", ok, try h.fmt(a, "first line: {s}\n{s}\n{s}", .{ first, out, err }));
     }
     r = try c.mopm(c.ws, &.{ "whoami", "--registry", c.fake.base, "--config-dir", c.conf });
