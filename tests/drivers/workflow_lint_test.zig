@@ -347,6 +347,10 @@ test "write permissions: only id-token, and only in the deploy workflows" {
     try expectLint("promote.yml", id_token ++ "concurrency:\n  group: g\n  cancel-in-progress: false\n", &.{"triggers must be exactly push and workflow_dispatch"});
     try expectLint("oidc-subject-check.yml", id_token, &.{});
     try expectLint("farm.yml", id_token, &.{});
+    try expectLint("farm-macos.yml", id_token, &.{});
+    // A near name is any other workflow.
+    try expectLint("farm-mac.yml", id_token, &.{"farm-mac.yml: jobs.j.permissions.id-token: write is not allowed"});
+    try expectLint("farm-macos.yml", job_write, &.{"farm-macos.yml: jobs.j.permissions.contents: write is not allowed"});
 }
 
 test "account, region and role ARNs are not repository variables" {
@@ -487,7 +491,7 @@ test "only local workflows are called, only GitHub-owned actions pinned by SHA a
         const want = try std.fmt.allocPrint(a, "ci.yml: j step 0: only GitHub-owned actions pinned by full SHA are allowed: {s}", .{u});
         try c.expectLines(u, try lint(a, "ci.yml", yaml), &.{want});
     }
-    // komira's farm-connect, pinned by commit, is for farm.yml alone
+    // komira's farm-connect, pinned by commit, is for farm.yml and farm-macos.yml alone
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -495,6 +499,10 @@ test "only local workflows are called, only GitHub-owned actions pinned by SHA a
     try c.expectLines("farm", try lint(a, "farm.yml", connect), &.{});
     const other = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: komira-ai/komira/.github/actions/other@{s}\n", .{ head, job_head, sha });
     try c.expectLines("farm other", try lint(a, "farm.yml", other), &.{"only GitHub-owned actions pinned by full SHA"});
+    try c.expectLines("farm-macos", try lint(a, "farm-macos.yml", connect), &.{});
+    try c.expectLines("farm-macos other", try lint(a, "farm-macos.yml", other), &.{"only GitHub-owned actions pinned by full SHA"});
+    const by_tag = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: komira-ai/komira/.github/actions/farm-connect@main\n", .{ head, job_head });
+    try c.expectLines("farm-macos by tag", try lint(a, "farm-macos.yml", by_tag), &.{"only GitHub-owned actions pinned by full SHA"});
 }
 
 test "actions/create-github-app-token is for release.yml alone, pinned by commit" {

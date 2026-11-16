@@ -57,6 +57,14 @@
   git_origin = https://github.com/komira-ai/buildrules.git
   commit_hash = eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503
 
+# The farm's macOS arm64 workers, for buildrules, which reads every `[buildrules_re]` key from this (the root) cell. farm-connect
+# writes the worker property set and the hosts under `[komira_re]` (farm-macos.yml passes them); these keys follow them, holding no
+# value of their own, so a build with no macOS workers (every farm.yml build) leaves them empty and registers no macOS execution
+# platform (platforms/macos.bzl, `macos_gate`). This is the passthrough of komira's own .buckconfig.
+[buildrules_re]
+  macos_aarch64_properties = $(config komira_re.darwin_arm64_properties)
+  darwin_macos_hosts = $(config komira_re.darwin_macos_hosts)
+
 [buildfile]
   name = BUCK
 

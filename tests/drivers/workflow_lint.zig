@@ -23,9 +23,9 @@ const Out = c.Out;
 pub const prefix = "workflow-lint: ";
 
 const oidc_files = [_][]const u8{ "deploy.yml", "e2e.yml", "promote.yml", "oidc-subject-check.yml" };
-/// farm.yml may also hold the id-token grant, and one action outside GitHub's own
-/// (komira's farm-connect, pinned by commit); hygiene.zig holds it to its conditions.
-const farm_file = "farm.yml";
+/// farm.yml (the linux farm build) and farm-macos.yml (the macOS checks on the farm's Mac workers) may also hold the id-token grant,
+/// and one action outside GitHub's own (komira's farm-connect, pinned by commit); hygiene.zig holds each to its conditions.
+const farm_files = [_][]const u8{ "farm.yml", "farm-macos.yml" };
 /// kpin-update.yml (the weekly pin update) holds the two write grants it needs to push its branch
 /// and open its pull request with the default token, nothing else, and only on a schedule or a
 /// manual run: checked below.
@@ -174,7 +174,7 @@ fn checkPerm(a: Allocator, f: []const u8, base: []const u8, path: []const []cons
                 if (std.mem.eql(u8, base, kpin_file) and c.containsStr(&kpin_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
                 if (std.mem.eql(u8, base, release_file) and c.containsStr(&release_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
                 if (std.mem.eql(u8, base, advisories_file) and std.mem.eql(u8, k, "issues") and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
-                if (!(std.mem.eql(u8, k, "id-token") and (isOidc(base) or std.mem.eql(u8, base, farm_file)))) {
+                if (!(std.mem.eql(u8, k, "id-token") and (isOidc(base) or c.containsStr(&farm_files, base)))) {
                     try c.problem(a, out, prefix ++ "{s}: {s}.{s}: write is not allowed", .{ f, try joinPath(a, path), k });
                 }
             }
@@ -387,7 +387,7 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
         if (steps != .array) continue;
         for (steps.array.items, 0..) |st, i| {
             const uses = c.str(c.get(st, "uses"));
-            const farm_connect = std.mem.eql(u8, base, farm_file) and uses != null and pinned(uses.?, "komira-ai/komira/.github/actions/farm-connect");
+            const farm_connect = c.containsStr(&farm_files, base) and uses != null and pinned(uses.?, "komira-ai/komira/.github/actions/farm-connect");
             if (uses) |u| {
                 // release.yml signs with Sigstore's installer (not GitHub-owned), pinned by commit like the rest.
                 const cosign_installer = std.mem.eql(u8, base, release_file) and pinned(u, "sigstore/cosign-installer");

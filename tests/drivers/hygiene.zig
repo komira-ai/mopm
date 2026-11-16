@@ -232,11 +232,17 @@ const subject_check = "oidc-subject-check.yml";
 /// farm-connect action. Allowed only for a push to main or a pull request from a branch of this
 /// repository, with no environment and no secret.
 const farm_file = "farm.yml";
+/// farm-macos.yml runs the macOS checks as farm actions on the farm's Mac workers, and holds the same id-token grant for farm-connect.
+/// Never on a pull request (macOS is a beta stage, after the merge): its triggers are exactly a push to main and a call from release.yml
+/// (`beta-macos`, the one job there that calls a workflow with an id-token grant), with no environment and no secret, and every job
+/// runs on a hosted Linux x86_64 runner: the Macs are reached through the farm, never as a runner.
+const farm_macos_file = "farm-macos.yml";
+const farm_macos_call = "./.github/workflows/" ++ farm_macos_file;
 /// release.yml publishes a release with build-provenance attestations, so its publish job holds an
 /// id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
 /// when the triggers are a push to main and a manual run, with no secret but the release bot's key and the
 /// archive signing key (the apt-index jobs), no environment but `release` (on exactly the jobs that read RELEASE_BOT_*),
-/// `apt-signing` (APT_GPG_*) and `apt-publish` (APT_PUBLISH_*), and no id-token on a job that calls another workflow.
+/// `apt-signing` (APT_GPG_*) and `apt-publish` (APT_PUBLISH_*), and no id-token on a job that calls another workflow but farm-macos.yml.
 const release_file = "release.yml";
 /// The environment that holds the release bot's key, restricted to main.
 const release_environment = "release";
@@ -401,6 +407,28 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
         return;
     }
 
+    if (std.mem.eql(u8, base, farm_macos_file)) {
+        const push = c.get(c.onValue(doc), "push");
+        const push_and_call = on.len == 2 and c.containsStr(on, "push") and c.containsStr(on, "workflow_call");
+        const push_main = push != null and push.? == .object and push.?.object.count() == 1 and blk: {
+            const br = c.get(push, "branches") orelse break :blk false;
+            break :blk br == .array and br.array.items.len == 1 and c.isStr(br.array.items[0], "main");
+        };
+        if (!(push_and_call and push_main)) {
+            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly push of branches [main] and workflow_call (never a pull request: macOS runs after the merge)", .{f});
+        }
+        if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
+            try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
+        }
+        for (jobs) |j| {
+            const runs_on = c.str(c.get(j.node, "runs-on")) orelse "";
+            if (!isLinuxX64Runner(runs_on)) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} runs on {s}; it must run on a hosted Linux x86_64 runner (ubuntu-*, not -arm) and reach the Macs through the farm", .{ f, j.name, if (runs_on.len == 0) "no runner it names" else runs_on });
+            }
+        }
+        return;
+    }
+
     if (std.mem.eql(u8, base, release_file)) {
         // on.keys == ["push", "workflow_dispatch"] && push has branches == ["main"] and nothing but paths-ignore
         const sorted_on = try a.dupe([]const u8, on);
@@ -443,6 +471,8 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
             }
         }
         for (jobs) |j| {
+            // The one exception: the job that calls farm-macos.yml, whose farm-connect needs the token (its rules are above).
+            if (c.isStr(c.get(j.node, "uses"), farm_macos_call)) continue;
             if (j.node == .object and j.node.object.contains("uses") and c.findKey(j.node, "id-token")) {
                 try c.problem(a, out, prefix ++ "{s}: job {s} calls a workflow and grants id-token", .{ f, j.name });
             }

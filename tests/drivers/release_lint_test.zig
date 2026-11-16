@@ -125,14 +125,27 @@ test "defect: tag does not need the user-level beta, or the plan" {
 
 test "defect: the user-level beta does not gate on the build, or the plan on the lint" {
     try variant("beta-user without build", "  beta-user:\n    needs: [plan, build]", "  beta-user:\n    needs: [plan]", "beta-user must need build");
-    try variant("plan without lint", "    needs: [beta, lint]", "    needs: [beta]", "plan must need lint");
-    try variant("plan without beta", "    needs: [beta, lint]", "    needs: [lint]", "plan must need beta");
+    try variant("plan without lint", "    needs: [beta, lint, beta-macos]", "    needs: [beta, beta-macos]", "plan must need lint");
+    try variant("plan without beta", "    needs: [beta, lint, beta-macos]", "    needs: [lint, beta-macos]", "plan must need beta");
+    try variant("plan without the macOS checks on the farm", "    needs: [beta, lint, beta-macos]", "    needs: [beta, lint]", "plan must need beta-macos");
 }
 
 test "defect: the stages call the right workflows" {
     try variant("beta-user calls the build", "    uses: ./.github/workflows/release-beta-user.yml", "    uses: ./.github/workflows/release-build.yml", "beta-user must call ./.github/workflows/release-beta-user.yml");
     try variant("lint calls ci", "    uses: ./.github/workflows/lint.yml", "    uses: ./.github/workflows/ci.yml", "lint must call ./.github/workflows/lint.yml");
     try variant("beta calls lint", "    uses: ./.github/workflows/ci.yml", "    uses: ./.github/workflows/lint.yml", "beta must call ./.github/workflows/ci.yml");
+    try variant("beta-macos calls farm.yml (the linux farm build, which a pull request runs)", "    uses: ./.github/workflows/farm-macos.yml", "    uses: ./.github/workflows/farm.yml", "beta-macos must call ./.github/workflows/farm-macos.yml");
+}
+
+/// The header of beta-macos as release.yml spells it: the id-token grant for farm-connect in the workflow it calls.
+const macos_head = "  beta-macos:\n    permissions:\n      contents: read\n      id-token: write\n";
+
+test "defect: the macOS checks on the farm (beta-macos) lose their grant, gain a write, a skip or an error budget, or go" {
+    try variant("beta-macos without id-token (farm-connect cannot join the farm)", macos_head, "  beta-macos:\n    permissions:\n      contents: read\n", "beta-macos: needs id-token: write");
+    try variant("beta-macos writes contents", macos_head, "  beta-macos:\n    permissions:\n      contents: write\n      id-token: write\n", "beta-macos: contents: write is not allowed here");
+    try variant("beta-macos with an if (a release that skips its macOS checks)", macos_head, macos_head ++ "    if: ${{ github.event_name == 'push' }}\n", "beta-macos must not have an if:");
+    try variant("beta-macos with continue-on-error", macos_head, macos_head ++ "    continue-on-error: true\n", "beta-macos must not set continue-on-error");
+    try variant("no beta-macos job", macos_head ++ "    uses: ./.github/workflows/farm-macos.yml\n", "", "jobs are");
 }
 
 test "defect: contents: write in verify" {
@@ -167,7 +180,7 @@ test "defect: a bare write-all, a continue-on-error, an if where none belongs" {
     try variant("beta-user continue-on-error", "  beta-user:\n    needs: [plan, build]\n", "  beta-user:\n    needs: [plan, build]\n    continue-on-error: true\n", "beta-user must not set continue-on-error");
     try variant("build with another if", build_if_head, "  build:\n    needs: plan\n    if: ${{ always() }}\n", "build must run only under if:");
     try variant("beta-user with another if", user_if_head, "  beta-user:\n    needs: [plan, build]\n    if: ${{ github.event_name == 'push' }}\n", "beta-user must run only under if:");
-    try variant("plan with an if", "  plan:\n    needs: [beta, lint]\n", "  plan:\n    needs: [beta, lint]\n    if: ${{ github.event_name == 'workflow_dispatch' }}\n", "plan must not have an if:");
+    try variant("plan with an if", "  plan:\n    needs: [beta, lint, beta-macos]\n", "  plan:\n    needs: [beta, lint, beta-macos]\n    if: ${{ github.event_name == 'workflow_dispatch' }}\n", "plan must not have an if:");
 }
 
 test "defect: the order of the stages" {
