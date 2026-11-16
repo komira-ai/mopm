@@ -5,12 +5,12 @@
 //!   1. `GET <ACTIONS_ID_TOKEN_REQUEST_URL>&audience=<audience>` with the request token as a bearer token
 //!      answers `{"value": "<jwt>"}`, a short-lived identity token for this job. The audience names the registry:
 //!      `mopm.dev` for prod and `<stage>.mopm.dev` for any other stage (`beta.mopm.dev` for beta).
-//!   2. `POST <api>/auth/oidc/exchange` with `{"jwt", "name", "version"}` (spec/api/openapi.yaml, `exchangeOidcToken`)
-//!      answers `{"token", "token_kind": "publish", "expires_at", "name", "version"}`: a token that may publish that
+//!   2. `POST <api_v2_url>/auth/oidc/exchange` with `{"jwt", "name", "version"}` (`name` is the package's full name
+//!      `<namespace>/<name>`; spec/api/openapi.yaml, `exchangeOidcToken`) answers `{"token", "token_kind": "publish", "expires_at", "name", "version"}`: a token that may publish that
 //!      one package version, if the job's repository, workflow and environment match a trusted publisher of the package.
 //!      `mopm publish --oidc` (one package) stays on this form: it is the path of a package's registered trusted publisher.
-//!   2'. `mopm publish --staged --oidc` posts `{"jwt", "packages": [{"name", "version"}, ...]}` instead (at most 500
-//!      entries, no name twice) and gets `{"token", "token_kind": "publish", "expires_at", "packages"}`: ONE token, good
+//!   2'. `mopm publish --staged --oidc` posts `{"jwt", "packages": [{"name", "version"}, ...]}` (full names) instead (at
+//!      most 500 entries, no name twice) and gets `{"token", "token_kind": "publish", "expires_at", "packages"}`: ONE token, good
 //!      for ten minutes, for exactly those package versions, which the registry lets create and run a group. An identity
 //!      token is single-use, so the whole staged set is covered by one exchange of one identity token.
 //!
@@ -31,6 +31,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const http = @import("http.zig");
 const registry = @import("registry.zig");
+const v2 = @import("registry_v2.zig");
 
 /// The variables GitHub Actions sets for a job that may request an identity token.
 pub const url_var = "ACTIONS_ID_TOKEN_REQUEST_URL";
@@ -94,6 +95,7 @@ pub fn tokenUrl(arena: Allocator, url: []const u8, audience: []const u8) Allocat
 pub fn identityToken(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, audience: []const u8) anyerror!Result {
     if (!registry.allowedUrl(job.url)) return .{ .bad = url_var ++ " is not an https URL; the identity token is not requested" };
     const url = try tokenUrl(arena, job.url, audience);
+    // not the registry API: GitHub Actions' own endpoint that issues the job's identity token
     const answer = http.retrying(arena, io, .GET, url, .{
         .token = job.token,
         .extra_headers = &.{.{ .name = "accept", .value = "application/json; api-version=2.0" }},
@@ -137,17 +139,9 @@ pub const Minted = struct { token: []const u8, kind: Kind };
 pub const Outcome = union(enum) { ok: Minted, bad: []const u8 };
 
 /// Trades the identity token `jwt` for a registry token that may publish `name` `version` (the single-package form).
-pub fn exchange(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, jwt: []const u8, name: []const u8, version: []const u8) anyerror!Result {
-    var body = std.ArrayList(u8).init(arena);
-    const w = body.writer();
-    try w.writeAll("{\"jwt\":");
-    try std.json.encodeJsonString(jwt, .{}, w);
-    try w.writeAll(",\"name\":");
-    try std.json.encodeJsonString(name, .{}, w);
-    try w.writeAll(",\"version\":");
-    try std.json.encodeJsonString(version, .{}, w);
-    try w.writeByte('}');
-    return asResult(try post(arena, io, policy, api_url, body.items, try std.fmt.allocPrint(arena, "{s} {s}", .{ name, version }), .publish));
+pub fn exchange(arena: Allocator, io: anytype, policy: http.Policy, api_v2_url: []const u8, jwt: []const u8, name: []const u8, version: []const u8) anyerror!Result {
+    const params = v2.ExchangeOidcTokenParams{ .body = .{ .jwt = jwt, .name = name, .version = version } };
+    return asResult(try post(arena, io, policy, api_v2_url, params, try std.fmt.allocPrint(arena, "{s} {s}", .{ name, version }), .publish));
 }
 
 /// The token of `o` as a plain `Result`, for the callers whose purpose is `publish` (`post` has refused a `stage` answer to them).
@@ -160,40 +154,30 @@ fn asResult(o: Outcome) Result {
 
 /// Trades the identity token `jwt` for one registry token that may publish exactly `packages` at those versions (the
 /// `packages` form: `{"jwt", "packages": [{"name", "version"}, ...]}`).
-pub fn exchangePackages(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, jwt: []const u8, packages: []const Package) anyerror!Result {
-    return asResult(try exchangePackagesFor(arena, io, policy, api_url, jwt, packages, .publish));
+pub fn exchangePackages(arena: Allocator, io: anytype, policy: http.Policy, api_v2_url: []const u8, jwt: []const u8, packages: []const Package) anyerror!Result {
+    return asResult(try exchangePackagesFor(arena, io, policy, api_v2_url, jwt, packages, .publish));
 }
 
 /// `exchangePackages` for a `purpose`: `publish` sends the body it always has, `stage` adds `"purpose":"stage"`. The answer
 /// carries the kind the registry says it minted.
-pub fn exchangePackagesFor(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, jwt: []const u8, packages: []const Package, purpose: Purpose) anyerror!Outcome {
-    var body = std.ArrayList(u8).init(arena);
-    const w = body.writer();
-    try w.writeAll("{\"jwt\":");
-    try std.json.encodeJsonString(jwt, .{}, w);
-    try w.writeAll(",\"packages\":[");
-    for (packages, 0..) |p, i| {
-        if (i != 0) try w.writeByte(',');
-        try w.writeAll("{\"name\":");
-        try std.json.encodeJsonString(p.name, .{}, w);
-        try w.writeAll(",\"version\":");
-        try std.json.encodeJsonString(p.version, .{}, w);
-        try w.writeByte('}');
-    }
-    try w.writeAll("]");
-    if (purpose == .stage) try w.writeAll(",\"purpose\":\"stage\"");
-    try w.writeAll("}");
-    return post(arena, io, policy, api_url, body.items, try std.fmt.allocPrint(arena, "the {d} packages of the set", .{packages.len}), purpose);
+pub fn exchangePackagesFor(arena: Allocator, io: anytype, policy: http.Policy, api_v2_url: []const u8, jwt: []const u8, packages: []const Package, purpose: Purpose) anyerror!Outcome {
+    const entries = try arena.alloc(v2.OidcExchangeRequestEntry, packages.len);
+    for (packages, entries) |p, *e| e.* = .{ .name = p.name, .version = p.version };
+    const params = v2.ExchangeOidcTokenParams{ .body = .{
+        .jwt = jwt,
+        .packages = entries,
+        .purpose = if (purpose == .stage) .stage else null,
+    } };
+    return post(arena, io, policy, api_v2_url, params, try std.fmt.allocPrint(arena, "the {d} packages of the set", .{packages.len}), purpose);
 }
 
-/// Sends an exchange `body` and reads the token out of the answer. `subject` names what the token is for, in a refusal.
+/// Sends an exchange (`params`, as the registry contract writes its URL and body) and reads the token out of the answer. `subject` names what the token is for, in a refusal.
 /// `purpose` is what the body asked for: an answer of the other kind than a `publish` request's is refused, because a token the
 /// run cannot use is not one to go on with; a `stage` request that is answered `publish` (or with no kind) is a registry from
 /// before `purpose`, and the caller decides what to say about it.
-fn post(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, body: []const u8, subject: []const u8, purpose: Purpose) anyerror!Outcome {
-    const url = try std.fmt.allocPrint(arena, "{s}/auth/oidc/exchange", .{api_url});
+fn post(arena: Allocator, io: anytype, policy: http.Policy, api_v2_url: []const u8, params: v2.ExchangeOidcTokenParams, subject: []const u8, purpose: Purpose) anyerror!Outcome {
     // A POST is sent once: a rerun of the command is its retry.
-    const answer = http.retrying(arena, io, .POST, url, .{ .body = body }, policy) catch |e| {
+    const answer = v2.send(v2.ExchangeOidcToken, arena, io, policy, api_v2_url, null, params) catch |e| {
         return .{ .bad = try std.fmt.allocPrint(arena, "POST /auth/oidc/exchange: {s}", .{@errorName(e)}) };
     };
     if (!answer.ok()) {
@@ -225,7 +209,7 @@ fn post(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8,
 
 /// The registry token for `name` `version`: an identity token for the registry's audience, exchanged. `stage` is the
 /// registry's own name for itself (`beta`), which names the audience.
-pub fn obtain(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, api_url: []const u8, stage: []const u8, name: []const u8, version: []const u8) anyerror!Result {
+pub fn obtain(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, api_v2_url: []const u8, stage: []const u8, name: []const u8, version: []const u8) anyerror!Result {
     const audience = switch (try audienceFor(arena, stage)) {
         .ok => |a| a,
         .bad => |why| return .{ .bad = why },
@@ -234,18 +218,18 @@ pub fn obtain(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, 
         .ok => |t| t,
         .bad => |why| return .{ .bad = why },
     };
-    return exchange(arena, io, policy, api_url, jwt, name, version);
+    return exchange(arena, io, policy, api_v2_url, jwt, name, version);
 }
 
 /// The one registry token for a set of package versions: one identity token for the registry's audience, one exchange
 /// of the `packages` form. The set is checked first, so that a set the service would refuse asks GitHub for nothing
 /// (an identity token is single-use and a request for one is a request the job should not waste).
-pub fn obtainPackages(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, api_url: []const u8, stage: []const u8, packages: []const Package) anyerror!Result {
-    return asResult(try obtainPackagesFor(arena, io, policy, job, api_url, stage, packages, .publish));
+pub fn obtainPackages(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, api_v2_url: []const u8, stage: []const u8, packages: []const Package) anyerror!Result {
+    return asResult(try obtainPackagesFor(arena, io, policy, job, api_v2_url, stage, packages, .publish));
 }
 
 /// `obtainPackages` for a `purpose`, answering the token with its kind.
-pub fn obtainPackagesFor(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, api_url: []const u8, stage: []const u8, packages: []const Package, purpose: Purpose) anyerror!Outcome {
+pub fn obtainPackagesFor(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, api_v2_url: []const u8, stage: []const u8, packages: []const Package, purpose: Purpose) anyerror!Outcome {
     if (packages.len == 0) return .{ .bad = "--oidc: the set names no package; nothing was sent" };
     if (packages.len > max_packages) {
         return .{ .bad = try std.fmt.allocPrint(arena, "--oidc: one identity token covers at most {d} packages and this set uploads {d}; a group is published as one unit, so it cannot be split; nothing was sent", .{ max_packages, packages.len }) };
@@ -263,7 +247,7 @@ pub fn obtainPackagesFor(arena: Allocator, io: anytype, policy: http.Policy, job
         .ok => |t| t,
         .bad => |why| return .{ .bad = why },
     };
-    return exchangePackagesFor(arena, io, policy, api_url, jwt, packages, purpose);
+    return exchangePackagesFor(arena, io, policy, api_v2_url, jwt, packages, purpose);
 }
 
 // ---------------------------------------------------------------------- tests
@@ -277,13 +261,15 @@ const Scripted = struct {
     identity_url: []const u8 = "",
     identity_bearer: []const u8 = "",
     identity_accept: []const u8 = "",
+    exchange_url: []const u8 = "",
     exchange_body: []const u8 = "",
     exchange_bearer: ?[]const u8 = null,
 
     pub fn once(s: *Scripted, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
-        if (std.mem.indexOf(u8, url, "/auth/oidc/exchange") != null) {
+        if (std.mem.indexOf(u8, url, v2.ExchangeOidcToken.path_template) != null) {
             try std.testing.expectEqual(std.http.Method.POST, method);
             s.exchange_calls += 1;
+            s.exchange_url = try arena.dupe(u8, url);
             s.exchange_body = try arena.dupe(u8, options.body orelse "");
             s.exchange_bearer = options.token;
             return s.exchange;
@@ -307,7 +293,7 @@ const secret_request_token = "request-token-secret";
 const secret_jwt = "header.payload.signature";
 const actions = Actions{ .url = "https://pipelines.example/idtoken?api-version=2.0", .token = secret_request_token };
 const good_identity = "{\"value\":\"" ++ secret_jwt ++ "\"}";
-const good_exchange = "{\"token\":\"mopm_registry_secret\",\"token_kind\":\"publish\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"name\":\"left_pad\",\"version\":\"1.2.3\"}";
+const good_exchange = "{\"token\":\"mopm_registry_secret\",\"token_kind\":\"publish\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"name\":\"acme/left_pad\",\"version\":\"1.2.3\"}";
 
 fn expectNoSecret(text: []const u8) !void {
     for ([_][]const u8{ secret_request_token, secret_jwt, "mopm_registry_secret" }) |s| {
@@ -366,12 +352,12 @@ test "obtain asks GitHub for the registry's audience, then exchanges that token 
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, good_exchange) };
-    const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", "left_pad", "1.2.3");
+    const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", "acme/left_pad", "1.2.3");
     try std.testing.expectEqualStrings("mopm_registry_secret", got.ok);
     try std.testing.expectEqualStrings("https://pipelines.example/idtoken?api-version=2.0&audience=beta.mopm.dev", io.identity_url);
     try std.testing.expectEqualStrings(secret_request_token, io.identity_bearer);
     try std.testing.expectEqualStrings("application/json; api-version=2.0", io.identity_accept);
-    try std.testing.expectEqualStrings("{\"jwt\":\"" ++ secret_jwt ++ "\",\"name\":\"left_pad\",\"version\":\"1.2.3\"}", io.exchange_body);
+    try std.testing.expectEqualStrings("{\"jwt\":\"" ++ secret_jwt ++ "\",\"name\":\"acme/left_pad\",\"version\":\"1.2.3\"}", io.exchange_body);
     // The exchange is the one request that carries no bearer token: the identity token is its credential.
     try std.testing.expect(io.exchange_bearer == null);
     try std.testing.expectEqual(@as(usize, 1), io.identity_calls);
@@ -383,7 +369,7 @@ test "the prod audience is mopm.dev" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, good_exchange) };
-    _ = try obtain(a, &io, .{}, actions, "https://api.mopm.dev/api/v1", "prod", "left_pad", "1.2.3");
+    _ = try obtain(a, &io, .{}, actions, "https://api.mopm.dev/api/v2", "prod", "acme/left_pad", "1.2.3");
     try std.testing.expectEqualStrings("https://pipelines.example/idtoken?api-version=2.0&audience=mopm.dev", io.identity_url);
 }
 
@@ -392,7 +378,7 @@ test "a refused identity request stops before the exchange and says nothing secr
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var io = Scripted{ .identity = reply(403, "{\"message\":\"no\"}"), .exchange = reply(200, good_exchange) };
-    const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", "left_pad", "1.2.3");
+    const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", "acme/left_pad", "1.2.3");
     try std.testing.expect(std.mem.indexOf(u8, got.bad, "HTTP 403") != null);
     try std.testing.expect(std.mem.indexOf(u8, got.bad, "id-token: write") != null);
     try std.testing.expectEqual(@as(usize, 0), io.exchange_calls);
@@ -406,7 +392,7 @@ test "an identity answer that is not a token is refused, before the exchange" {
     const bodies = [_][]const u8{ "not json", "[]", "{}", "{\"value\":\"\"}", "{\"value\":7}" };
     for (bodies) |body| {
         var io = Scripted{ .identity = reply(200, body), .exchange = reply(200, good_exchange) };
-        const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", "left_pad", "1.2.3");
+        const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", "acme/left_pad", "1.2.3");
         try std.testing.expect(got == .bad);
         try std.testing.expectEqual(@as(usize, 0), io.exchange_calls);
     }
@@ -417,10 +403,10 @@ test "a connection that fails is reported by name, for either request" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var io = Scripted{ .identity = error.ConnectionRefused, .exchange = reply(200, good_exchange) };
-    const first = try obtain(a, &io, .{ .retries = 0 }, actions, "https://api.beta.mopm.dev/api/v1", "beta", "left_pad", "1.2.3");
+    const first = try obtain(a, &io, .{ .retries = 0 }, actions, "https://api.beta.mopm.dev/api/v2", "beta", "acme/left_pad", "1.2.3");
     try std.testing.expect(std.mem.indexOf(u8, first.bad, "ConnectionRefused") != null);
     io = Scripted{ .identity = reply(200, good_identity), .exchange = error.ConnectionRefused };
-    const second = try obtain(a, &io, .{ .retries = 0 }, actions, "https://api.beta.mopm.dev/api/v1", "beta", "left_pad", "1.2.3");
+    const second = try obtain(a, &io, .{ .retries = 0 }, actions, "https://api.beta.mopm.dev/api/v2", "beta", "acme/left_pad", "1.2.3");
     try std.testing.expect(std.mem.indexOf(u8, second.bad, "ConnectionRefused") != null);
     try expectNoSecret(second.bad);
 }
@@ -431,13 +417,13 @@ test "an identity URL that is not https is never sent the request token" {
     const a = arena_state.allocator();
     var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, good_exchange) };
     const plain = Actions{ .url = "http://pipelines.example/idtoken", .token = secret_request_token };
-    const got = try obtain(a, &io, .{}, plain, "https://api.beta.mopm.dev/api/v1", "beta", "left_pad", "1.2.3");
+    const got = try obtain(a, &io, .{}, plain, "https://api.beta.mopm.dev/api/v2", "beta", "acme/left_pad", "1.2.3");
     try std.testing.expect(got == .bad);
     try std.testing.expectEqual(@as(usize, 0), io.identity_calls);
     try expectNoSecret(got.bad);
     // Loopback http is allowed, as it is for a registry: a local stand-in for GitHub.
     const local = Actions{ .url = "http://127.0.0.1:9/idtoken", .token = secret_request_token };
-    const ok = try obtain(a, &io, .{}, local, "https://api.beta.mopm.dev/api/v1", "beta", "left_pad", "1.2.3");
+    const ok = try obtain(a, &io, .{}, local, "https://api.beta.mopm.dev/api/v2", "beta", "acme/left_pad", "1.2.3");
     try std.testing.expect(ok == .ok);
 }
 
@@ -446,14 +432,14 @@ test "a refused exchange carries the registry's message and hint, and no secret"
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const refusals = [_]struct { status: u16, body: []const u8, text: []const u8 }{
-        .{ .status = 403, .body = "{\"error\":{\"code\":\"oidc_not_trusted\",\"message\":\"No trusted publisher of 'left_pad' matches this CI identity.\",\"hint\":\"Register the repository.\"}}", .text = "No trusted publisher of 'left_pad' matches this CI identity." },
+        .{ .status = 403, .body = "{\"error\":{\"code\":\"oidc_not_trusted\",\"message\":\"No trusted publisher of 'acme/left_pad' matches this CI identity.\",\"hint\":\"Register the repository.\"}}", .text = "No trusted publisher of 'acme/left_pad' matches this CI identity." },
         .{ .status = 401, .body = "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: wrong audience.\",\"hint\":\"Check the audience.\"}}", .text = "wrong audience" },
         .{ .status = 502, .body = "<html>bad gateway</html>", .text = "HTTP 502" },
     };
     for (refusals) |r| {
         var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(r.status, r.body) };
-        const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", "left_pad", "1.2.3");
-        try std.testing.expect(std.mem.indexOf(u8, got.bad, "refused the identity token for left_pad 1.2.3") != null);
+        const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", "acme/left_pad", "1.2.3");
+        try std.testing.expect(std.mem.indexOf(u8, got.bad, "refused the identity token for acme/left_pad 1.2.3") != null);
         try std.testing.expect(std.mem.indexOf(u8, got.bad, r.text) != null);
         try expectNoSecret(got.bad);
         // A 502 is not retried for a POST: the exchange is sent once.
@@ -468,7 +454,7 @@ test "an exchange answer without a publish token is refused" {
     const bodies = [_][]const u8{ "not json", "[]", "{}", "{\"token\":\"\"}", "{\"token\":\"t\",\"token_kind\":\"session\"}", "{\"token\":\"t\",\"token_kind\":3}" };
     for (bodies) |body| {
         var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, body) };
-        const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", "left_pad", "1.2.3");
+        const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", "acme/left_pad", "1.2.3");
         try std.testing.expect(got == .bad);
     }
 }
@@ -478,12 +464,12 @@ test "a stage that cannot name an audience asks GitHub for nothing" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, good_exchange) };
-    const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "Be Ta", "left_pad", "1.2.3");
+    const got = try obtain(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "Be Ta", "acme/left_pad", "1.2.3");
     try std.testing.expect(got == .bad);
     try std.testing.expectEqual(@as(usize, 0), io.identity_calls);
 }
 
-const three = [_]Package{ .{ .name = "a", .version = "1.0.0" }, .{ .name = "b", .version = "2.1.0" }, .{ .name = "c", .version = "0.0.3" } };
+const three = [_]Package{ .{ .name = "acme/a", .version = "1.0.0" }, .{ .name = "acme/b", .version = "2.1.0" }, .{ .name = "acme/c", .version = "0.0.3" } };
 const good_packages_exchange = "{\"token\":\"mopm_registry_secret\",\"token_kind\":\"publish\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"packages\":[]}";
 
 test "a set is covered by one identity request and one exchange that lists every member at its version" {
@@ -491,13 +477,14 @@ test "a set is covered by one identity request and one exchange that lists every
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, good_packages_exchange) };
-    const got = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", &three);
+    const got = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", &three);
     try std.testing.expectEqualStrings("mopm_registry_secret", got.ok);
     try std.testing.expectEqual(@as(usize, 1), io.identity_calls);
     try std.testing.expectEqual(@as(usize, 1), io.exchange_calls);
     try std.testing.expectEqualStrings("https://pipelines.example/idtoken?api-version=2.0&audience=beta.mopm.dev", io.identity_url);
+    try std.testing.expectEqualStrings("https://api.beta.mopm.dev/api/v2/auth/oidc/exchange", io.exchange_url);
     try std.testing.expectEqualStrings(
-        "{\"jwt\":\"" ++ secret_jwt ++ "\",\"packages\":[{\"name\":\"a\",\"version\":\"1.0.0\"},{\"name\":\"b\",\"version\":\"2.1.0\"},{\"name\":\"c\",\"version\":\"0.0.3\"}]}",
+        "{\"jwt\":\"" ++ secret_jwt ++ "\",\"packages\":[{\"name\":\"acme/a\",\"version\":\"1.0.0\"},{\"name\":\"acme/b\",\"version\":\"2.1.0\"},{\"name\":\"acme/c\",\"version\":\"0.0.3\"}]}",
         io.exchange_body,
     );
     try std.testing.expect(io.exchange_bearer == null);
@@ -508,12 +495,12 @@ test "a refused set exchange carries the registry's message and no secret, and i
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const refusals = [_]struct { status: u16, body: []const u8, text: []const u8 }{
-        .{ .status = 403, .body = "{\"error\":{\"code\":\"not_owner\",\"message\":\"You are not an owner of 'b'.\",\"hint\":\"Ask an owner.\"}}", .text = "You are not an owner of 'b'." },
-        .{ .status = 403, .body = "{\"error\":{\"code\":\"oidc_not_trusted\",\"message\":\"No trusted publisher of 'a' matches this CI identity.\",\"hint\":\"Register it.\"}}", .text = "No trusted publisher of 'a' matches this CI identity." },
+        .{ .status = 403, .body = "{\"error\":{\"code\":\"not_owner\",\"message\":\"You are not an owner of 'acme/b'.\",\"hint\":\"Ask an owner.\"}}", .text = "You are not an owner of 'acme/b'." },
+        .{ .status = 403, .body = "{\"error\":{\"code\":\"oidc_not_trusted\",\"message\":\"No trusted publisher of 'acme/a' matches this CI identity.\",\"hint\":\"Register it.\"}}", .text = "No trusted publisher of 'acme/a' matches this CI identity." },
     };
     for (refusals) |r| {
         var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(r.status, r.body) };
-        const got = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", &three);
+        const got = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", &three);
         try std.testing.expect(std.mem.indexOf(u8, got.bad, "refused the identity token for the 3 packages of the set") != null);
         try std.testing.expect(std.mem.indexOf(u8, got.bad, r.text) != null);
         try expectNoSecret(got.bad);
@@ -529,28 +516,28 @@ test "a set the service would refuse asks GitHub and the registry for nothing" {
 
     // Exactly the limit is covered; one more is refused whole, with the numbers in the message.
     var many = std.ArrayList(Package).init(a);
-    for (0..max_packages) |i| try many.append(.{ .name = try std.fmt.allocPrint(a, "pkg{d}", .{i}), .version = "1.0.0" });
-    const full = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", many.items);
+    for (0..max_packages) |i| try many.append(.{ .name = try std.fmt.allocPrint(a, "acme/pkg{d}", .{i}), .version = "1.0.0" });
+    const full = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", many.items);
     try std.testing.expectEqualStrings("mopm_registry_secret", full.ok);
     try std.testing.expectEqual(@as(usize, 1), io.exchange_calls);
 
     io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, good_packages_exchange) };
-    try many.append(.{ .name = "one-too-many", .version = "1.0.0" });
-    const over = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", many.items);
+    try many.append(.{ .name = "acme/one-too-many", .version = "1.0.0" });
+    const over = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", many.items);
     try std.testing.expect(std.mem.indexOf(u8, over.bad, "at most 500 packages") != null);
     try std.testing.expect(std.mem.indexOf(u8, over.bad, "uploads 501") != null);
     try std.testing.expect(std.mem.indexOf(u8, over.bad, "cannot be split") != null);
 
-    const twice = [_]Package{ .{ .name = "a", .version = "1.0.0" }, .{ .name = "a", .version = "1.0.1" } };
-    const dup = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", &twice);
-    try std.testing.expect(std.mem.indexOf(u8, dup.bad, "names a twice") != null);
-    const none = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", &.{});
+    const twice = [_]Package{ .{ .name = "acme/a", .version = "1.0.0" }, .{ .name = "acme/a", .version = "1.0.1" } };
+    const dup = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", &twice);
+    try std.testing.expect(std.mem.indexOf(u8, dup.bad, "names acme/a twice") != null);
+    const none = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v2", "beta", &.{});
     try std.testing.expect(none == .bad);
     try std.testing.expectEqual(@as(usize, 0), io.identity_calls);
     try std.testing.expectEqual(@as(usize, 0), io.exchange_calls);
 }
 
-const api_beta = "https://api.beta.mopm.dev/api/v1";
+const api_beta = "https://api.beta.mopm.dev/api/v2";
 
 test "a staging exchange asks for purpose stage and keeps the stage token the registry answers" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -561,7 +548,7 @@ test "a staging exchange asks for purpose stage and keeps the stage token the re
     try std.testing.expectEqualStrings("mopm_registry_secret", got.ok.token);
     try std.testing.expectEqual(Kind.stage, got.ok.kind);
     try std.testing.expectEqualStrings(
-        "{\"jwt\":\"" ++ secret_jwt ++ "\",\"packages\":[{\"name\":\"a\",\"version\":\"1.0.0\"},{\"name\":\"b\",\"version\":\"2.1.0\"},{\"name\":\"c\",\"version\":\"0.0.3\"}],\"purpose\":\"stage\"}",
+        "{\"jwt\":\"" ++ secret_jwt ++ "\",\"purpose\":\"stage\",\"packages\":[{\"name\":\"acme/a\",\"version\":\"1.0.0\"},{\"name\":\"acme/b\",\"version\":\"2.1.0\"},{\"name\":\"acme/c\",\"version\":\"0.0.3\"}]}",
         io.exchange_body,
     );
     try std.testing.expectEqual(@as(usize, 1), io.identity_calls);

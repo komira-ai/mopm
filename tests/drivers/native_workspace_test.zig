@@ -49,7 +49,7 @@ const is_macos = builtin.os.tag == .macos;
 const shim_value: []const u8 = if (is_macos) "43" else "42";
 const app_value: []const u8 = if (is_macos) "44" else "43";
 
-const consumer_toml = "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n";
+const consumer_toml = "[package]\nname = \"example/consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n";
 
 const consumer_main =
     \\from nativeapp import plus_one
@@ -119,10 +119,10 @@ fn unitById(graph: Value, id: []const u8) ?Value {
     return null;
 }
 
-/// Whether the unit `u` lists the built native `libshim.a` of `native:shimlib/shim`.
+/// Whether the unit `u` lists the built native `libshim.a` of `native:example/shimlib/shim`.
 fn listsBuiltShim(u: Value) bool {
     for (items(u, "natives")) |n| {
-        if (std.mem.eql(u8, h.jsonString(n, "soname") orelse "", "libshim.a") and std.mem.eql(u8, h.jsonString(n, "built") orelse "", "native:shimlib/shim")) return true;
+        if (std.mem.eql(u8, h.jsonString(n, "soname") orelse "", "libshim.a") and std.mem.eql(u8, h.jsonString(n, "built") orelse "", "native:example/shimlib/shim")) return true;
     }
     return false;
 }
@@ -142,7 +142,7 @@ const NativeSpec = struct {
 /// The native of tests/e2e/natws/shimlib/mopm.toml, written out, for a machine whose unit graph mopm cannot make (see
 /// `have_graph` in `run`). On linux-64 the spec comes from the graph, and a check holds it to this one.
 const manifest_spec = NativeSpec{
-    .package = "shimlib",
+    .package = "example/shimlib",
     .soname = "libshim.a",
     .srcs = &.{ "shimlib/native/scale.c", "shimlib/native/shim.c" },
     .cflags = &.{ "-O1", "-DSHIM_SCALE=6" },
@@ -236,11 +236,12 @@ const Ctx = struct {
 
     /// Builds the archive of a native from its spec, as a build system does: `cc -c` of each source with the flags
     /// (`cflags`, then the `cflags_by_os` of this operating system) and one `-I` per include directory (relative to
-    /// the member, which here sits at <ws>/<package>), then `ar` of the objects, in the order of the sources, into
+    /// the member, which here sits at <ws>/<import name of the package>), then `ar` of the objects, in the order of the sources, into
     /// `<natives>/<soname>`.
     fn buildNative(c: *Ctx, spec: NativeSpec, ws: []const u8, natives: []const u8) !void {
         const a = c.a;
-        const package = spec.package;
+        const start = if (std.mem.indexOfScalar(u8, spec.package, '/')) |slash| slash + 1 else 0;
+        const package = spec.package[start..];
         const soname = spec.soname;
         const member = try h.join(a, &.{ ws, package });
         var flags = std.ArrayList([]const u8).init(a);
@@ -350,10 +351,10 @@ fn run(a: Allocator, rep: *h.Report) !void {
     // `manifest_spec` to the graph's), and the compiler builds the libraries and the program directly.
     const have_graph = std.mem.eql(u8, subdir, "linux-64");
     const graph_path = try h.join(a, &.{ work, "graph.json" });
-    const native_id = "native:shimlib/shim";
-    const lib_shim = "shimlib@1.0.0#mojo1.0.0/lib";
-    const lib_app = "nativeapp@1.0.0#mojo1.0.0/lib";
-    const bin_demo = "nativeapp@1.0.0#mojo1.0.0/bin:demo";
+    const native_id = "native:example/shimlib/shim";
+    const lib_shim = "example/shimlib@1.0.0#mojo1.0.0/lib";
+    const lib_app = "example/nativeapp@1.0.0#mojo1.0.0/lib";
+    const bin_demo = "example/nativeapp@1.0.0#mojo1.0.0/bin:demo";
     if (have_graph) {
         r = try c.mopmRun(&env, ws, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0", "--subdir", subdir, "-o", graph_path });
         try c.must("mopm plan --unit-graph of the workspace", r);
@@ -369,40 +370,40 @@ fn run(a: Allocator, rep: *h.Report) !void {
     }
     var spec = manifest_spec;
     if (have_graph) {
-    const graph = try h.parseJson(a, try h.readFile(a, graph_path));
-    const closure = blk: {
-        const tcv = graph.object.get("toolchain") orelse return error.BadGraph;
-        break :blk h.jsonString(tcv, "closure_sha256") orelse return error.BadGraph;
-    };
-    try h.writeFile(try h.join(a, &.{ tc, "CLOSURE_SHA256" }), try h.fmt(a, "{s}\n", .{closure}));
+        const graph = try h.parseJson(a, try h.readFile(a, graph_path));
+        const closure = blk: {
+            const tcv = graph.object.get("toolchain") orelse return error.BadGraph;
+            break :blk h.jsonString(tcv, "closure_sha256") orelse return error.BadGraph;
+        };
+        try h.writeFile(try h.join(a, &.{ tc, "CLOSURE_SHA256" }), try h.fmt(a, "{s}\n", .{closure}));
 
-    const native_unit = unitById(graph, native_id) orelse {
-        rep.check("the graph holds the native unit native:shimlib/shim", false, "no such unit");
-        return error.Fatal;
-    };
-    spec = try specOf(a, native_unit);
-    rep.check("the native unit names the archive libshim.a and the member's sources, sorted", std.mem.eql(u8, h.jsonString(native_unit, "kind") orelse "", "native") and
-        std.mem.eql(u8, h.jsonString(native_unit, "soname") orelse "", "libshim.a") and
-        std.mem.eql(u8, try pathsOf(a, native_unit, "srcs"), "shimlib/native/scale.c shimlib/native/shim.c"), "kind, soname or srcs differ");
-    rep.check("the native unit names the header, the flags, the flags of each operating system and the include directory", std.mem.eql(u8, try pathsOf(a, native_unit, "hdrs"), "shimlib/native/shim.h") and
-        std.mem.eql(u8, try joined(a, native_unit, "cflags", " "), "-O1 -DSHIM_SCALE=6") and
-        std.mem.eql(u8, try joined(a, native_unit.object.get("cflags_by_os") orelse .null, "linux", " "), "-DSHIM_OS_ADD=0") and
-        std.mem.eql(u8, try joined(a, native_unit.object.get("cflags_by_os") orelse .null, "macos", " "), "-DSHIM_OS_ADD=1") and
-        std.mem.eql(u8, try joined(a, native_unit, "includes", " "), "native"), "a field of the native unit differs");
-    for ([_][]const u8{ lib_shim, lib_app, bin_demo }) |id| {
-        const u = unitById(graph, id);
-        rep.check(try h.fmt(a, "{s} lists the built native libshim.a of native:shimlib/shim", .{id}), u != null and listsBuiltShim(u.?), "the unit is missing or does not list the built native");
-    }
-    {
-        const want = manifest_spec;
-        const same = std.mem.eql(u8, spec.package, want.package) and std.mem.eql(u8, spec.soname, want.soname) and
-            std.mem.eql(u8, try std.mem.join(a, " ", spec.srcs), try std.mem.join(a, " ", want.srcs)) and
-            std.mem.eql(u8, try std.mem.join(a, " ", spec.cflags), try std.mem.join(a, " ", want.cflags)) and
-            std.mem.eql(u8, try std.mem.join(a, " ", spec.cflags_linux), try std.mem.join(a, " ", want.cflags_linux)) and
-            std.mem.eql(u8, try std.mem.join(a, " ", spec.cflags_macos), try std.mem.join(a, " ", want.cflags_macos)) and
-            std.mem.eql(u8, try std.mem.join(a, " ", spec.includes), try std.mem.join(a, " ", want.includes));
-        rep.check("the graph's native is the one this driver writes out for the platforms that have no graph", same, "manifest_spec differs from the native unit");
-    }
+        const native_unit = unitById(graph, native_id) orelse {
+            rep.check("the graph holds the native unit native:example/shimlib/shim", false, "no such unit");
+            return error.Fatal;
+        };
+        spec = try specOf(a, native_unit);
+        rep.check("the native unit names the archive libshim.a and the member's sources, sorted", std.mem.eql(u8, h.jsonString(native_unit, "kind") orelse "", "native") and
+            std.mem.eql(u8, h.jsonString(native_unit, "soname") orelse "", "libshim.a") and
+            std.mem.eql(u8, try pathsOf(a, native_unit, "srcs"), "shimlib/native/scale.c shimlib/native/shim.c"), "kind, soname or srcs differ");
+        rep.check("the native unit names the header, the flags, the flags of each operating system and the include directory", std.mem.eql(u8, try pathsOf(a, native_unit, "hdrs"), "shimlib/native/shim.h") and
+            std.mem.eql(u8, try joined(a, native_unit, "cflags", " "), "-O1 -DSHIM_SCALE=6") and
+            std.mem.eql(u8, try joined(a, native_unit.object.get("cflags_by_os") orelse .null, "linux", " "), "-DSHIM_OS_ADD=0") and
+            std.mem.eql(u8, try joined(a, native_unit.object.get("cflags_by_os") orelse .null, "macos", " "), "-DSHIM_OS_ADD=1") and
+            std.mem.eql(u8, try joined(a, native_unit, "includes", " "), "native"), "a field of the native unit differs");
+        for ([_][]const u8{ lib_shim, lib_app, bin_demo }) |id| {
+            const u = unitById(graph, id);
+            rep.check(try h.fmt(a, "{s} lists the built native libshim.a of native:example/shimlib/shim", .{id}), u != null and listsBuiltShim(u.?), "the unit is missing or does not list the built native");
+        }
+        {
+            const want = manifest_spec;
+            const same = std.mem.eql(u8, spec.package, want.package) and std.mem.eql(u8, spec.soname, want.soname) and
+                std.mem.eql(u8, try std.mem.join(a, " ", spec.srcs), try std.mem.join(a, " ", want.srcs)) and
+                std.mem.eql(u8, try std.mem.join(a, " ", spec.cflags), try std.mem.join(a, " ", want.cflags)) and
+                std.mem.eql(u8, try std.mem.join(a, " ", spec.cflags_linux), try std.mem.join(a, " ", want.cflags_linux)) and
+                std.mem.eql(u8, try std.mem.join(a, " ", spec.cflags_macos), try std.mem.join(a, " ", want.cflags_macos)) and
+                std.mem.eql(u8, try std.mem.join(a, " ", spec.includes), try std.mem.join(a, " ", want.includes));
+            rep.check("the graph's native is the one this driver writes out for the platforms that have no graph", same, "manifest_spec differs from the native unit");
+        }
     }
 
     // 2. The member's native, built from its C sources.
@@ -418,44 +419,43 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const lib_out = try h.join(a, &.{ work, "lib_out" });
     try cwd.makePath(deps);
     if (have_graph) {
-    for ([_]struct { id: []const u8, name: []const u8 }{ .{ .id = lib_shim, .name = "shimlib" }, .{ .id = lib_app, .name = "nativeapp" } }) |l| {
-        r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", l.id, "--graph", graph_path, "--out", lib_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.fmt(a, "{s}/stage_{s}", .{ work, l.name }) });
-        try c.must(try h.fmt(a, "mopm unit build: the library {s}", .{l.name}), r);
-        try cwd.copyFile(try h.join(a, &.{ lib_out, try h.fmt(a, "{s}.mojoc", .{l.name}) }), cwd, try h.join(a, &.{ deps, try h.fmt(a, "{s}.mojoc", .{l.name}) }), .{});
-    }
-    const bin_out = try h.join(a, &.{ work, "bin_out" });
-    r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", bin_demo, "--graph", graph_path, "--out", bin_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.join(a, &.{ work, "stage_demo" }) });
-    try c.must("mopm unit build: the program demo, with libshim.a in --natives", r);
-    try c.runProgram("the program built by mopm unit build", try h.join(a, &.{ bin_out, "demo" }));
-    const logged = try h.readFile(a, log);
-    var with_operand: usize = 0;
-    var build_lines: usize = 0;
-    var lib_with_operand: usize = 0;
-    var lines = std.mem.splitScalar(u8, logged, '\n');
-    while (lines.next()) |l| {
-        // The archive as a linker operand: `-Xlinker <natives dir>/libshim.a`. (The directory is not compared as text: a
-        // runner's temporary directory may be reached through a link.)
-        const has_operand = h.contains(l, "-Xlinker ") and h.contains(l, "/natives/libshim.a");
-        if (h.contains(l, " build ")) {
-            build_lines += 1;
-            if (has_operand) with_operand += 1;
-        } else if (has_operand) {
-            lib_with_operand += 1;
+        for ([_]struct { id: []const u8, name: []const u8 }{ .{ .id = lib_shim, .name = "shimlib" }, .{ .id = lib_app, .name = "nativeapp" } }) |l| {
+            r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", l.id, "--graph", graph_path, "--out", lib_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.fmt(a, "{s}/stage_{s}", .{ work, l.name }) });
+            try c.must(try h.fmt(a, "mopm unit build: the library {s}", .{l.name}), r);
+            try cwd.copyFile(try h.join(a, &.{ lib_out, try h.fmt(a, "{s}.mojoc", .{l.name}) }), cwd, try h.join(a, &.{ deps, try h.fmt(a, "{s}.mojoc", .{l.name}) }), .{});
         }
-    }
-    rep.check("the compiler's link line: the program's build holds the archive as a linker operand", build_lines == 1 and with_operand == 1, logged);
-    rep.check("the compiler's command lines for the libraries do not link the archive", lib_with_operand == 0, logged);
+        const bin_out = try h.join(a, &.{ work, "bin_out" });
+        r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", bin_demo, "--graph", graph_path, "--out", bin_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.join(a, &.{ work, "stage_demo" }) });
+        try c.must("mopm unit build: the program demo, with libshim.a in --natives", r);
+        try c.runProgram("the program built by mopm unit build", try h.join(a, &.{ bin_out, "demo" }));
+        const logged = try h.readFile(a, log);
+        var with_operand: usize = 0;
+        var build_lines: usize = 0;
+        var lib_with_operand: usize = 0;
+        var lines = std.mem.splitScalar(u8, logged, '\n');
+        while (lines.next()) |l| {
+            // The archive as a linker operand: `-Xlinker <natives dir>/libshim.a`. (The directory is not compared as text: a
+            // runner's temporary directory may be reached through a link.)
+            const has_operand = h.contains(l, "-Xlinker ") and h.contains(l, "/natives/libshim.a");
+            if (h.contains(l, " build ")) {
+                build_lines += 1;
+                if (has_operand) with_operand += 1;
+            } else if (has_operand) {
+                lib_with_operand += 1;
+            }
+        }
+        rep.check("the compiler's link line: the program's build holds the archive as a linker operand", build_lines == 1 and with_operand == 1, logged);
+        rep.check("the compiler's command lines for the libraries do not link the archive", lib_with_operand == 0, logged);
 
-    // Controls of the unit build: each must be able to fail.
-    const bare = try h.join(a, &.{ work, "natives_bare" });
-    try cwd.makePath(bare);
-    r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", bin_demo, "--graph", graph_path, "--out", try h.join(a, &.{ work, "out_a" }), "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", bare, "--stage", try h.join(a, &.{ work, "stage_a" }) });
-    rep.check("control: an archive missing from --natives is refused (4), naming it", !r.signaled and r.code == 4 and h.contains(r.text, "missing input: libshim.a, the archive of native:shimlib/shim") and h.contains(r.text, "is not in"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
-    const not_ar = try h.join(a, &.{ work, "natives_not_ar" });
-    try h.writeFile(try h.join(a, &.{ not_ar, "libshim.a" }), "this is not an archive\n");
-    r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", bin_demo, "--graph", graph_path, "--out", try h.join(a, &.{ work, "out_b" }), "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", not_ar, "--stage", try h.join(a, &.{ work, "stage_b" }) });
-    rep.check("control: a file that is not an archive is refused (4), naming libshim.a", !r.signaled and r.code == 4 and h.contains(r.text, "libshim.a"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
-
+        // Controls of the unit build: each must be able to fail.
+        const bare = try h.join(a, &.{ work, "natives_bare" });
+        try cwd.makePath(bare);
+        r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", bin_demo, "--graph", graph_path, "--out", try h.join(a, &.{ work, "out_a" }), "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", bare, "--stage", try h.join(a, &.{ work, "stage_a" }) });
+        rep.check("control: an archive missing from --natives is refused (4), naming it", !r.signaled and r.code == 4 and h.contains(r.text, "missing input: libshim.a, the archive of native:example/shimlib/shim") and h.contains(r.text, "is not in"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+        const not_ar = try h.join(a, &.{ work, "natives_not_ar" });
+        try h.writeFile(try h.join(a, &.{ not_ar, "libshim.a" }), "this is not an archive\n");
+        r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", bin_demo, "--graph", graph_path, "--out", try h.join(a, &.{ work, "out_b" }), "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", not_ar, "--stage", try h.join(a, &.{ work, "stage_b" }) });
+        rep.check("control: a file that is not an archive is refused (4), naming libshim.a", !r.signaled and r.code == 4 and h.contains(r.text, "libshim.a"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
     } else {
         // No unit graph here: the compiler builds the libraries and the program directly (the same sources, the same
         // archive on the link line). Each directory given with -I holds one .mojoc.
@@ -487,16 +487,16 @@ fn run(a: Allocator, rep: *h.Report) !void {
         if (std.mem.eql(u8, name, "shimlib")) try args.appendSlice(&.{ "--native", try h.fmt(a, "shim={s}:{s}", .{ subdir, archive_path }) });
         r = try c.mopmRun(&env, ws, args.items);
         try c.must(try h.fmt(a, "mopm pack {s}{s}", .{ name, if (std.mem.eql(u8, name, "shimlib")) " with the archive of its native" else "" }), r);
-        const file = try h.fmt(a, "mojo-{s}-1.0.0-mojo1.0.0_0.conda", .{name});
+        const file = try h.fmt(a, "mojo-example.{s}-1.0.0-mojo1.0.0_0.conda", .{name});
         try packs.append(.{ .name = name, .file = file, .bytes = try h.readFile(a, try h.join(a, &.{ dist, subdir, file })), .manifest_sha256 = try valueOf(a, r.text, "manifest_sha256") });
     }
     {
         var plan = std.ArrayList(u8).init(a);
-        try plan.appendSlice("{\"version\":1,\"members\":[");
+        try plan.appendSlice("{\"version\":2,\"members\":[");
         for (packs.items, 0..) |p, i| {
             if (i > 0) try plan.append(',');
             try plan.writer().print(
-                "{{\"name\":\"{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
+                "{{\"name\":\"example/{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
                 .{ p.name, p.manifest_sha256, subdir, p.file, try sha256Hex(a, p.bytes), p.bytes.len },
             );
         }
@@ -510,12 +510,13 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const consumer = try h.join(a, &.{ work, "consumer" });
     try h.writeFile(try h.join(a, &.{ consumer, "mopm.toml" }), consumer_toml);
     try h.writeFile(try h.join(a, &.{ consumer, "main.mojo" }), consumer_main);
-    r = try c.mopmRun(&env, consumer, &.{ "add", "nativeapp@=1.0.0", "--registry", fake.base, "--overlay", dist });
+    r = try c.mopmRun(&env, consumer, &.{ "add", "example/nativeapp@=1.0.0", "--registry", fake.base, "--overlay", dist });
     try c.must("mopm add --overlay locks the staged set in a fresh project", r);
     const consumer_lock = try h.readFile(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     rep.check("the lock pins the sha256 of libshim.a, the archive the member's pack carries", h.contains(consumer_lock, try sha256Hex(a, archive_bytes)), consumer_lock);
     rep.check("the lock does not name the staged set's directory", !h.contains(consumer_lock, dist), consumer_lock);
     const toolchain = try cp.fakeToolchain(a, try h.join(a, &.{ work, "fake" }), fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
+    _ = try cp.unpinToolchain(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     r = try c.mopmRun(&env, consumer, &.{ "sync", "--locked", "--overlay", dist, "--registry", fake.base, "--toolchain", toolchain.closure, "--cache", try h.join(a, &.{ work, "toolchain-cache" }) });
     try c.must("mopm sync --locked --overlay installs the set (the registry holds none of it)", r);
     rep.check("sync read the packages from the staged set", h.contains(r.text, "from the staged set"), r.text);
@@ -556,7 +557,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
 // The fixture is tests/e2e/natcxx: `cxxapp` (a library and the program `demo`) depends on the path member `cxxlib`, whose
 // native is `native/cxxshim.cpp` behind a C ABI (`cxx_answer`): it uses std::string, operator new[] and a virtual call,
 // so its archive leaves libc++'s symbols undefined. The walk is the one above, on linux-64: `mopm lock`, `mopm plan
-// --unit-graph` (the graph says format 5 and gives the program `link = ["c++"]`), the archive built with `c++ -c` and
+// --unit-graph` (the graph says format 6 and gives the program `link = ["c++"]`), the archive built with `c++ -c` and
 // `ar`, `mopm unit build` of the libraries and the program, the program run in an empty environment (it prints 42, which
 // only the C++ code gives), `mopm pack`, an `--overlay` install in a fresh project (the installed metadata carries the
 // link name) and `mopm build` of a program against it, run again. Without `link`, the program's link fails on libc++'s
@@ -650,10 +651,10 @@ fn runCxx(a: Allocator, rep: *h.Report) !void {
         break :blk h.jsonString(tcv, "closure_sha256") orelse return error.BadGraph;
     };
     try h.writeFile(try h.join(a, &.{ tc, "CLOSURE_SHA256" }), try h.fmt(a, "{s}\n", .{closure}));
-    const lib_cxx = "cxxlib@1.0.0#mojo1.0.0/lib";
-    const lib_app = "cxxapp@1.0.0#mojo1.0.0/lib";
-    const bin_demo = "cxxapp@1.0.0#mojo1.0.0/bin:demo";
-    rep.check("the graph is format 5", h.contains(graph_text, "\"unit_graph\": 5"), graph_text);
+    const lib_cxx = "example/cxxlib@1.0.0#mojo1.0.0/lib";
+    const lib_app = "example/cxxapp@1.0.0#mojo1.0.0/lib";
+    const bin_demo = "example/cxxapp@1.0.0#mojo1.0.0/bin:demo";
+    rep.check("the graph is format 6", h.contains(graph_text, "\"unit_graph\": 6"), graph_text);
     for ([_][]const u8{ lib_cxx, lib_app, bin_demo }) |id| {
         const u = unitById(graph, id);
         rep.check(try h.fmt(a, "{s} has link = [\"c++\"]", .{id}), u != null and std.mem.eql(u8, try joined(a, u.?, "link", ","), "c++"), "the unit is missing or names no c++");
@@ -702,16 +703,16 @@ fn runCxx(a: Allocator, rep: *h.Report) !void {
         if (std.mem.eql(u8, name, "cxxlib")) try args.appendSlice(&.{ "--native", try h.fmt(a, "cxxshim={s}:{s}", .{ subdir, archive_path }) });
         r = try c.mopmRun(&env, ws, args.items);
         try c.must(try h.fmt(a, "mopm pack {s}", .{name}), r);
-        const file = try h.fmt(a, "mojo-{s}-1.0.0-mojo1.0.0_0.conda", .{name});
+        const file = try h.fmt(a, "mojo-example.{s}-1.0.0-mojo1.0.0_0.conda", .{name});
         try packs.append(.{ .name = name, .file = file, .bytes = try h.readFile(a, try h.join(a, &.{ dist, subdir, file })), .manifest_sha256 = try valueOf(a, r.text, "manifest_sha256") });
     }
     {
         var plan = std.ArrayList(u8).init(a);
-        try plan.appendSlice("{\"version\":1,\"members\":[");
+        try plan.appendSlice("{\"version\":2,\"members\":[");
         for (packs.items, 0..) |p, i| {
             if (i > 0) try plan.append(',');
             try plan.writer().print(
-                "{{\"name\":\"{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
+                "{{\"name\":\"example/{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
                 .{ p.name, p.manifest_sha256, subdir, p.file, try sha256Hex(a, p.bytes), p.bytes.len },
             );
         }
@@ -723,13 +724,14 @@ fn runCxx(a: Allocator, rep: *h.Report) !void {
     var fake = try h.Fake.start(a, try h.toolPathAbs(a, "MOPM_FAKE_REGISTRY"), try h.join(a, &.{ work, "fake" }));
     defer fake.close();
     const consumer = try h.join(a, &.{ work, "consumer" });
-    try h.writeFile(try h.join(a, &.{ consumer, "mopm.toml" }), "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n");
+    try h.writeFile(try h.join(a, &.{ consumer, "mopm.toml" }), "[package]\nname = \"example/consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n");
     try h.writeFile(try h.join(a, &.{ consumer, "main.mojo" }), "from cxxapp import plus_one\nfrom cxxlib import cxx_answer\n\n\ndef main():\n    print(\"cxx\", cxx_answer())\n    print(\"app\", plus_one())\n");
-    r = try c.mopmRun(&env, consumer, &.{ "add", "cxxapp@=1.0.0", "--registry", fake.base, "--overlay", dist });
+    r = try c.mopmRun(&env, consumer, &.{ "add", "example/cxxapp@=1.0.0", "--registry", fake.base, "--overlay", dist });
     try c.must("mopm add --overlay locks the staged set in a fresh project", r);
     const consumer_lock = try h.readFile(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     rep.check("the lock carries link = [\"c++\"] for the native", h.contains(consumer_lock, "\"link\": [\n            \"c++\"\n          ]"), consumer_lock);
     const toolchain = try cp.fakeToolchain(a, try h.join(a, &.{ work, "fake" }), fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
+    _ = try cp.unpinToolchain(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     r = try c.mopmRun(&env, consumer, &.{ "sync", "--locked", "--overlay", dist, "--registry", fake.base, "--toolchain", toolchain.closure, "--cache", try h.join(a, &.{ work, "toolchain-cache" }) });
     try c.must("mopm sync --locked --overlay installs the set", r);
     const env_dir = try h.join(a, &.{ consumer, ".mopm/env" });

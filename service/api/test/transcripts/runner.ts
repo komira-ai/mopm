@@ -1,8 +1,10 @@
 import {
+  AuthError,
   Authenticator,
   DeviceLogin,
   GithubJwtVerifier,
   HttpGitHubApi,
+  MemoryNamespaceStore,
   OidcExchange,
   TokenService,
 } from '../../src/auth';
@@ -129,6 +131,7 @@ export async function runScenario(sc: Scenario): Promise<{ transcript: Transcrip
     ...(w.github?.user ? { user: w.github.user } : {}),
     ...(w.github?.user_status ? { userStatus: w.github.user_status } : {}),
   });
+  const namespaces = new MemoryNamespaceStore();
   const owned = async (id: number) => {
     const out: string[] = [];
     for (const n of await registry.listPackageNames()) if ((await registry.listOwners(n)).some((o) => o.github_id === id)) out.push(n);
@@ -143,7 +146,8 @@ export async function runScenario(sc: Scenario): Promise<{ transcript: Transcrip
           now: h.clock.now,
           verifier: new GithubJwtVerifier({ audiences: ['mopm.dev'], now: h.clock.now, jwks: async () => ({ keys: [] }) }),
         }),
-        devices: async () => new DeviceLogin({ store: h.authStore, github: new HttpGitHubApi('Iv1.testclientid', github.fetchFn), now: h.clock.now, require2fa: w.require_2fa }),
+        devices: async () => new DeviceLogin({ store: h.authStore, namespaces, github: new HttpGitHubApi('Iv1.testclientid', github.fetchFn), now: h.clock.now, require2fa: w.require_2fa }),
+        registration: async () => { throw new AuthError('unavailable', 'The registry is temporarily unavailable.'); }, // prettier-ignore
       }
     : undefined;
   const deps: RouterDeps = {

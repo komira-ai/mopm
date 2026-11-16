@@ -15,11 +15,20 @@ import { readSearch, searchErrorView, searchResultsView, searchTooLongView } fro
 import { versionView } from './views/version.js';
 
 /**
- * The API refused the route's name. routes.ts sends only names the spec grammar accepts, so this means the two
- * grammars disagree: nothing is at this address and a Retry cannot help, so the page is the not-found one.
+ * The API refused the route's namespace or name. routes.ts sends only namespaces and names the spec grammar accepts, so
+ * invalid_namespace or invalid_name means the two grammars disagree, and namespace_reserved names a namespace nobody can
+ * hold (a conda subdir, a channel prefix): nothing is at this address and a Retry cannot help, so the page is the
+ * not-found one.
  */
+const REFUSED_NAME: ReadonlySet<string> = new Set(['invalid_name', 'invalid_namespace', 'namespace_reserved']);
+
 function refusedName(r: { kind: string; code?: string }): boolean {
-  return r.kind === 'invalid' && r.code === 'invalid_name';
+  return r.kind === 'invalid' && r.code !== undefined && REFUSED_NAME.has(r.code);
+}
+
+/** The API says the package is missing, not only the version: no such package, or no such namespace. */
+function packageMissing(code: string | undefined): boolean {
+  return code === 'package_not_found' || code === 'namespace_not_found';
 }
 
 /** `pathname` and `search` are location's; `api` is null on a host outside the table; `host` is location.hostname. */
@@ -37,18 +46,20 @@ export async function appView<N>(doc: Doc<N>, pathname: string, search: string, 
       return { ...view, canonicalPath, searchQ: state.q };
     }
     case 'package': {
-      const r = await api.getPackage(route.name);
-      if (r.kind === 'ok') return packageView(doc, route.name, r.value, ctx);
-      return r.kind === 'notFound' || refusedName(r) ? notFoundView(doc, route.name) : errorView(doc, r);
+      const f = { namespace: route.namespace, name: route.name };
+      const r = await api.getPackage(f);
+      if (r.kind === 'ok') return packageView(doc, f, r.value, ctx);
+      return r.kind === 'notFound' || refusedName(r) ? notFoundView(doc, f) : errorView(doc, r);
     }
     case 'version': {
-      const r = await api.getVersion(route.name, route.version);
-      if (r.kind === 'ok') return versionView(doc, route.name, r.value, ctx);
-      if (refusedName(r)) return notFoundView(doc, route.name);
-      if (r.kind === 'invalid' && r.code === 'invalid_version') return notFoundView(doc, route.name, route.version);
+      const f = { namespace: route.namespace, name: route.name };
+      const r = await api.getVersion(f, route.version);
+      if (r.kind === 'ok') return versionView(doc, f, r.value, ctx);
+      if (refusedName(r)) return notFoundView(doc, f);
+      if (r.kind === 'invalid' && r.code === 'invalid_version') return notFoundView(doc, f, route.version);
       if (r.kind !== 'notFound') return errorView(doc, r);
-      // The API says which is missing: the package, or only this version of it.
-      return r.code === 'package_not_found' ? notFoundView(doc, route.name) : notFoundView(doc, route.name, route.version);
+      // The API says which is missing: the package (or its whole namespace), or only this version of it.
+      return packageMissing(r.code) ? notFoundView(doc, f) : notFoundView(doc, f, route.version);
     }
   }
 }

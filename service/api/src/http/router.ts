@@ -9,7 +9,9 @@ import { render } from './catalogue';
 import { templateFor } from './auth-catalogue';
 import { routePublish, type PublishApi } from './publish-routes';
 import { buildIndexConfig } from '../index-files';
+import { flatCreationHint } from '../publish/catalogue';
 import { createHash } from 'node:crypto';
+import { routeV2, type V2Deps } from './v2-routes';
 
 export type Stage = 'beta' | 'gamma' | 'prod';
 
@@ -43,6 +45,8 @@ export interface RouterDeps {
   publish?: PublishApi;
   /** The hosts `GET /index/config.json` names (from the stage's configuration). Absent: that path answers 404. */
   indexConfig?: { apiDomain: string; channelDomain: string };
+  /** What `/api/v2` needs besides the services above (src/http/v2-routes.ts). Absent: every v2 path answers `unavailable`. */
+  v2?: V2Deps;
 }
 
 export const INDEX_CONFIG_PATH = '/index/config.json';
@@ -64,22 +68,22 @@ function respond(statusCode: number, requestId: string, body?: unknown): HttpRes
 }
 
 function errorResponse(requestId: string, code: string, status: number, detail: Record<string, string>): HttpResponse {
-  const entry = templateFor(code);
-  if (!entry) return errorResponse(requestId, 'internal_error', HTTP_STATUS.internal_error, {});
+  // Both callers pass a code the catalogue holds (the catch below checks it first).
+  const entry = templateFor(code)!;
   return respond(status, requestId, {
-    error: { code, message: render(entry.message, detail), hint: render(entry.hint, detail) },
+    error: { code, message: render(entry.message, detail), hint: flatCreationHint(code, detail) ?? render(entry.hint, detail) },
   });
 }
 
-const bad = (detail: string) => new RegistryError('invalid_request', detail, { detail });
+export const bad = (detail: string) => new RegistryError('invalid_request', detail, { detail });
 
 // --- cursors: opaque to clients; base64url of a small JSON object that names what it continues ---------------
 
-type Cursor = { k: 'name'; after: string } | { k: 'updated'; ts: string; after: string } | { k: 'version'; after: string };
+export type Cursor = { k: 'name'; after: string } | { k: 'updated'; ts: string; after: string } | { k: 'version'; after: string };
 
-const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c), 'utf8').toString('base64url');
+export const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c), 'utf8').toString('base64url');
 
-function decodeCursor(raw: string, kind: Cursor['k']): Cursor {
+export function decodeCursor(raw: string, kind: Cursor['k']): Cursor {
   const unknown = bad('cursor is not recognised');
   if (raw.length > 512) throw unknown;
   let c: any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -94,7 +98,7 @@ function decodeCursor(raw: string, kind: Cursor['k']): Cursor {
   return c as Cursor;
 }
 
-function parseLimit(raw: string | undefined): number {
+export function parseLimit(raw: string | undefined): number {
   if (raw === undefined) return DEFAULT_LIMIT;
   if (!/^[0-9]+$/.test(raw)) throw bad('limit must be an integer from 1 to 100');
   const n = Number(raw);
@@ -105,10 +109,10 @@ function parseLimit(raw: string | undefined): number {
 // --- projections ------------------------------------------------------------------------------------------
 
 /** `pending` is internal: a reserved number whose files are not committed. It is never listed. */
-const visible = (vs: VersionRecord[]) => vs.filter((v) => v.state !== 'pending');
-const newestFirst = (vs: VersionRecord[]) => [...vs].sort((a, b) => compareVersions(b.version, a.version));
+export const visible = (vs: VersionRecord[]) => vs.filter((v) => v.state !== 'pending');
+export const newestFirst = (vs: VersionRecord[]) => [...vs].sort((a, b) => compareVersions(b.version, a.version));
 
-function versionSummary(v: VersionRecord) {
+export function versionSummary(v: VersionRecord) {
   return {
     version: v.version,
     state: v.state,
@@ -122,7 +126,7 @@ function versionSummary(v: VersionRecord) {
  * A readme over the cap is dropped rather than truncated mid-character; the publish pipeline refuses such a readme,
  * so this is a guard for a row written some other way.
  */
-function displayMetadata(r: Partial<Pick<VersionRecord, 'description' | 'license' | 'repository' | 'homepage' | 'keywords' | 'readme'>>) {
+export function displayMetadata(r: Partial<Pick<VersionRecord, 'description' | 'license' | 'repository' | 'homepage' | 'keywords' | 'readme'>>) {
   return {
     ...(r.description === undefined ? {} : { description: r.description }),
     ...(r.license === undefined ? {} : { license: r.license }),
@@ -134,7 +138,7 @@ function displayMetadata(r: Partial<Pick<VersionRecord, 'description' | 'license
 }
 
 /** Newest published version, or null (spec: PackageSummary.latest). */
-function latestOf(vs: VersionRecord[]): string | null {
+export function latestOf(vs: VersionRecord[]): string | null {
   const candidates = vs.filter((v) => v.state === 'published');
   return candidates.length ? newestFirst(candidates)[0]!.version : null;
 }
@@ -143,13 +147,13 @@ function latestOf(vs: VersionRecord[]): string | null {
 const updatedAt = (p: PackageSummaryRecord, vs: VersionRecord[]) =>
   vs.reduce((m, v) => (v.published_at > m ? v.published_at : m), p.created_at);
 
-function readmeOf(vs: VersionRecord[]): string | undefined {
+export function readmeOf(vs: VersionRecord[]): string | undefined {
   const latest = latestOf(vs);
   const v = latest === null ? undefined : vs.find((x) => x.version === latest);
   return v === undefined ? undefined : displayMetadata({ readme: v.readme }).readme;
 }
 
-function packageSummary(p: PackageSummaryRecord, vs: VersionRecord[]) {
+export function packageSummary(p: PackageSummaryRecord, vs: VersionRecord[]) {
   return { name: p.name, latest: latestOf(vs), description: p.description ?? null, updated_at: updatedAt(p, vs) };
 }
 
@@ -166,10 +170,11 @@ async function requirePackage(deps: RouterDeps, name: string): Promise<PackageRe
   return p;
 }
 
-const getHealth = (deps: RouterDeps) => ({
+/** `getHealth`, the same at both prefixes but for `api_version`. */
+export const getHealth = (deps: RouterDeps, api_version: 'v1' | 'v2' = 'v1') => ({
   status: 'ok',
   stage: deps.stage,
-  api_version: 'v1',
+  api_version,
   read_only: deps.readOnly,
   // Additive fields (the contract allows them): what e2e reads to prove which release is deployed.
   version: deps.version,
@@ -180,14 +185,17 @@ const getHealth = (deps: RouterDeps) => ({
   features: ['group_readme_objects'],
 });
 
-async function getPackage(deps: RouterDeps, name: string) {
-  const p = await requirePackage(deps, name);
-  const [owners, all] = await Promise.all([deps.store.listOwners(p.name), deps.store.listVersions(p.name)]);
+/**
+ * `PackageInfo` but for who holds the package: `owners` (v1) or `namespace` (v2) goes after `state`, which is the only
+ * difference between the two bodies.
+ */
+export async function packageInfo(deps: RouterDeps, p: PackageRecord, holder: () => Promise<Record<string, unknown>>) {
+  const [who, all] = await Promise.all([holder(), deps.store.listVersions(p.name)]);
   const vs = visible(all);
   return {
     name: p.name,
     state: p.state,
-    owners: owners.map((o) => ({ github_id: o.github_id, handle: o.handle })),
+    ...who,
     latest: latestOf(vs),
     repository: p.repository ?? null,
     license: p.license ?? null,
@@ -201,10 +209,21 @@ async function getPackage(deps: RouterDeps, name: string) {
   };
 }
 
+async function getPackage(deps: RouterDeps, name: string) {
+  const p = await requirePackage(deps, name);
+  const owners = async () => ({ owners: (await deps.store.listOwners(p.name)).map((o) => ({ github_id: o.github_id, handle: o.handle })) });
+  return packageInfo(deps, p, owners);
+}
+
 async function listVersions(deps: RouterDeps, name: string, query: HttpRequest['query']) {
+  return versionPage(deps, query, () => requirePackage(deps, name));
+}
+
+/** The page of `listVersions`: the limit and cursor are checked before the package is read. */
+export async function versionPage(deps: RouterDeps, query: HttpRequest['query'], find: () => Promise<PackageRecord>) {
   const limit = parseLimit(query.limit);
   const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, 'version');
-  const p = await requirePackage(deps, name);
+  const p = await find();
   let vs = newestFirst(visible(await deps.store.listVersions(p.name)));
   if (after) vs = vs.filter((v) => compareVersions(v.version, after.after) < 0);
   const page = vs.slice(0, limit);
@@ -215,8 +234,38 @@ async function listVersions(deps: RouterDeps, name: string, query: HttpRequest['
 }
 
 /** `sort=updated` ranks every match by its newest publication, so it reads them all; beyond this many it refuses. */
-const MAX_UPDATED_SCAN = 1000;
-const SEARCH_PAGE = 100;
+export const MAX_UPDATED_SCAN = 1000;
+export const SEARCH_PAGE = 100;
+
+/** One read for the whole page, so that a group's members are all shown or all hidden (src/group.ts). */
+export async function summarise(deps: RouterDeps, ps: PackageSummaryRecord[]) {
+  const byName = await deps.store.versionsOf(
+    ps.map((p) => p.name),
+    API_VIEW,
+  );
+  return ps.map((p) => packageSummary(p, visible(byName.get(p.name)!)));
+}
+
+/** A row of the name index that `/api/v1` lists: a full name (`<namespace>/<name>`) belongs to `/api/v2`. */
+const isFlat = (p: PackageSummaryRecord) => !p.name.includes('/');
+
+/**
+ * Up to `want` flat packages of the index from `prefix`, after `after`. A full name is skipped, so a page may take
+ * several reads to fill.
+ */
+async function flatSearch(deps: RouterDeps, prefix: string, after: string | undefined, want: number) {
+  const found: PackageSummaryRecord[] = [];
+  // No flat name has a `/`: nothing to read.
+  if (prefix.includes('/')) return found;
+  const size = Math.min(want, SEARCH_PAGE);
+  for (let last = after; found.length < want; ) {
+    const chunk = await deps.store.searchPackages(prefix, last, size);
+    for (const p of chunk) if (isFlat(p) && found.length < want) found.push(p);
+    if (chunk.length < size) break;
+    last = chunk[chunk.length - 1]!.name;
+  }
+  return found;
+}
 
 async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
   const limit = parseLimit(query.limit);
@@ -227,38 +276,28 @@ async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
   const prefix = normaliseQuery(q);
   const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sort);
 
-  // One read for the whole page, so that a group's members are all shown or all hidden (src/group.ts).
-  const summarise = async (ps: PackageSummaryRecord[]) => {
-    const byName = await deps.store.versionsOf(
-      ps.map((p) => p.name),
-      API_VIEW,
-    );
-    return ps.map((p) => packageSummary(p, visible(byName.get(p.name)!)));
-  };
-
   if (sort === 'name') {
     // A name cursor continues the index at that name; one that does not start with this query's prefix is for
     // another query and would be outside the index range.
     if (after && !after.after.startsWith(prefix)) throw bad('cursor does not belong to this query');
     // One more than the page, to know whether there is a next page.
-    const found = await deps.store.searchPackages(prefix, after?.after, limit + 1);
+    const found = await flatSearch(deps, prefix, after?.after, limit + 1);
     const page = found.slice(0, limit);
     return {
-      packages: await summarise(page),
+      packages: await summarise(deps, page),
       next_cursor: found.length > limit ? encodeCursor({ k: 'name', after: page[page.length - 1]!.name }) : null,
     };
   }
 
   // sort=updated needs every match's newest publication time (there is no index on it yet).
-  const matches: PackageSummaryRecord[] = [];
-  for (let last: string | undefined; ; ) {
-    const chunk = await deps.store.searchPackages(prefix, last, SEARCH_PAGE);
-    matches.push(...chunk);
-    if (matches.length > MAX_UPDATED_SCAN) throw bad(`sort=updated needs a longer q: more than ${MAX_UPDATED_SCAN} packages match`);
-    if (chunk.length < SEARCH_PAGE) break;
-    last = chunk[chunk.length - 1]!.name;
-  }
-  let all = await summarise(matches);
+  const matches = await flatSearch(deps, prefix, undefined, MAX_UPDATED_SCAN + 1);
+  if (matches.length > MAX_UPDATED_SCAN) throw bad(`sort=updated needs a longer q: more than ${MAX_UPDATED_SCAN} packages match`);
+  return updatedPage(await summarise(deps, matches), limit, after);
+}
+
+/** The page of `sort=updated`: newest publication first, name order within a time, continuing after the cursor. */
+export function updatedPage(summaries: ReturnType<typeof packageSummary>[], limit: number, after: Cursor | undefined) {
+  let all = summaries;
   all.sort((a, b) => (a.updated_at === b.updated_at ? (a.name < b.name ? -1 : 1) : a.updated_at < b.updated_at ? 1 : -1));
   if (after && after.k === 'updated') {
     all = all.filter((s) => s.updated_at < after.ts || (s.updated_at === after.ts && s.name > after.after));
@@ -281,6 +320,11 @@ async function getVersion(deps: RouterDeps, name: string, version: string) {
   validName(name);
   canonicalVersion(version); // throws invalid_version before anything is read
   const p = await requirePackage(deps, name);
+  return versionDetail(deps, p, version);
+}
+
+/** The version row of `p`, as `VersionDetail`; `version_not_found` for a missing or pending one. */
+export async function versionDetail(deps: RouterDeps, p: PackageRecord, version: string) {
   const v = await deps.store.getVersion(p.name, version);
   if (!v || v.state === 'pending') throw new RegistryError('version_not_found', `'${p.name}' has no version '${version}'.`, { name: p.name, version });
   return {
@@ -338,6 +382,8 @@ function indexConfig(deps: RouterDeps, requestId: string): HttpResponse {
 export async function route(req: HttpRequest, deps: RouterDeps, requestId: string): Promise<HttpResponse> {
   try {
     if (req.path === INDEX_CONFIG_PATH && req.method === 'GET') return indexConfig(deps, requestId);
+    const v2 = await routeV2(req, deps, requestId);
+    if (v2) return v2;
     if (deps.publish) {
       const published = await routePublish(req, deps.publish, requestId);
       if (published) return published;

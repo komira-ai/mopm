@@ -232,11 +232,17 @@ const subject_check = "oidc-subject-check.yml";
 /// farm-connect action. Allowed only for a push to main or a pull request from a branch of this
 /// repository, with no environment and no secret.
 const farm_file = "farm.yml";
+/// farm-macos.yml runs the macOS checks as farm actions on the farm's Mac workers, and holds the same id-token grant for farm-connect.
+/// Never on a pull request (macOS is a beta stage, after the merge): its triggers are exactly a push to main and a call from release.yml
+/// (`beta-macos`, the one job there that calls a workflow with an id-token grant), with no environment and no secret, and every job
+/// runs on a hosted Linux x86_64 runner: the Macs are reached through the farm, never as a runner.
+const farm_macos_file = "farm-macos.yml";
+const farm_macos_call = "./.github/workflows/" ++ farm_macos_file;
 /// release.yml publishes a release with build-provenance attestations, so its publish job holds an
 /// id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
 /// when the triggers are a push to main and a manual run, with no secret but the release bot's key and the
 /// archive signing key (the apt-index jobs), no environment but `release` (on exactly the jobs that read RELEASE_BOT_*),
-/// `apt-signing` (APT_GPG_*) and `apt-publish` (APT_PUBLISH_*), and no id-token on a job that calls another workflow.
+/// `apt-signing` (APT_GPG_*) and `apt-publish` (APT_PUBLISH_*), and no id-token on a job that calls another workflow but farm-macos.yml.
 const release_file = "release.yml";
 /// The environment that holds the release bot's key, restricted to main.
 const release_environment = "release";
@@ -296,6 +302,56 @@ fn jobIf(a: Allocator, job: Value) ![]const u8 {
     return c.toS(a, c.get(job, "if"));
 }
 
+/// A hosted Linux x86_64 runner: `ubuntu-*`, not an `-arm` one. The owner's rule: the pull request checks run on Linux x86_64 only; every
+/// other platform is a beta stage of the release (release.yml), after the merge.
+fn isLinuxX64Runner(r: []const u8) bool {
+    return std.mem.startsWith(u8, r, "ubuntu-") and std.mem.indexOf(u8, r, "arm") == null;
+}
+
+/// The runners a pull request can reach in a job whose `runs-on` is `${{ matrix.os }}`: the list of `matrix.os`, the `os` of each `include`, and
+/// for a `fromJSON(github.event_name == 'pull_request' && '[...]' || '[...]')` expression the first list, the one a pull request gets.
+fn matrixRunners(a: Allocator, f: []const u8, job: Job, out: *Out) ![]const []const u8 {
+    var found = std.ArrayList([]const u8).init(a);
+    const matrix = c.get(c.get(job.node, "strategy"), "matrix") orelse return found.items;
+    if (c.get(matrix, "os")) |os| {
+        if (c.str(os)) |expr| {
+            const key = "github.event_name == 'pull_request' && '[";
+            const at = std.mem.indexOf(u8, expr, key);
+            const end = if (at) |i| std.mem.indexOfPos(u8, expr, i + key.len, "]'") else null;
+            if (at == null or end == null) {
+                try c.problem(a, out, prefix ++ "{s}: job {s}: matrix.os is an expression the lint cannot read; write it as fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\"]' || '[...]') so the runners of a pull request are visible", .{ f, job.name });
+            } else {
+                var parts = std.mem.splitScalar(u8, expr[at.? + key.len .. end.?], '"');
+                var in_quotes = false;
+                while (parts.next()) |part| : (in_quotes = !in_quotes) {
+                    if (in_quotes) try found.append(part);
+                }
+            }
+        } else {
+            for (try c.arrayOf(a, os)) |r| try found.append(r);
+        }
+    }
+    if (c.get(matrix, "include")) |inc| {
+        if (inc == .array) for (inc.array.items) |e| if (c.str(c.get(e, "os"))) |r| try found.append(r);
+    }
+    return found.items;
+}
+
+/// The runners of every job a pull request runs (a job guarded by `github.event_name != 'pull_request'` never does) must be hosted Linux x86_64.
+fn prRunnerProblems(a: Allocator, f: []const u8, jobs: []const Job, out: *Out) !void {
+    for (jobs) |j| {
+        if (isBetaGuard(try jobIf(a, j.node))) continue;
+        const runs_on = c.str(c.get(j.node, "runs-on")) orelse continue;
+        if (std.mem.eql(u8, runs_on, "${{ matrix.os }}")) {
+            for (try matrixRunners(a, f, j, out)) |r| {
+                if (!isLinuxX64Runner(r)) try c.problem(a, out, prefix ++ "{s}: job {s} runs on {s} for a pull request; a pull request runs on Linux x86_64 (ubuntu-*, not -arm) only, and the other platforms are the beta stage of release.yml", .{ f, j.name, r });
+            }
+        } else if (!isLinuxX64Runner(runs_on)) {
+            try c.problem(a, out, prefix ++ "{s}: job {s} runs on {s} for a pull request; a pull request runs on Linux x86_64 (ubuntu-*, not -arm) only, and the other platforms are the beta stage of release.yml", .{ f, j.name, runs_on });
+        }
+    }
+}
+
 /// The id-token and trigger rules for one workflow file. `f` is the path as
 /// the messages show it; its base name picks the rules, as in the Ruby.
 pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !void {
@@ -351,6 +407,28 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
         return;
     }
 
+    if (std.mem.eql(u8, base, farm_macos_file)) {
+        const push = c.get(c.onValue(doc), "push");
+        const push_and_call = on.len == 2 and c.containsStr(on, "push") and c.containsStr(on, "workflow_call");
+        const push_main = push != null and push.? == .object and push.?.object.count() == 1 and blk: {
+            const br = c.get(push, "branches") orelse break :blk false;
+            break :blk br == .array and br.array.items.len == 1 and c.isStr(br.array.items[0], "main");
+        };
+        if (!(push_and_call and push_main)) {
+            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly push of branches [main] and workflow_call (never a pull request: macOS runs after the merge)", .{f});
+        }
+        if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
+            try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
+        }
+        for (jobs) |j| {
+            const runs_on = c.str(c.get(j.node, "runs-on")) orelse "";
+            if (!isLinuxX64Runner(runs_on)) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} runs on {s}; it must run on a hosted Linux x86_64 runner (ubuntu-*, not -arm) and reach the Macs through the farm", .{ f, j.name, if (runs_on.len == 0) "no runner it names" else runs_on });
+            }
+        }
+        return;
+    }
+
     if (std.mem.eql(u8, base, release_file)) {
         // on.keys == ["push", "workflow_dispatch"] && push has branches == ["main"] and nothing but paths-ignore
         const sorted_on = try a.dupe([]const u8, on);
@@ -393,6 +471,8 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
             }
         }
         for (jobs) |j| {
+            // The one exception: the job that calls farm-macos.yml, whose farm-connect needs the token (its rules are above).
+            if (c.isStr(c.get(j.node, "uses"), farm_macos_call)) continue;
             if (j.node == .object and j.node.object.contains("uses") and c.findKey(j.node, "id-token")) {
                 try c.problem(a, out, prefix ++ "{s}: job {s} calls a workflow and grants id-token", .{ f, j.name });
             }
@@ -423,6 +503,7 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     if (c.containsStr(on, "pull_request") and !c.containsStr(&pr_files, base) and !isOidcFile(base)) {
         try c.problem(a, out, prefix ++ "{s}: a pull request runs build and unit tests only, so only ci.yml, lint.yml, farm.yml and service-ci.yml may run on pull_request", .{f});
     }
+    if (c.containsStr(on, "pull_request")) try prRunnerProblems(a, f, jobs, out);
     if (std.mem.eql(u8, base, "ci.yml") and c.containsStr(on, "pull_request")) {
         for (jobs) |j| {
             if (c.containsStr(&ci_unit_jobs, j.name)) continue;
@@ -433,7 +514,7 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
     if ((std.mem.eql(u8, base, "lint.yml") or std.mem.eql(u8, base, "ci.yml")) and c.containsStr(on, "pull_request")) {
         // A filter makes the check skip for some pull requests (a docs-only change, another base branch, a label event), and a
-        // skipped check is a check that did not run. `types` may only add to the defaults (ci.yml adds `labeled` for the macOS opt-in).
+        // skipped check is a check that did not run. `types` may only add to the defaults.
         const pr = c.get(c.onValue(doc), "pull_request");
         for (c.keys(pr)) |k| {
             if (std.mem.eql(u8, k, "types")) {

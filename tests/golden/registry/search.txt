@@ -1,0 +1,24 @@
+usage: mopm search [<q>] [--sort <name|updated>] [--cursor <cursor>] [--limit <n>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Search the packages by name.
+
+Filters only what the index serves: a prefix (`q`) and a sort order. `q` is a name prefix, or
+`<namespace>/` with an optional name prefix to list one namespace's packages. Filtering by platform, Mojo
+version or native library is not offered.
+
+arguments:
+  <q>
+      A name prefix, or `<namespace>/` with an optional name prefix; normalised before matching.
+options:
+  --sort <name|updated>
+  --cursor <cursor>
+      Opaque. Pass the `next_cursor` of the previous page.
+  --limit <n>
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends GET /api/v2/packages (searchPackages).

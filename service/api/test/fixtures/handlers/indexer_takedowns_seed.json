@@ -1,5 +1,5 @@
 {
-  "description": "An index_takedowns message rebuilds index/takedowns.json from every row of the registry (a Scan of the packages table, then each package's versions): on an empty registry it writes the empty log, which is also how a stage's takedown log is seeded. The object has no create-only condition, so a rebuild replaces it.",
+  "description": "An index_takedowns message rebuilds both takedown logs (index/takedowns.json for flat names, index/v2/takedowns.json for full names) from every row of the registry (a Scan of the packages table, then each package's versions): on an empty registry it writes the two empty logs, which is also how a stage's takedown logs are seeded. The object has no create-only condition, so a rebuild replaces them.",
   "lambda": "indexer",
   "env": {
     "MOPM_STAGE": "beta",
@@ -46,6 +46,17 @@
         },
         "body": {
           "sha256": "936e857e5e343908da14a0eb33e54aa21aec4c4b06f47d65dab217b9ed22b4de"
+        }
+      },
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/index/v2/takedowns.json",
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "public, max-age=60"
+        },
+        "body": {
+          "sha256": "ffedc86b6d83ea8ccff8915f80ea2317b0d57ab4809085e35bb05e8de9a27d5d"
         }
       }
     ],

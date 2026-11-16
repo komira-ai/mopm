@@ -35,7 +35,7 @@ const file_prints = "hello, a file\n";
 
 const manifest_without_dep =
     \\[package]
-    \\name = "app"
+    \\name = "example/app"
     \\version = "0.1.0"
     \\
     \\[toolchain]
@@ -51,7 +51,7 @@ const manifest_without_dep =
 
 const manifest_without_targets =
     \\[package]
-    \\name = "empty"
+    \\name = "example/empty"
     \\version = "0.1.0"
     \\
     \\[toolchain]

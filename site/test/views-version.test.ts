@@ -2,43 +2,51 @@
 // or yanked version and only to the conda channel of the host the page is served on (a tombstoned version never gets
 // one, even if a url came with it); a pinned mopm.toml line only for a published version; dependencies link only when
 // their name is valid; the address shows the version the registry returned.
+import { DEP_CHANNELS_NOTE, CHANNELS_NOTE } from '../src/views/package';
 import { versionView } from '../src/views/version';
 import { hrefs, html, sdoc, text, uniqueIds, versionFixture } from './view-helpers';
 
 const CTX = { host: 'mopm.dev' };
-const FILE_URL = 'https://conda.mopm.dev/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda';
-const render = (v = versionFixture('version detail'), ctx = CTX, route = 'http_client') => versionView(sdoc, route, v, ctx);
+const CH = 'https://conda.mopm.dev/komira-ai/';
+const FILE_URL = `${CH}noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda`;
+const FN = { namespace: 'komira-ai', name: 'json' };
+const installCardOf = (page: string) => page.slice(page.indexOf('<section class="install-card"'), page.indexOf('</section>', page.indexOf('<section class="install-card"')));
+const render = (v = versionFixture('version detail'), ctx = CTX, route = FN) => versionView(sdoc, route, v, ctx);
 
 describe('a published version (fixture: version detail)', () => {
   const view = render();
   const out = html(view);
 
   test('title and h1 name the version', () => {
-    expect(view.title).toBe('http_client 0.4.0');
+    expect(view.title).toBe('komira-ai/json 1.1.0');
     expect(out.match(/<h1>/g)).toHaveLength(1);
-    expect(out).toContain('<h1>http_client <span class="ver">0.4.0</span></h1>');
-    expect(text(out.slice(out.indexOf('<h1>'), out.indexOf('</h1>')))).toBe('http_client 0.4.0');
+    expect(out).toContain('<h1><span class="ns">komira-ai/</span><span>json</span> <span class="ver">1.1.0</span></h1>');
+    expect(text(out.slice(out.indexOf('<h1>'), out.indexOf('</h1>')))).toBe('komira-ai/json 1.1.0');
   });
 
   // The package page's head band: crumb Packages / name / version, the glyph, the state tag, then the facts.
   // Defect caught: the crumb losing the package link; the facts losing the platforms (taken from the files).
   test('the head is the package page\'s: crumb to the package, glyph, state, published, license, Mojo, platforms', () => {
-    expect(out).toContain('<header class="page-band pkg-head"><nav class="crumb" aria-label="Breadcrumb"><a href="/search">Packages</a><span class="sep" aria-hidden="true">/</span><a href="/packages/http_client" class="crumb-pkg">http_client</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">0.4.0</span></nav>');
-    expect(out).toMatch(/<span class="glyph g[012] glyph-lg" aria-hidden="true">hc<\/span><h1>/);
+    expect(out).toContain('<header class="page-band pkg-head"><nav class="crumb" aria-label="Breadcrumb"><a href="/search">Packages</a><span class="sep" aria-hidden="true">/</span><a href="/search?q=komira-ai%2F" class="crumb-pkg">komira-ai</a><span class="sep" aria-hidden="true">/</span><a href="/packages/komira-ai/json" class="crumb-pkg">json</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">1.1.0</span></nav>');
+    expect(out).toMatch(/<span class="glyph g[012] glyph-lg" aria-hidden="true">js<\/span><h1>/);
     expect(out).toContain('<span class="tag state-published">published</span>');
     const facts = text(out.slice(out.indexOf('<ul class="metarow">'), out.indexOf('</ul>', out.indexOf('<ul class="metarow">'))));
     expect(facts).toMatch(/^Published \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/);
-    expect(facts).toContain('Platform linux-64');
+    expect(facts).toContain('Platform noarch');
   });
 
   // One install command first, as on the package page, before the files; the mopm.toml pin and the channel under
   // "Other ways". Defect caught: the card moved below the files; a second command shown outside the details.
-  test('one install command leads the page, before the files, with the pin under Other ways', () => {
+  test('the channel command and the install command lead the page, before the files, with the pin under Other ways', () => {
     expect(out.indexOf('class="install-card"')).toBeLessThan(out.indexOf('id="files-heading"'));
-    expect(out.match(/<div class="cmd cmd-lg copy-box">/g)).toHaveLength(1);
+    expect(out.match(/<div class="cmd cmd-lg copy-box">/g)).toHaveLength(2);
+    expect(out.indexOf(`<code>pixi workspace channel add ${CH}</code>`)).toBeGreaterThan(-1);
+    expect(out.indexOf('<code>pixi add mojo-komira-ai.json</code>')).toBeGreaterThan(out.indexOf(`<code>pixi workspace channel add ${CH}</code>`));
+    expect(out).toContain('aria-label="channel command"');
+    expect(out).toContain('aria-label="install command"');
     const details = out.slice(out.indexOf('<details class="other-ways">'));
-    expect(details).toContain('http_client = "=0.4.0"');
-    expect(out.indexOf('http_client = "=0.4.0"')).toBeGreaterThan(out.indexOf('<details class="other-ways">'));
+    expect(details).toContain('"komira-ai/json" = "=1.1.0"');
+    expect(out.indexOf('"komira-ai/json" = "=1.1.0"')).toBeGreaterThan(out.indexOf('<details class="other-ways">'));
   });
 
   // Each digest is a copy box the page script gives a Copy button, named for its file through a hidden label. The
@@ -54,29 +62,43 @@ describe('a published version (fixture: version detail)', () => {
   });
 
   test('jump links to the files and dependencies, with their counts', () => {
-    expect(out).toContain('<nav class="tabs" aria-label="On this page"><a href="#files-heading">Files <span class="count">1</span></a><a href="#deps-heading">Dependencies <span class="count">1</span></a>');
+    expect(out).toContain('<nav class="tabs" aria-label="On this page"><a href="#files-heading">Files <span class="count">1</span></a><a href="#deps-heading">Dependencies <span class="count">0</span></a>');
   });
 
   test('the mopm.toml line pins the version', () => {
-    expect(out).toContain('<code>[dependencies]\nhttp_client = "=0.4.0"</code>');
+    expect(out).toContain('<code>[dependencies]\n"komira-ai/json" = "=1.1.0"</code>');
   });
 
   test('the file links to the channel of this host', () => {
     expect(hrefs(out)).toContain(FILE_URL);
-    expect(out).toContain('<td class="num" role="cell">120.6 KiB</td>');
+    expect(out).toContain('<td class="num" role="cell">4.0 KiB</td>');
   });
 
-  test('a dependency with a valid name links to its page, with its range as text', () => {
-    expect(out).toContain('<a href="/packages/http_core">http_core</a><code class="range">&gt;=1.2,&lt;2</code>');
+  test('a dependency is a full name that links to its page, with its range as text', () => {
+    const page = html(render(versionFixture('version detail', (r) => Object.assign(r, { deps: [{ name: 'acme/http_core', range: '>=1.2,<2' }] }))));
+    expect(page).toContain('<a href="/packages/acme/http_core">acme/http_core</a><code class="range">&gt;=1.2,&lt;2</code>');
+  });
+
+  test('the address is /packages/<namespace>/<name>/<version>', () => {
+    expect(view.canonicalPath).toBe('/packages/komira-ai/json/1.1.0');
+  });
+
+  test('the side panel links to all versions of the full name', () => {
+    expect(out).toContain('<a href="/packages/komira-ai/json#versions-heading">All versions of komira-ai/json</a>');
+  });
+
+  test('the caption of the files table names the full name and the version', () => {
+    expect(out).toContain('<caption class="visually-hidden">Files of komira-ai/json 1.1.0</caption>');
   });
 
   test('provenance and the manifest digest are text', () => {
-    expect(text(out)).toContain('example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0');
-    expect(out).toContain('2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae');
+    const page = html(render(versionFixture('version detail', (r) => Object.assign(r, { provenance: { kind: 'oidc', repository: 'komira-ai/json', workflow_ref: 'komira-ai/json/.github/workflows/release.yml@refs/heads/main' } }))));
+    expect(text(page)).toContain('komira-ai/json/.github/workflows/release.yml@refs/heads/main');
+    expect(out).toContain('bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363');
   });
 
   test('the pixi line says it installs the newest version, which may not be this one', () => {
-    expect(out).toContain('<code>pixi add mojo-http_client</code>');
+    expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
     expect(text(out)).toContain('This installs the newest version, not necessarily this one.');
     expect(out).toContain('aria-describedby="install-note install-caveat"');
   });
@@ -108,7 +130,7 @@ describe('yanked (fixture)', () => {
 
   test('a banner gives the reason', () => {
     expect(text(out)).toContain('Yanked.');
-    expect(text(out)).toContain('Reason: crashes on empty body');
+    expect(text(out)).toContain('Reason: crashes on empty input');
   });
 
   test('no pinned mopm.toml line', () => {
@@ -124,7 +146,7 @@ describe('yanked (fixture)', () => {
   });
 
   test('the sidebar state carries the reason', () => {
-    expect(out).toContain('<dt>State</dt><dd>yanked: crashes on empty body</dd>');
+    expect(out).toContain('<dt>State</dt><dd>yanked: crashes on empty input</dd>');
   });
 });
 
@@ -132,7 +154,7 @@ describe('tombstoned (fixture)', () => {
   test('a banner says the files were removed, with the reason code and date', () => {
     const out = html(render(versionFixture('tombstoned version has no url')));
     expect(text(out)).toContain('An administrator removed the files of this version.');
-    expect(text(out)).toContain('Reason: malware, on 2026-10-14.');
+    expect(text(out)).toContain('Reason: malware, on 2026-11-12.');
     expect(out).not.toContain('[dependencies]');
     expect(out).not.toContain('pixi add');
     expect(out).not.toContain('conda channel');
@@ -146,7 +168,7 @@ describe('tombstoned (fixture)', () => {
     expect(v.files[0].url).toBe(FILE_URL);
     const out = html(render(v));
     expect(hrefs(out).filter((h) => h.includes('conda'))).toEqual([]);
-    expect(out).toContain('<span class="file">mojo-http_client-0.4.0-mojo1.0.0_0.conda</span>');
+    expect(out).toContain('<span class="file">mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda</span>');
   });
 });
 
@@ -162,15 +184,19 @@ describe('download links', () => {
   });
 
   test.each([
-    ['another stage\'s channel', 'https://conda.beta.mopm.dev/linux-64/x.conda'],
-    ['plain http', 'http://conda.mopm.dev/linux-64/x.conda'],
-    ['the site host, not the channel', 'https://mopm.dev/linux-64/x.conda'],
-    ['another host', 'https://evil-mopm.invalid/linux-64/x.conda'],
-    ['a host ending in the channel host', 'https://evilconda.mopm.dev/linux-64/x.conda'],
+    ['another stage\'s channel', 'https://conda.beta.mopm.dev/komira-ai/noarch/x.conda'],
+    ['plain http', 'http://conda.mopm.dev/komira-ai/noarch/x.conda'],
+    ['the site host, not the channel', 'https://mopm.dev/komira-ai/noarch/x.conda'],
+    ['another host', 'https://evil-mopm.invalid/komira-ai/noarch/x.conda'],
+    ['a host ending in the channel host', 'https://evilconda.mopm.dev/komira-ai/noarch/x.conda'],
     ['a look-alike host', 'https://conda.mopm.dev.evil-mopm.invalid/x.conda'],
     ['a host with a port', 'https://conda.mopm.dev:8443/x.conda'],
     ['credentials in the URL', 'https://user:pw@conda.mopm.dev/x.conda'],
     ['a script URL', 'javascript:alert(1)'],
+    ['another namespace\'s channel', 'https://conda.mopm.dev/acme/noarch/x.conda'],
+    ['the channel root', 'https://conda.mopm.dev/noarch/x.conda'],
+    ['a namespace that only starts with this one', 'https://conda.mopm.dev/komira-ai-labs/noarch/x.conda'],
+    ['the channel root of the right host with a dot-dot back out', 'https://conda.mopm.dev/komira-ai/../acme/x.conda'],
   ])('a url on %s is not a link', (_what, url) => {
     const out = html(render(versionFixture('version detail', (r) => {
       (r.files as Record<string, unknown>[])[0].url = url;
@@ -186,7 +212,7 @@ describe('download links', () => {
   });
 
   test('a beta page links beta channel files', () => {
-    const url = 'https://conda.beta.mopm.dev/linux-64/x.conda';
+    const url = 'https://conda.beta.mopm.dev/komira-ai/noarch/x.conda';
     const out = html(render(versionFixture('version detail', (r) => {
       (r.files as Record<string, unknown>[])[0].url = url;
     }), { host: 'beta.mopm.dev' }));
@@ -194,17 +220,40 @@ describe('download links', () => {
   });
 });
 
+describe('native libraries', () => {
+  test('are listed with their id and soname when the version has some, and absent otherwise', () => {
+    const page = html(render(versionFixture('version detail', (r) => Object.assign(r, { native: [{ id: 'openssl', soname: 'libssl.so.3' }] }))));
+    expect(page).toContain('<h2 id="native-heading">Native libraries</h2>');
+    expect(page).toContain('<li><span>openssl</span><code>libssl.so.3</code></li>');
+    expect(html(render())).not.toContain('native-heading');
+  });
+});
+
 describe('names, spellings and unknown values', () => {
+  test.each([
+    ['a flat name', 'http_core'],
+    ['an uppercase name', 'acme/Http'],
+    ['an uppercase namespace', 'Acme/http'],
+    ['a name that would be normalised', 'acme/http-core'],
+    ['three parts', 'acme/http/core'],
+    ['an empty name', 'acme/'],
+    ['an empty namespace', '/http'],
+  ])('a dependency that is %s is text, not a link', (_what, name) => {
+    const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { deps: [{ name }] }))));
+    expect(out).toContain(`<li><span>${name}</span></li>`);
+    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h.split('#')[0] !== '/packages/komira-ai/json')).toEqual([]);
+  });
+
   test('a dependency name that is not a package name is text', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { deps: [{ name: 'Bad-Name' }, { name: 'javascript:x' }] }))));
     expect(out).toContain('<span>Bad-Name</span>');
     expect(out).toContain('<span>javascript:x</span>');
-    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h.split('#')[0] !== '/packages/http_client')).toEqual([]);
+    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h.split('#')[0] !== '/packages/komira-ai/json')).toEqual([]);
   });
 
   test('the address is the version the registry returned', () => {
     const view = render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.0.0' })));
-    expect(view.canonicalPath).toBe('/packages/http_client/1.0.0');
+    expect(view.canonicalPath).toBe('/packages/komira-ai/json/1.0.0');
   });
 
   test('a returned version outside the grammar is not put in the address', () => {
@@ -228,24 +277,24 @@ describe('names, spellings and unknown values', () => {
 
   test('a published version is pinned as written', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.2.0' }))));
-    expect(out).toContain('<code>[dependencies]\nhttp_client = "=1.2.0"</code>');
+    expect(out).toContain('<code>[dependencies]\n"komira-ai/json" = "=1.2.0"</code>');
   });
 });
 
 // Every fixture version has one file, so a table showing only the first, or a head that repeats or miscounts the
 // platforms, would pass the tests above. Three files on two platforms, one platform twice. Defect caught: v.files.slice(0, 1)
-// in the table; the platforms not deduped (linux-64 listed twice); 'Platform' for more than one; the Files tab counting
+// in the table; the platforms not deduped (noarch listed twice); 'Platform' for more than one; the Files tab counting
 // platforms or rows of one platform.
 describe('a version with several files', () => {
   const extra = (subdir: string, n: string) => ({
-    filename: `mojo-http_client-0.4.0-mojo1.0.0_${n}.conda`,
+    filename: `mojo-komira-ai.json-1.1.0-mojo1.0.0_${n}.conda`,
     subdir,
     size: 1024,
     sha256: n.repeat(64).slice(0, 64),
-    url: `https://conda.mopm.dev/${subdir}/mojo-http_client-0.4.0-mojo1.0.0_${n}.conda`,
+    url: `https://conda.mopm.dev/komira-ai/${subdir}/mojo-komira-ai.json-1.1.0-mojo1.0.0_${n}.conda`,
   });
   const v = versionFixture('version detail', (r) => {
-    (r.files as Record<string, unknown>[]).push(extra('osx-arm64', '1'), extra('linux-64', '2'));
+    (r.files as Record<string, unknown>[]).push(extra('osx-arm64', '1'), extra('noarch', '2'));
   });
   const out = html(render(v));
 
@@ -262,8 +311,8 @@ describe('a version with several files', () => {
 
   test('the head lists each platform once, as Platforms, and the Files tab counts every file', () => {
     const facts = text(out.slice(out.indexOf('<ul class="metarow">'), out.indexOf('</ul>', out.indexOf('<ul class="metarow">'))));
-    expect(facts).toContain('Platforms linux-64 · osx-arm64');
-    expect(facts.match(/linux-64/g)).toHaveLength(1);
+    expect(facts).toContain('Platforms noarch · osx-arm64');
+    expect(facts.match(/noarch/g)).toHaveLength(1);
     expect(out).toContain('<a href="#files-heading">Files <span class="count">3</span></a>');
   });
 });
@@ -283,5 +332,80 @@ describe('a version with no files', () => {
     expect(out).not.toContain('role="table"');
     expect(out).not.toContain('aria-label="Files"');
     expect(out).not.toContain('<table');
+  });
+});
+
+describe('the channels of the dependencies', () => {
+  const withDeps = (names: string[], host = 'mopm.dev') =>
+    html(render(versionFixture('version detail', (r) => Object.assign(r, { deps: names.map((name) => ({ name })) })), { host }));
+  const cmds = (page: string) => [...page.matchAll(/aria-label="((?:channel|install) command[^"]*)"[^>]*><code>([^<]*)<\/code>/g)].map((m) => [m[1], m[2]]);
+
+  test('no dependencies: one channel command, then the install command, and no note about other channels', () => {
+    const page = withDeps([]);
+    expect(cmds(page)).toEqual([
+      ['channel command', `pixi workspace channel add ${CH}`],
+      ['install command', 'pixi add mojo-komira-ai.json'],
+    ]);
+    expect(text(page)).not.toContain(text(DEP_CHANNELS_NOTE));
+  });
+
+  test('dependencies in the package\'s own namespace add no channel and no note', () => {
+    const page = withDeps(['komira-ai/xml', 'komira-ai/yaml']);
+    expect(cmds(page)).toHaveLength(2);
+    expect(text(page)).not.toContain(text(DEP_CHANNELS_NOTE));
+  });
+
+  test('each other namespace of the dependencies gets a channel command, sorted, once, between the own channel and the install command', () => {
+    const page = withDeps(['zeta/a_pkg', 'acme/http', 'komira-ai/xml', 'acme/json', 'zeta/b_pkg']);
+    expect(cmds(page)).toEqual([
+      ['channel command', `pixi workspace channel add ${CH}`],
+      ['channel command 2', 'pixi workspace channel add https://conda.mopm.dev/acme/'],
+      ['channel command 3', 'pixi workspace channel add https://conda.mopm.dev/zeta/'],
+      ['install command', 'pixi add mojo-komira-ai.json'],
+    ]);
+  });
+
+  test('the note on the other channels is shown when there are some, and the package page\'s note is not', () => {
+    const page = withDeps(['acme/http']);
+    expect(text(installCardOf(page))).toContain(text(DEP_CHANNELS_NOTE));
+    expect(text(page)).not.toContain(text(CHANNELS_NOTE));
+  });
+
+  test('a dependency outside the grammar adds no channel', () => {
+    const page = withDeps(['http_core', 'Acme/http', 'acme/Http', 'bad ns/x']);
+    expect(cmds(page)).toHaveLength(2);
+    expect(text(page)).not.toContain(text(DEP_CHANNELS_NOTE));
+  });
+
+  test('the channels are those of the stage the page is served on', () => {
+    const page = withDeps(['acme/http'], 'beta.mopm.dev');
+    expect(cmds(page).map((c) => c[1])).toEqual([
+      'pixi workspace channel add https://conda.beta.mopm.dev/komira-ai/',
+      'pixi workspace channel add https://conda.beta.mopm.dev/acme/',
+      'pixi add mojo-komira-ai.json',
+    ]);
+  });
+
+  test('every command is described by the install note and the caveat', () => {
+    const page = withDeps(['acme/http']);
+    expect(page.match(/aria-describedby="install-note install-caveat"/g)).toHaveLength(3);
+  });
+
+  test('a yanked version lists the channels of its dependencies too', () => {
+    const page = html(render(versionFixture('yanked version keeps its files and says why', (r) => Object.assign(r, { deps: [{ name: 'acme/http' }] }))));
+    expect(cmds(page)).toHaveLength(3);
+    expect(text(page)).toContain(text(DEP_CHANNELS_NOTE));
+  });
+
+  test('a tombstoned version has no commands and no note', () => {
+    const page = html(render(versionFixture('tombstoned version has no url', (r) => Object.assign(r, { deps: [{ name: 'acme/http' }] }))));
+    expect(cmds(page)).toEqual([]);
+    expect(text(page)).not.toContain(text(DEP_CHANNELS_NOTE));
+  });
+
+  test('on a host outside the table there are no commands and no note', () => {
+    const page = withDeps(['acme/http'], 'localhost');
+    expect(cmds(page)).toEqual([]);
+    expect(text(page)).not.toContain(text(DEP_CHANNELS_NOTE));
   });
 });

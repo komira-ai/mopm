@@ -1,0 +1,1200 @@
+{
+  "cases": [
+    {
+      "name": "start the registration of an organization namespace",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "acme-labs"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293",
+          "user_code": "WDJB-MJHT",
+          "verification_uri": "https://github.com/login/device",
+          "expires_in": 600,
+          "interval": 5
+        }
+      }
+    },
+    {
+      "name": "get a user namespace",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "alice"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "alice",
+          "kind": "user",
+          "github_id": 1001,
+          "login": "Alice"
+        }
+      }
+    },
+    {
+      "name": "get an organization namespace",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "komira-ai"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "komira-ai",
+          "kind": "org",
+          "github_id": 77,
+          "login": "komira-ai"
+        }
+      }
+    },
+    {
+      "name": "NamespaceInfo with a kind that is not one",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "alice"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "alice",
+          "kind": "team",
+          "github_id": 1001,
+          "login": "Alice"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a namespace in upper case",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "Alice"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "alice",
+          "kind": "user",
+          "github_id": 1001,
+          "login": "Alice"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "NamespaceInfo missing login",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "alice"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "alice",
+          "kind": "user",
+          "github_id": 1001
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "NamespaceInfo with the removed frozen field only",
+      "operationId": "getNamespace",
+      "request": {
+        "path": {
+          "namespace": "alice"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "alice",
+          "kind": "user",
+          "frozen": false
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "create a namespace outside the grammar",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "Acme-Labs"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_namespace",
+            "message": "'Acme-Labs' is not a valid namespace.",
+            "hint": "A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "create a reserved namespace",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "index"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "namespace_reserved",
+            "message": "'index' is reserved.",
+            "hint": "Publish in an organization's namespace."
+          }
+        }
+      }
+    },
+    {
+      "name": "create a namespace a user holds",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "alice"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "namespace_taken",
+            "message": "'alice' is taken.",
+            "hint": "Choose the namespace of another GitHub organization."
+          }
+        }
+      }
+    },
+    {
+      "name": "a registration answered 201, which the operation does not declare",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "acme-labs"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "acme-labs",
+          "kind": "org",
+          "github_id": 99,
+          "login": "acme-labs"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a registration start without a verification uri",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "acme-labs"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293",
+          "user_code": "WDJB-MJHT",
+          "expires_in": 600,
+          "interval": 5
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "start a registration with a session-less scheme",
+      "operationId": "createNamespace",
+      "request": {
+        "body": {
+          "namespace": "acme-labs"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293",
+          "user_code": "WDJB-MJHT",
+          "verification_uri": "https://github.com/login/device",
+          "expires_in": 600,
+          "interval": 5
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "poll a registration while pending",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "pending",
+          "interval": 5
+        }
+      }
+    },
+    {
+      "name": "poll a registration that was created",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "created",
+          "namespace": {
+            "namespace": "acme-labs",
+            "kind": "org",
+            "github_id": 99,
+            "login": "acme-labs"
+          }
+        }
+      }
+    },
+    {
+      "name": "poll a registration that was denied",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "denied"
+        }
+      }
+    },
+    {
+      "name": "poll a registration that expired",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "expired"
+        }
+      }
+    },
+    {
+      "name": "poll a registration approved by a plain member of the organization",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_org_admin",
+            "message": "You are not an active admin of the GitHub organization 'acme-labs'.",
+            "hint": "An admin of the GitHub organization runs 'mopm org create acme-labs'; an organization that restricts OAuth apps approves the mopm registry first."
+          }
+        }
+      }
+    },
+    {
+      "name": "poll a registration approved by another GitHub account",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "github_account_mismatch",
+            "message": "The GitHub account that approved is not the one logged in to mopm.",
+            "hint": "Approve with the GitHub account you logged in with, or run 'mopm login' with the other one."
+          }
+        }
+      }
+    },
+    {
+      "name": "poll a registration created without its namespace",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "created"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "poll a registration with a status that is not one",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "approved"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "poll a registration with a created namespace that has frozen but no login",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "created",
+          "namespace": {
+            "namespace": "acme-labs",
+            "kind": "org",
+            "github_id": 99,
+            "frozen": false
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "poll a registration without the device code",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {},
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "pending",
+          "interval": 5
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "poll a registration with no token answers 200",
+      "operationId": "pollNamespace",
+      "request": {
+        "body": {
+          "device_code": "dev_5d8c1b7a93e24f60a1c3b8d4e7f20915a6c3d8e1b4f70293"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "pending",
+          "interval": 5
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "list the members of an organization namespace",
+      "operationId": "listMembers",
+      "request": {
+        "path": {
+          "namespace": "komira-ai"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "komira-ai",
+          "members": [
+            {
+              "user": "alice",
+              "handle": "Alice",
+              "github_id": 1001,
+              "role": "owner",
+              "added_at": "2026-11-14T12:00:00.000Z"
+            },
+            {
+              "user": "carol",
+              "handle": "carol",
+              "github_id": 2001,
+              "role": "member",
+              "added_at": "2026-11-14T12:00:00.000Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "list the members as an account that is not one",
+      "operationId": "listMembers",
+      "request": {
+        "path": {
+          "namespace": "komira-ai"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_namespace_member",
+            "message": "You cannot write in 'komira-ai'.",
+            "hint": "Ask an owner of 'komira-ai' to run 'mopm org add komira-ai <your mopm username>'."
+          }
+        }
+      }
+    },
+    {
+      "name": "list the members of a user namespace",
+      "operationId": "listMembers",
+      "request": {
+        "path": {
+          "namespace": "alice"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "The request is not valid: 'alice' is a user namespace; it has no members.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      }
+    },
+    {
+      "name": "a member list with a role that is not one",
+      "operationId": "listMembers",
+      "request": {
+        "path": {
+          "namespace": "komira-ai"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "komira-ai",
+          "members": [
+            {
+              "user": "alice",
+              "handle": "Alice",
+              "github_id": 1001,
+              "role": "admin",
+              "added_at": "2026-11-14T12:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a member without added_at",
+      "operationId": "listMembers",
+      "request": {
+        "path": {
+          "namespace": "komira-ai"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "komira-ai",
+          "members": [
+            {
+              "user": "alice",
+              "handle": "Alice",
+              "github_id": 1001,
+              "role": "owner"
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a member list without its namespace",
+      "operationId": "listMembers",
+      "request": {
+        "path": {
+          "namespace": "komira-ai"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "members": [
+            {
+              "user": "alice",
+              "handle": "Alice",
+              "github_id": 1001,
+              "role": "owner",
+              "added_at": "2026-11-14T12:00:00.000Z"
+            },
+            {
+              "user": "carol",
+              "handle": "carol",
+              "github_id": 2001,
+              "role": "member",
+              "added_at": "2026-11-14T12:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a member list asked with a publish-only scheme",
+      "operationId": "listMembers",
+      "request": {
+        "path": {
+          "namespace": "komira-ai"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "namespace": "komira-ai",
+          "members": [
+            {
+              "user": "alice",
+              "handle": "Alice",
+              "github_id": 1001,
+              "role": "owner",
+              "added_at": "2026-11-14T12:00:00.000Z"
+            },
+            {
+              "user": "carol",
+              "handle": "carol",
+              "github_id": 2001,
+              "role": "member",
+              "added_at": "2026-11-14T12:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "add a member",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "bob"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "user": "bob",
+          "handle": "bob",
+          "github_id": 1002,
+          "role": "member",
+          "added_at": "2026-11-14T12:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "make a member an owner",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "carol"
+        },
+        "body": {
+          "role": "owner"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "user": "carol",
+          "handle": "carol",
+          "github_id": 2001,
+          "role": "owner",
+          "added_at": "2026-11-14T12:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "set the role a member already has",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "carol"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "user": "carol",
+          "handle": "carol",
+          "github_id": 2001,
+          "role": "member",
+          "added_at": "2026-11-14T12:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "set a member as a member of the namespace",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "bob"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_namespace_owner",
+            "message": "You are not an owner of 'komira-ai'.",
+            "hint": "Ask an owner of 'komira-ai'; 'mopm org list komira-ai' shows them."
+          }
+        }
+      }
+    },
+    {
+      "name": "set a member as an account that is not one",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "bob"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_namespace_member",
+            "message": "You cannot write in 'komira-ai'.",
+            "hint": "Ask an owner of 'komira-ai' to run 'mopm org add komira-ai <your mopm username>'."
+          }
+        }
+      }
+    },
+    {
+      "name": "demote the only owner",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "alice"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "last_owner",
+            "message": "'alice' is the last owner of 'komira-ai'.",
+            "hint": "Make another member an owner first."
+          }
+        }
+      }
+    },
+    {
+      "name": "set an account that has no mopm username",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "ghost"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "user_not_found",
+            "message": "There is no mopm user 'ghost'.",
+            "hint": "A user gets their name at their first 'mopm login'."
+          }
+        }
+      }
+    },
+    {
+      "name": "set an organization namespace as a user",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "acme-labs"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "user_not_found",
+            "message": "There is no mopm user 'acme-labs'.",
+            "hint": "A user gets their name at their first 'mopm login'."
+          }
+        }
+      }
+    },
+    {
+      "name": "set a member with a role that is not one",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "bob"
+        },
+        "body": {
+          "role": "admin"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "user": "bob",
+          "handle": "bob",
+          "github_id": 1002,
+          "role": "member",
+          "added_at": "2026-11-14T12:00:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "set a member without a role",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "bob"
+        },
+        "body": {},
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "user": "bob",
+          "handle": "bob",
+          "github_id": 1002,
+          "role": "member",
+          "added_at": "2026-11-14T12:00:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "set a member answered 204, which the operation does not declare",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "bob"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 204,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "set a member with a user in upper case",
+      "operationId": "setMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "Bob"
+        },
+        "body": {
+          "role": "member"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "user": "bob",
+          "handle": "bob",
+          "github_id": 1002,
+          "role": "member",
+          "added_at": "2026-11-14T12:00:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "remove a member",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "carol"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 204,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        }
+      }
+    },
+    {
+      "name": "an owner removes themselves while another owner remains",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "alice"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 204,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        }
+      }
+    },
+    {
+      "name": "remove an account that is not a member",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "bob"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "member_not_found",
+            "message": "'bob' is not a member of 'komira-ai'.",
+            "hint": "List the members with 'mopm org list komira-ai'."
+          }
+        }
+      }
+    },
+    {
+      "name": "remove the only owner",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "alice"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "last_owner",
+            "message": "'alice' is the last owner of 'komira-ai'.",
+            "hint": "Make another member an owner first."
+          }
+        }
+      }
+    },
+    {
+      "name": "remove a member as a member of the namespace",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "carol"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_namespace_owner",
+            "message": "You are not an owner of 'komira-ai'.",
+            "hint": "Ask an owner of 'komira-ai'; 'mopm org list komira-ai' shows them."
+          }
+        }
+      }
+    },
+    {
+      "name": "remove a member answered 200, which the operation does not declare",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "carol"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {}
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "remove a member with a scheme the operation does not accept",
+      "operationId": "removeMember",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "user": "carol"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 204,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

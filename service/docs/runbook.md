@@ -29,6 +29,23 @@ old pinned-hash test guarded; the pin moved to `service/api/test/publish/empty-i
 - Rebuilding is always safe and idempotent: the writer derives the file from the registry's records. After a manual change to
   a version row, send the same message for each affected subdir.
 
+## Namespace channels
+
+Each namespace is its own channel (`spec/channel.md`): a package `<namespace>/<name>` has its files at
+`<namespace>/<subdir>/mojo-<namespace>.<name>-<version>-<build>.conda` and is listed in `<namespace>/<subdir>/repodata.json(.zst)`.
+The root `<subdir>/repodata.json` lists only packages of flat names (on prod, once the held deletion has run, only the kept
+`kci_*` ones). Everything above about a subdir holds for a "repodata directory": `<subdir>` at the root, `<namespace>/<subdir>`
+in a namespace (`service/api/src/channel-paths.ts`).
+
+- To rebuild a namespace's subdir, send `{"type":"index","subdir":"<namespace>/<subdir>"}` with `MessageGroupId`
+  `<namespace>/<subdir>`. The first job of a namespace creates that namespace's other three empty subdirs.
+- A full name's sparse-index file is `index/v2/<aa>/<bb>/<namespace>/<name>` (`aa`, `bb` from the namespace), and
+  `{"type":"index_takedowns"}` writes both `index/takedowns.json` (flat names) and `index/v2/takedowns.json` (full names).
+- Deploy order: the publish stack's index writer must run the namespace-aware code before an API or validator sends a
+  `<namespace>/<subdir>` message. An older writer logs such a message as an unknown subdir and drops it, leaving that publish
+  `indexing`; it is fixed by a rebuild message once the new writer runs. `deploy.yml` deploys every stack in one run (`cdk deploy
+  --all`); only a namespace publish inside the minutes between two stacks can be caught.
+
 ## The sparse index writer
 
 The index writer also owns `index/<aa>/<bb>/<name>` (one NDJSON file per package, `spec/index.md`) and
@@ -103,8 +120,8 @@ dead-letter queue and the indexer's logs (`index_takedowns` is logged on success
 `POST /packages/{name}/{version}/files` (begin) reserves the version number as `pending`, records the declared file
 and answers with a presigned PUT into `quarantine/<upload id>/<file>` pinned to the exact length and sha256.
 `POST .../publish` (commit) takes the version lock, queues the publish on `mopm-<stage>-validate.fifo` (group = package) and answers 202.
-The validator Lambda reads the quarantined object, runs the validator, copies the file to `<subdir>/<file>`,
-publishes the version, and queues `mopm-<stage>-index.fifo` (group = subdir); the index writer rebuilds the subdir's
+The validator Lambda reads the quarantined object, runs the validator, copies the file to `<subdir>/<file>` (`<namespace>/<subdir>/<file>` for a full name),
+publishes the version, and queues `mopm-<stage>-index.fifo` (group = the repodata directory); the index writer rebuilds that directory's
 repodata and invalidates its two CloudFront paths. The job that lists the last subdir marks the publish `index_pending` and
 queues one `index_pkg` message (group `pkg:<name>`); that job writes the package's sparse-index file and only then marks the
 publish `published`. See "The sparse index writer" below.
@@ -123,7 +140,7 @@ publish `published`. See "The sparse index writer" below.
   committed to validation (`POST /groups/{id}/commit`, which `read_only` also refuses), validated, committed and then released into the
   channel's files and made `visible` (the chain, below).
 - **The chain after a commit.** A commit makes the group's members show in the API at once. The channel's files follow, one step at a
-  time, and each step is a message: a repodata hop for each subdir the group has files in (index queue, FIFO group = the subdir), then
+  time, and each step is a message: a repodata hop for each repodata directory the group has files in (index queue, FIFO group = the directory), then
   an index hop for each member in the header's `write_order` (dependencies first; a dependency cycle is ordered by name; FIFO group
   `pkg:<name>`), then the flip (group queue): every member row becomes `published` at the commit time (a yanked or taken-down member is
   left as it is) and the header becomes `visible`, which also takes it out of the sweeper's index. A hop first sets its gate on the
@@ -205,7 +222,7 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
 - **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
   trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
   config-table item for it), so the fastest stop is the deploy.
-- **Gamma gets none of it, and prod only the acting-for row below.** Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the claim route's, on every stage, and there is no CI-only grant), and answers the `packages`
+- **Gamma gets none of it, and prod only the acting-for row below.** Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the create route's, `PUT /api/v2/packages/{namespace}/{name}`, on every stage, and there is no CI-only grant), and answers the `packages`
   form of the exchange with `oidc_not_trusted`. The handler also refuses to start on gamma if the variable is present, and on prod if a
   row does not carry `acts_for`, so a function that fails to start with "may be set on the beta stage only" or "trusts only rows that
   carry 'acts_for'" means the variable reached the wrong stage or has the wrong shape: fix it in the stack and redeploy. Trusting a CI
@@ -235,21 +252,40 @@ addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-
   stay valid until their 10 minutes end, and a deploy without the row refuses every later exchange with `oidc_not_trusted`. The
   account's own tokens, groups and `groups_enabled` item are untouched. To stop CI groups without a deploy, remove `u:<id>` from
   `groups_enabled` (that also stops the human account).
-- **Reading a refusal.** As for beta, plus: `package_not_found` at the exchange means the account has not claimed the name (claim it
-  with the account's own login first); an `oidc_token_invalid` "wrong audience" means the job asked for an audience other than `mopm.dev`.
+- **Reading a refusal.** As for beta, plus: `package_not_found` at the exchange means the account owns no flat package of that name.
+  `/api/v1` creates no new flat names any more (claims are refused `name_reserved`), so a new package is published in a namespace
+  through `/api/v2` instead; an `oidc_token_invalid` "wrong audience" means the job asked for an audience other than `mopm.dev`.
 - **What a CI-created package looks like.** `claimed`, `ci_owner` = `gh-repo:<repository_id>`, no owner rows (so `owners` is empty in
   the read API), and an audit entry `ci_claim`. Only a token minted for that identity may publish to it. Fixing a wrong name means a
-  takedown by an operator; the service has no route that renames or transfers it.
+  takedown by an operator; the service has no route that renames or transfers it. Since `/api/v2` is served the exchange creates no
+  flat package any more: a name nobody has is refused `name_reserved` with the hint "package names are in namespaces now; update
+  mopm". CI-created packages made before keep publishing.
 - **Reading a refusal.** `oidc_not_trusted`: the job's repository id, owner id, workflow file, ref, environment or event is not the
   configured one (`pull_request` never is). `not_owner` at the exchange: a name in the request belongs to an account or to another
   identity. `oidc_token_invalid` "token already used": a CI token is exchanged once.
-- **One namespace with claims.** A CI exchange and `POST /packages/{name}/claim` create packages by the same conditional write, so a name
-  goes to whoever creates it first: a user claim of a CI-created name is `name_taken`, and the exchange for a user-claimed name is
-  `not_owner`. The claim rate limit counts user claims only; the exchange is not charged to it.
+- **Namespace publishers.** A `CI_PUBLISHERS` row may name a `namespace` instead of `acts_for` (prod accepts either, never both): the
+  `/api/v2` exchange then mints a token for full names in that namespace, when the job's `repository_owner_id` is the namespace's GitHub
+  id. It creates nothing; `mopm publish` creates a package with `PUT /api/v2/packages/{namespace}/{name}` using that token.
 
-## Claiming a package name
+## Organization namespaces
 
-`POST /packages/{name}/claim` (a user token: a login or an API token; a CI identity token is refused) is the only way a package comes to exist. It writes the package
+An admin of a GitHub organization registers it with `mopm org create <org>`: a device flow that asks GitHub for `read:org` once, reads
+the caller's membership, and discards the token. It needs no secret and no stage setup. The registrant becomes the namespace's first
+owner; owners manage members with `mopm org add|remove|list`, and a removed member is refused on their next write. Members live in the
+`namespace_members` table (a removal is a row written back as removed, and the table denies DeleteItem); to fix a namespace by hand,
+write that row, never the namespace row's `members_rev`.
+
+## Creating a package
+
+`PUT /api/v2/packages/{namespace}/{name}` is the only way a package comes to exist (docs/design/namespaces.md section 8). It needs the
+right to write the namespace: the account a user namespace is bound to, an owner or member of an organization namespace (a row in
+the `namespace_members` table; no GitHub call), or a CI token minted for that namespace's publisher. It writes the package row (`state: claimed`, no expiry, no owner row: the namespace is the
+owner) and an audit entry `create`, answers 201, or 200 when the package exists. An import name that is a keyword, a builtin, a
+reserved name or a top-level module of the Mojo standard library is `name_reserved`. The daily limit below applies to it, counted per
+account (or per namespace for a CI token).
+
+`POST /api/v1/packages/{name}/claim` no longer creates anything: it answers `name_reserved` with the hint "package names are in
+namespaces now; update mopm", whatever the token. What follows described it, and still describes the rows claims made: it wrote the package
 (`state: claimed`, with `claim_expires_at` 30 days out), its first owner (the account) and an `audit` entry in one DynamoDB transaction, each
 row created only if its key is absent, so of two claims of one name exactly one wins and the loser leaves nothing behind. The API role has
 `PutItem` on `packages` and `owners` for this and nothing more there: it cannot change or delete an owner or a package.
@@ -298,7 +334,7 @@ reasons: the addendum in `service/docs/adr-ci-publisher-identity.md`.
   `ci:gh-repo:<id>` actors). Gamma and prod keep the human flip of `groups_enabled`.
 - **What the identity can do with it.** Create a group whose every member is a package that the identity owns and that its token was
   minted for, at that version. A member outside the token, a package an account or another identity owns, or a caller that is not on
-  the list is refused and nothing is created. Everything afterwards (commit, the validator and the chain, abort, `yank --group`) works for
+  the list is refused and nothing is created. Everything afterwards (commit, the validator and the chain, abort, `mopm group yank`) works for
   that identity's own groups and for no other caller. The actor in audit rows, group headers and uploads is `ci:gh-repo:<repository_id>`
   (the identity, not a token), and the group budget per day is counted per identity.
 
@@ -408,6 +444,40 @@ any revert is merged:
 3. Only then merge the revert.
 
 A group that is stuck at step 2 is rolled forward (the sweeper, or a redrive) or ended with the group tool; it is not reverted around.
+
+## Deleting the global names (held)
+
+Once packages live in namespaces (docs/design/namespaces.md, section 12.4), the flat names are deleted by a held tool,
+`service/api/src/ops/delete-global-names/`, built by `npm run build` in `service/api` to `dist/ops/delete-global-names/bin.js`. It
+runs with the stage's takedown role (on beta and gamma, the takedown or the cleanup role): the only roles the tables and the channel
+bucket let delete. Every setting is a flag; the AWS credentials are the SDK's standard variables.
+
+```text
+node dist/ops/delete-global-names/bin.js --stage=<beta|gamma|prod> --bucket=<channel bucket> --distribution=<channel CloudFront id> \
+  --config-url=https://<api host>/index/config.json [--region=<region>] [--apply=<digest>]
+```
+
+- **Without `--apply` it is a dry run and changes nothing.** It lists the work from the stage: every package whose name has no
+  namespace, with its versions, owners and trusted publishers, its `.conda` files at the bucket's root (`<subdir>/mojo-<name>-*.conda`)
+  and its version 1 index file, plus any flat name that has such files or an index file but no package row. It prints one `name` line
+  per name, one `kept` line per `kci_` package (those are never touched), a `checks` line, a `totals` line and a `digest` line.
+- `--apply=<digest>` lists again and refuses (exit status 2, nothing deleted) unless the listing's digest is the dry run's: a version, a
+  package, an owner, a publisher or a root file that appeared or went since the dry run stops it. The digest covers the stage, so one
+  stage's digest never applies to another. It also refuses unless `config.json` lists index version 2 in `index_versions` and names
+  `api_v2_url`, and `<api_v2_url>/health` answers 200 (asked with no token): once `/api/v2` is served, `/api/v1` refuses to create a
+  flat name.
+- Per name it appends a `delete_global` audit record, deletes the version 1 index file, rewrites the root `repodata.json` and
+  `repodata.json.zst` of each subdir that lists the name without it, invalidates those paths on the CDN, deletes the `.conda` files,
+  deletes the version, owner and trusted publisher rows, and deletes the package row last. The deleted files leave the CDN in one
+  invalidation per run, `/<subdir>/mojo-*` for each subdir that lost a file (also when the run stops part way): a path per file would
+  pass the number of paths CloudFront lets be in progress. The wildcard also refreshes the kept `kci_` files, which only costs a fetch. If a version appears while it deletes the
+  rows, it stops before the package row (exit status 2).
+- It never retries: a step that fails stops the run (exit status 1) with the package row still there. Run the dry run again, read it,
+  and apply its new digest: it lists only what is left and finishes it. A run with nothing left does nothing.
+- The bucket is versioned with no expiry for package files, so a deleted `.conda` file stays restorable as a non-current version; the
+  tables have point-in-time recovery. API tokens that name a deleted package are left to expire. `index/takedowns.json` is not changed.
+
+The order is beta, then gamma, then prod, each applied only after its dry run has been read. The prod run is the owner's step.
 
 ## Cutting over to the Rust port
 

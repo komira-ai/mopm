@@ -5,14 +5,21 @@ import {
   parseCiPublishers,
   DeviceLogin,
   DynamoAuthStore,
+  DynamoNamespaceStore,
   GithubJwtVerifier,
   HttpGitHubApi,
+  type NamespaceAccess,
+  OrgMembers,
+  OrgRegistration,
   OidcExchange,
   ownedPackagesFrom,
   TokenService,
 } from '../auth';
 import { DynamoStore, tablesFor, type DocClient } from '../dynamo-store';
-import { documentClient, flagsFor, publishApiFor, stageOf } from '../publish/wiring';
+import { documentClient, flagsFor, namespaceAccessFor, publishApiFor, stageOf } from '../publish/wiring';
+import { TokenServiceV2 } from '../auth/tokens-v2';
+import type { Store } from '../store';
+import type { V2Deps } from './v2-routes';
 import type { Flags } from '../publish/ports';
 import type { AuthServices } from './auth-routes';
 import { OAuthSecretSource, readSecretFromAws, type SecretReader } from './oauth-secret';
@@ -58,23 +65,66 @@ export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessE
   const ciPublishers = parseCiPublishers(stage, env[CI_PUBLISHERS_ENV]);
   const secretId = env.MOPM_OAUTH_SECRET_NAME;
   if (!secretId) return undefined;
-  const store = new DynamoAuthStore(doc, authTablesFor(stage));
+  const tables = authTablesFor(stage);
+  const store = new DynamoAuthStore(doc, tables);
+  const namespaces = new DynamoNamespaceStore(doc, tables.namespaces, tables.namespace_members);
   const secret = new OAuthSecretSource({ secretId, read });
   const require2fa = env.MOPM_REQUIRE_2FA !== 'false';
-  let device: { clientId: string; svc: DeviceLogin } | undefined;
+  let device: { clientId: string; svc: DeviceLogin; registration: OrgRegistration } | undefined;
+  const services = async () => {
+    const clientId = await secret.clientId();
+    if (device?.clientId !== clientId) {
+      const github = new HttpGitHubApi(clientId);
+      device = { clientId, svc: new DeviceLogin({ store, namespaces, github, require2fa }), registration: new OrgRegistration({ store, namespaces, github }) };
+    }
+    return device;
+  };
   return {
     authn: new Authenticator({ store }),
     tokens: new TokenService({ store, ownedPackages: ownedPackagesFrom(doc, tablesFor(stage).owners) }),
     oidc: new OidcExchange({
       store,
       verifier: new GithubJwtVerifier({ audiences: oidcAudiences(stage) }),
+      namespaces,
       ...(ciPublishers.length > 0 ? { ciPublishers, registry: new DynamoStore(doc, tablesFor(stage)) } : {}),
     }),
     async devices() {
-      const clientId = await secret.clientId();
-      if (device?.clientId !== clientId) device = { clientId, svc: new DeviceLogin({ store, github: new HttpGitHubApi(clientId), require2fa }) };
-      return device.svc;
+      return (await services()).svc;
     },
+    async registration() {
+      return (await services()).registration;
+    },
+  };
+}
+
+/** The full names of a namespace's packages, sorted: a prefix read of the registry's name index. */
+export function packagesInFrom(registry: Pick<Store, 'searchPackages'>): (namespace: string) => Promise<string[]> {
+  return async (namespace) => {
+    const out: string[] = [];
+    for (let after: string | undefined; ; ) {
+      const page = await registry.searchPackages(`${namespace}/`, after, 100);
+      out.push(...page.map((p) => p.name));
+      if (page.length < 100) return out;
+      after = page[page.length - 1]!.name;
+    }
+  };
+}
+
+/**
+ * What `/api/v2` needs (src/http/v2-routes.ts). `getMe` and `createToken` need the auth tables, so they are wired with login
+ * (MOPM_OAUTH_SECRET_NAME); `createPackage` with the publish side; the members of an organization namespace with the stage's
+ * namespace and member tables alone.
+ */
+export function configureV2(stage: Stage, doc: DocClient, env: NodeJS.ProcessEnv, registry: Store, access: NamespaceAccess, creates: V2Deps['creates']): V2Deps {
+  const tables = authTablesFor(stage);
+  const namespaces = new DynamoNamespaceStore(doc, tables.namespaces, tables.namespace_members);
+  const users = new DynamoAuthStore(doc, tables);
+  return {
+    access,
+    namespaces,
+    members: new OrgMembers({ namespaces, access, users }),
+    ...(creates ? { creates } : {}),
+    ...(env.MOPM_OAUTH_SECRET_NAME ? { tokens: new TokenServiceV2({ store: users, access, packagesIn: packagesInFrom(registry) }) } : {}),
   };
 }
 
@@ -83,15 +133,19 @@ function configure(): Configured {
   const doc = documentClient();
   const flags = flagsFor(process.env, doc, stage);
   const envReadOnly = process.env.MOPM_READ_ONLY === 'true';
+  const store = new DynamoStore(doc, tablesFor(stage));
+  const access = namespaceAccessFor(doc, stage);
+  const publish = publishApiFor(process.env, doc, stage, flags, access);
   return {
     deps: {
-      store: new DynamoStore(doc, tablesFor(stage)),
+      store,
       stage,
       version: process.env.MOPM_VERSION ?? 'dev',
       commit: process.env.MOPM_COMMIT ?? 'dev',
       readOnly: envReadOnly,
-      publish: publishApiFor(process.env, doc, stage, flags),
+      publish,
       auth: configureAuth(stage, doc, process.env),
+      v2: configureV2(stage, doc, process.env, store, access, publish?.creates),
       ...(process.env.MOPM_API_DOMAIN && process.env.MOPM_CHANNEL_DOMAIN
         ? { indexConfig: { apiDomain: process.env.MOPM_API_DOMAIN, channelDomain: process.env.MOPM_CHANNEL_DOMAIN } }
         : {}),

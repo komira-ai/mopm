@@ -5,16 +5,19 @@
 //! Run by Buck2 (//:contract): the working directory is the repository root
 //! with spec/, tests/contract and tests/fixtures present. It checks
 //!
-//!  1. spec/api/openapi.yaml is read (tests/drivers/yaml.zig) and passes the
-//!     structural checks of openapi_check.zig
+//!  1. spec/api/openapi.yaml (`/api/v1`) and spec/api/openapi-v2.yaml
+//!     (`/api/v2`) are read (tests/drivers/yaml.zig) and pass the structural
+//!     checks of openapi_check.zig
 //!  2. every spec/*.schema.json passes jsonschema.checkSchema, which REFUSES
 //!     a keyword it does not implement; the package metadata fixtures under
 //!     tests/fixtures validate against package-metadata.schema.json
 //!  3. the error catalogue (x-mopm-errors) and the ErrorCode enum agree
-//!  4. every case of tests/contract/api/*.json: "valid" ones have no problem,
-//!     "invalid" ones (counter-examples with one defect each) are REJECTED;
-//!     every operation has a passing success case, every error code and every
-//!     rejection code a case
+//!  4. every case of tests/contract/api/*.json against openapi.yaml, and of
+//!     tests/contract/api-v2/*.json against openapi-v2.yaml, the same checks
+//!     for each pair: "valid" ones have no problem, "invalid" ones
+//!     (counter-examples with one defect each) are REJECTED; every operation
+//!     has a passing success case, every error code and every rejection code
+//!     a case
 //!  5. the examples under tests/contract/examples/<kind>/valid pass and those
 //!     under <kind>/invalid fail, with the lock rules JSON Schema cannot say
 //!
@@ -57,13 +60,15 @@ fn stringSet(a: Allocator, items: []const Value) !std.StringHashMap(void) {
     return set;
 }
 
-fn checkApi(a: Allocator, t: *c.Tally, counts: *Counts, spec: Value) !void {
+/// The cases of `dir` against `spec`, whose file is named `spec_name`. `label` starts the name of each case in a failure line (empty for
+/// v1, so its lines are what they were).
+fn checkApi(a: Allocator, t: *c.Tally, counts: *Counts, spec: Value, spec_name: []const u8, dir: []const u8, label: []const u8) !void {
     var dups = c.Problems.init(a);
     const ops = try c.operations(a, spec, &dups);
     for (dups.items) |d| t.fail("{s}", .{d});
     const catalogue = c.get(spec, "x-mopm-errors") orelse .null;
     if (catalogue != .object) {
-        t.fail("openapi.yaml has no x-mopm-errors", .{});
+        t.fail("{s} has no x-mopm-errors", .{spec_name});
         return;
     }
     const schemas = c.get(c.get(spec, "components") orelse .null, "schemas") orelse .null;
@@ -84,12 +89,12 @@ fn checkApi(a: Allocator, t: *c.Tally, counts: *Counts, spec: Value) !void {
     var seen_ok = std.StringHashMap(void).init(a);
     var seen_codes = std.StringHashMap(void).init(a);
     var seen_rejections = std.StringHashMap(void).init(a);
-    const files = try c.listFiles(a, "tests/contract/api", ".json");
-    if (files.len == 0) t.fail("no files in tests/contract/api", .{});
+    const files = try c.listFiles(a, dir, ".json");
+    if (files.len == 0) t.fail("no files in {s}", .{dir});
     for (files) |file| {
-        const doc = try c.loadJson(a, try std.fmt.allocPrint(a, "tests/contract/api/{s}", .{file}));
+        const doc = try c.loadJson(a, try std.fmt.allocPrint(a, "{s}/{s}", .{ dir, file }));
         for (c.getArr(doc, "cases"), 0..) |case, i| {
-            const name = try std.fmt.allocPrint(a, "{s}[{d}] {s}", .{ file, i, c.getStr(case, "name") orelse "" });
+            const name = try std.fmt.allocPrint(a, "{s}{s}[{d}] {s}", .{ label, file, i, c.getStr(case, "name") orelse "" });
             counts.api_cases += 1;
             const problems = try c.caseProblems(a, spec, ops, catalogue, case);
             const expect = c.getStr(case, "expect") orelse "valid";
@@ -118,16 +123,16 @@ fn checkApi(a: Allocator, t: *c.Tally, counts: *Counts, spec: Value) !void {
     }
     var op_it = ops.iterator();
     while (op_it.next()) |e| {
-        if (!seen_ok.contains(e.key_ptr.*)) t.fail("operation {s} has no passing success case", .{e.key_ptr.*});
+        if (!seen_ok.contains(e.key_ptr.*)) t.fail("{s}: operation {s} has no passing success case", .{ spec_name, e.key_ptr.* });
     }
     code_it = codes.iterator();
     while (code_it.next()) |e| {
-        if (!seen_codes.contains(e.key_ptr.*)) t.fail("error code {s} has no case", .{e.key_ptr.*});
+        if (!seen_codes.contains(e.key_ptr.*)) t.fail("{s}: error code {s} has no case", .{ spec_name, e.key_ptr.* });
     }
     const rejection_enum = c.getArr(c.get(schemas, "RejectionCode") orelse .null, "enum");
-    if (rejection_enum.len == 0) t.fail("components.schemas.RejectionCode has no enum", .{});
+    if (rejection_enum.len == 0) t.fail("{s}: components.schemas.RejectionCode has no enum", .{spec_name});
     for (rejection_enum) |code| {
-        if (code == .string and !seen_rejections.contains(code.string)) t.fail("rejection code {s} has no case", .{code.string});
+        if (code == .string and !seen_rejections.contains(code.string)) t.fail("{s}: rejection code {s} has no case", .{ spec_name, code.string });
     }
 }
 
@@ -191,14 +196,127 @@ test "the registry contract: spec, API cases and examples" {
     var structural = c.Problems.init(a);
     try oa.check(a, spec, &structural);
     for (structural.items) |p| t.fail("openapi.yaml is not a valid OpenAPI document: {s}", .{p});
-    if (structural.items.len != 0) return t.finish();
+    const spec_v2 = try yaml.parse(a, try c.readFile(a, "spec/api/openapi-v2.yaml"));
+    var structural_v2 = c.Problems.init(a);
+    try oa.check(a, spec_v2, &structural_v2);
+    for (structural_v2.items) |p| t.fail("openapi-v2.yaml is not a valid OpenAPI document: {s}", .{p});
+    if (structural.items.len != 0 or structural_v2.items.len != 0) return t.finish();
 
     const meta = try c.loadJson(a, "spec/package-metadata.schema.json");
     try checkSchemas(a, &t, &counts, meta);
-    try checkApi(a, &t, &counts, spec);
+    try checkApi(a, &t, &counts, spec, "openapi.yaml", "tests/contract/api", "");
+    try checkApi(a, &t, &counts, spec_v2, "openapi-v2.yaml", "tests/contract/api-v2", "api-v2/");
     try checkExamples(a, &t, &counts);
 
     std.debug.print("checked: api cases {d}, invalid cases rejected {d}, examples {d}, schemas {d}, metadata fixtures {d}\n", .{ counts.api_cases, counts.rejected, counts.examples, counts.schemas, counts.fixtures });
     try t.finish();
     std.debug.print("contract OK\n", .{});
+}
+
+const LockVariant = struct {
+    lock_version: []const u8 = "3",
+    mojo: []const u8 = "[\"1.0.0\"]",
+    toolchain_key: []const u8 = "1.0.0",
+    channels: []const u8 = "[\"https://conda.mopm.dev/\"]",
+    name: []const u8 = "komira-ai/http_core",
+    conda: []const u8 = "mojo-komira-ai.http_core",
+    channel: []const u8 = "https://conda.mopm.dev/komira-ai/",
+    artifact_key: []const u8 = "1.0.0",
+    extra: []const u8 = "",
+};
+
+/// A lock with one registry package and the changes `v` makes, run through the rules of `lockProblems`.
+fn lockVariantProblems(a: Allocator, v: LockVariant) !c.Problems {
+    const text = try std.fmt.allocPrint(a,
+        \\{{"lock_version":{s},"mojo":{s},"toolchain":{{"{s}":{{"linux-64":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}}},
+        \\ "channels":{s},"packages":[{{"name":"{s}","version":"1.2.5","subdir":"linux-64","channel":"{s}",
+        \\ "artifacts":{{"{s}":{{"build":"mojo1.0.0_0","url":"{s}linux-64/{s}-1.2.5-mojo1.0.0_0.conda",
+        \\ "sha256":"fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9","size":1000}}}}}}{s}]}}
+    , .{ v.lock_version, v.mojo, v.toolchain_key, v.channels, v.name, v.channel, v.artifact_key, v.channel, v.conda, v.extra });
+    return c.lockProblems(a, try c.parseJson(a, text));
+}
+
+fn expectLockProblems(a: Allocator, v: LockVariant, want: []const []const u8) !void {
+    const got = try lockVariantProblems(a, v);
+    try std.testing.expectEqual(want.len, got.items.len);
+    for (want, got.items) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "lockProblems: the lock 3 rules, each refused with its own message" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try expectLockProblems(a, .{}, &.{});
+    try expectLockProblems(a, .{ .lock_version = "2" }, &.{"mopm.lock predates namespaces (lock_version 2); run 'mopm lock'"});
+    try expectLockProblems(a, .{ .lock_version = "1" }, &.{"mopm.lock predates namespaces (lock_version 1); run 'mopm lock'"});
+    try expectLockProblems(a, .{ .mojo = "[\"1.1.0\",\"1.0.0\"]", .artifact_key = "1.0.0", .toolchain_key = "1.0.0" }, &.{"mojo is not sorted with no repeats"});
+    try expectLockProblems(a, .{ .toolchain_key = "1.1.0" }, &.{"toolchain names mojo 1.1.0, which mojo does not list"});
+    try expectLockProblems(a, .{ .artifact_key = "1.1.0" }, &.{"komira-ai/http_core: artifact for mojo 1.1.0, which mojo does not list"});
+    try expectLockProblems(a, .{ .channel = "https://conda.mopm.dev/" }, &.{
+        "komira-ai/http_core: channel https://conda.mopm.dev/ is not a listed channel followed by komira-ai/",
+    });
+    try expectLockProblems(a, .{ .channel = "https://conda.mopm.dev/other-org/" }, &.{
+        "komira-ai/http_core: channel https://conda.mopm.dev/other-org/ is not a listed channel followed by komira-ai/",
+    });
+    try expectLockProblems(a, .{ .channel = "https://elsewhere.example/komira-ai/" }, &.{
+        "komira-ai/http_core: channel https://elsewhere.example/komira-ai/ is not a listed channel followed by komira-ai/",
+    });
+    try expectLockProblems(a, .{ .conda = "mojo-http_core" }, &.{
+        "komira-ai/http_core: url is not https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.http_core-1.2.5-mojo1.0.0_0.conda",
+    });
+    try expectLockProblems(a, .{ .name = "komira-ai-komira-ai-komira-ai-komira-ai-komira/http_core", .conda = "mojo-komira-ai-komira-ai-komira-ai-komira-ai-komira.http_core", .channel = "https://conda.mopm.dev/komira-ai-komira-ai-komira-ai-komira-ai-komira/" }, &.{
+        "komira-ai-komira-ai-komira-ai-komira-ai-komira/http_core: name is not a full name <namespace>/<name>",
+    });
+}
+
+test "lockProblems: import names, dependencies, path entries and channels across entries" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const other =
+        \\,{"name":"other-org/http_core","version":"1.2.5","subdir":"linux-64","channel":"https://conda.mopm.dev/other-org/",
+        \\ "artifacts":{"1.0.0":{"build":"mojo1.0.0_0","url":"https://conda.mopm.dev/other-org/linux-64/mojo-other-org.http_core-1.2.5-mojo1.0.0_0.conda",
+        \\ "sha256":"fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9","size":1000}}}
+    ;
+    try expectLockProblems(a, .{ .extra = other }, &.{"komira-ai/http_core and other-org/http_core have the same import name http_core"});
+    const path_ok =
+        \\,{"name":"zzz/local","version":"0.1.0","source":"path","path":"../l","deps":["komira-ai/http_core"]}
+    ;
+    try expectLockProblems(a, .{ .extra = path_ok }, &.{});
+    const path_dep_missing =
+        \\,{"name":"zzz/local","version":"0.1.0","source":"path","path":"../l","deps":["x/y"]}
+    ;
+    try expectLockProblems(a, .{ .extra = path_dep_missing }, &.{"zzz/local: dep x/y is not in packages"});
+    const path_clash =
+        \\,{"name":"zzz/http_core","version":"0.1.0","source":"path","path":"../l"}
+    ;
+    try expectLockProblems(a, .{ .extra = path_clash }, &.{"komira-ai/http_core and zzz/http_core have the same import name http_core"});
+    const second_root =
+        \\,{"name":"komira-ai/http_core","version":"1.2.5","subdir":"osx-arm64","channel":"https://b.example/komira-ai/",
+        \\ "artifacts":{"1.0.0":{"build":"mojo1.0.0_0","url":"https://b.example/komira-ai/osx-arm64/mojo-komira-ai.http_core-1.2.5-mojo1.0.0_0.conda",
+        \\ "sha256":"fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9","size":1000}}}
+    ;
+    try expectLockProblems(a, .{ .channels = "[\"https://conda.mopm.dev/\",\"https://b.example/\"]", .extra = second_root }, &.{"komira-ai/http_core comes from more than one channel"});
+}
+
+fn expectIndexProblems(a: Allocator, stem: []const u8, record: []const u8, want: []const []const u8) !void {
+    const got = (try c.indexProblems(a, stem, record, try c.parseJson(a, "{}"))).items;
+    try std.testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
+test "indexProblems: a version 1 file's url ends /<subdir>/<filename>, a version 2 file's /<namespace>/<subdir>/<filename>" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const v1 = "{\"name\":\"pkg1\",\"version\":\"0.1.0\",\"build\":\"mojo1.0.0_0\",\"files\":[{\"subdir\":\"linux-64\",\"filename\":\"mojo-pkg1-0.1.0-mojo1.0.0_0.conda\",\"url\":\"http://h/channel/linux-64/mojo-pkg1-0.1.0-mojo1.0.0_0.conda\"}]}\n";
+    try expectIndexProblems(a, "pkg1", v1, &.{});
+    try expectIndexProblems(a, "pkg1", try std.mem.replaceOwned(u8, a, v1, "channel/linux-64/", "channel/osx-arm64/"), &.{
+        "line 1: url http://h/channel/osx-arm64/mojo-pkg1-0.1.0-mojo1.0.0_0.conda does not end with /linux-64/mojo-pkg1-0.1.0-mojo1.0.0_0.conda",
+    });
+    const v2 = "{\"name\":\"example/pkg1\",\"version\":\"0.1.0\",\"build\":\"mojo1.0.0_0\",\"files\":[{\"subdir\":\"linux-64\",\"filename\":\"mojo-example.pkg1-0.1.0-mojo1.0.0_0.conda\",\"url\":\"http://h/channel/example/linux-64/mojo-example.pkg1-0.1.0-mojo1.0.0_0.conda\"}]}\n";
+    try expectIndexProblems(a, "example.pkg1", v2, &.{});
+    try expectIndexProblems(a, "example.pkg1", try std.mem.replaceOwned(u8, a, v2, "channel/example/", "channel/"), &.{
+        "line 1: url http://h/channel/linux-64/mojo-example.pkg1-0.1.0-mojo1.0.0_0.conda does not end with /example/linux-64/mojo-example.pkg1-0.1.0-mojo1.0.0_0.conda",
+    });
 }

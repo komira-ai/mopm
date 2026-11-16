@@ -4,7 +4,7 @@ import { fromResponse, networkError } from '../src/errors';
 import {
   errorView, notFoundView, pageNotFoundView, readOnlyBanner, titleOf, unknownHostView,
 } from '../src/views/common';
-import { readSearch, searchErrorView, searchResultsView, searchTooLongView } from '../src/views/search';
+import { PREFIX_NOTE, Q_MAX, readSearch, searchErrorView, searchResultsView, searchTooLongView } from '../src/views/search';
 import { serialize } from '../src/doc';
 import { decodePackageList } from '../src/decode';
 import { hrefs, html, sdoc, text } from './view-helpers';
@@ -33,25 +33,39 @@ describe('readSearch', () => {
     expect(readSearch(`?cursor=${'a'.repeat(512)}`).state.cursor).toHaveLength(512);
   });
 
-  test('q over 64 characters after trimming is too long; 64 is not', () => {
-    expect(readSearch(`?q=${'a'.repeat(65)}`).tooLong).toBe(true);
-    expect(readSearch(`?q=%20${'a'.repeat(64)}%20`).tooLong).toBe(false);
+  test('q over 104 characters after trimming is too long; 104 is not', () => {
+    expect(Q_MAX).toBe(104);
+    expect(readSearch(`?q=${'a'.repeat(105)}`).tooLong).toBe(true);
+    expect(readSearch(`?q=%20${'a'.repeat(104)}%20`).tooLong).toBe(false);
+  });
+
+  test('a namespace prefix keeps its slash in the address, percent-encoded', () => {
+    const r = readSearch('?q=komira-ai%2Fjs');
+    expect(r.state.q).toBe('komira-ai/js');
+    expect(r.canonicalPath).toBe('/search?q=komira-ai%2Fjs');
   });
 });
 
 describe('search results', () => {
-  test('a first page: a linked result, its latest version, a Next link carrying the cursor and the query', () => {
-    const state = { q: 'http', sort: 'name' as const };
-    const out = html(searchResultsView(sdoc, state, listFixture('search by prefix')));
-    expect(out).toContain('<a href="/packages/http_client" class="result-name">http_client</a>');
-    expect(text(out)).toContain('latest version 0.4.0');
-    expect(hrefs(out)).toContain('/search?q=http&cursor=c2Vjb25kLXBhZ2U');
+  test('a first page: a linked full name, its latest version, a Next link carrying the cursor and the query', () => {
+    const state = { q: 'js', sort: 'name' as const };
+    const out = html(searchResultsView(sdoc, state, listFixture('search, first page of one')));
+    expect(out).toContain('<a href="/packages/alice/json" class="result-name">alice/json</a>');
+    expect(text(out)).toContain('latest version 1.0.0');
+    expect(hrefs(out)).toContain('/search?q=js&cursor=eyJrIjoibmFtZSIsImFmdGVyIjoiYWxpY2UvanNvbiJ9');
     expect(text(out)).not.toContain('First page');
+  });
+
+  test('a page of several namespaces links each result to its own namespace', () => {
+    const out = html(searchResultsView(sdoc, { q: 'json', sort: 'name' }, listFixture('search by name prefix in every namespace')));
+    expect(out).toContain('<a href="/packages/alice/json" class="result-name">alice/json</a>');
+    expect(out).toContain('<a href="/packages/komira-ai/json" class="result-name">komira-ai/json</a>');
+    expect(text(out)).toContain('latest version 1.1.0');
   });
 
   test('a later page: a First page link without the cursor, no Next on the last page, a claimed package shows no release', () => {
     const state = { q: '', sort: 'updated' as const, cursor: 'c2Vjb25kLXBhZ2U' };
-    const out = html(searchResultsView(sdoc, state, listFixture('search, last page, claimed package with no version')));
+    const out = html(searchResultsView(sdoc, state, listFixture('search, last page, a package with no version')));
     expect(hrefs(out)).toContain('/search?sort=updated');
     expect(text(out)).not.toContain('Next page');
     expect(text(out)).toContain('no release');
@@ -61,14 +75,14 @@ describe('search results', () => {
     ['empty', ''],
     ['over 512 characters', 'a'.repeat(513)],
   ])('a next_cursor from the server that is %s gives no Next link', (_what, cursor) => {
-    const out = html(searchResultsView(sdoc, { q: 'http', sort: 'name' }, { ...listFixture('search by prefix'), next_cursor: cursor }));
+    const out = html(searchResultsView(sdoc, { q: 'http', sort: 'name' }, { ...listFixture('search by name prefix in every namespace'), next_cursor: cursor }));
     expect(text(out)).not.toContain('Next page');
     expect(hrefs(out).filter((h) => h.includes('cursor='))).toEqual([]);
   });
 
   test('a next_cursor of 512 characters gives a Next link carrying it', () => {
     const cursor = 'a'.repeat(512);
-    const out = html(searchResultsView(sdoc, { q: 'http', sort: 'name' }, { ...listFixture('search by prefix'), next_cursor: cursor }));
+    const out = html(searchResultsView(sdoc, { q: 'http', sort: 'name' }, { ...listFixture('search by name prefix in every namespace'), next_cursor: cursor }));
     expect(hrefs(out)).toContain(`/search?q=http&cursor=${cursor}`);
   });
 
@@ -87,19 +101,48 @@ describe('search results', () => {
   });
 
   test('a q too long gets a message (the caller makes no call)', () => {
-    const out = html(searchTooLongView(sdoc, { q: 'a'.repeat(65), sort: 'name' }));
+    const out = html(searchTooLongView(sdoc, { q: 'a'.repeat(105), sort: 'name' }));
     expect(out).toContain('role="alert"');
-    expect(text(out)).toContain('at most 64 characters');
+    expect(text(out)).toContain('Full package names are at most 104 characters');
   });
 
   test('a result name that is not a package name is text, not a link', () => {
     const out = html(searchResultsView(sdoc, { q: '', sort: 'name' }, { packages: [{ name: 'Bad/../x', latest: null, description: null, updated_at: 'x' }], next_cursor: null }));
     expect(out).toContain('<span class="result-name">Bad/../x</span>');
   });
+
+  test.each([
+    ['a flat name', 'json'],
+    ['an upper-case namespace', 'Komira-AI/json'],
+    ['a name outside the grammar', 'komira-ai/Json'],
+    ['an empty name', 'komira-ai/'],
+    ['an empty namespace', '/json'],
+    ['a namespace over 39 characters', `${'a'.repeat(40)}/json`],
+  ])('%s is text, not a link', (_what, name) => {
+    const out = html(searchResultsView(sdoc, { q: '', sort: 'name' }, { packages: [{ name, latest: '1.0.0', description: null, updated_at: '2026-11-01T00:00:00Z' }], next_cursor: null }));
+    expect(out).toContain(`<span class="result-name">${name}</span>`);
+    expect(hrefs(out).filter((h) => h.startsWith('/packages/'))).toEqual([]);
+  });
+
+  test('the glyph initials come from the name part, not the namespace', () => {
+    const pkg = (name: string) => ({ name, latest: '1.0.0', description: null, updated_at: '2026-11-01T00:00:00Z' });
+    const out = html(searchResultsView(sdoc, { q: '', sort: 'name' }, { packages: [pkg('komira-ai/http_client'), pkg('alice/json')], next_cursor: null }));
+    expect(out).toMatch(/aria-hidden="true">hc<\/span>/);
+    expect(out).toMatch(/aria-hidden="true">js<\/span>/);
+    expect(out).not.toMatch(/aria-hidden="true">ko<\/span>/);
+    expect(out).not.toMatch(/aria-hidden="true">al<\/span>/);
+  });
+
+  test('a result of a namespace-scoped search links to its own namespace', () => {
+    const out = html(searchResultsView(sdoc, { q: 'komira-ai/js', sort: 'name' }, listFixture('search one namespace')));
+    expect(hrefs(out)).toContain('/packages/komira-ai/json');
+    expect(hrefs(out)).toContain('/packages/komira-ai/jsonschema');
+    expect(text(out)).toContain('Packages starting with “komira-ai/js”');
+  });
 });
 
 describe('the search page design', () => {
-  const list = listFixture('search by prefix');
+  const list = listFixture('search, first page of one');
   const out = html(searchResultsView(sdoc, { q: 'http', sort: 'name' }, list));
 
   // Defect caught: a card that drops the description or the update date, or the glyph.
@@ -116,9 +159,21 @@ describe('the search page design', () => {
   // The API matches a name prefix only. Defect caught: a ranking chip, a "why it matched" or a ranking explainer added to the
   // page; the note saying what search matches removed.
   test('the page says search matches the start of a name, and claims no ranking', () => {
-    expect(text(out)).toContain('Search matches the start of a package name, not descriptions or readmes.');
+    expect(text(out)).toContain(PREFIX_NOTE);
+    expect(PREFIX_NOTE).toBe('Search matches the start of a package name in every namespace, or after “<namespace>/” in that namespace; not descriptions or readmes.');
     expect(out).toContain('aria-describedby="search-note"');
     expect(text(out)).not.toMatch(/rank|relevan|best match|why it matched|exact name/i);
+  });
+
+  test('the help beside the results explains full names and namespace prefixes', () => {
+    const help = out.slice(out.indexOf('<aside class="search-help"'), out.indexOf('</aside>'));
+    const lines = [...help.matchAll(/<li>(.*?)<\/li>/g)].map((m) => text(m[1]));
+    expect(lines).toEqual([
+      'It finds every package whose name starts with what you type, in every namespace.',
+      'A package is <namespace>/<name>: the namespace is a GitHub account, the name lowercase letters, digits and underscores.',
+      'Type komira-ai/ to list one namespace’s packages, or komira-ai/js to search in it.',
+      'Results are sorted by name, or by last update for up to 1000 matches.',
+    ]);
   });
 
   test('the big search box shows the current query, and the page has one h1 naming it', () => {
@@ -240,12 +295,12 @@ describe('shared views', () => {
   });
 
   test('not found: noindex, and a way on', () => {
-    const p = notFoundView(sdoc, 'zz_absent');
+    const p = notFoundView(sdoc, { namespace: 'komira-ai', name: 'zz_absent' });
     expect(p.noindex).toBe(true);
     expect(hrefs(html(p))).toContain('/search?q=zz_absent');
-    const v = notFoundView(sdoc, 'http_client', '9.9.9');
+    const v = notFoundView(sdoc, { namespace: 'komira-ai', name: 'json' }, '9.9.9');
     expect(v.noindex).toBe(true);
-    expect(hrefs(html(v))).toContain('/packages/http_client');
+    expect(hrefs(html(v))).toContain('/packages/komira-ai/json');
     expect(pageNotFoundView(sdoc).noindex).toBe(true);
   });
 
@@ -253,8 +308,8 @@ describe('shared views', () => {
   // one '/' focuses), Home, the package list and the docs. Defect caught: the search box or the way-on row dropped; the box
   // given id q (two #q on the app shell).
   test.each([
-    ['a package', () => notFoundView(sdoc, 'zz_absent'), 'zz_absent'],
-    ['a version', () => notFoundView(sdoc, 'http_client', '9.9.9'), ''],
+    ['a package', () => notFoundView(sdoc, { namespace: 'komira-ai', name: 'zz_absent' }), 'zz_absent'],
+    ['a version', () => notFoundView(sdoc, { namespace: 'komira-ai', name: 'json' }, '9.9.9'), ''],
     ['an address', () => pageNotFoundView(sdoc), ''],
   ])('not found (%s): a search box, Home, Browse packages and Docs', (_what, make, q) => {
     const out = html(make());
@@ -271,6 +326,24 @@ describe('shared views', () => {
     const v = unknownHostView(sdoc, 'evil<x>mopm.dev');
     expect(v.noindex).toBe(true);
     expect(html(v)).toContain('evil&lt;x&gt;mopm.dev');
+  });
+
+  test('not found: a package address names the full name and the way on searches the name in every namespace', () => {
+    const p = notFoundView(sdoc, { namespace: 'komira-ai', name: 'zz_absent' });
+    const out = html(p);
+    expect(text(out)).toContain('There is no package komira-ai/zz_absent in the registry.');
+    expect(hrefs(out)).toContain('/search?q=zz_absent');
+    expect(text(out)).toContain('Search every namespace for names starting with zz_absent');
+    expect(out).toContain('<input id="lost-q" name="q" type="search" value="zz_absent"');
+  });
+
+  test('not found: a version address names the full name and version, and links to the package inside its namespace', () => {
+    const v = notFoundView(sdoc, { namespace: 'komira-ai', name: 'json' }, '9.9.9');
+    const out = html(v);
+    expect(text(out)).toContain('komira-ai/json has no version 9.9.9.');
+    expect(hrefs(out)).toContain('/packages/komira-ai/json');
+    expect(hrefs(out)).not.toContain('/search?q=json');
+    expect(text(out)).toContain('All versions of komira-ai/json');
   });
 
   test('titles get the site suffix once', () => {

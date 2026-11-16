@@ -1,8 +1,10 @@
 //! Version resolution over the sparse index (spec/index.md).
 //!
 //! `parseIndex` reads one package's index file and applies the reader's rules
-//! (record version, one name, no repeated version, the state's required keys,
-//! a final newline). `resolve` picks one version of every package in the
+//! (record version 2, one full name `<namespace>/<name>` equal to the file's,
+//! full names in `deps`, each file named after the record's conda name, no
+//! repeated version, the state's required keys, a final newline). Every
+//! package name here is a full name; two full names are two packages. `resolve` picks one version of every package in the
 //! closure of the root requirements:
 //!
 //! - requirements follow cargo's rules (semver.zig), for the project's own
@@ -30,6 +32,7 @@ const std = @import("std");
 const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const semver = @import("semver.zig");
+const names = @import("names.zig");
 
 pub const State = enum { published, yanked, tombstoned };
 
@@ -174,9 +177,10 @@ fn parseRecord(arena: Allocator, name: []const u8, text: []const u8, n: usize, d
         .integer => |i| i,
         else => return l.bad("v is not an integer", .{}),
     };
-    if (rv != 1) return l.bad("record version {d}; this mopm reads 1. Update mopm.", .{rv});
+    if (rv != 2) return l.bad("record version {d}; this mopm reads 2. Update mopm.", .{rv});
     const rec_name = try l.string(o, "name");
     if (!std.mem.eql(u8, rec_name, name)) return l.bad("names {s}", .{rec_name});
+    if (!names.isFullName(rec_name)) return l.bad("{s} is not a full name <namespace>/<name>", .{rec_name});
     const state_text = try l.string(o, "state");
     var r = Record{
         .name = rec_name,
@@ -200,6 +204,7 @@ fn parseRecord(arena: Allocator, name: []const u8, text: []const u8, n: usize, d
     for (try l.array(o, "deps")) |dv| {
         const d = try l.object(dv, "a dependency");
         var dep = Dep{ .name = try l.string(d, "name") };
+        if (!names.isFullName(dep.name)) return l.bad("dependency {s} is not a full name <namespace>/<name>", .{dep.name});
         if (d.get("range") != null) dep.range = try l.string(d, "range");
         try deps.append(dep);
     }
@@ -212,6 +217,7 @@ fn parseRecord(arena: Allocator, name: []const u8, text: []const u8, n: usize, d
         }
         r.native = natives.items;
     }
+    const want_file = try std.fmt.allocPrint(arena, "{s}-{s}-{s}.conda", .{ try names.condaName(arena, rec_name), r.version, r.build });
     var files = std.ArrayList(File).init(arena);
     for (try l.array(o, "files")) |fv| {
         const f = try l.object(fv, "a file");
@@ -222,7 +228,9 @@ fn parseRecord(arena: Allocator, name: []const u8, text: []const u8, n: usize, d
             else => return l.bad("a file's size is not an integer", .{}),
         };
         if (size < 1) return l.bad("a file's size is not positive", .{});
-        try files.append(.{ .subdir = try l.string(f, "subdir"), .filename = try l.string(f, "filename"), .sha256 = sha, .size = @intCast(size) });
+        const filename = try l.string(f, "filename");
+        if (!std.mem.eql(u8, filename, want_file)) return l.bad("a file is named {s}; the conda name of {s} makes it {s}", .{ filename, rec_name, want_file });
+        try files.append(.{ .subdir = try l.string(f, "subdir"), .filename = filename, .sha256 = sha, .size = @intCast(size) });
     }
     if (files.items.len == 0) return l.bad("no files", .{});
     r.files = files.items;
@@ -237,7 +245,7 @@ fn isSha256(s: []const u8) bool {
     return true;
 }
 
-/// Reads the index file of `name` (newline-delimited records).
+/// Reads the index file of the package `name`, a full name (newline-delimited records).
 pub fn parseIndex(arena: Allocator, name: []const u8, text: []const u8, diag: *Diagnostic) Error![]const Record {
     if (text.len == 0) return fail(arena, diag, .bad_index, "the index file of {s} is empty", .{name});
     if (text[text.len - 1] != '\n') {
@@ -261,7 +269,7 @@ pub fn parseIndex(arena: Allocator, name: []const u8, text: []const u8, diag: *D
 }
 
 /// A requirement of the project (`mopm.toml`) on a package, or of one of
-/// its path dependencies (`from` names which).
+/// its path dependencies (`from` names which). `name` is a full name.
 pub const Root = struct { name: []const u8, requirement: []const u8, from: []const u8 = "mopm.toml" };
 /// A version a lock already pins; tried first while it still fits.
 pub const Pin = struct { name: []const u8, version: []const u8 };
@@ -283,13 +291,13 @@ pub const Input = struct {
 
 pub const Picked = struct {
     record: *const Record,
-    /// Names of its direct dependencies, sorted, without repeats.
+    /// Full names of its direct dependencies, sorted, without repeats.
     deps: []const []const u8,
 };
 
 pub const Resolution = struct {
     mojo: []const u8,
-    /// Sorted by name.
+    /// Sorted by full name.
     packages: []const Picked,
 };
 
@@ -302,7 +310,7 @@ const Req = struct {
 };
 
 /// Resolves `input`. `source.fetch(arena, name, diag)` returns the text of
-/// the index file of `name`, null when there is none, or
+/// the index file of the full name `name`, null when there is none, or
 /// `error.ResolveFailed` with `diag` set when it cannot be read.
 pub fn resolve(arena: Allocator, source: anytype, input: Input, diag: *Diagnostic) Error!Resolution {
     var r = Resolver(@TypeOf(source)){
@@ -316,6 +324,9 @@ pub fn resolve(arena: Allocator, source: anytype, input: Input, diag: *Diagnosti
     };
     diag.* = .{};
     for (input.roots) |root| {
+        if (!names.isFullName(root.name)) {
+            return fail(arena, diag, .bad_requirement, "{s}: {s} is not a full name <namespace>/<name>", .{ root.from, root.name });
+        }
         var why: []const u8 = "";
         const req = semver.parseReq(arena, root.requirement, &why) catch |e| switch (e) {
             error.Invalid => return fail(arena, diag, .bad_requirement, "{s}: {s} = \"{s}\": {s}", .{ root.from, root.name, root.requirement, why }),
@@ -331,14 +342,14 @@ pub fn resolve(arena: Allocator, source: anytype, input: Input, diag: *Diagnosti
     var it = r.chosen.iterator();
     while (it.next()) |e| {
         const rec = e.value_ptr.*;
-        var names = std.ArrayList([]const u8).init(arena);
+        var dep_names = std.ArrayList([]const u8).init(arena);
         for (rec.deps) |d| {
             var dup = false;
-            for (names.items) |x| dup = dup or std.mem.eql(u8, x, d.name);
-            if (!dup) try names.append(d.name);
+            for (dep_names.items) |x| dup = dup or std.mem.eql(u8, x, d.name);
+            if (!dup) try dep_names.append(d.name);
         }
-        std.mem.sort([]const u8, names.items, {}, lessString);
-        try out.append(.{ .record = rec, .deps = names.items });
+        std.mem.sort([]const u8, dep_names.items, {}, lessString);
+        try out.append(.{ .record = rec, .deps = dep_names.items });
     }
     std.mem.sort(Picked, out.items, {}, struct {
         fn less(_: void, a: Picked, b: Picked) bool {
@@ -555,10 +566,10 @@ fn Resolver(comptime S: type) type {
 
 // ---------------------------------------------------------------- tests
 
-/// A name and a text, for the in-memory indexes and channels of the tests.
+/// A full name and a text, for the in-memory indexes and channels of the tests.
 pub const Pair = struct { []const u8, []const u8 };
 
-/// An index held in memory: name -> file text.
+/// An index held in memory: full name -> file text.
 pub const MemoryIndex = struct {
     files: []const Pair,
 
@@ -578,11 +589,11 @@ fn indexLine(comptime name: []const u8, comptime version: []const u8, comptime e
 }
 
 fn indexLine2(comptime name: []const u8, comptime version: []const u8, comptime mojo: []const u8, comptime state: []const u8, comptime extra: []const u8) []const u8 {
-    const file = "mojo-" ++ name ++ "-" ++ version ++ "-mojo" ++ mojo ++ "_0.conda";
+    const file = std.fmt.comptimePrint("mojo-{s}.{s}", .{ names.namespaceOf(name), names.importName(name) }) ++ "-" ++ version ++ "-mojo" ++ mojo ++ "_0.conda";
     return "{\"build\":\"mojo" ++ mojo ++ "_0\"," ++ extra ++
         "\"files\":[{\"filename\":\"" ++ file ++ "\",\"sha256\":\"" ++ sha_a ++ "\",\"size\":1000,\"subdir\":\"linux-64\"}]," ++
         "\"manifest_sha256\":\"" ++ sha_a ++ "\",\"name\":\"" ++ name ++ "\",\"published_at\":\"2026-10-13T12:00:00Z\"," ++
-        "\"requires_mojo\":\"==" ++ mojo ++ "\",\"state\":\"" ++ state ++ "\",\"v\":1,\"version\":\"" ++ version ++ "\"}\n";
+        "\"requires_mojo\":\"==" ++ mojo ++ "\",\"state\":\"" ++ state ++ "\",\"v\":2,\"version\":\"" ++ version ++ "\"}\n";
 }
 
 const no_deps = "\"deps\":[],";
@@ -625,8 +636,8 @@ fn expectFailure(index: MemoryIndex, roots: []const Root, kind: Kind, contains: 
     }
 }
 
-const core_versions = indexLine("core", "1.0.0", no_deps) ++ indexLine("core", "1.2.0", no_deps) ++ indexLine("core", "1.2.7", no_deps) ++
-    indexLine("core", "1.3.0", no_deps) ++ indexLine("core", "2.0.0", no_deps) ++ indexLine("core", "2.1.0-rc1", no_deps);
+const core_versions = indexLine("komira-ai/core", "1.0.0", no_deps) ++ indexLine("komira-ai/core", "1.2.0", no_deps) ++ indexLine("komira-ai/core", "1.2.7", no_deps) ++
+    indexLine("komira-ai/core", "1.3.0", no_deps) ++ indexLine("komira-ai/core", "2.0.0", no_deps) ++ indexLine("komira-ai/core", "2.1.0-rc1", no_deps);
 
 test "registry versions are MAJOR.MINOR.PATCH; MAJOR.MINOR gets a zero patch; nothing else is read" {
     const v = semverOf("1.2").?;
@@ -646,33 +657,33 @@ test "registry versions are MAJOR.MINOR.PATCH; MAJOR.MINOR gets a zero patch; no
 
 test "versions that are not MAJOR.MINOR.PATCH are never picked and each gets a warning; 1.0 is 1.0.0" {
     const index = comptime MemoryIndex{ .files = &.{.{
-        "legacy",
-        indexLine("legacy", "1.0", no_deps) ++ indexLine("legacy", "1.1.0", no_deps) ++
-            indexLine("legacy", "1.2.3.4", no_deps) ++ indexLine("legacy", "2.0.0-rc1", no_deps),
+        "komira-ai/legacy",
+        indexLine("komira-ai/legacy", "1.0", no_deps) ++ indexLine("komira-ai/legacy", "1.1.0", no_deps) ++
+            indexLine("komira-ai/legacy", "1.2.3.4", no_deps) ++ indexLine("komira-ai/legacy", "2.0.0-rc1", no_deps),
     }} };
     // A reader that cut 1.2.3.4 to 1.2.3 would pick it for "1".
-    try expectPicks(index, &.{.{ .name = "legacy", .requirement = "1" }}, &.{}, &.{.{ "legacy", "1.1.0" }});
-    try expectPicks(index, &.{.{ .name = "legacy", .requirement = "=1.0.0" }}, &.{}, &.{.{ "legacy", "1.0" }});
-    try expectPicks(index, &.{.{ .name = "legacy", .requirement = "<1.1" }}, &.{}, &.{.{ "legacy", "1.0" }});
+    try expectPicks(index, &.{.{ .name = "komira-ai/legacy", .requirement = "1" }}, &.{}, &.{.{ "komira-ai/legacy", "1.1.0" }});
+    try expectPicks(index, &.{.{ .name = "komira-ai/legacy", .requirement = "=1.0.0" }}, &.{}, &.{.{ "komira-ai/legacy", "1.0" }});
+    try expectPicks(index, &.{.{ .name = "komira-ai/legacy", .requirement = "<1.1" }}, &.{}, &.{.{ "komira-ai/legacy", "1.0" }});
     // A reader that kept the pre-release would pick 2.0.0-rc1 here.
-    try expectFailure(index, &.{.{ .name = "legacy", .requirement = ">=2.0.0-rc1" }}, .no_match, &.{"2.0.0-rc1 (ignored: not MAJOR.MINOR.PATCH)"});
-    try expectFailure(index, &.{.{ .name = "legacy", .requirement = "=1.2.3" }}, .no_match, &.{"1.2.3.4 (ignored: not MAJOR.MINOR.PATCH)"});
+    try expectFailure(index, &.{.{ .name = "komira-ai/legacy", .requirement = ">=2.0.0-rc1" }}, .no_match, &.{"2.0.0-rc1 (ignored: not MAJOR.MINOR.PATCH)"});
+    try expectFailure(index, &.{.{ .name = "komira-ai/legacy", .requirement = "=1.2.3" }}, .no_match, &.{"1.2.3.4 (ignored: not MAJOR.MINOR.PATCH)"});
     // A pin on an ignored version is not honoured either.
-    try expectPicks(index, &.{.{ .name = "legacy", .requirement = "*" }}, &.{.{ .name = "legacy", .version = "1.2.3.4" }}, &.{.{ "legacy", "1.1.0" }});
+    try expectPicks(index, &.{.{ .name = "komira-ai/legacy", .requirement = "*" }}, &.{.{ .name = "komira-ai/legacy", .version = "1.2.3.4" }}, &.{.{ "komira-ai/legacy", "1.1.0" }});
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var warnings = std.ArrayList([]const u8).init(a);
     var diag: Diagnostic = .{};
-    _ = try resolve(a, index, .{ .mojo = "1.0.0", .roots = &.{.{ .name = "legacy", .requirement = "1" }}, .warnings = &warnings }, &diag);
+    _ = try resolve(a, index, .{ .mojo = "1.0.0", .roots = &.{.{ .name = "komira-ai/legacy", .requirement = "1" }}, .warnings = &warnings }, &diag);
     try std.testing.expectEqual(@as(usize, 2), warnings.items.len);
-    try std.testing.expectEqualStrings("the index lists legacy 1.2.3.4, which is not a MAJOR.MINOR.PATCH version; it is ignored", warnings.items[0]);
-    try std.testing.expectEqualStrings("the index lists legacy 2.0.0-rc1, which is not a MAJOR.MINOR.PATCH version; it is ignored", warnings.items[1]);
+    try std.testing.expectEqualStrings("the index lists komira-ai/legacy 1.2.3.4, which is not a MAJOR.MINOR.PATCH version; it is ignored", warnings.items[0]);
+    try std.testing.expectEqualStrings("the index lists komira-ai/legacy 2.0.0-rc1, which is not a MAJOR.MINOR.PATCH version; it is ignored", warnings.items[1]);
 }
 
 test "requirement edge cases pick the newest version each one allows" {
-    const index = comptime MemoryIndex{ .files = &.{.{ "core", core_versions }} };
+    const index = comptime MemoryIndex{ .files = &.{.{ "komira-ai/core", core_versions }} };
     const Case = struct { []const u8, []const u8 };
     const cases = [_]Case{
         .{ "1", "1.3.0" }, // caret: newest 1.x, not 2.0.0
@@ -684,120 +695,121 @@ test "requirement edge cases pick the newest version each one allows" {
         .{ "*", "2.0.0" }, // never 2.1.0-rc1, which is ignored
     };
     for (cases) |case| {
-        expectPicks(index, &.{.{ .name = "core", .requirement = case[0] }}, &.{}, &.{.{ "core", case[1] }}) catch |e| {
+        expectPicks(index, &.{.{ .name = "komira-ai/core", .requirement = case[0] }}, &.{}, &.{.{ "komira-ai/core", case[1] }}) catch |e| {
             std.debug.print("for requirement '{s}'\n", .{case[0]});
             return e;
         };
     }
     // A registry pre-release is ignored, even for a requirement that names one.
-    try expectFailure(index, &.{.{ .name = "core", .requirement = ">=2.1.0-rc1" }}, .no_match, &.{ ">=2.1.0-rc1 (from mopm.toml)", "2.1.0-rc1 (ignored" });
-    try expectFailure(index, &.{.{ .name = "core", .requirement = ">2.0.0" }}, .no_match, &.{">2.0.0 (from mopm.toml)"});
+    try expectFailure(index, &.{.{ .name = "komira-ai/core", .requirement = ">=2.1.0-rc1" }}, .no_match, &.{ ">=2.1.0-rc1 (from mopm.toml)", "2.1.0-rc1 (ignored" });
+    try expectFailure(index, &.{.{ .name = "komira-ai/core", .requirement = ">2.0.0" }}, .no_match, &.{">2.0.0 (from mopm.toml)"});
 }
 
 test "a lock's pin is kept while it fits, and dropped when it does not" {
-    const index = comptime MemoryIndex{ .files = &.{.{ "core", core_versions }} };
-    try expectPicks(index, &.{.{ .name = "core", .requirement = "1" }}, &.{.{ .name = "core", .version = "1.2.0" }}, &.{.{ "core", "1.2.0" }});
-    try expectPicks(index, &.{.{ .name = "core", .requirement = "~1.2.7" }}, &.{.{ .name = "core", .version = "1.2.0" }}, &.{.{ "core", "1.2.7" }});
+    const index = comptime MemoryIndex{ .files = &.{.{ "komira-ai/core", core_versions }} };
+    try expectPicks(index, &.{.{ .name = "komira-ai/core", .requirement = "1" }}, &.{.{ .name = "komira-ai/core", .version = "1.2.0" }}, &.{.{ "komira-ai/core", "1.2.0" }});
+    try expectPicks(index, &.{.{ .name = "komira-ai/core", .requirement = "~1.2.7" }}, &.{.{ .name = "komira-ai/core", .version = "1.2.0" }}, &.{.{ "komira-ai/core", "1.2.7" }});
 }
 
 test "a diamond resolves to the newest version both sides allow" {
     const index = comptime MemoryIndex{ .files = &.{
-        .{ "app_a", indexLine("app_a", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\">=1.2,<2\"}],") },
-        .{ "app_b", indexLine("app_b", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\"~1.2\"}],") },
-        .{ "core", core_versions },
+        .{ "komira-ai/app_a", indexLine("komira-ai/app_a", "1.0.0", "\"deps\":[{\"name\":\"komira-ai/core\",\"range\":\">=1.2,<2\"}],") },
+        .{ "komira-ai/app_b", indexLine("komira-ai/app_b", "1.0.0", "\"deps\":[{\"name\":\"komira-ai/core\",\"range\":\"~1.2\"}],") },
+        .{ "komira-ai/core", core_versions },
     } };
     // Newest for app_a alone is 1.3.0; app_b holds it to 1.2.x.
-    try expectPicks(index, &.{ .{ .name = "app_a", .requirement = "1" }, .{ .name = "app_b", .requirement = "1" } }, &.{}, &.{
-        .{ "app_a", "1.0.0" }, .{ "app_b", "1.0.0" }, .{ "core", "1.2.7" },
+    try expectPicks(index, &.{ .{ .name = "komira-ai/app_a", .requirement = "1" }, .{ .name = "komira-ai/app_b", .requirement = "1" } }, &.{}, &.{
+        .{ "komira-ai/app_a", "1.0.0" }, .{ "komira-ai/app_b", "1.0.0" }, .{ "komira-ai/core", "1.2.7" },
     });
 }
 
 test "backtracking: an older parent whose dependency fits" {
     const index = comptime MemoryIndex{ .files = &.{
-        .{ "top", indexLine("top", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\"^1\"}],") ++
-            indexLine("top", "1.1.0", "\"deps\":[{\"name\":\"core\",\"range\":\"^2\"}],") },
-        .{ "core", core_versions },
+        .{ "komira-ai/top", indexLine("komira-ai/top", "1.0.0", "\"deps\":[{\"name\":\"komira-ai/core\",\"range\":\"^1\"}],") ++
+            indexLine("komira-ai/top", "1.1.0", "\"deps\":[{\"name\":\"komira-ai/core\",\"range\":\"^2\"}],") },
+        .{ "komira-ai/core", core_versions },
     } };
     // top 1.1.0 needs core 2, which the root forbids; top 1.0.0 is the answer.
-    try expectPicks(index, &.{ .{ .name = "top", .requirement = "1" }, .{ .name = "core", .requirement = "<2" } }, &.{}, &.{
-        .{ "core", "1.3.0" }, .{ "top", "1.0.0" },
+    try expectPicks(index, &.{ .{ .name = "komira-ai/top", .requirement = "1" }, .{ .name = "komira-ai/core", .requirement = "<2" } }, &.{}, &.{
+        .{ "komira-ai/core", "1.3.0" }, .{ "komira-ai/top", "1.0.0" },
     });
 }
 
 test "a conflict names every requirement and where it came from" {
     const index = comptime MemoryIndex{ .files = &.{
-        .{ "app_a", indexLine("app_a", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\"^1\"}],") },
-        .{ "app_b", indexLine("app_b", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\"^2\"}],") },
-        .{ "core", core_versions },
+        .{ "komira-ai/app_a", indexLine("komira-ai/app_a", "1.0.0", "\"deps\":[{\"name\":\"komira-ai/core\",\"range\":\"^1\"}],") },
+        .{ "komira-ai/app_b", indexLine("komira-ai/app_b", "1.0.0", "\"deps\":[{\"name\":\"komira-ai/core\",\"range\":\"^2\"}],") },
+        .{ "komira-ai/core", core_versions },
     } };
-    try expectFailure(index, &.{ .{ .name = "app_a", .requirement = "1" }, .{ .name = "app_b", .requirement = "1" } }, .conflict, &.{
-        "no version of core satisfies every requirement", "^1 (from app_a 1.0.0)", "^2 (from app_b 1.0.0)",
+    try expectFailure(index, &.{ .{ .name = "komira-ai/app_a", .requirement = "1" }, .{ .name = "komira-ai/app_b", .requirement = "1" } }, .conflict, &.{
+        "no version of komira-ai/core satisfies every requirement", "^1 (from komira-ai/app_a 1.0.0)", "^2 (from komira-ai/app_b 1.0.0)",
     });
 }
 
 test "yanked and taken-down versions are not picked; when only they match, the reason is shown" {
     const index = comptime MemoryIndex{ .files = &.{.{
-        "tls",
-        indexLine("tls", "1.0.0", no_deps) ++
-            indexLine2("tls", "1.1.0", "1.0.0", "yanked", no_deps ++ "\"yank_reason\":\"crashes on empty body\",") ++
-            indexLine2("tls", "1.2.0", "1.0.0", "tombstoned", no_deps ++ "\"tombstone\":{\"date\":\"2026-10-14\",\"reason_code\":\"malware\"},"),
+        "komira-ai/tls",
+        indexLine("komira-ai/tls", "1.0.0", no_deps) ++
+            indexLine2("komira-ai/tls", "1.1.0", "1.0.0", "yanked", no_deps ++ "\"yank_reason\":\"crashes on empty body\",") ++
+            indexLine2("komira-ai/tls", "1.2.0", "1.0.0", "tombstoned", no_deps ++ "\"tombstone\":{\"date\":\"2026-10-14\",\"reason_code\":\"malware\"},"),
     }} };
-    try expectPicks(index, &.{.{ .name = "tls", .requirement = "1" }}, &.{}, &.{.{ "tls", "1.0.0" }});
+    try expectPicks(index, &.{.{ .name = "komira-ai/tls", .requirement = "1" }}, &.{}, &.{.{ "komira-ai/tls", "1.0.0" }});
     // A pin on a yanked version is not honoured by new resolution.
-    try expectPicks(index, &.{.{ .name = "tls", .requirement = "1" }}, &.{.{ .name = "tls", .version = "1.1.0" }}, &.{.{ "tls", "1.0.0" }});
-    try expectFailure(index, &.{.{ .name = "tls", .requirement = "=1.1.0" }}, .yanked, &.{"1.1.0 was yanked: crashes on empty body"});
-    try expectFailure(index, &.{.{ .name = "tls", .requirement = ">=1.1" }}, .yanked, &.{ "1.1.0 was yanked", "1.2.0 was taken down (malware)" });
+    try expectPicks(index, &.{.{ .name = "komira-ai/tls", .requirement = "1" }}, &.{.{ .name = "komira-ai/tls", .version = "1.1.0" }}, &.{.{ "komira-ai/tls", "1.0.0" }});
+    try expectFailure(index, &.{.{ .name = "komira-ai/tls", .requirement = "=1.1.0" }}, .yanked, &.{"1.1.0 was yanked: crashes on empty body"});
+    try expectFailure(index, &.{.{ .name = "komira-ai/tls", .requirement = ">=1.1" }}, .yanked, &.{ "1.1.0 was yanked", "1.2.0 was taken down (malware)" });
 }
 
 test "a build for another mojo is not picked; when only it matches, the compiler is named" {
     const index = comptime MemoryIndex{ .files = &.{.{
-        "core",
-        indexLine("core", "1.0.0", no_deps) ++ indexLine2("core", "1.1.0", "1.1.0", "published", no_deps),
+        "komira-ai/core",
+        indexLine("komira-ai/core", "1.0.0", no_deps) ++ indexLine2("komira-ai/core", "1.1.0", "1.1.0", "published", no_deps),
     }} };
-    try expectPicks(index, &.{.{ .name = "core", .requirement = "1" }}, &.{}, &.{.{ "core", "1.0.0" }});
-    try expectFailure(index, &.{.{ .name = "core", .requirement = "=1.1.0" }}, .compiler_mismatch, &.{ "built for mojo 1.0.0", "1.1.0 (mojo 1.1.0)" });
+    try expectPicks(index, &.{.{ .name = "komira-ai/core", .requirement = "1" }}, &.{}, &.{.{ "komira-ai/core", "1.0.0" }});
+    try expectFailure(index, &.{.{ .name = "komira-ai/core", .requirement = "=1.1.0" }}, .compiler_mismatch, &.{ "built for mojo 1.0.0", "1.1.0 (mojo 1.1.0)" });
 }
 
 test "no version with a build for the project's mojo: the error names the version, its builds and the way out" {
     // core 1.2.0 is built for mojo 1.0.0 only; the project builds for 1.1.0.
     const index = comptime MemoryIndex{ .files = &.{.{
-        "core",
-        indexLine("core", "1.1.0", no_deps) ++ indexLine("core", "1.2.0", no_deps) ++ indexLine2("core", "1.0.0", "1.1.0", "published", no_deps),
+        "komira-ai/core",
+        indexLine("komira-ai/core", "1.1.0", no_deps) ++ indexLine("komira-ai/core", "1.2.0", no_deps) ++ indexLine2("komira-ai/core", "1.0.0", "1.1.0", "published", no_deps),
     }} };
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     var diag: Diagnostic = .{};
-    const roots = [_]Root{.{ .name = "core", .requirement = "1.2" }};
+    const roots = [_]Root{.{ .name = "komira-ai/core", .requirement = "1.2" }};
     try std.testing.expectError(error.ResolveFailed, resolve(arena_state.allocator(), index, .{ .mojo = "1.1.0", .roots = &roots, .mojoc_message = true }, &diag));
     try std.testing.expectEqual(Kind.compiler_mismatch, diag.kind);
-    try std.testing.expectEqualStrings("core 1.2.0 has no .mojoc for Mojo 1.1.0 (published for: 1.0.0). Build with mojo 1.0.0, ask the publisher for a 1.1.0 build, or pin a version that has one.", diag.message);
+    try std.testing.expectEqualStrings("komira-ai/core 1.2.0 has no .mojoc for Mojo 1.1.0 (published for: 1.0.0). Build with mojo 1.0.0, ask the publisher for a 1.1.0 build, or pin a version that has one.", diag.message);
     // Without the flag the older wording stays.
-    try expectFailure(index, &.{.{ .name = "core", .requirement = "=1.0.0" }}, .compiler_mismatch, &.{"built for mojo 1.0.0"});
+    try expectFailure(index, &.{.{ .name = "komira-ai/core", .requirement = "=1.0.0" }}, .compiler_mismatch, &.{"built for mojo 1.0.0"});
 }
 
 test "a package with no index file is named with what required it" {
-    const index = comptime MemoryIndex{ .files = &.{.{ "top", indexLine("top", "1.0.0", "\"deps\":[{\"name\":\"gone\",\"range\":\"1\"}],") }} };
-    try expectFailure(index, &.{.{ .name = "top", .requirement = "1" }}, .not_found, &.{"gone (required by top 1.0.0) is not in the registry's index"});
+    const index = comptime MemoryIndex{ .files = &.{.{ "komira-ai/top", indexLine("komira-ai/top", "1.0.0", "\"deps\":[{\"name\":\"komira-ai/gone\",\"range\":\"1\"}],") }} };
+    try expectFailure(index, &.{.{ .name = "komira-ai/top", .requirement = "1" }}, .not_found, &.{"komira-ai/gone (required by komira-ai/top 1.0.0) is not in the registry's index"});
 }
 
 test "index files that break spec/index.md are refused" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const good = comptime indexLine("core", "1.0.0", no_deps);
+    const good = comptime indexLine("komira-ai/core", "1.0.0", no_deps);
     const Case = struct { []const u8, []const u8 };
     const cases = comptime [_]Case{
         .{ good[0 .. good.len - 1], "does not end with a newline" },
         .{ good ++ "\n" ++ good, "blank" },
-        .{ good ++ indexLine("core", "1.0", no_deps), "version 1.0 repeats 1.0.0" },
-        .{ indexLine("other", "1.0.0", no_deps), "names other" },
-        .{ "{\"v\":2}\n", "record version 2; this mopm reads 1. Update mopm." },
-        .{ indexLine2("core", "1.0.0", "1.0.0", "yanked", no_deps), "no yank_reason" },
+        .{ good ++ indexLine("komira-ai/core", "1.0", no_deps), "version 1.0 repeats 1.0.0" },
+        .{ indexLine("komira-ai/other", "1.0.0", no_deps), "names komira-ai/other" },
+        .{ "{\"v\":3}\n", "record version 3; this mopm reads 2. Update mopm." },
+        .{ "{\"v\":1}\n", "record version 1; this mopm reads 2. Update mopm." },
+        .{ indexLine2("komira-ai/core", "1.0.0", "1.0.0", "yanked", no_deps), "no yank_reason" },
         .{ "not json\n", "not JSON" },
     };
     for (cases) |case| {
         var diag: Diagnostic = .{};
-        if (parseIndex(a, "core", case[0], &diag)) |_| {
+        if (parseIndex(a, "komira-ai/core", case[0], &diag)) |_| {
             std.debug.print("accepted: {s}\n", .{case[1]});
             return error.TestUnexpectedResult;
         } else |e| if (e != error.ResolveFailed) return e;
@@ -813,13 +825,63 @@ test "the spec's example index files parse" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var diag: Diagnostic = .{};
-    const text = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, "tests/contract/examples/index-record/valid/http_client.ndjson"), 1 << 20);
-    const recs = parseIndex(a, "http_client", text, &diag) catch |e| {
+    const text = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, "tests/contract/examples/index-record/valid/komira-ai.http_client.ndjson"), 1 << 20);
+    const recs = parseIndex(a, "komira-ai/http_client", text, &diag) catch |e| {
         std.debug.print("{s}\n", .{diag.message});
         return e;
     };
     try std.testing.expectEqual(@as(usize, 3), recs.len);
     try std.testing.expectEqual(State.yanked, recs[0].state);
-    try std.testing.expectEqualStrings("http_core", recs[1].deps[0].name);
+    try std.testing.expectEqualStrings("komira-ai/http_core", recs[1].deps[0].name);
     try std.testing.expectEqualStrings("libcrypto_native.so.1", recs[1].native[0].soname);
+}
+
+/// Expects the refusal of the index file of komira-ai/core made of `good` with `from` replaced by `to`.
+fn expectRefusedAfter(a: Allocator, good: []const u8, from: []const u8, to: []const u8, want: []const u8) !void {
+    const text = try std.mem.replaceOwned(u8, a, good, from, to);
+    var diag: Diagnostic = .{};
+    try std.testing.expectError(error.ResolveFailed, parseIndex(a, "komira-ai/core", text, &diag));
+    try std.testing.expectEqual(Kind.bad_index, diag.kind);
+    try std.testing.expectEqualStrings(want, diag.message);
+}
+
+test "a record's names must be full names and its files named after its conda name" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const dep_line = comptime indexLine("komira-ai/core", "1.0.0", "\"deps\":[{\"name\":\"komira-ai/base\",\"range\":\"1\"}],");
+    var diag: Diagnostic = .{};
+    const ok = try parseIndex(a, "komira-ai/core", dep_line, &diag);
+    try std.testing.expectEqualStrings("komira-ai/base", ok[0].deps[0].name);
+    try std.testing.expectEqualStrings("mojo-komira-ai.core-1.0.0-mojo1.0.0_0.conda", ok[0].files[0].filename);
+
+    try expectRefusedAfter(a, dep_line, "\"name\":\"komira-ai/base\"", "\"name\":\"base\"", "the index file of komira-ai/core, line 1: dependency base is not a full name <namespace>/<name>");
+    try expectRefusedAfter(a, dep_line, "\"name\":\"komira-ai/base\"", "\"name\":\"Komira-AI/base\"", "the index file of komira-ai/core, line 1: dependency Komira-AI/base is not a full name <namespace>/<name>");
+    try expectRefusedAfter(a, dep_line, "\"filename\":\"mojo-komira-ai.core-", "\"filename\":\"mojo-core-", "the index file of komira-ai/core, line 1: a file is named mojo-core-1.0.0-mojo1.0.0_0.conda; the conda name of komira-ai/core makes it mojo-komira-ai.core-1.0.0-mojo1.0.0_0.conda");
+    try expectRefusedAfter(a, dep_line, "\"filename\":\"mojo-komira-ai.core-", "\"filename\":\"mojo-acme.core-", "the index file of komira-ai/core, line 1: a file is named mojo-acme.core-1.0.0-mojo1.0.0_0.conda; the conda name of komira-ai/core makes it mojo-komira-ai.core-1.0.0-mojo1.0.0_0.conda");
+    try expectRefusedAfter(a, dep_line, "-mojo1.0.0_0.conda", "-mojo1.0.0_1.conda", "the index file of komira-ai/core, line 1: a file is named mojo-komira-ai.core-1.0.0-mojo1.0.0_1.conda; the conda name of komira-ai/core makes it mojo-komira-ai.core-1.0.0-mojo1.0.0_0.conda");
+
+    // A bare name in the file's own name is not a package name either.
+    const bare = comptime indexLine("core", "1.0.0", no_deps);
+    var d2: Diagnostic = .{};
+    try std.testing.expectError(error.ResolveFailed, parseIndex(a, "core", bare, &d2));
+    try std.testing.expectEqualStrings("the index file of core, line 1: core is not a full name <namespace>/<name>", d2.message);
+}
+
+test "the same import name in two namespaces is two packages" {
+    const index = comptime MemoryIndex{ .files = &.{
+        .{ "komira-ai/core", indexLine("komira-ai/core", "1.0.0", no_deps) },
+        .{ "acme/core", indexLine("acme/core", "2.0.0", no_deps) },
+    } };
+    try expectPicks(index, &.{ .{ .name = "komira-ai/core", .requirement = "1" }, .{ .name = "acme/core", .requirement = "2" } }, &.{}, &.{
+        .{ "acme/core", "2.0.0" }, .{ "komira-ai/core", "1.0.0" },
+    });
+    // A requirement on one does not match the other's versions.
+    try expectFailure(index, &.{ .{ .name = "komira-ai/core", .requirement = "1" }, .{ .name = "acme/core", .requirement = "1" } }, .no_match, &.{"no version of acme/core matches 1 (from mopm.toml); the index has 2.0.0"});
+}
+
+test "a requirement on a name without a namespace is refused before the index is read" {
+    const index = comptime MemoryIndex{ .files = &.{} };
+    try expectFailure(index, &.{.{ .name = "core", .requirement = "1" }}, .bad_requirement, &.{"mopm.toml: core is not a full name <namespace>/<name>"});
+    try expectFailure(index, &.{.{ .name = "komira-ai/core", .requirement = "1", .from = "app 1.0.0" }}, .not_found, &.{"komira-ai/core (required by app 1.0.0) is not in the registry's index"});
 }

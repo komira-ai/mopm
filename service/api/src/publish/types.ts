@@ -60,12 +60,12 @@ export interface PublishRecord {
   /** `source_commit` of the commit request (src/publish/source-commit.ts); stored on the version when it is published. */
   source_commit?: string;
   files: PublishFile[];
-  /** Subdirs whose repodata does not yet list this publish (set when the version is published). */
+  /** Repodata directories (`<subdir>` for a flat name, `<namespace>/<subdir>` for a full one) whose repodata does not yet list this publish (set when the version is published). */
   remaining_subdirs: string[];
   /**
    * Set by the job that lists the last subdir: the repodata is done, the package's sparse-index file is not.
    * The publish becomes `published` when that file is written. Separate from `remaining_subdirs`, which only
-   * ever holds conda subdirs.
+   * ever holds repodata directories.
    */
   index_pending?: boolean;
   created_at: string;
@@ -82,6 +82,10 @@ export interface ValidateMessage {
 /** What the index queue carries. Without a publish id it is a plain rebuild (init, a later yank). */
 export interface IndexMessage {
   type: 'index';
+  /**
+   * A repodata directory (src/channel-paths.ts): `<subdir>` is the channel root, `<namespace>/<subdir>` a namespace's channel.
+   * The field keeps its name so a message sent before namespaces, which holds a plain subdir, still means the root.
+   */
   subdir: string;
   publish_id?: string;
   /**

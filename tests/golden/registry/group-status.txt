@@ -1,0 +1,23 @@
+usage: mopm group status <group_id> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Show a publish group: its state, its members and its yank.
+
+The group's status, attempt and deadline, and the state of each member: `pending` (its number is not reserved
+yet), `reserved`, `staged`, `published` or `yanked`. Each member also lists its `files`: the facts the caller declared at
+`createGroup`, and, while the group is `open`, whether each file is in storage. The read reserves and charges nothing (it only
+expires a group past its deadline), so it is the way to see a group, whatever its status, without `createGroup` (which reopens a group that ended).
+Needs a token with `stage` or `publish`. Readable by the caller who created the group and by an account that can write the namespace of every
+package in it; anyone else gets `group_not_found`. A group past its deadline that was still open is expired
+by this read.
+
+arguments:
+  <group_id>
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends GET /api/v2/groups/{group_id} (getGroup) with the token 'mopm login' stored, or $MOPM_TOKEN.

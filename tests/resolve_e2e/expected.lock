@@ -1,22 +1,32 @@
 {
-  "lock_version": 1,
+  "lock_version": 3,
+  "mojo": [
+    "1.0.0"
+  ],
   "toolchain": {
-    "mojo": "1.0.0"
+    "1.0.0": {
+      "linux-64": "3ed75e01401544e0d660ee48dc387dacce437e3833ac296d4a0601f28abd4aec",
+      "linux-aarch64": "84a22df9ff1ca84c7eb47a3b3d5eaede4c970ee85b660853f640841b5dfa03c3",
+      "osx-arm64": "0d34e9a60951231f6c2161f6620957ff086542b217b187774fdf9d82b76046a1"
+    }
   },
   "channels": [
     "@CHANNEL@"
   ],
   "packages": [
     {
-      "name": "crypto",
+      "name": "example/crypto",
       "version": "2.0.1",
-      "build": "mojo1.0.0_0",
       "subdir": "linux-64",
-      "channel": "@CHANNEL@",
-      "url": "@CHANNEL@linux-64/mojo-crypto-2.0.1-mojo1.0.0_0.conda",
-      "sha256": "@CRYPTO_LINUX_FILE_SHA@",
-      "size": @CRYPTO_LINUX_FILE_SIZE@,
-      "mojo": "1.0.0",
+      "channel": "@CHANNEL@example/",
+      "artifacts": {
+        "1.0.0": {
+          "build": "mojo1.0.0_0",
+          "url": "@CHANNEL@example/linux-64/mojo-example.crypto-2.0.1-mojo1.0.0_0.conda",
+          "sha256": "@CRYPTO_LINUX_FILE_SHA@",
+          "size": @CRYPTO_LINUX_FILE_SIZE@
+        }
+      },
       "native": [
         {
           "id": "crypto",
@@ -27,15 +37,18 @@
       ]
     },
     {
-      "name": "crypto",
+      "name": "example/crypto",
       "version": "2.0.1",
-      "build": "mojo1.0.0_0",
       "subdir": "osx-arm64",
-      "channel": "@CHANNEL@",
-      "url": "@CHANNEL@osx-arm64/mojo-crypto-2.0.1-mojo1.0.0_0.conda",
-      "sha256": "@CRYPTO_OSX_FILE_SHA@",
-      "size": @CRYPTO_OSX_FILE_SIZE@,
-      "mojo": "1.0.0",
+      "channel": "@CHANNEL@example/",
+      "artifacts": {
+        "1.0.0": {
+          "build": "mojo1.0.0_0",
+          "url": "@CHANNEL@example/osx-arm64/mojo-example.crypto-2.0.1-mojo1.0.0_0.conda",
+          "sha256": "@CRYPTO_OSX_FILE_SHA@",
+          "size": @CRYPTO_OSX_FILE_SIZE@
+        }
+      },
       "native": [
         {
           "id": "crypto",
@@ -46,43 +59,52 @@
       ]
     },
     {
-      "name": "http_client",
+      "name": "example/http_client",
       "version": "0.4.0",
-      "build": "mojo1.0.0_0",
       "subdir": "linux-64",
-      "channel": "@CHANNEL@",
-      "url": "@CHANNEL@linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda",
-      "sha256": "affd517aaba64e2b8d3ea7b3bb9f62564c52482f7db11ff97a4f3f329b1f3772",
-      "size": 4096,
-      "mojo": "1.0.0",
+      "channel": "@CHANNEL@example/",
+      "artifacts": {
+        "1.0.0": {
+          "build": "mojo1.0.0_0",
+          "url": "@CHANNEL@example/linux-64/mojo-example.http_client-0.4.0-mojo1.0.0_0.conda",
+          "sha256": "6cd384d734982e4d7b347749259462ce956ca8b2f2f5b10d5be744b22a569c1a",
+          "size": 4096
+        }
+      },
       "deps": [
-        "crypto",
-        "http_core"
+        "example/crypto",
+        "example/http_core"
       ]
     },
     {
-      "name": "http_core",
+      "name": "example/http_core",
       "version": "1.2.5",
-      "build": "mojo1.0.0_0",
       "subdir": "linux-64",
-      "channel": "@CHANNEL@",
-      "url": "@CHANNEL@linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda",
-      "sha256": "683a4f0012639dcfc0470a722adf238d3094a67c80d87147f10ecfa2aeab58ea",
-      "size": 4096,
-      "mojo": "1.0.0"
+      "channel": "@CHANNEL@example/",
+      "artifacts": {
+        "1.0.0": {
+          "build": "mojo1.0.0_0",
+          "url": "@CHANNEL@example/linux-64/mojo-example.http_core-1.2.5-mojo1.0.0_0.conda",
+          "sha256": "09141b2adeb9685d791ea8745bd747784d528f383b429f357382696e6d3f1c72",
+          "size": 4096
+        }
+      }
     },
     {
-      "name": "tls",
+      "name": "example/tls",
       "version": "1.1.0",
-      "build": "mojo1.0.0_0",
       "subdir": "linux-64",
-      "channel": "@CHANNEL@",
-      "url": "@CHANNEL@linux-64/mojo-tls-1.1.0-mojo1.0.0_0.conda",
-      "sha256": "5fd3bf754294a155a3435cbbe72c2c65263c945535a6c57f8ea268fd41355988",
-      "size": 4096,
-      "mojo": "1.0.0",
+      "channel": "@CHANNEL@example/",
+      "artifacts": {
+        "1.0.0": {
+          "build": "mojo1.0.0_0",
+          "url": "@CHANNEL@example/linux-64/mojo-example.tls-1.1.0-mojo1.0.0_0.conda",
+          "sha256": "f42b04a307c847cc921e116d5099359c2efa57043ac03345f96b1488a088069a",
+          "size": 4096
+        }
+      },
       "deps": [
-        "http_core"
+        "example/http_core"
       ]
     }
   ]

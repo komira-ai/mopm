@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "name": "pkg_a",
+  "schema": 2,
+  "name": "example/pkg_a",
   "version": "1.0.0",
   "native": [
     { "id": "x", "soname": "libdup.so.1", "file": "lib/libdup.so.1" }

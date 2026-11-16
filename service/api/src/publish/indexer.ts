@@ -1,4 +1,6 @@
-import { buildPackageIndex, buildTakedowns, indexKey, packageRev, TAKEDOWNS_KEY } from '../index-files';
+import { inChannel, parseRepodataDir, repodataDir } from '../channel-paths';
+import { buildPackageIndex, buildTakedowns, indexKey, INDEX_VERSION, INDEX_VERSION_V2, packageRev, TAKEDOWNS_KEY, TAKEDOWNS_V2_KEY } from '../index-files';
+import { NAME_PATTERN, splitFullName } from '../names';
 import { INDEX_VIEW, repodataView, TAKEDOWNS_VIEW, type View } from '../group';
 import type { GroupStore } from '../group-store';
 import { buildRepodata } from '../repodata';
@@ -30,15 +32,20 @@ export interface IndexerDeps {
   ensured?: Set<string>;
 }
 
-/** The two files of a subdir's index, and the CloudFront paths to refresh when they change. */
-export const repodataKeys = (subdir: string) => ({ json: `${subdir}/repodata.json`, zst: `${subdir}/repodata.json.zst` });
+/**
+ * The two files of a repodata directory (`<subdir>` at the channel root, `<namespace>/<subdir>` in a namespace's channel,
+ * src/channel-paths.ts), and the CloudFront paths to refresh when they change.
+ */
+export const repodataKeys = (dir: string) => ({ json: `${dir}/repodata.json`, zst: `${dir}/repodata.json.zst` });
 
 const REPODATA_CACHE = 'public, max-age=60';
 const INDEX_CACHE = 'public, max-age=60';
 
 /**
- * Process one `index` message: rebuild the subdir's repodata from the registry's records, write it, refresh the
- * CDN, and tell the publish that this subdir lists it.
+ * Process one `index` message: rebuild the repodata of one subdir of one channel from the registry's records, write it,
+ * refresh the CDN, and tell the publish that this subdir lists it. The message's `subdir` is a repodata directory
+ * (src/channel-paths.ts): a plain subdir is the channel root, which lists the packages of flat names only; `<namespace>/<subdir>`
+ * is that namespace's channel, which lists its packages only. A publish in one namespace never rewrites another's files.
  *
  * Why this is correct under concurrency: the messages of one subdir share a FIFO group, so at most one job per
  * subdir runs at a time and in order, and a job rebuilds from every committed record rather than patching the
@@ -55,7 +62,8 @@ const INDEX_CACHE = 'public, max-age=60';
  */
 export async function indexSubdir(d: IndexerDeps, msg: IndexMessage): Promise<void> {
   const log = d.log ?? ((l: Record<string, unknown>) => console.log(JSON.stringify(l)));
-  if (!SUBDIRS_V1.includes(msg.subdir)) {
+  const dir = parseRepodataDir(msg.subdir);
+  if (!dir) {
     log({ level: 'error', msg: 'index message for an unknown subdir', subdir: msg.subdir });
     return;
   }
@@ -65,10 +73,10 @@ export async function indexSubdir(d: IndexerDeps, msg: IndexMessage): Promise<vo
   const hop = msg.then && 'group' in msg.then ? msg.then.group : undefined;
   // A hop of a group's yank or unyank (src/publish/group-yank.ts) releases its own gate, on the header's `yank`.
   if (hop && (await (isYankHop(hop) ? releaseYankRepodata(chainDeps(d), hop, msg.subdir) : releaseRepodata(chainDeps(d), hop, msg.subdir))) === undefined) return;
-  await ensureEmptyIndexes(d, msg.subdir);
+  await ensureEmptyIndexes(d, dir.namespace, dir.subdir);
 
-  const records = await allRecords(d.registry, repodataView(msg.subdir));
-  const files = buildRepodata(msg.subdir, records);
+  const records = await allRecords(d.registry, repodataView(msg.subdir), dir.namespace ?? null);
+  const files = buildRepodata(dir.subdir, records);
   const keys = repodataKeys(msg.subdir);
   // The .json first: a reader that finds the .zst new finds the .json new too.
   await d.objects.put(keys.json, files.json, { contentType: 'application/json', cacheControl: REPODATA_CACHE });
@@ -163,13 +171,19 @@ function chainQueues(d: IndexerDeps) {
   return { indexQueue: d.indexQueue, groupQueue: d.groupQueue };
 }
 
-/** Process one `index_takedowns` message: rebuild `index/takedowns.json` from every row of the registry (an empty log when none). */
+/**
+ * Process one `index_takedowns` message: rebuild both takedown logs from every row of the registry (an empty log when
+ * none): `index/takedowns.json` with the flat names, `index/v2/takedowns.json` with the full names.
+ */
 export async function indexTakedowns(d: IndexerDeps): Promise<void> {
-  const body = buildTakedowns(await allRecords(d.registry, TAKEDOWNS_VIEW));
-  await d.objects.put(TAKEDOWNS_KEY, Buffer.from(body, 'utf8'), { contentType: 'application/json', cacheControl: INDEX_CACHE });
+  const rows = await allRecords(d.registry, TAKEDOWNS_VIEW);
+  for (const [key, version] of [[TAKEDOWNS_KEY, INDEX_VERSION], [TAKEDOWNS_V2_KEY, INDEX_VERSION_V2]] as const) {
+    await d.objects.put(key, Buffer.from(buildTakedowns(rows, version), 'utf8'), { contentType: 'application/json', cacheControl: INDEX_CACHE });
+  }
 }
 
-const PKG_NAME = /^[a-z][a-z0-9_]{1,63}$/;
+/** A package name of either kind: flat (`/api/v1`) or full (`<namespace>/<name>`, `/api/v2`). */
+const isPkgName = (v: unknown): v is string => typeof v === 'string' && (NAME_PATTERN.test(v) || splitFullName(v) !== undefined);
 const isRev = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
 /** A hop of a group's yank or unyank (it names the yank), not of the commit's chain. */
@@ -205,11 +219,11 @@ export function parseIndexMessage(raw: unknown): IndexQueueMessage | undefined {
         const group = parseHop(t.group);
         return group && !('name' in t) && !('next' in t) ? { type: 'index', subdir: m.subdir, ...publishId, then: { group } } : undefined;
       }
-      if (typeof t.name !== 'string' || !PKG_NAME.test(t.name) || !isRev(t.rev) || !Array.isArray(t.next) || !t.next.every((x) => typeof x === 'string')) return undefined;
+      if (!isPkgName(t.name) || !isRev(t.rev) || !Array.isArray(t.next) || !t.next.every((x) => typeof x === 'string')) return undefined;
       return { type: 'index', subdir: m.subdir, ...publishId, then: { name: t.name, rev: t.rev, next: t.next as string[] } };
     }
     case 'index_pkg': {
-      if (typeof m.name !== 'string' || !PKG_NAME.test(m.name) || !isRev(m.rev)) return undefined;
+      if (!isPkgName(m.name) || !isRev(m.rev)) return undefined;
       if (m.group === undefined) return { type: 'index_pkg', name: m.name, rev: m.rev, ...publishId };
       const hop = parseHop(m.group);
       const position = (m.group as Record<string, unknown>).position;
@@ -233,23 +247,32 @@ export async function processIndexMessage(d: IndexerDeps, msg: IndexQueueMessage
  * Every version of every package, as `view` shows them: the truth the channel's files are derived from. The read
  * is one `versionsOf`, which also brings in the package of every member of a committed group that was claimed
  * after the package list was read, so a group's members are all in or all out of one build.
+ *
+ * With `channel` (a namespace, or `null` for the channel root), only that channel's packages: a namespace's full names,
+ * or the flat names at the root. The names are filtered before the read, and the rows after it (the group members the
+ * read brings in may be of any channel).
  */
-export async function allRecords(registry: Store, view: View): Promise<VersionRecord[]> {
-  const names = await registry.listPackageNames();
-  return [...(await registry.versionsOf(names, view)).values()].flat();
+export async function allRecords(registry: Store, view: View, channel?: string | null): Promise<VersionRecord[]> {
+  const listed = await registry.listPackageNames();
+  if (channel === undefined) return [...(await registry.versionsOf(listed, view)).values()].flat();
+  const namespace = channel ?? undefined;
+  const names = listed.filter((n) => inChannel(n, namespace));
+  return [...(await registry.versionsOf(names, view)).values()].flat().filter((r) => inChannel(r.name, namespace));
 }
 
-/** The empty index of a subdir, as the writer produces it (also what a fresh channel serves before any publish). */
+/** The empty index of a subdir, as the writer produces it in any channel (also what a fresh channel serves before any publish). */
 export const emptyIndex = (subdir: string) => buildRepodata(subdir, []);
 
-async function ensureEmptyIndexes(d: IndexerDeps, except: string): Promise<void> {
+/** Create, if absent, the empty repodata of the channel's other subdirs: a channel that has seen one publish has all four. */
+async function ensureEmptyIndexes(d: IndexerDeps, namespace: string | undefined, except: string): Promise<void> {
   const ensured = d.ensured ?? new Set<string>();
   for (const subdir of SUBDIRS_V1) {
-    if (subdir === except || ensured.has(subdir)) continue;
+    const dir = repodataDir(namespace, subdir);
+    if (subdir === except || ensured.has(dir)) continue;
     const empty = emptyIndex(subdir);
-    const keys = repodataKeys(subdir);
+    const keys = repodataKeys(dir);
     await d.objects.put(keys.json, empty.json, { contentType: 'application/json', cacheControl: REPODATA_CACHE, createOnly: true });
     await d.objects.put(keys.zst, empty.zst, { contentType: 'application/zstd', cacheControl: REPODATA_CACHE, createOnly: true });
-    ensured.add(subdir);
+    ensured.add(dir);
   }
 }

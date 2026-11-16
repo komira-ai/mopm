@@ -108,7 +108,8 @@ fn joinVersions(a: Allocator, v: []const []const u8) ![]u8 {
 /// Publishes, yanks and takes down versions of one package, then checks the
 /// files a client reads with no API: the index config, the package's index
 /// records, the takedown log, repodata.json and current_repodata.json, and the
-/// package file itself. Returns the problems.
+/// package file itself. The package is a flat name, so its index records and
+/// the takedown log are version 1 (spec/index.md, "Version 1"). Returns the problems.
 fn checkFiles(f: *r.F) !c.Problems {
     const a = f.a;
     var out = c.Problems.init(a);
@@ -131,7 +132,7 @@ fn checkFiles(f: *r.F) !c.Problems {
 
     // The index records: valid, oldest first, the states the API reports.
     const index_text = try f.fetch(try indexPath(f, rel.name));
-    const record_schema = try c.loadJson(a, "spec/index-record.schema.json");
+    const record_schema = try c.loadJson(a, "spec/index-record-1.schema.json");
     for ((try c.indexProblems(a, rel.name, index_text, record_schema)).items) |p| try c.problem(a, &out, "index: {s}", .{p});
     var order = std.ArrayList(u8).init(a);
     var lines = std.mem.splitScalar(u8, index_text, '\n');
@@ -202,7 +203,7 @@ fn checkFiles(f: *r.F) !c.Problems {
     }
 
     const takedowns = try c.parseJson(a, try f.fetch("/index/takedowns.json"));
-    const td_schema = try c.loadJson(a, "spec/takedowns.schema.json");
+    const td_schema = try c.loadJson(a, "spec/takedowns-1.schema.json");
     for ((try c.schemaErrors(a, td_schema, td_schema, takedowns)).items) |e| try c.problem(a, &out, "takedowns.json: {s}", .{e});
     var listed_td = false;
     for (c.getArr(takedowns, "takedowns")) |td| {

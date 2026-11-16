@@ -1,12 +1,13 @@
 # Contributing
 
 - Tooling is written in Zig 0.12.0. Run `zig build test` from the repository
-  root before opening a pull request; CI runs it on Linux (x86_64, aarch64) on
+  root before opening a pull request; CI runs it on Linux x86_64 on
   every pull request (the unit tier only: the end-to-end, packer-conformance and `install.sh`
-  checks and the release run after the merge), and on macOS (arm64) after the merge (push to `main`), nightly,
-  on manual dispatch, and on a pull request that carries the label `macos`
-  (the macOS queue is slow, so add the label when your change touches
-  platform-specific code).
+  checks and the release run after the merge). The other platforms, Linux aarch64 and macOS (arm64), run after the merge
+  (push to `main`, as the beta stage of the release), nightly and on manual dispatch; a pull request never runs them
+  and no label asks for them, so a change that touches platform-specific code is checked on those platforms once it is on `main`.
+  On macOS that is also the build farm's Mac workers: `farm-macos.yml` (a push to `main`, and the release's `beta-macos` stage)
+  runs the unit tests and the CLI there as Buck2 actions (`./buck2 build` of the `macos-farm` targets, `platforms/macos.bzl`).
 - The rules every change is written and reviewed against are in
   [AGENTS.md](AGENTS.md), each with an id: among them, a bug fix comes with a
   test that failed before the fix (T5), a behaviour change updates the golden
@@ -29,14 +30,16 @@ Two builds describe the same program, and both stay.
   (`//:mopm` is not built unless `//:core_test` and `//:cli_test` passed).
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
   golden files; it replaced `tests/run_golden.sh`), `//:registry_login` and
-  `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:group_publish` (`mopm publish --staged` and `mopm yank --group` against the fake registry), `//:stage` (`mopm stage` against the fake registry, and `publish --staged` on its output), `//:install_e2e`
+  `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:group_publish` (`mopm publish --staged` and `mopm group yank` against the fake registry), `//:stage` (`mopm stage` against the fake registry, and `publish --staged` on its output), `//:install_e2e`
   (`mopm sync`, then `mopm build` and `run` with the real Mojo; the former `tests/install_e2e/run.py`), `//:sync_e2e` (`mopm sync`
   installing the environment itself with no pixi on `PATH`: pinned bytes only, a current environment downloads nothing, a mirror
   closure, a failed install leaves the old environment; on every pull request), `//:sync_state_e2e`, `//:sync_refuse_e2e`
   and `//:sync_cache_e2e` (`mopm sync` against a moved, damaged, interrupted or concurrently synced project; each refusal and
   what it leaves; the cache layout, system libraries and conflicting paths; on every pull request), `//:gen_errors_current` (the committed
   `registry/fake/errors.zig` is what `./buck2 run //:gen_errors -- spec/api/openapi.yaml registry/fake/errors.zig`
-  makes of the spec; the former `gen_errors.py`), and the
+  makes of the spec; the former `gen_errors.py`), `//:api_gen_test` (`spec/api/openapi-v2.yaml`,
+  `service/api/src/gen/registry-v2.ts` and `src/core/registry_v2.zig` are what `zig build gen-api` makes of
+  `spec/api/mopm/registry/v2/*.proto`; `zig build test` and `lint.yml` run it too), and the
   contract checks: `//:contract` (the OpenAPI
   document, the JSON Schemas, the API cases and the examples),
   `//:contract_replay` (the fake registry against the API

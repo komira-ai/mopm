@@ -5,7 +5,7 @@ reads and checks it.
 
 ```toml
 [package]
-name = "http_client"          # the import name and the registry name
+name = "example/http_client"  # a full name, <namespace>/<name>; Mojo code imports "http_client"
 version = "0.4.0"           # MAJOR.MINOR.PATCH, see Package versions
 description = "HTTP/1.1 client"
 license = "Apache-2.0"
@@ -16,16 +16,16 @@ readme = "README.md"
 publish = true                # false: never staged, packed or published (a test-support helper); default true
 mojo = ["1.0.0", "1.1.0"]     # exact compiler versions it builds for, one .mojoc each (a .mojoc is tied to one)
 
-[dependencies]                # Mojo packages
-http_core = "1.2"
-tls = { version = "0.9" }
-local_util = { path = "../local_util", version = "0.2" }   # a path needs a version to be published
+[dependencies]                # Mojo packages, by full name; a key holding "/" is quoted
+"example/http_core" = "1.2"
+"example/tls" = { version = "0.9" }
+"example/local_util" = { path = "../local_util", version = "0.2" }   # a path needs a version to be published
 
 [native-dependencies]         # non-Mojo libraries the package links
 zlib = { version = ">=1.2", kind = "shared", mode = "link" }
 
 [dev-dependencies]            # only for tests and tooling
-mopm_test = "0.1"
+"example/mopm_test" = "0.1"
 
 [native.curl_shim]            # a native library this package ships
 kind = "shared"               # shared | static | both
@@ -34,15 +34,58 @@ build = "cmake -S native -B out && cmake --build out"
 outputs = ["out/libcurl_shim.so.1"]
 
 [targets]                     # what to build
-lib = { path = "src/http_client" }
+lib = { path = "src/http_client" }  # the directory is the import name
 bins = [{ name = "fetch", path = "src/fetch.mojo" }]
 tests = ["tests"]
 ```
 
+## Names
+
+A package's name is a full name, `<namespace>/<name>`, such as `komira-ai/json`.
+
+| part | grammar | example |
+|---|---|---|
+| namespace | a GitHub login in lower case: `^[a-z0-9]+(-[a-z0-9]+)*$`, 1 to 39 characters | `komira-ai` |
+| name | `^[a-z][a-z0-9_]{1,63}$` | `json` |
+| full name | `<namespace>/<name>` | `komira-ai/json` |
+| import name | the name, the part after `/` | `json` |
+
+- `[package] name` and every key of `[dependencies]` and `[dev-dependencies]`
+  are full names. TOML needs quotes around a key that holds `/`:
+  `"komira-ai/json" = "0.1"`. `[native-dependencies]` keys are conda names and
+  are not full names.
+- A name without a namespace is refused, naming the key and giving the full
+  form: `dependency 'json' has no namespace: write it "<namespace>/json" =
+  "0.1"`, `package name 'json' has no namespace: write name =
+  "<namespace>/json"`. In the commands that read a `mopm.toml` with a registry
+  (`lock`, `update`, `sync`, `tree`, `add`, `remove`), a bare `[package]` name is
+  refused with the namespace `mopm login` stored for the registry, when there is
+  one: `package name 'json' has no namespace: write name = "alice/json" (alice
+  is your namespace), or another namespace you publish in`. Without a login,
+  or when the stored entry has no namespace, the first wording is used.
+- One spelling, lower case: `Komira-AI/json` is refused with a message that
+  gives `komira-ai/json`. Nothing normalises a name.
+- The import name is what Mojo code imports (`import json`). It is never a Mojo
+  keyword or builtin, never `mopm`, `mojo`, `max`, `modular`, `std` or `stdlib`,
+  and never a top-level module of the Mojo standard library (`collections`,
+  `memory`, `os`, ...: the union of mopm's
+  `toolchain/mojo-<version>.std-modules.txt`), since Mojo code imports those
+  both as `std.<module>` and by the bare name: `package name
+  'example/collections': the import name 'collections' is a module of the Mojo
+  standard library (std.collections); choose another name`. A dependency key
+  whose import name is such a module is read with a warning naming the module
+  and the dependency, so a project that depends on a package published before
+  its name joined the list keeps building.
+- Reserved namespaces, which no package has: the shape of a conda subdir,
+  `^(noarch|(linux|osx|win|freebsd|zos|wasi|emscripten)-[a-z0-9]+)$`, and
+  `index`, `quarantine`, `native-mirror` and `poll`.
+- A path dependency's key must equal the `[package] name` of the `mopm.toml` at
+  the path; a path package in another namespace is fine.
+
 ## Sections
 
-- `[package]`: identity. `name` is unique in the registry; only its owner can
-  publish versions of it, and a published version is immutable.
+- `[package]`: identity. `name` is the full name (see Names). Only its owner
+  can publish versions of it, and a published version is immutable.
   All of `description`, `license`, `repository`, `homepage`, `keywords` and
   `readme` are optional. When present they are checked as below and served by
   the registry's read API (`description`, `license`, `repository`, `homepage`,
@@ -93,7 +136,10 @@ tests = ["tests"]
   the library must be `kind = "static"` with `mode = "link"`. It applies with and
   without `provided = true`, and is carried into `<name>.mopm.json`, the lock and
   the unit graph (`unit-graph.md`, "System libraries of a native").
-- `[targets]`: the library, executables and tests to build.
+- `[targets]`: the library, executables and tests to build. `lib` defaults to
+  `src/<import name>`. Mojo imports a package by its directory's name, so a
+  `lib` path whose last component is not the import name is refused, naming
+  both.
 
 ## Other tools' settings: `[package.metadata]`
 
@@ -187,5 +233,31 @@ untrusted; `description` and `license` are plain text to escape, never markup.
 
 - A native library has one owner: two packages in one dependency closure may
   not ship the same soname.
+- An import name has one package: two packages in one dependency closure (the
+  root with its `[dependencies]` and `[dev-dependencies]`, and every path and
+  registry package with its `[dependencies]`, at any depth) may not have the same import
+  name. There is no rename. `mopm lock` refuses such a closure before it writes
+  anything (exit 1), and so does every command that reads `mopm.toml` or
+  `mopm.lock` (`tree`, `sync`, `plan`) and `mopm plan` when it makes the unit
+  graph. The error lists every clashing import name, sorted, and under each
+  the packages that have it, sorted by full name, each with the shortest
+  dependency path from the root (ties broken by comparing the full names
+  along the path as bytes; the root's own path is the root alone; a path that
+  starts in `[dev-dependencies]` ends in `(dev)` and loses a tie to one that
+  does not):
+
+  ```text
+  2 packages in the dependency closure have the import name 'json'; Mojo imports a package by the part after '/', so a closure holds one package per import name:
+    alice/json 1.4.2         alice/app -> alice/http 0.3.0 -> alice/json 1.4.2
+    komira-ai/json 0.1.0     alice/app -> komira-ai/parquet 0.2.0 -> komira-ai/json 0.1.0
+  There is no rename: drop one of the dependencies that brings them in.
+  ```
+
+  Until the lock and the index name packages by full name, a registry package
+  is known by the full name a manifest of the closure gives it (one that no
+  manifest names is shown by its bare name; a lock dependency that the
+  manifests name in several namespaces gives no path through it), and a clash found before
+  resolution shows a registry package's requirement in quotes in place of its
+  version.
 - A package that links natives lists, in its generated metadata, every native
   library it needs from other packages.

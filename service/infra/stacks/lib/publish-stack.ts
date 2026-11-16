@@ -50,7 +50,7 @@ export const MAX_RECEIVES = 3;
  *
  *  - validate queue (group = package): the validator reads the quarantined upload, runs validatePackage, copies the
  *    files into the channel, publishes the version, then sends one message per affected subdir to
- *  - index queue (group = subdir, `pkg:<name>` or `takedowns`): the index writer rebuilds a subdir's repodata from the
+ *  - index queue (group = repodata directory, `pkg:<name>` or `takedowns`): the index writer rebuilds a repodata directory's repodata from the
  *    registry's records, writes it and invalidates its two CloudFront paths; the last subdir job of a publish queues
  *    the package's job, which writes the package's sparse-index file and marks the publish published.
  *
@@ -136,7 +136,7 @@ export class PublishStack extends Stack {
       new iam.PolicyStatement({
         sid: 'WritePackageFiles',
         actions: ['s3:PutObject'],
-        resources: CHANNEL_SUBDIRS.map((s) => `${bucketArn}/${s}/mojo-*.conda`),
+        resources: CHANNEL_SUBDIRS.flatMap((s) => [`${bucketArn}/${s}/mojo-*.conda`, `${bucketArn}/*/${s}/mojo-*.conda`]),
       }),
     );
     this.validator.addToRolePolicy(
@@ -197,7 +197,15 @@ export class PublishStack extends Stack {
       new iam.PolicyStatement({
         sid: 'WriteRepodata',
         actions: ['s3:PutObject'],
-        resources: CHANNEL_SUBDIRS.flatMap((s) => [`${bucketArn}/${s}/repodata.json`, `${bucketArn}/${s}/repodata.json.zst`]),
+        // A repodata directory is `<subdir>` (the root) or `<namespace>/<subdir>`; the namespace is one path segment the registry chose,
+        // so it is a `*`. IAM cannot limit `*` to one segment: it also covers quarantine/ and index/ keys of that exact shape, which
+        // this role has no reason to write and nothing reads as a channel.
+        resources: CHANNEL_SUBDIRS.flatMap((s) => [
+          `${bucketArn}/${s}/repodata.json`,
+          `${bucketArn}/${s}/repodata.json.zst`,
+          `${bucketArn}/*/${s}/repodata.json`,
+          `${bucketArn}/*/${s}/repodata.json.zst`,
+        ]),
       }),
     );
     // The sparse index (spec/index.md): one file per package and the takedown log, all under index/. PutObject only:
@@ -276,7 +284,7 @@ export class PublishStack extends Stack {
       new iam.PolicyStatement({
         sid: 'ReadAndWritePackageFiles',
         actions: ['s3:GetObject', 's3:PutObject'],
-        resources: CHANNEL_SUBDIRS.map((s) => `${bucketArn}/${s}/mojo-*.conda`),
+        resources: CHANNEL_SUBDIRS.flatMap((s) => [`${bucketArn}/${s}/mojo-*.conda`, `${bucketArn}/*/${s}/mojo-*.conda`]),
       }),
     );
     this.groupValidator.addToRolePolicy(

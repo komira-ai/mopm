@@ -1,4 +1,5 @@
 import { canonicalJson } from './canonical-json';
+import { condaNameOf } from './names';
 import type { Subdir, VersionRecord } from './types';
 import { zstdFrame } from './zstd';
 
@@ -26,8 +27,11 @@ interface Entry {
   version: string;
 }
 
-/** Conda MatchSpec text for a dependency: `mojo-<name> <range>` or just `mojo-<name>`. */
-const depSpec = (d: { name: string; range?: string }) => (d.range ? `mojo-${d.name} ${d.range}` : `mojo-${d.name}`);
+/**
+ * Conda MatchSpec text for a dependency: its conda name (`mojo-<name>` for a flat name, `mojo-<namespace>.<name>` for a
+ * full one, spec/channel.md "Package naming") with the range, or the conda name alone.
+ */
+const depSpec = (d: { name: string; range?: string }) => (d.range ? `${condaNameOf(d.name)} ${d.range}` : condaNameOf(d.name));
 
 function dependsOf(r: VersionRecord): string[] {
   const specs = [
@@ -40,7 +44,8 @@ function dependsOf(r: VersionRecord): string[] {
 }
 
 /**
- * repodata.json text for one subdir (spec/channel.md). A pure function of the records: `published`
+ * repodata.json text for one subdir of one channel (spec/channel.md). The caller passes the records of that channel
+ * only (src/channel-paths.ts): a namespace's packages, or the flat names at the root. A pure function of the records: `published`
  * records of the subdir are listed under `packages.conda`; `yanked` ones leave it and are listed under
  * `removed` (the files stay downloadable), and so do `tombstoned` ones (their bytes are gone; the name
  * tells a client the file was withdrawn); `pending` records appear nowhere. The
@@ -64,7 +69,7 @@ export function buildRepodataJson(subdir: Subdir, records: readonly VersionRecor
         build: r.build,
         build_number: 0,
         depends: dependsOf(r),
-        name: `mojo-${r.name}`,
+        name: condaNameOf(r.name),
         sha256: f.sha256,
         size: f.size,
         subdir: f.subdir,

@@ -23,10 +23,12 @@ pub const Net = struct {
 
     /// One request, repeated by the policy when it is idempotent and fails in a way a second try can cure.
     pub fn request(n: Net, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
+        // not the registry API: the transport itself; the generated client sends every registry request through it
         return http.retrying(arena, n, method, url, options, n.policy);
     }
     /// One try, as `http.retrying` asks for it.
     pub fn once(n: Net, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
+        // not the registry API: the transport itself; the generated client sends every registry request through it
         return n.vtable.request(n.ptr, arena, method, url, options);
     }
     /// The wait between tries, as `http.retrying` asks for it.
@@ -49,6 +51,7 @@ pub fn realNet() Net {
 }
 
 fn realRequest(_: *anyopaque, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
+    // not the registry API: the transport itself; the generated client sends every registry request through it
     return http.request(arena, method, url, options);
 }
 
@@ -102,4 +105,3 @@ pub const Console = struct {
         c.err.clearRetainingCapacity();
     }
 };
-

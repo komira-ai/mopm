@@ -1,20 +1,25 @@
 //! mopm command line. `--version`, `link-plan`, `metadata`, `new`, `init`, and
 //! `build`/`run`/`repl`, which run the stock `mojo` with the environment's native
 //! libraries linked or preloaded (or print that command with `--print-cmd`).
+//!
+//! `new` and `init` are in scaffold_cmd.zig.
 
 const std = @import("std");
 const core = @import("mopm_core");
 const mojo_cmd = core.mojo_cmd;
 const test_cmd = @import("test_cmd.zig");
 const registry_cmd = @import("registry_cmd.zig");
+const org_cmd = @import("org_cmd.zig");
+const api_cmd = @import("api_cmd.zig");
+const registry_commands = @import("registry_commands.zig");
 const publish_cmd = @import("publish_cmd.zig");
 const install_cmd = @import("install_cmd.zig");
 const plan_cmd = @import("plan_cmd.zig");
 const unit_cmd = @import("unit_cmd.zig");
-const yank_cmd = @import("yank_cmd.zig");
 const stage_cmd = @import("stage_cmd.zig");
 const build_cmd = @import("build_cmd.zig");
 const bin_run = @import("bin_run.zig");
+const scaffold_cmd = @import("scaffold_cmd.zig");
 
 /// The release version, from the build (`zig build -Dversion=`; the dev default in build_options.zig).
 pub const version = @import("build_options").version;
@@ -30,7 +35,7 @@ pub fn isPlanned(cmd: []const u8) bool {
     return false;
 }
 
-const usage =
+const hand_usage =
     \\usage: mopm <command> [args]
     \\
     \\working today:
@@ -38,10 +43,14 @@ const usage =
     \\  link-plan <file>...     print the link plan for installed packages,
     \\                          given their <name>.mopm.json files
     \\  metadata [mopm.toml]    check a package manifest and print it as JSON
-    \\  new <name> [--lib|--bin]
-    \\                          make a package in a new directory <name>
-    \\  init [--lib|--bin] [--name <name>]
-    \\                          make a package in this directory
+    \\  new [<namespace>/]<name> [--lib|--bin] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                          make a package in a new directory <name>; with no
+    \\                          <namespace>/ it is the namespace 'mopm login'
+    \\                          stored for the registry (default prod), refused
+    \\                          when there is none; a full name needs no registry
+    \\  init [--lib|--bin] [--name [<namespace>/]<name>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                          make a package in this directory (named by it,
+    \\                          without --name), in the same namespaces as new
     \\  build <file.mojo> [-o <out>]
     \\  build [--out-dir <dir>] with no program: the [targets] of mopm.toml, the
     \\                          library as <dir>/<name>.mojoc and each program as
@@ -65,10 +74,16 @@ const usage =
     \\  test --list [<path>...] list them; --check also builds each file and
     \\                          compares the list with the binary's `--skip-all`
     \\                          listing (--strict-discovery, --prefix <dir>)
-    \\  login | logout | whoami [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\  login | logout [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
     \\                          an account on a registry (device login through
     \\                          GitHub; the token is kept in credentials.json,
     \\                          mode 0600, and never printed)
+    \\  org create <org> [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                          register the namespace of a GitHub organization
+    \\                          you are an admin of (a device approval on GitHub
+    \\                          that reads your membership once; you become its
+    \\                          owner); its members are managed with 'org add',
+    \\                          'org remove' and 'org list' (listed below)
     \\  pack --compiler <mojo version> --mojoc [<subdir>=]<file>... [-o <dir>]
     \\                          write the package as a .conda per subdir
     \\                          (noarch, linux-64, linux-aarch64, osx-arm64) and
@@ -109,10 +124,6 @@ const usage =
     \\                          other bytes: refused; same bytes: skipped); write
     \\                          the staged set for 'publish --staged'. Reads no
     \\                          token; --registry is required
-    \\  yank --group <id> --registry <prod|gamma|beta|url> --reason <text>
-    \\       --group <id> --registry <...> --unyank
-    \\                          yank every version a group published, or restore
-    \\                          the ones its yank changed
     \\  lock [--registry <prod|gamma|beta|url>] [--overlay <staged set>]
     \\                          resolve mopm.toml's dependencies against the
     \\                          registry's index and write mopm.lock (keeping
@@ -136,13 +147,13 @@ const usage =
     \\                          --cache (default ~/.cache/mopm/pkgs);
     \\                          --toolchain <file> names another closure (a
     \\                          mirror). build, run and repl use .mopm/env
-    \\  add <package>[@<req>] [--dev] [--path <dir>] [--registry ...] [--overlay <staged set>]
+    \\  add <namespace>/<name>[@<req>] [--dev] [--path <dir>] [--registry ...] [--overlay <staged set>]
     \\                          add a dependency to mopm.toml ([dev-dependencies]
     \\                          with --dev): <req>, else ^ the newest version
     \\                          that fits, or { path = "<dir>" }; then lock.
     \\                          Comments and layout are kept; nothing is
     \\                          written if it does not resolve
-    \\  remove <package> [--dev] [--registry ...]
+    \\  remove <namespace>/<name> [--dev] [--registry ...]
     \\                          take a dependency out of mopm.toml and lock
     \\  plan --unit-graph --locked [--mojo <version>] [--workspace-root <dir>] [-o <file>]
     \\                          print the unit graph (spec/unit-graph.md) of
@@ -166,6 +177,9 @@ const usage =
     \\  cov check export launch
     \\
 ;
+
+/// The hand-written commands, then the list of the generated registry commands.
+const usage = hand_usage ++ "\n" ++ registry_commands.list;
 
 fn linkPlan(arena: std.mem.Allocator, paths: []const []const u8) u8 {
     if (paths.len == 0) {
@@ -206,99 +220,10 @@ fn metadataCmd(arena: std.mem.Allocator, args: []const []const u8) u8 {
         }
         return 1;
     };
+    for (m.warnings) |w| std.debug.print("mopm: warning: {s}:{s}\n", .{ path, w });
     var buf = std.ArrayList(u8).init(arena);
     core.manifest.writeJson(m, buf.writer()) catch return 1;
     std.io.getStdOut().writeAll(buf.items) catch return 1;
-    return 0;
-}
-
-const ScaffoldArgs = struct {
-    name: ?[]const u8 = null,
-    kind: core.scaffold.Kind = .lib,
-};
-
-/// `new <name> [--lib|--bin]` or `init [--lib|--bin] [--name <name>]`; null if
-/// the arguments are neither.
-fn scaffoldArgs(cmd: []const u8, args: []const []const u8) ?ScaffoldArgs {
-    const is_new = std.mem.eql(u8, cmd, "new");
-    var out = ScaffoldArgs{};
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        if (std.mem.eql(u8, a, "--lib")) {
-            out.kind = .lib;
-        } else if (std.mem.eql(u8, a, "--bin")) {
-            out.kind = .bin;
-        } else if (!is_new and std.mem.eql(u8, a, "--name") and i + 1 < args.len and out.name == null) {
-            i += 1;
-            out.name = args[i];
-        } else if (is_new and a.len > 0 and a[0] != '-' and out.name == null) {
-            out.name = a;
-        } else return null;
-    }
-    if (is_new and out.name == null) return null;
-    return out;
-}
-
-/// `mopm new` (into a new directory) and `mopm init` (into this one).
-fn scaffoldCmd(arena: std.mem.Allocator, cmd: []const u8, args: []const []const u8) u8 {
-    const parsed = scaffoldArgs(cmd, args) orelse {
-        std.debug.print("usage: mopm new <name> [--lib|--bin]\n       mopm init [--lib|--bin] [--name <name>]\n", .{});
-        return 2;
-    };
-    const is_new = std.mem.eql(u8, cmd, "new");
-    var hint: []const u8 = "";
-    const name = parsed.name orelse blk: {
-        const here = std.fs.cwd().realpathAlloc(arena, ".") catch |e| {
-            std.debug.print("mopm init: {s}\n", .{@errorName(e)});
-            return 1;
-        };
-        hint = " (the name comes from this directory; pass --name <name>)";
-        break :blk std.fs.path.basename(here);
-    };
-    const problem = core.manifest.nameProblem(arena, "package name", name) catch return 1;
-    if (problem) |message| {
-        std.debug.print("mopm {s}: {s}{s}\n", .{ cmd, message, hint });
-        return 1;
-    }
-    const files = core.scaffold.files(arena, name, parsed.kind) catch return 1;
-
-    var dir = std.fs.cwd();
-    var opened: ?std.fs.Dir = null;
-    defer if (opened) |*d| d.close();
-    if (is_new) {
-        std.fs.cwd().makeDir(name) catch |e| {
-            if (e == error.PathAlreadyExists) {
-                std.debug.print("mopm new: '{s}' already exists\n", .{name});
-            } else {
-                std.debug.print("mopm new: {s}: {s}\n", .{ name, @errorName(e) });
-            }
-            return 1;
-        };
-        opened = std.fs.cwd().openDir(name, .{}) catch |e| {
-            std.debug.print("mopm new: {s}: {s}\n", .{ name, @errorName(e) });
-            return 1;
-        };
-        dir = opened.?;
-    }
-    if (core.scaffold.firstExisting(dir, files)) |path| {
-        std.debug.print("mopm {s}: {s} already exists; nothing was written\n", .{ cmd, path });
-        return 1;
-    }
-    core.scaffold.write(dir, files) catch |e| {
-        std.debug.print("mopm {s}: {s}\n", .{ cmd, @errorName(e) });
-        return 1;
-    };
-    const what = switch (parsed.kind) {
-        .lib => "library",
-        .bin => "binary",
-    };
-    const out = std.io.getStdOut().writer();
-    if (is_new) {
-        out.print("created {s} package '{s}' in {s}/\n", .{ what, name, name }) catch return 1;
-    } else {
-        out.print("created {s} package '{s}'\n", .{ what, name }) catch return 1;
-    }
     return 0;
 }
 
@@ -572,6 +497,7 @@ fn run(arena: std.mem.Allocator) u8 {
         return 2;
     }
     const cmd = args[1];
+    if (api_cmd.run(arena, args[1..], version)) |code| return code;
     if (std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "-V")) {
         std.io.getStdOut().writeAll("mopm " ++ version ++ "\n") catch return 1;
         return 0;
@@ -582,15 +508,15 @@ fn run(arena: std.mem.Allocator) u8 {
     }
     if (std.mem.eql(u8, cmd, "link-plan")) return linkPlan(arena, args[2..]);
     if (std.mem.eql(u8, cmd, "metadata")) return metadataCmd(arena, args[2..]);
-    if (std.mem.eql(u8, cmd, "new") or std.mem.eql(u8, cmd, "init")) return scaffoldCmd(arena, cmd, args[2..]);
+    if (std.mem.eql(u8, cmd, "new") or std.mem.eql(u8, cmd, "init")) return scaffold_cmd.scaffoldCmd(arena, cmd, args[2..], version);
     if (std.mem.eql(u8, cmd, "test")) return test_cmd.main(arena, args[2..]);
-    if (std.mem.eql(u8, cmd, "login") or std.mem.eql(u8, cmd, "logout") or std.mem.eql(u8, cmd, "whoami")) {
+    if (std.mem.eql(u8, cmd, "login") or std.mem.eql(u8, cmd, "logout")) {
         return registry_cmd.main(arena, cmd, args[2..], version);
     }
+    if (std.mem.eql(u8, cmd, "org")) return org_cmd.main(arena, args[2..], version);
     if (std.mem.eql(u8, cmd, "pack") or std.mem.eql(u8, cmd, "publish")) {
         return publish_cmd.main(arena, cmd, args[2..], version);
     }
-    if (std.mem.eql(u8, cmd, "yank")) return yank_cmd.main(arena, args[2..], version);
     if (std.mem.eql(u8, cmd, "stage")) return stage_cmd.main(arena, args[2..], version);
     if (std.mem.eql(u8, cmd, "lock")) return install_cmd.main(arena, .lock, args[2..], version);
     if (std.mem.eql(u8, cmd, "update")) return install_cmd.main(arena, .update, args[2..], version);
@@ -605,6 +531,10 @@ fn run(arena: std.mem.Allocator) u8 {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});
         return 1;
     }
+    if (api_cmd.groupUsage(arena, cmd)) |text| {
+        std.debug.print("{s}", .{text});
+        return 2;
+    }
     std.debug.print("mopm: unknown command '{s}'\n\n{s}", .{ cmd, usage });
     return 2;
 }
@@ -617,22 +547,33 @@ pub fn main() void {
 
 test {
     _ = registry_cmd;
+    _ = org_cmd;
     _ = publish_cmd;
     _ = install_cmd;
     _ = plan_cmd;
     _ = unit_cmd;
-    _ = yank_cmd;
+    _ = api_cmd;
+    _ = @import("api_cmd_test.zig");
+    _ = @import("registry_commands_test.zig");
+    _ = @import("api_render.zig");
+    _ = @import("api_spec.zig");
     _ = @import("group_plan.zig");
     _ = @import("group_publish.zig");
     _ = @import("group_publish_test.zig");
+    _ = @import("group_commit_request_test.zig");
     _ = @import("group_readmes_test.zig");
     _ = @import("group_readmes_resume_test.zig");
     _ = @import("stage_readmes_test.zig");
     _ = @import("group_stage_token.zig");
     _ = stage_cmd;
     _ = @import("stage_test.zig");
+    _ = @import("plan_v2_test.zig");
     _ = @import("publish_false_test.zig");
     _ = @import("bin_run.zig");
+    _ = @import("scaffold_cmd.zig");
+    _ = @import("bare_name.zig");
+    _ = @import("bare_name_test.zig");
+    _ = @import("install_cmd_project_test.zig");
     _ = build_cmd;
 }
 
@@ -657,35 +598,15 @@ test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(!isPlanned("frobnicate"));
 }
 
-test "new and init arguments" {
-    try std.testing.expectEqualStrings("demo", scaffoldArgs("new", &.{ "demo", "--bin" }).?.name.?);
-    try std.testing.expectEqual(core.scaffold.Kind.bin, scaffoldArgs("new", &.{ "--bin", "demo" }).?.kind);
-    try std.testing.expectEqual(core.scaffold.Kind.lib, scaffoldArgs("new", &.{"demo"}).?.kind);
-    try std.testing.expectEqual(core.scaffold.Kind.lib, scaffoldArgs("new", &.{ "--bin", "--lib", "demo" }).?.kind);
-    try std.testing.expect(scaffoldArgs("new", &.{}) == null);
-    try std.testing.expect(scaffoldArgs("new", &.{ "a", "b" }) == null);
-    try std.testing.expect(scaffoldArgs("new", &.{ "--name", "a" }) == null);
-    try std.testing.expectEqualStrings("x", scaffoldArgs("init", &.{ "--name", "x" }).?.name.?);
-    try std.testing.expect(scaffoldArgs("init", &.{}).?.name == null);
-    try std.testing.expect(scaffoldArgs("init", &.{"x"}) == null);
-    try std.testing.expect(scaffoldArgs("init", &.{"--name"}) == null);
-}
-
 fn parseOk(a: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) !Opts {
-    return switch (try parseOpts(a, tool, args)) {
-        .ok => |o| o,
-        .usage => |m| {
-            std.debug.print("unexpected usage error: {s}\n", .{m});
-            return error.TestUnexpectedResult;
-        },
-    };
+    const parsed = try parseOpts(a, tool, args);
+    try std.testing.expectEqualStrings("", if (parsed == .usage) parsed.usage else "");
+    try std.testing.expect(parsed == .ok);
+    return parsed.ok;
 }
 
 fn parseUsage(a: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) !void {
-    switch (try parseOpts(a, tool, args)) {
-        .ok => return error.TestUnexpectedResult,
-        .usage => {},
-    }
+    try std.testing.expect((try parseOpts(a, tool, args)) == .usage);
 }
 
 test "options: both spellings, any order" {

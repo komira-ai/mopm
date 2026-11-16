@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import { channelFileKey } from '../channel-paths';
 import { API_VIEW, type GroupMember, type GroupMembers } from '../group';
 import { bitmapHas, bitmapSet, memberAuditId, type GroupFailure, type GroupRecord, type GroupStore } from '../group-store';
 import type { Store } from '../store';
@@ -246,7 +247,7 @@ class GroupJob {
     // A group's status does not carry warnings yet: they are in the job's log, with the group and the member.
     const warnings = warningsOf(facts);
     if (warnings.length > 0) this.log({ level: 'info', msg: 'group member passed with warnings', group_id: this.gid, member: m.name, warnings });
-    const fill = fillFrom(d.channelUrl, this.now(), { version: row.version, ...(input.display ? { display: input.display } : {}), ...(input.source_commit !== undefined ? { source_commit: input.source_commit } : {}), published_by: row.published_by ?? this.h.actor }, row.files, facts);
+    const fill = fillFrom(d.channelUrl, this.now(), m.name, { version: row.version, ...(input.display ? { display: input.display } : {}), ...(input.source_commit !== undefined ? { source_commit: input.source_commit } : {}), published_by: row.published_by ?? this.h.actor }, row.files, facts);
     await d.registry.applyGroupEvent(m.name, row.version, { type: 'stage', group_id: this.gid, attempt: this.h.attempt, fill }, this.audit(i, m, 'group_stage'));
   }
 
@@ -277,7 +278,7 @@ class GroupJob {
       const bytes = await objects.get(src);
       if (!bytes) throw verdict('upload_missing', `${f.filename} vanished from quarantine after it was validated`, true, m.name);
       if (sha256Hex(bytes) !== f.sha256) throw verdict('sha256_mismatch', `${f.filename}: the upload changed after it was validated`, true, m.name);
-      const dest = `${f.subdir}/${f.filename}`;
+      const dest = channelFileKey(m.name, f.subdir, f.filename);
       const put = await objects.put(dest, bytes, { contentType: 'application/octet-stream', cacheControl: 'public, max-age=31536000, immutable', createOnly: true });
       if (put === 'exists') {
         // A repeat of this very step leaves the same bytes. Anything else under this name is not ours to publish over.

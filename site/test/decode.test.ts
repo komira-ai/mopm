@@ -52,7 +52,7 @@ test('yank_reason may be absent, null or a string', () => {
   const p = bodyOf('getPackage');
   const dp = decodePackageInfo(p);
   expect(dp.versions[0]).not.toHaveProperty('yank_reason');
-  expect(dp.versions[1].yank_reason).toBe('crashes on empty body');
+  expect(dp.versions[1].yank_reason).toBe('wrong license text');
 });
 
 test('a file with a subdir this build does not know is accepted as is', () => {
@@ -77,6 +77,7 @@ test.each([
   ['getVersion', 'manifest_sha256'],
   ['getVersion', 'provenance'],
   ['getPackage', 'latest'],
+  ['getPackage', 'namespace'],
   ['getPackage', 'versions'],
   ['searchPackages', 'next_cursor'],
 ] as const)('%s without %s is an error', (op, field) => {
@@ -102,7 +103,7 @@ test('a claimed package (no version yet) decodes with latest null and no version
   Object.assign(p, { state: 'claimed', latest: null, versions: [], repository: null, license: null, description: null });
   const d = decodePackageInfo(p);
   expect(d).toMatchObject({ state: 'claimed', latest: null, versions: [], repository: null, license: null, description: null });
-  expect(d.owners).toEqual(p.owners);
+  expect(d.namespace).toEqual(p.namespace);
 });
 
 test("a package's version summaries keep a null yank_reason as null", () => {
@@ -134,4 +135,75 @@ test("a version's display metadata decodes when present", () => {
   };
   Object.assign(v, meta);
   expect(decodeVersionDetail(v)).toMatchObject(meta);
+});
+
+describe('the namespace of a package (there are no owners in version 2)', () => {
+  const pkg = () => bodyOf('getPackage', (b) => (b.namespace as { kind: string }).kind === 'org');
+  const ns = (p: Record<string, unknown>) => p.namespace as Record<string, unknown>;
+
+  test('decodes each field as sent, and the package name is the full name', () => {
+    const p = pkg();
+    const d = decodePackageInfo(p);
+    expect(d.name).toBe('komira-ai/json');
+    expect(d.namespace).toEqual({ namespace: 'komira-ai', kind: 'org', github_id: 77, login: 'komira-ai' });
+    expect(d).not.toHaveProperty('owners');
+  });
+
+  test('a user namespace whose login differs from the namespace keeps both', () => {
+    const p = bodyOf('getPackage', (b) => (b.namespace as { kind: string }).kind === 'user');
+    expect(decodePackageInfo(p).namespace).toMatchObject({ namespace: 'alice', kind: 'user', login: 'Alice' });
+  });
+
+  test('a namespace field this build does not know is ignored', () => {
+    const p = pkg();
+    ns(p).frozen = true;
+    expect(decodePackageInfo(p).namespace).toEqual({ namespace: 'komira-ai', kind: 'org', github_id: 77, login: 'komira-ai' });
+  });
+
+  test.each(['org', 'user'] as const)('kind %s decodes as itself', (kind) => {
+    const p = pkg();
+    ns(p).kind = kind;
+    expect(decodePackageInfo(p).namespace.kind).toBe(kind);
+  });
+
+  test.each(['team', 'bot', ''])('a kind this build does not know (%j) decodes as unknown', (kind) => {
+    const p = pkg();
+    ns(p).kind = kind;
+    expect(decodePackageInfo(p).namespace.kind).toBe('unknown');
+  });
+
+  test.each(['namespace', 'kind', 'github_id', 'login'])('a namespace without %s is an error naming it', (field) => {
+    const p = pkg();
+    delete ns(p)[field];
+    expect(() => decodePackageInfo(p)).toThrow(DecodeError);
+    expect(() => decodePackageInfo(p)).toThrow(new RegExp(`namespace\\.${field}`));
+  });
+
+  test.each([
+    ['namespace', 7],
+    ['kind', 1],
+    ['github_id', '77'],
+    ['login', null],
+  ] as const)('a mistyped %s is an error', (field, value) => {
+    const p = pkg();
+    ns(p)[field] = value;
+    expect(() => decodePackageInfo(p)).toThrow(DecodeError);
+  });
+
+  test.each([undefined, null, 'komira-ai', 5, [], [{ namespace: 'komira-ai' }]])('a package whose namespace is %j is an error', (v) => {
+    const p = pkg();
+    if (v === undefined) delete p.namespace;
+    else p.namespace = v;
+    expect(() => decodePackageInfo(p)).toThrow(DecodeError);
+  });
+
+  test('extra fields of the namespace are ignored and not copied', () => {
+    const p = pkg();
+    ns(p).plan = 'free';
+    expect(decodePackageInfo(p).namespace).not.toHaveProperty('plan');
+  });
+
+  test('the version answers of the fixtures decode with a full name', () => {
+    expect(decodeVersionDetail(bodyOf('getVersion')).name).toBe('komira-ai/json');
+  });
 });

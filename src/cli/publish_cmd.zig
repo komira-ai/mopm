@@ -6,7 +6,7 @@
 //!                [--manifest <file>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
 //!                [--readme <file>] [--dry-run] [--oidc]
 //!
-//! `pack` writes `<dir>/<subdir>/mojo-<name>-<version>-mojo<compiler>_0.conda`
+//! `pack` writes `<dir>/<subdir>/mojo-<namespace>.<name>-<version>-mojo<compiler>_0.conda`
 //! (src/core/conda.zig) and prints each file's sha256. A package that declares
 //! `[native.<id>] kind = "static"` gets its archive for each subdir from
 //! `--native <id>=<subdir>:<file>` (one per native and subdir; the `.conda` of a
@@ -15,6 +15,10 @@
 //! same way and then follows the registry's three steps (spec/api/openapi.yaml):
 //! begin an upload per file and PUT the bytes to the URL it names, commit the
 //! uploads, and poll the publish until it is `published` or `rejected`.
+//!
+//! Before the first upload, `publish` creates the package when the registry does not have it (`PUT /api/v2/packages/<namespace>/<name>`,
+//! no body: 201 says `created <name> on <stage>`, 200 means it was there already and says nothing). The registry checks first that
+//! the token's user may write the namespace; a refusal is printed and nothing is uploaded. `--dry-run` sends nothing.
 //!
 //! The token is `$MOPM_TOKEN` when that is set and not empty, else the one
 //! `mopm login` stored for the registry. It is sent only to the registry's
@@ -40,6 +44,7 @@ const credentials = core.credentials;
 const ci_oidc = core.ci_oidc;
 const registry_cmd = @import("registry_cmd.zig");
 const group_publish = @import("group_publish.zig");
+const v2 = core.registry_v2;
 
 const usage =
     \\usage: mopm pack    --compiler <mojo version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
@@ -200,17 +205,6 @@ pub fn readmeProblem(arena: Allocator, path: []const u8, bytes: []const u8) Allo
     return null;
 }
 
-/// The URL of a publish's status: `status_url` is a path on the API's host
-/// (`/api/v1/publishes/...`), resolved against the scheme and host of
-/// `api_url`. Null when it is not such a path.
-pub fn resolveStatusUrl(arena: Allocator, api_url: []const u8, status_url: []const u8) Allocator.Error!?[]const u8 {
-    const prefix = "/api/v1/publishes/";
-    if (!std.mem.startsWith(u8, status_url, prefix) or status_url.len == prefix.len) return null;
-    const scheme_end = (std.mem.indexOf(u8, api_url, "://") orelse return null) + 3;
-    const origin_end = std.mem.indexOfScalarPos(u8, api_url, scheme_end, '/') orelse api_url.len;
-    return try std.fmt.allocPrint(arena, "{s}{s}", .{ api_url[0..origin_end], status_url });
-}
-
 const Prepared = struct {
     m: manifest.Manifest,
     packs: []const conda.Packed,
@@ -233,8 +227,9 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         }
         return null;
     };
+    for (m.warnings) |w| err("warning: {s}:{s}\n", .{ f.manifest, w });
     if (!m.package.publish) {
-        err("{s}: {s} has publish = false, so it is not packed for a registry or published; remove the key to publish it\n", .{ f.manifest, m.package.name });
+        err("{s}: {s} has publish = false, so it is not packed for a registry or published; remove the key to publish it\n", .{ f.manifest, m.package.full_name });
         return null;
     }
     if (try versionProblem(arena, m.package.version)) |problem| {
@@ -290,7 +285,7 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
             return null;
         }
         const p = try conda.pack(arena, .{
-            .name = m.package.name,
+            .name = m.package.full_name,
             .version = m.package.version,
             .compiler = f.compiler,
             .subdir = entry.subdir,
@@ -394,7 +389,7 @@ fn pathVersions(arena: Allocator, m: manifest.Manifest, manifest_dir: []const u8
         if (d.requirement == null) continue;
         const file = try std.fs.path.join(arena, &.{ manifest_dir, p, "mopm.toml" });
         const src = std.fs.cwd().readFileAlloc(arena, file, 1 << 20) catch |e| {
-            err("{s}: dependency '{s}' has the path '{s}', which cannot be read: {s}\n", .{ file, d.name, p, @errorName(e) });
+            err("{s}: dependency '{s}' has the path '{s}', which cannot be read: {s}\n", .{ file, d.full_name, p, @errorName(e) });
             return null;
         };
         var diag: manifest.Diagnostic = .{};
@@ -406,15 +401,15 @@ fn pathVersions(arena: Allocator, m: manifest.Manifest, manifest_dir: []const u8
             }
             return null;
         };
-        if (!std.mem.eql(u8, dm.package.name, d.name)) {
-            err("{s} names the package {s}, but dependency '{s}' calls it {s}\n", .{ file, dm.package.name, d.name, d.name });
+        if (!std.mem.eql(u8, dm.package.full_name, d.full_name)) {
+            err("{s} names the package {s}, but dependency '{s}' calls it {s}\n", .{ file, dm.package.full_name, d.full_name, d.full_name });
             return null;
         }
         if (!dm.package.publish) {
-            err("{s} depends on {s} (at {s}), which has publish = false; a published package cannot need one that is never published (a dev-dependency may)\n", .{ m.package.name, d.name, file });
+            err("{s} depends on {s} (at {s}), which has publish = false; a published package cannot need one that is never published (a dev-dependency may)\n", .{ m.package.full_name, d.full_name, file });
             return null;
         }
-        try out.append(.{ .name = d.name, .version = dm.package.version });
+        try out.append(.{ .name = d.full_name, .version = dm.package.version });
     }
     return out.items;
 }
@@ -508,14 +503,14 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
     const readme = try loadReadme(arena, f, prep, &refused);
     if (refused) return 1;
     const out = std.io.getStdOut().writer();
-    const name = prep.m.package.name;
+    const name = prep.m.package.full_name;
     const version = prep.m.package.version;
 
     if (f.dry_run) {
         for (prep.packs) |p| {
             try out.print("would upload {s}/{s} ({d} bytes, sha256 {s})\n", .{ p.subdir, p.file_name, p.bytes.len, &p.sha256 });
         }
-        try out.print("would commit mojo-{s} {s} (manifest_sha256 {s})\n", .{ name, version, &prep.packs[0].manifest_sha256 });
+        try out.print("would commit {s} {s} (manifest_sha256 {s})\n", .{ name, version, &prep.packs[0].manifest_sha256 });
         if (readme) |r| try out.print("would send a readme of {d} bytes\n", .{r.len});
         try out.writeAll("dry run: nothing was sent\n");
         return 0;
@@ -527,7 +522,7 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
         return 1;
     }) else null;
     const s = registry_cmd.open(arena, .{ .registry = f.registry, .config_dir = f.config_dir }, cli_version) orelse return 1;
-    const token = if (actions) |act| switch (try ci_oidc.obtain(arena, http.Real{}, .{}, act, s.config.api_url, s.config.stage, name, version)) {
+    const token = if (actions) |act| switch (try ci_oidc.obtain(arena, http.Real{}, .{}, act, s.config.api_v2_url, s.config.stage, name, version)) {
         .ok => |t| t,
         .bad => |why| {
             err("{s}\n", .{why});
@@ -538,6 +533,11 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
         return 1;
     };
 
+    // The package is created when the registry does not have it; the right to write its namespace is the registry's to check, and
+    // it does so before anything is uploaded.
+    var con = group_publish.Console.init(arena, group_publish.Console.stdStreams);
+    if (!try ensurePackage(arena, group_publish.realNet(), &con, s.config.api_v2_url, token, s.config.stage, name)) return 1;
+
     var ids = std.ArrayList([]const u8).init(arena);
     for (prep.packs) |p| {
         const id = (try uploadFile(s, token, name, version, p)) orelse return 1;
@@ -546,37 +546,75 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
     }
 
     // Commit.
-    var body = std.ArrayList(u8).init(arena);
-    const w = body.writer();
-    try w.writeAll("{\"upload_ids\":[");
-    for (ids.items, 0..) |id, i| {
-        if (i > 0) try w.writeByte(',');
-        try std.json.encodeJsonString(id, .{}, w);
-    }
-    try w.print("],\"manifest_sha256\":\"{s}\"", .{&prep.packs[0].manifest_sha256});
-    if (readme) |r| {
-        try w.writeAll(",\"readme\":");
-        try std.json.encodeJsonString(r, .{}, w);
-    }
-    try w.writeByte('}');
-    const path = try std.fmt.allocPrint(arena, "/packages/{s}/{s}/publish", .{ name, version });
-    const committed = try http.request(arena, .POST, try s.api(path), .{ .token = token, .body = body.items });
+    const full = fullOf(name) orelse {
+        err(not_full, .{name});
+        return 1;
+    };
+    const commit = v2.CommitPublishParams{
+        .namespace = full.namespace,
+        .name = full.name,
+        .version = version,
+        .body = .{ .upload_ids = ids.items, .manifest_sha256 = &prep.packs[0].manifest_sha256, .readme = readme },
+    };
+    const committed = try v2.sendOnce(v2.CommitPublish, arena, http.Real{}, s.config.api_v2_url, token, commit);
     if (!committed.ok()) {
         registry_cmd.printFailure(committed);
         return 1;
     }
-    const accepted = try std.json.parseFromSliceLeaky(struct {
-        publish_id: []const u8,
-        status_url: []const u8,
-    }, arena, committed.body, .{ .ignore_unknown_fields = true });
+    const accepted = try v2.decode(v2.CommitPublish, arena, committed.body);
     try out.print("committed, publish {s}\n", .{accepted.publish_id});
-    const status_url = (try resolveStatusUrl(arena, s.config.api_url, accepted.status_url)) orelse {
-        err("the registry sent a status URL that is not a path under /api/v1/publishes/\n", .{});
-        return 1;
-    };
-    var con = group_publish.Console.init(arena, group_publish.Console.stdStreams);
-    return waitForPublish(s, group_publish.realNet(), &con, wait_secs, token, status_url, name, version);
+    return waitForPublish(s, group_publish.realNet(), &con, wait_secs, token, accepted.publish_id, name, version);
 }
+
+/// Makes sure the package `name` (a full name) exists on the registry, before anything of it is uploaded: `PUT <api_v2_url>/packages/<name>`
+/// with the token and an empty body. The registry checks that the token's user may write the namespace; it answers 201 for a
+/// package it created, which this says (`created <name> on <stage>`), and 200 for one it already had, which is a no-op and
+/// is not said. Any other answer is printed as every failed request is and the result is false, so the caller stops before
+/// an upload. A request that fails before an answer is said the same way.
+pub fn ensurePackage(arena: Allocator, net: group_publish.Net, con: *group_publish.Console, api_v2_url: []const u8, token: []const u8, stage: []const u8, name: []const u8) Allocator.Error!bool {
+    const full = fullOf(name) orelse {
+        con.fail(not_full, .{name});
+        return false;
+    };
+    // An empty body, not none: the request then carries `Content-Length: 0`, which a PUT needs.
+    const answer = v2.send(v2.CreatePackage, arena, EmptyBody{ .net = net }, net.policy, api_v2_url, token, .{ .namespace = full.namespace, .name = full.name }) catch |e| {
+        con.fail("PUT /packages/{s}: {s}\n", .{ name, @errorName(e) });
+        return false;
+    };
+    if (answer.status == 200) return true;
+    if (answer.status == 201) {
+        con.say("created {s} on {s}\n", .{ name, stage });
+        return true;
+    }
+    registry_cmd.reportFailure(con, answer);
+    return false;
+}
+
+/// The net a request without a body goes through with an empty body and no `Content-Type`, so that it carries `Content-Length: 0`.
+const EmptyBody = struct {
+    net: group_publish.Net,
+
+    pub fn once(self: EmptyBody, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
+        var sent = options;
+        sent.body = "";
+        sent.content_type = null;
+        // not the registry API: the transport under v2.send for createPackage, which sends no Content-Type and an empty body
+        return self.net.once(arena, method, url, sent);
+    }
+
+    pub fn pause(self: EmptyBody, secs: u64) void {
+        self.net.pause(secs);
+    }
+};
+
+/// `name` split into its namespace and name for a v2 path; null for a name that is not a full name `<namespace>/<name>`
+/// (the manifest checks guarantee one, so this only keeps a bare name from ever becoming a request).
+fn fullOf(name: []const u8) ?core.names.FullName {
+    return core.names.split(name);
+}
+
+/// What is said of a package name that is not a full name, before any request is sent.
+const not_full = "'{s}' is not a full name <namespace>/<name>\n";
 
 /// Every header the registry named for a PUT, as given (the client sets Content-Length itself from the body, to the same
 /// value); null after printing why not, when a header's value is not text.
@@ -602,33 +640,50 @@ pub fn putHeaders(arena: Allocator, put_headers: ?std.json.Value) Allocator.Erro
     return headers.items;
 }
 
+/// `putHeaders` of the headers `beginUpload` answered (a JSON object of strings).
+fn putHeadersOf(arena: Allocator, named: std.json.ArrayHashMap([]const u8)) Allocator.Error!?[]const std.http.Header {
+    var object = std.json.ObjectMap.init(arena);
+    var it = named.map.iterator();
+    while (it.next()) |h| try object.put(h.key_ptr.*, .{ .string = h.value_ptr.* });
+    return putHeaders(arena, .{ .object = object });
+}
+
 /// Begins the upload of `p` and PUTs its bytes; the upload id, or null after
 /// printing why not.
 fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, version: []const u8, p: conda.Packed) anyerror!?[]const u8 {
     const arena = s.arena;
-    const begin_body = try std.fmt.allocPrint(
-        arena,
-        "{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}",
-        .{ p.subdir, p.file_name, &p.sha256, p.bytes.len },
-    );
-    const path = try std.fmt.allocPrint(arena, "/packages/{s}/{s}/files", .{ name, version });
-    const begun = try http.request(arena, .POST, try s.api(path), .{ .token = token, .body = begin_body });
+    const full = fullOf(name) orelse {
+        err(not_full, .{name});
+        return null;
+    };
+    const begin = v2.BeginUploadParams{
+        .namespace = full.namespace,
+        .name = full.name,
+        .version = version,
+        .body = .{ .subdir = std.meta.stringToEnum(v2.Subdir, p.subdir) orelse .unknown, .filename = p.file_name, .sha256 = &p.sha256, .size = @intCast(p.bytes.len) },
+    };
+    const begun = try v2.sendOnce(v2.BeginUpload, arena, http.Real{}, s.config.api_v2_url, token, begin);
     if (!begun.ok()) {
         registry_cmd.printFailure(begun);
         return null;
     }
-    const up = try std.json.parseFromSliceLeaky(struct {
-        upload_id: []const u8,
-        put_url: []const u8,
-        put_headers: ?std.json.Value = null,
-    }, arena, begun.body, .{ .ignore_unknown_fields = true });
+    const up = v2.decode(v2.BeginUpload, arena, begun.body) catch |e| {
+        // An upload header whose value is not text is said as before the answer was decoded with the generated type.
+        if (std.json.parseFromSliceLeaky(std.json.Value, arena, begun.body, .{}) catch null) |value| {
+            if (value == .object) if (value.object.get("put_headers")) |named| {
+                if ((try putHeaders(arena, named)) == null) return null;
+            };
+        }
+        return e;
+    };
     if (!registry.allowedUrl(up.put_url)) {
         err("the registry named an upload URL that is neither https nor loopback http\n", .{});
         return null;
     }
 
-    const headers = (try putHeaders(arena, up.put_headers)) orelse return null;
+    const headers = (try putHeadersOf(arena, up.put_headers)) orelse return null;
     // No bearer token: the URL is presigned.
+    // not the registry API: the file is PUT to the storage URL the registry signed
     const put = try http.request(arena, .PUT, up.put_url, .{
         .body = p.bytes,
         .content_type = null,
@@ -641,14 +696,14 @@ fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, vers
     return up.upload_id;
 }
 
-/// Polls the publish at `url` until it is published or rejected, or `wait` seconds of `net`'s clock have passed. The
+/// Polls the publish `publish_id` until it is published or rejected, or `wait` seconds of `net`'s clock have passed. The
 /// clock and the pauses are `net`'s and everything it says goes through `con`, so a test drives it without waiting and
 /// without touching the real standard streams.
-fn waitForPublish(s: registry_cmd.Session, net: group_publish.Net, con: *group_publish.Console, wait: i64, token: []const u8, url: []const u8, name: []const u8, version: []const u8) anyerror!u8 {
+fn waitForPublish(s: registry_cmd.Session, net: group_publish.Net, con: *group_publish.Console, wait: i64, token: []const u8, publish_id: []const u8, name: []const u8, version: []const u8) anyerror!u8 {
     const arena = s.arena;
     const deadline = net.now() + wait;
     while (net.now() < deadline) {
-        const polled = try net.once(arena, .GET, url, .{ .token = token });
+        const polled = try v2.sendOnce(v2.GetPublishStatus, arena, net, s.config.api_v2_url, token, .{ .publish_id = publish_id });
         if (polled.status == 429) {
             net.pause(@min(polled.retry_after orelse 1, 60));
             continue;
@@ -657,28 +712,22 @@ fn waitForPublish(s: registry_cmd.Session, net: group_publish.Net, con: *group_p
             registry_cmd.reportFailure(con, polled);
             return 1;
         }
-        const state = try std.json.parseFromSliceLeaky(struct {
-            status: []const u8,
-            rejection_code: ?[]const u8 = null,
-            message: ?[]const u8 = null,
-            /// What did not stop the publish (a native dependency whose name conda-forge does not list). Registries that
-            /// predate the field do not send it; a CLI that predates it ignores it (`ignore_unknown_fields`).
-            warnings: ?[]const []const u8 = null,
-        }, arena, polled.body, .{ .ignore_unknown_fields = true });
-        const finished = std.mem.eql(u8, state.status, "published") or std.mem.eql(u8, state.status, "rejected");
+        const state = try v2.decode(v2.GetPublishStatus, arena, polled.body);
+        const finished = state.status == .published or state.status == .rejected;
         if (finished) {
             for (state.warnings orelse &.{}) |w| con.fail("warning: {s}\n", .{w});
         }
-        if (std.mem.eql(u8, state.status, "published")) {
-            con.say("published mojo-{s} {s}\n", .{ name, version });
+        if (state.status == .published) {
+            con.say("published {s} {s}\n", .{ name, version });
             return 0;
         }
-        if (std.mem.eql(u8, state.status, "rejected")) {
-            con.fail("rejected: {s}: {s}\n", .{ state.rejection_code orelse "unknown", state.message orelse "" });
+        if (state.status == .rejected) {
+            con.fail("rejected: {s}: {s}\n", .{ if (state.rejection_code) |c| @tagName(c) else "unknown", state.message orelse "" });
             return 1;
         }
         net.pause(1);
     }
+    const url = try v2.url(v2.GetPublishStatus, arena, s.config.api_v2_url, .{ .publish_id = publish_id });
     con.fail("gave up waiting for the publish after {d} minutes; it may still finish: check 'GET {s}'\n", .{ @divTrunc(wait, 60), url });
     return 1;
 }
@@ -688,23 +737,15 @@ fn waitForPublish(s: registry_cmd.Session, net: group_publish.Net, con: *group_p
 // ---------------------------------------------------------------------------
 
 fn parseOk(a: Allocator, cmd: Cmd, args: []const []const u8) !Flags {
-    return switch (try parseFlags(a, cmd, args)) {
-        .ok => |f| f,
-        .bad => |why| {
-            std.debug.print("unexpected refusal: {s}\n", .{why});
-            return error.TestUnexpectedResult;
-        },
-    };
+    const parsed = try parseFlags(a, cmd, args);
+    try std.testing.expectEqualStrings("", if (parsed == .bad) parsed.bad else "");
+    return parsed.ok;
 }
 
 fn parseBad(a: Allocator, cmd: Cmd, args: []const []const u8, needle: []const u8) !void {
-    switch (try parseFlags(a, cmd, args)) {
-        .ok => return error.TestUnexpectedResult,
-        .bad => |why| if (std.mem.indexOf(u8, why, needle) == null) {
-            std.debug.print("refusal '{s}' lacks '{s}'\n", .{ why, needle });
-            return error.TestUnexpectedResult;
-        },
-    }
+    const parsed = try parseFlags(a, cmd, args);
+    try std.testing.expect(parsed == .bad);
+    try std.testing.expect(std.mem.indexOf(u8, parsed.bad, needle) != null);
 }
 
 test "--oidc is a flag of publish and takes no value; pack does not know it" {
@@ -789,7 +830,7 @@ test "--native names an archive per native library and subdir, and nothing that 
 
 const native_manifest_text =
     \\[package]
-    \\name = "demo"
+    \\name = "example/demo"
     \\version = "0.1.0"
     \\
     \\[toolchain]
@@ -851,7 +892,7 @@ test "nativeFiles reads the archive of each native library for each subdir it pa
     try std.testing.expectEqualStrings("!<arch>\nosx\n", got.get("osx-arm64").?[0].archive);
 
     // A manifest with no native libraries packs as it always did: no entries, whatever the subdirs.
-    const plain = try manifest.parse(a, "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", &diag);
+    const plain = try manifest.parse(a, "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", &diag);
     const none = try nativeOk(a, plain, nativeFlags(&.{.{ .subdir = "noarch", .path = "x" }}, &.{}));
     try std.testing.expectEqual(@as(u32, 0), none.count());
 
@@ -884,7 +925,7 @@ test "a member's native built from srcs is packed from the archive the build sys
     try tmp.dir.writeFile("libother.a", "!<arch>\nother\n");
     const root = try tmp.dir.realpathAlloc(a, ".");
     var diag: manifest.Diagnostic = .{};
-    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const head = "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
     const m = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\n", &diag);
     const renamed = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nsoname = \"libother.a\"\n", &diag);
     const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
@@ -919,7 +960,7 @@ test "a provided native is packed under lib<id>.a or its soname, and an archive 
     try tmp.dir.writeFile("libother.a", "!<arch>\nother\n");
     const root = try tmp.dir.realpathAlloc(a, ".");
     var diag: manifest.Diagnostic = .{};
-    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const head = "[package]\nname = \"example/demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
     const m = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nprovided = true\n", &diag);
     const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
     const right = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libshim.a" }) };
@@ -941,10 +982,7 @@ test "version refusals" {
     try std.testing.expect((try versionProblem(a, "1.0.0")) == null);
     try std.testing.expect((try versionProblem(a, "0.0.0")) == null);
     for ([_][]const u8{ "1.0", "1", "1.0.0-rc.1", "1.0.0+7", "01.0.0", "1.0.0.0", "1.0.a" }) |v| {
-        const why = (try versionProblem(a, v)) orelse {
-            std.debug.print("accepted {s}\n", .{v});
-            return error.TestUnexpectedResult;
-        };
+        const why = (try versionProblem(a, v)) orelse "(accepted)";
         try std.testing.expect(std.mem.indexOf(u8, why, "exactly MAJOR.MINOR.PATCH") != null);
     }
 }
@@ -983,31 +1021,27 @@ test "a PUT carries the headers the registry named, as given, except the length 
     try std.testing.expect((try putHeaders(a, odd)) == null);
 }
 
-test "the status URL resolves against the API host" {
+test "the headers of a beginUpload answer are the PUT's headers as the registry named them" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
-    try std.testing.expectEqualStrings(
-        "http://127.0.0.1:5000/api/v1/publishes/pub_1",
-        (try resolveStatusUrl(a, "http://127.0.0.1:5000/api/v1", "/api/v1/publishes/pub_1")).?,
-    );
-    try std.testing.expectEqualStrings(
-        "https://mopm.dev/api/v1/publishes/x",
-        (try resolveStatusUrl(a, "https://mopm.dev/api/v1", "/api/v1/publishes/x")).?,
-    );
-    try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "https://evil.example/api/v1/publishes/x")) == null);
-    try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "//evil.example/api/v1/publishes/x")) == null);
-    try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "/api/v1/publishes/")) == null);
-    try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "/other")) == null);
+    const up = try v2.decode(v2.BeginUpload, a, "{\"upload_id\":\"up_1\",\"put_url\":\"https://s3.test/x\",\"put_headers\":{\"x-amz-checksum-sha256\":\"abc=\",\"x-amz-meta-n\":\"v\"},\"expires_at\":\"2026-10-25T00:05:00Z\"}");
+    try std.testing.expectEqualStrings("up_1", up.upload_id);
+    const headers = (try putHeadersOf(a, up.put_headers)).?;
+    try std.testing.expectEqual(@as(usize, 2), headers.len);
+    try std.testing.expectEqualStrings("x-amz-checksum-sha256", headers[0].name);
+    try std.testing.expectEqualStrings("abc=", headers[0].value);
+    try std.testing.expectEqualStrings("x-amz-meta-n", headers[1].name);
+    try std.testing.expectEqualStrings("v", headers[1].value);
 }
 
 const gt = @import("group_publish_test.zig");
-const poll_url = "http://127.0.0.1:1/api/v1/publishes/pub_1";
-const pending = "{\"status\":\"validating\"}";
-const done = "{\"status\":\"published\"}";
+const status_head = "{\"publish_id\":\"pub_1\",\"name\":\"example/x\",\"version\":\"1.0.0\",";
+const pending = status_head ++ "\"status\":\"validating\"}";
+const done = status_head ++ "\"status\":\"published\"}";
 
 fn waitSession(a: Allocator) registry_cmd.Session {
-    return .{ .arena = a, .config = .{ .stage = "beta", .api_url = "http://127.0.0.1:1/api/v1", .channel_url = "", .min_cli_version = "", .read_only = false }, .config_dir = "unused" };
+    return .{ .arena = a, .config = .{ .stage = "beta", .api_url = "http://127.0.0.1:1/api/v1", .api_v2_url = "http://127.0.0.1:1/api/v2", .channel_url = "", .min_cli_version = "", .read_only = false }, .config_dir = "unused" };
 }
 
 test "the wait for a publish polls once a second on the net's clock until the registry says published" {
@@ -1020,14 +1054,14 @@ test "the wait for a publish polls once a second on the net's clock until the re
         .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending },
         .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
     }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), script.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), script.net(), &con, 600, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expect(script.mismatch == null);
     try std.testing.expectEqual(@as(usize, 3), script.seen.items.len);
     // One second between polls: two pauses between three polls.
     try std.testing.expectEqual(@as(u64, 2), script.slept);
     for (script.seen.items) |x| try std.testing.expectEqualStrings("tok", x.token.?);
     // What it says goes through the console it was given, not the process's standard output.
-    try std.testing.expectEqualStrings("published mojo-x 1.0.0\n", con.out.items);
+    try std.testing.expectEqualStrings("published example/x 1.0.0\n", con.out.items);
     try std.testing.expectEqualStrings("", con.err.items);
 }
 
@@ -1037,7 +1071,7 @@ test "a publish that never finishes is given up on when the net's clock passes t
     const a = st.allocator();
     var con = group_publish.Console.init(a, null);
     var script = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), script.net(), &con,5, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), script.net(), &con, 5, "tok", "pub_1", "example/x", "1.0.0"));
     // A wait of 5 seconds is five polls, one at each second of the clock, and five pauses: the clock is exactly at the limit.
     try std.testing.expectEqual(@as(usize, 5), script.seen.items.len);
     try std.testing.expectEqual(@as(u64, 5), script.slept);
@@ -1045,7 +1079,7 @@ test "a publish that never finishes is given up on when the net's clock passes t
 
     // A wait of zero polls nothing.
     var none = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), none.net(), &con,0, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), none.net(), &con, 0, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(usize, 0), none.seen.items.len);
 }
 
@@ -1058,7 +1092,7 @@ test "a 429 waits the registry's Retry-After, one second when it names none, and
         .{ .method = .GET, .suffix = "pub_1", .status = 429, .retry_after = 7 },
         .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
     }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), named.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), named.net(), &con, 600, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(u64, 7), named.slept);
     try std.testing.expectEqual(@as(usize, 2), named.seen.items.len);
 
@@ -1066,19 +1100,19 @@ test "a 429 waits the registry's Retry-After, one second when it names none, and
         .{ .method = .GET, .suffix = "pub_1", .status = 429 },
         .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
     }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), unnamed.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), unnamed.net(), &con, 600, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(u64, 1), unnamed.slept);
 
     var huge = gt.Script{ .steps = &.{
         .{ .method = .GET, .suffix = "pub_1", .status = 429, .retry_after = 3600 },
         .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
     }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), huge.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), huge.net(), &con, 600, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(u64, 60), huge.slept);
 
     // A pause that carries the clock past the wait ends the wait: no poll follows it.
     var late = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 429, .retry_after = 60 }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), late.net(), &con,30, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), late.net(), &con, 30, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(usize, 1), late.seen.items.len);
     try std.testing.expectEqual(@as(u64, 60), late.slept);
 }
@@ -1089,15 +1123,15 @@ test "the warnings of a finished publish are printed to standard error, and a st
     const a = st.allocator();
     var con = group_publish.Console.init(a, null);
     var warned = gt.Script{ .steps = &.{
-        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"validating\",\"warnings\":[\"not yet\"]}" },
-        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"published\",\"warnings\":[\"native dependency 'libpgn' is not a conda-forge package name\",\"second\"],\"future\":{\"a\":1}}" },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"validating\",\"warnings\":[\"not yet\"]}" },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"published\",\"warnings\":[\"native dependency 'libpgn' is not a conda-forge package name\",\"second\"],\"future\":{\"a\":1}}" },
     }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), warned.net(), &con, 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), warned.net(), &con, 600, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expectEqualStrings("mopm: warning: native dependency 'libpgn' is not a conda-forge package name\nmopm: warning: second\n", con.err.items);
-    try std.testing.expectEqualStrings("published mojo-x 1.0.0\n", con.out.items);
+    try std.testing.expectEqualStrings("published example/x 1.0.0\n", con.out.items);
     var plain = group_publish.Console.init(a, null);
-    var quiet = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"published\",\"future\":[1]}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), quiet.net(), &plain, 600, "tok", poll_url, "x", "1.0.0"));
+    var quiet = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"published\",\"future\":[1]}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), quiet.net(), &plain, 600, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expectEqualStrings("", plain.err.items);
 }
 
@@ -1106,12 +1140,108 @@ test "a rejected publish and a failing poll end the wait at once, with no pause"
     defer st.deinit();
     const a = st.allocator();
     var con = group_publish.Console.init(a, null);
-    var rejected = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"rejected\",\"rejection_code\":\"bad\",\"message\":\"no\"}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), rejected.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    var rejected = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"rejected\",\"rejection_code\":\"manifest_invalid\",\"message\":\"no\"}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), rejected.net(), &con, 600, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(u64, 0), rejected.slept);
-    try std.testing.expectEqualStrings("mopm: rejected: bad: no\n", con.err.items);
+    try std.testing.expectEqualStrings("mopm: rejected: manifest_invalid: no\n", con.err.items);
     var broken = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 500 }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
-    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), broken.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), broken.net(), &con, 600, "tok", "pub_1", "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(u64, 0), broken.slept);
     try std.testing.expectEqual(@as(usize, 1), broken.seen.items.len);
+}
+
+test "a status this CLI does not know is polled again, and a rejection code it does not know is said as unknown" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"reviewing\"}" },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = status_head ++ "\"status\":\"rejected\",\"rejection_code\":\"bad\",\"message\":\"no\"}" },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), script.net(), &con, 600, "tok", "pub_1", "example/x", "1.0.0"));
+    try std.testing.expectEqual(@as(usize, 2), script.seen.items.len);
+    try std.testing.expectEqual(@as(u64, 1), script.slept);
+    try std.testing.expectEqualStrings("mopm: rejected: unknown: no\n", con.err.items);
+}
+
+test "publish creates a package the registry does not have: PUT to its full name with the token and no body, and says created" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/packages/example/x", .status = 201, .body = "{\"name\":\"example/x\"}" }});
+    try std.testing.expect(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "example/x"));
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+    const sent = script.seen.items[0];
+    try std.testing.expectEqual(std.http.Method.PUT, sent.method);
+    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/packages/example/x", sent.url);
+    try std.testing.expectEqualStrings("tok", sent.token.?);
+    try std.testing.expectEqual(@as(usize, 0), if (sent.body) |b| b.len else 0);
+    try std.testing.expect(!sent.content_type_set);
+    try std.testing.expectEqualStrings("created example/x on beta\n", con.out.items);
+    try std.testing.expectEqualStrings("", con.err.items);
+}
+
+test "a package name that is not a full name is refused before any request" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.newScript(a, &.{});
+    try std.testing.expect(!(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "x")));
+    try std.testing.expectEqual(@as(usize, 0), script.seen.items.len);
+    try std.testing.expectEqualStrings("mopm: 'x' is not a full name <namespace>/<name>\n", con.err.items);
+    try std.testing.expect(fullOf("x") == null);
+    try std.testing.expectEqualStrings("example", fullOf("example/x").?.namespace);
+}
+
+test "publish of a package the registry already has says nothing about creating it and goes on" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/packages/example/x", .status = 200, .body = "{\"name\":\"example/x\"}" }});
+    try std.testing.expect(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "example/x"));
+    try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+    try std.testing.expectEqualStrings("", con.out.items);
+    try std.testing.expectEqualStrings("", con.err.items);
+}
+
+test "publish refuses with the registry's message, and goes no further, when the namespace is not the user's or is not valid" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const refusals = [_]struct { status: u16, body: []const u8, err: []const u8 }{
+        .{
+            .status = 403,
+            .body = "{\"error\":{\"code\":\"not_namespace_member\",\"message\":\"You are not a member of the namespace 'example'.\",\"hint\":\"Ask an owner to add you.\"}}",
+            .err = "mopm: You are not a member of the namespace 'example'.\n  hint: Ask an owner to add you.\n  request id: req-test\n",
+        },
+        .{
+            .status = 400,
+            .body = "{\"error\":{\"code\":\"invalid_namespace\",\"message\":\"'Example' is not a valid namespace.\",\"hint\":\"Use lower case.\"}}",
+            .err = "mopm: 'Example' is not a valid namespace.\n  hint: Use lower case.\n  request id: req-test\n",
+        },
+    };
+    for (refusals) |r| {
+        var con = group_publish.Console.init(a, null);
+        var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/packages/example/x", .status = r.status, .body = r.body }});
+        try std.testing.expect(!(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "example/x")));
+        try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+        try std.testing.expectEqualStrings("", con.out.items);
+        try std.testing.expectEqualStrings(r.err, con.err.items);
+    }
+}
+
+test "publish stops when the request for the package fails before any answer, naming the request" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/packages/example/x", .status = 0, .err = error.InvalidUri }});
+    try std.testing.expect(!(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "example/x")));
+    try std.testing.expectEqualStrings("mopm: PUT /packages/example/x: InvalidUri\n", con.err.items);
+    try std.testing.expectEqualStrings("", con.out.items);
 }

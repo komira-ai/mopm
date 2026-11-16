@@ -1,1 +1,1 @@
-mopm repl: refused (duplicate_owner): libdup.1.dylib is provided by both pkg_a and pkg_b; one owner per native library
+mopm repl: refused (duplicate_owner): libdup.1.dylib is provided by both example/pkg_a and example/pkg_b; one owner per native library

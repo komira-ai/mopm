@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { buildPackageIndex, buildTakedowns, indexKey } from '../../src/index-files';
+import { TAKEDOWNS_V2_KEY, buildPackageIndex, buildTakedowns, indexKey } from '../../src/index-files';
 import { keyOfPath, readIndex, type IndexObjects } from '../../src/http/index-reader';
 import { ALL_FIXTURE_ROWS, FIXTURE_PACKAGES } from '../fixtures/index-registry';
+import { ALL_FIXTURE_ROWS_V2, FIXTURE_PACKAGES_V2 } from '../fixtures/index-registry-v2';
 
 /** A bucket of objects; `fail` makes a key answer like S3 does when it refuses or breaks. */
 function bucket(files: Record<string, string | Buffer>, fail: Record<string, Error> = {}) {
@@ -197,5 +198,111 @@ describe('what S3 answers', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('version 2: /index/v2/<aa>/<bb>/<namespace>/<name>', () => {
+  const V2 = Object.keys(FIXTURE_PACKAGES_V2);
+  const stored2 = () => Object.fromEntries(V2.map((n) => [indexKey(n), buildPackageIndex(n, FIXTURE_PACKAGES_V2[n]!)!]));
+
+  test.each(V2)('%s: the response body is the exact bytes the builder wrote, read from the derived key', async (name) => {
+    const b = bucket(stored2());
+    const res = await get(b, pathOf(name));
+    expect(pathOf(name)).toBe(`/index/v2/ko/mi/${name}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe(buildPackageIndex(name, FIXTURE_PACKAGES_V2[name]!));
+    expect(res.headers['content-type']).toBe('application/x-ndjson');
+    expect(res.headers['cache-control']).toBe('public, max-age=60');
+    expect(b.asked).toEqual([indexKey(name)]);
+  });
+
+  test('the v2 takedown log is served from its own key, byte for byte, as JSON', async () => {
+    const text = buildTakedowns(ALL_FIXTURE_ROWS_V2, 2);
+    const b = bucket({ [TAKEDOWNS_V2_KEY]: text, 'index/takedowns.json': buildTakedowns(ALL_FIXTURE_ROWS) });
+    const res = await get(b, '/index/v2/takedowns.json');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe(text);
+    expect(res.headers['content-type']).toBe('application/json');
+    expect(b.asked).toEqual([TAKEDOWNS_V2_KEY]);
+  });
+
+  test('the v1 takedown log is still the v1 key, not the v2 one', async () => {
+    const b = bucket({});
+    await get(b, '/index/takedowns.json');
+    expect(b.asked).toEqual(['index/takedowns.json']);
+  });
+
+  test('the v2 takedown log missing is 404; S3 failing on it is 502', async () => {
+    expect((await get(bucket({}), '/index/v2/takedowns.json')).statusCode).toBe(404);
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      expect((await get(bucket({}, { [TAKEDOWNS_V2_KEY]: new Error('s3 answered 500') }), '/index/v2/takedowns.json')).statusCode).toBe(502);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('a full name nobody published is 404, and a v2 file missing is 404', async () => {
+    expect((await get(bucket(stored2()), '/index/v2/ko/mi/komira-ai/no_such')).statusCode).toBe(404);
+  });
+
+  test.each([
+    ['komira-ai/json', '/index/v2/ko/mi/komira-ai/json'],
+    ['ab/x1', '/index/v2/ab/__/ab/x1'],
+    ['abc/xy', '/index/v2/ab/c_/abc/xy'],
+    ['a-bc/xy', '/index/v2/a-/bc/a-bc/xy'],
+  ])('%s is at %s, with the directories padded and a dash kept', (full, path) => {
+    expect(keyOfPath(path)).toEqual({ key: indexKey(full), contentType: 'application/x-ndjson' });
+  });
+
+  test.each([
+    ['directories that are not the namespace\'s (aa)', '/index/v2/zz/mi/komira-ai/json'],
+    ['directories that are not the namespace\'s (bb)', '/index/v2/ko/zz/komira-ai/json'],
+    ['directories derived from the name', '/index/v2/js/on/komira-ai/json'],
+    ['a short namespace without its padding', '/index/v2/ab/x1/ab/x1'],
+    ['a flat name under v2', '/index/v2/ht/tp/http_client'],
+    ['no namespace', '/index/v2/ko/mi/json'],
+    ['three segments after the directories', '/index/v2/ko/mi/komira-ai/json/x'],
+    ['a trailing slash', '/index/v2/ko/mi/komira-ai/json/'],
+    ['a double slash', '/index/v2/ko/mi//komira-ai/json'],
+    ['an upper-case namespace', '/index/v2/KO/MI/KOMIRA-AI/json'],
+    ['a namespace that starts with a dash', '/index/v2/-a/bc/-abc/json'],
+    ['a namespace that ends with a dash', '/index/v2/ab/c-/abc-/json'],
+    ['a namespace with a double dash', '/index/v2/a-/-b/a--b/json'],
+    ['a namespace of 40 characters', `/index/v2/nn/nn/${'n'.repeat(40)}/json`],
+    ['an underscore in the namespace', '/index/v2/a_/b_/a_b/json'],
+    ['an upper-case name', '/index/v2/ko/mi/komira-ai/Json'],
+    ['a one-character name', '/index/v2/ko/mi/komira-ai/j'],
+    ['a name of 65 characters', `/index/v2/ko/mi/komira-ai/a${'a'.repeat(64)}`],
+    ['an encoded slash for the namespace separator', '/index/v2/ko/mi/komira-ai%2Fjson'],
+    ['an encoded dash', '/index/v2/ko/mi/komira%2Dai/json'],
+    ['dot-dot', '/index/v2/ko/mi/komira-ai/../json'],
+    ['dot-dot to v1 takedowns', '/index/v2/../takedowns.json'],
+    ['v2 takedowns with a suffix', '/index/v2/takedowns.json/x'],
+    ['v2 takedowns in another case', '/index/v2/Takedowns.json'],
+    ['the bare v2 directory', '/index/v2/'],
+    ['v2 alone', '/index/v2'],
+    ['a v3 path', '/index/v3/ko/mi/komira-ai/json'],
+  ])('%s is 404 and never reaches the bucket', async (_, path) => {
+    const b = bucket(stored2());
+    expect(keyOfPath(path)).toBeUndefined();
+    const res = await get(b, path);
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body).error.code).toBe('not_in_index');
+    expect(b.asked).toEqual([]);
+  });
+
+  test.each(['POST', 'PUT', 'DELETE'])('%s of a v2 path is 404 without a read', async (method) => {
+    const b = bucket(stored2());
+    expect((await get(b, '/index/v2/ko/mi/komira-ai/http_client', method)).statusCode).toBe(404);
+    expect((await get(b, '/index/v2/takedowns.json', method)).statusCode).toBe(404);
+    expect(b.asked).toEqual([]);
+  });
+
+  test('the v1 paths read v1 keys only: a v1 file is not reachable under v2 and the reverse', async () => {
+    const b = bucket({ ...stored(), ...stored2() });
+    expect((await get(b, '/index/ht/tp/http_client')).statusCode).toBe(200);
+    expect(b.asked).toEqual(['index/ht/tp/http_client']);
+    expect((await get(b, '/index/v2/ht/tp/http_client')).statusCode).toBe(404);
   });
 });

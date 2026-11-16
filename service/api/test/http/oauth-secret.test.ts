@@ -1,4 +1,4 @@
-import { AuthError } from '../../src/auth';
+import { AuthError, OrgRegistration } from '../../src/auth';
 import { configureAuth, oidcAudiences } from '../../src/http/lambda';
 import { OAuthSecretSource, oauthSecretName, type SecretReader } from '../../src/http/oauth-secret';
 import { FakeAuthDoc } from '../auth-fake-doc';
@@ -125,6 +125,26 @@ describe('configureAuth', () => {
     expect(r.calls).toEqual([]);
     expect(await auth.devices()).toBeDefined();
     expect(r.calls).toEqual(['mopm/beta/github-oauth']);
+  });
+
+  test('registration() reads the same secret as devices(), once, and hands out the registration service', async () => {
+    const r = reader([SECRET_VALUE]);
+    const auth = configureAuth('beta', doc, { MOPM_OAUTH_SECRET_NAME: 'mopm/beta/github-oauth' }, r.read)!;
+    const registration = await auth.registration();
+    expect(registration).toBeInstanceOf(OrgRegistration);
+    await auth.devices();
+    expect(await auth.registration()).toBe(registration);
+    expect(r.calls).toEqual(['mopm/beta/github-oauth']);
+  });
+
+  test('with the secret absent, registration() is unavailable too', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const auth = configureAuth('beta', doc, { MOPM_OAUTH_SECRET_NAME: 'mopm/beta/github-oauth' }, reader([undefined]).read)!;
+      expect(await codeOf(auth.registration())).toBe('unavailable');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('with the secret absent, devices() is unavailable while tokens and CI exchange are wired', async () => {

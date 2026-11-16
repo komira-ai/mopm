@@ -398,7 +398,11 @@ describe('the home page says what the repository says', () => {
   // dispatch (or removed from its usage) without the README and this page following.
   test("the working commands are the ones main.zig's usage lists and its dispatch handles", () => {
     const zig = readFileSync(join(REPO_ROOT, 'src', 'cli', 'main.zig'), 'utf8');
-    const usage = zig.slice(zig.indexOf('working today:'), zig.indexOf('planned (not implemented yet)'));
+    // `mopm --help` is main.zig's hand-written part and the list of the generated registry commands (src/cli/registry_commands.zig).
+    const generated = readFileSync(join(REPO_ROOT, 'src', 'cli', 'registry_commands.zig'), 'utf8');
+    const list = (/^pub const list = "(.*)";$/m.exec(generated)?.[1] ?? '').replace(/\\n/g, '\n');
+    expect(list).toContain('whoami');
+    const usage = zig.slice(zig.indexOf('working today:'), zig.indexOf('planned (not implemented yet)')) + list;
     expect(usage.length).toBeGreaterThan(500);
     for (const c of WORKING_TODAY) expect(usage).toMatch(new RegExp(`(?:^|[^a-z-])${c}(?![a-z-])`, 'm'));
     const help = new Set(['-h', '--help', 'help']);
@@ -526,14 +530,14 @@ describe('the home page says what the repository says', () => {
     expect(steps.match(/<li>/g)).toHaveLength(3);
     expect([...steps.matchAll(/<h3>([^<]*)<\/h3>/g)].map((m) => m[1])).toEqual(['Install mopm', 'Start a package', 'Add a package']);
     const cmds = [...steps.matchAll(/<code>([^<]*)<\/code><\/pre>/g)].map((m) => textOf(m[1]));
-    expect(cmds).toEqual(['mopm --version', 'mopm new my_package --lib', 'pixi add mojo-<name>']);
+    expect(cmds).toEqual(['mopm --version', 'mopm new my_package --lib', 'pixi add mojo-<namespace>.<name>']);
     expect(PLANNED).not.toContain('add');
     expect(WORKING_TODAY).toContain('add');
-    expect(textOf(steps)).toContain('In a mopm project, mopm add <name> adds it to mopm.toml and writes mopm.lock.');
+    expect(textOf(steps)).toContain('In a mopm project, mopm add <namespace>/<name> adds it to mopm.toml and writes mopm.lock.');
     expect(textOf(steps)).not.toContain('planned');
     // One artifact serves every stage: a static step must not name prod's channel (the channel shown below follows
     // the host at runtime).
-    expect(textOf(steps)).toContain('In a pixi project that lists the registry’s conda channel.');
+    expect(textOf(steps)).toContain('In a pixi project that lists the conda channel of the package’s namespace.');
     expect(textOf(steps)).not.toContain('mopm.dev channel');
   });
 
@@ -561,11 +565,22 @@ describe('the home page says what the repository says', () => {
     expect(home).not.toContain('sort=updated');
   });
 
+  test('the channel section names the per-namespace channel, the conda name and both add commands with full names', () => {
+    const home = read('index.html');
+    const t = textOf(home);
+    expect(t).toContain('Every published package is served from a conda channel, one per namespace, under https://conda.mopm.dev/');
+    expect(t).toContain('The conda package of <namespace>/<name> is mojo-<namespace>.<name> in the channel <namespace>/ there; in a pixi project that lists that channel, pixi add mojo-<namespace>.<name> installs it');
+    expect(t).toContain('In a mopm project, mopm add <namespace>/<name> resolves it against the registry’s index and writes mopm.toml and mopm.lock.');
+    expect(t).not.toContain('mojo-<name>');
+    expect(t).not.toContain('mopm add <name>');
+  });
+
   test('the pixi command is the one spec/channel.md documents, and the channel is the prod default', () => {
     const channel = readFileSync(join(REPO_ROOT, 'spec', 'channel.md'), 'utf8').replace(/\s*\n\s*/g, ' ');
-    expect(channel).toContain('`pixi add mojo-json` installs the package whose import name is `json`');
+    expect(channel).toContain('`pixi workspace channel add https://conda.mopm.dev/komira-ai/` then `pixi add mojo-komira-ai.json` installs `komira-ai/json`');
+    expect(channel).toContain('The conda package name of the package `<namespace>/<name>` is `mojo-<namespace>.<name>`');
     const home = read('index.html');
-    expect(home).toContain('<code>pixi add mojo-&lt;name&gt;</code>');
+    expect(home).toContain('<code>pixi add mojo-&lt;namespace&gt;.&lt;name&gt;</code>');
     expect(home).toContain('<code id="conda-channel">https://conda.mopm.dev/</code>');
   });
 });

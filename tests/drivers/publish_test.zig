@@ -82,7 +82,7 @@ fn exists(path: []const u8) bool {
 }
 
 fn tomlText(a: Allocator, name: []const u8, version: []const u8, extra: []const u8) ![]u8 {
-    return std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n{s}", .{ name, version, extra });
+    return std.fmt.allocPrint(a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n{s}", .{ name, version, extra });
 }
 
 /// A file of `n` 'a' bytes.
@@ -107,6 +107,12 @@ const Stub = struct {
     put_checksum: []const u8 = "",
     put_has_authorization: bool = false,
     put_size: usize = 0,
+    /// `PUT /api/v2/packages/example/stubpkg`, which creates the package: answered 201, and what it carried.
+    package_put_seen: bool = false,
+    package_put_auth: []const u8 = "",
+    package_put_body_len: usize = 0,
+    /// The first upload began after the package was created.
+    begin_after_package: bool = false,
 
     fn base(self: *Stub, a: Allocator) ![]u8 {
         return std.fmt.allocPrint(a, "http://127.0.0.1:{d}", .{self.server.listen_address.getPort()});
@@ -156,33 +162,42 @@ const Stub = struct {
         defer self.mutex.unlock();
         if (method == .GET and std.mem.eql(u8, target, "/index/config.json")) {
             return reply(req, .ok, try std.fmt.allocPrint(a,
-                \\{{"index_version":1,"stage":"stub","api_url":"{s}/api/v1","channel_url":"{s}/channel/","min_cli_version":"0.0.1"}}
-            , .{ b, b }));
+                \\{{"index_version":2,"index_versions":[1,2],"stage":"stub","api_url":"{s}/api/v1","api_v2_url":"{s}/api/v2","channel_url":"{s}/channel/","min_cli_version":"0.0.1"}}
+            , .{ b, b, b }));
         }
-        if (method == .GET and std.mem.eql(u8, target, "/api/v1/publishes/pub_1")) {
+        if (method == .GET and std.mem.eql(u8, target, "/api/v2/publishes/pub_1")) {
             self.polls += 1;
             if (self.polls < 2) {
                 return reply(req, .ok,
-                    \\{"publish_id":"pub_1","name":"stubpkg","version":"1.0.0","status":"validating"}
+                    \\{"publish_id":"pub_1","name":"example/stubpkg","version":"1.0.0","status":"validating"}
                 );
             }
             return reply(req, .ok,
-                \\{"publish_id":"pub_1","name":"stubpkg","version":"1.0.0","status":"rejected","rejection_code":"path_not_allowed","message":"bin/tool is not an allowed path"}
+                \\{"publish_id":"pub_1","name":"example/stubpkg","version":"1.0.0","status":"rejected","rejection_code":"path_not_allowed","message":"bin/tool is not an allowed path"}
             );
         }
-        if (method == .POST and std.mem.eql(u8, target, "/api/v1/packages/stubpkg/1.0.0/files")) {
+        if (method == .POST and std.mem.eql(u8, target, "/api/v2/packages/example/stubpkg/1.0.0/files")) {
             const v = try std.json.parseFromSliceLeaky(std.json.Value, a, body, .{});
             const size: i64 = if (v == .object) (if (v.object.get("size")) |s| (if (s == .integer) s.integer else -2) else -3) else -4;
             self.begin_size = size;
+            self.begin_after_package = self.package_put_seen;
             self.begin_auth = if (auth) |x| x else "";
             return reply(req, .ok, try std.fmt.allocPrint(a,
                 \\{{"upload_id":"upl_1","put_url":"{s}/put/upl_1","put_headers":{{"content-length":"{d}","x-stub-checksum":"abc=="}},"expires_at":"2099-01-01T00:00:00Z"}}
             , .{ b, size }));
         }
-        if (method == .POST and std.mem.eql(u8, target, "/api/v1/packages/stubpkg/1.0.0/publish")) {
+        if (method == .POST and std.mem.eql(u8, target, "/api/v2/packages/example/stubpkg/1.0.0/publish")) {
             self.commit_body = try std.heap.page_allocator.dupe(u8, body);
             return reply(req, .accepted,
-                \\{"publish_id":"pub_1","status_url":"/api/v1/publishes/pub_1"}
+                \\{"publish_id":"pub_1","status_url":"/api/v2/publishes/pub_1"}
+            );
+        }
+        if (method == .PUT and std.mem.eql(u8, target, "/api/v2/packages/example/stubpkg")) {
+            self.package_put_seen = true;
+            self.package_put_auth = if (auth) |x| x else "";
+            self.package_put_body_len = body.len;
+            return reply(req, .created,
+                \\{"name":"example/stubpkg"}
             );
         }
         if (method == .PUT) {
@@ -233,7 +248,7 @@ fn staticNatives(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc:
     const osx_mojoc = try std.fmt.allocPrint(a, "osx-arm64={s}", .{mojoc});
     const n_linux = try std.fmt.allocPrint(a, "nat_sys=linux-64:{s}", .{f_linux});
     const n_osx = try std.fmt.allocPrint(a, "nat_sys=osx-arm64:{s}", .{f_osx});
-    const conda_name = "mojo-natdemo-0.1.0-mojo1.0.0_0.conda";
+    const conda_name = "mojo-example.natdemo-0.1.0-mojo1.0.0_0.conda";
     const out1 = try h.join(a, &.{ work, "nat_dist1" });
     const out2 = try h.join(a, &.{ work, "nat_dist2" });
 
@@ -295,12 +310,12 @@ fn staticNatives(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc:
 /// before any request (a publish is pointed at nothing); a dev-dependency on it, and a package without the key, are packed.
 fn publishFalse(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc: []const u8) !void {
     const helper_dir = try h.join(a, &.{ work, "pf", "helper" });
-    try h.writeFile(try h.join(a, &.{ helper_dir, "mopm.toml" }), "[package]\nname = \"helper\"\nversion = \"0.1.0\"\npublish = false\n\n[toolchain]\nmojo = \"1.0.0\"\n");
-    const dep = "[dependencies]\nhelper = { path = \"../helper\", version = \"0.1\" }\n";
+    try h.writeFile(try h.join(a, &.{ helper_dir, "mopm.toml" }), "[package]\nname = \"example/helper\"\nversion = \"0.1.0\"\npublish = false\n\n[toolchain]\nmojo = \"1.0.0\"\n");
+    const dep = "[dependencies]\n\"example/helper\" = { path = \"../helper\", version = \"0.1\" }\n";
     const needs = try h.join(a, &.{ work, "pf", "needs", "mopm.toml" });
     try h.writeFile(needs, try tomlText(a, "needs", "0.1.0", dep));
     const tests_only = try h.join(a, &.{ work, "pf", "tests_only", "mopm.toml" });
-    try h.writeFile(tests_only, try tomlText(a, "tests_only", "0.1.0", "[dev-dependencies]\nhelper = { path = \"../helper\", version = \"0.1\" }\n"));
+    try h.writeFile(tests_only, try tomlText(a, "tests_only", "0.1.0", "[dev-dependencies]\n\"example/helper\" = { path = \"../helper\", version = \"0.1\" }\n"));
     const plain = try h.join(a, &.{ work, "pf", "plain", "mopm.toml" });
     try h.writeFile(plain, try tomlText(a, "plain", "0.1.0", ""));
     const helper = try h.join(a, &.{ helper_dir, "mopm.toml" });
@@ -309,7 +324,7 @@ fn publishFalse(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc: 
     const cases = [_]Case{
         .{ .label = "pack of a publish = false package", .cmd = "pack", .manifest = helper, .code = 1, .want = "helper has publish = false" },
         .{ .label = "publish of a publish = false package", .cmd = "publish", .manifest = helper, .code = 1, .want = "helper has publish = false" },
-        .{ .label = "pack of a package that needs a publish = false one", .cmd = "pack", .manifest = needs, .code = 1, .want = "needs depends on helper" },
+        .{ .label = "pack of a package that needs a publish = false one", .cmd = "pack", .manifest = needs, .code = 1, .want = "example/needs depends on example/helper" },
         .{ .label = "publish of a package that needs a publish = false one", .cmd = "publish", .manifest = needs, .code = 1, .want = "which has publish = false" },
         .{ .label = "pack of a package with a publish = false dev-dependency", .cmd = "pack", .manifest = tests_only, .code = 0, .want = "packed " },
         .{ .label = "pack of a package without the key", .cmd = "pack", .manifest = plain, .code = 0, .want = "packed " },
@@ -353,7 +368,7 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     const mojoc = try h.join(a, &.{ pkg, "pubdemo.mojoc" });
     try h.writeFile(mojoc, "not a real mojoc, only bytes\n");
     const conf = try h.join(a, &.{ work, "conf" });
-    const conda_name = "mojo-pubdemo-0.1.0-mojo1.0.0_0.conda";
+    const conda_name = "mojo-example.pubdemo-0.1.0-mojo1.0.0_0.conda";
 
     // --- pack
     const dist = try h.join(a, &.{ work, "dist" });
@@ -377,11 +392,11 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     rep.check("pack refuses an unknown subdir", r.code == 2 and h.contains(r.stderr, "not a subdir"), r.stderr);
 
     // --- an account that owns the name, and a token that may publish it
-    const session_json = try fake.control(a, "/session", "{\"handle\":\"pub-user\"}");
+    const session_json = try fake.control(a, "/session", "{\"handle\":\"example\"}");
     const session = h.jsonString(session_json, "token") orelse "";
-    var resp = try h.request(a, "POST", fake.base, "/api/v1/packages/pubdemo/claim", "{}", session);
-    rep.check("the name is claimed", resp.status == 201, resp.body);
-    resp = try h.request(a, "POST", fake.base, "/api/v1/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\"],\"packages\":[\"pubdemo\"],\"expires_in_days\":1}", session);
+    var resp = try h.request(a, "PUT", fake.base, "/api/v2/packages/example/pubdemo", null, session);
+    rep.check("the package is created in the account's user namespace", resp.status == 201, resp.body);
+    resp = try h.request(a, "POST", fake.base, "/api/v2/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\"],\"packages\":[\"example/pubdemo\"],\"expires_in_days\":1}", session);
     const api_token = if (resp.status == 201) (h.jsonString(try h.parseJson(a, resp.body), "token") orelse "") else "";
     rep.check("an API token with the publish scope is made", resp.status == 201 and api_token.len > 0, resp.body);
     const flags = [_][]const u8{ "--registry", fake.base, "--config-dir", conf };
@@ -394,7 +409,7 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     rep.check("--dry-run packs and says what it would send, without a registry", dry.code == 0 and
         h.contains(dry.stdout, "would upload noarch/" ++ conda_name) and
         h.contains(dry.stdout, try std.fmt.allocPrint(a, "sha256 {s}", .{packed_sha})) and
-        h.contains(dry.stdout, "would commit mojo-pubdemo 0.1.0") and
+        h.contains(dry.stdout, "would commit example/pubdemo 0.1.0") and
         h.contains(dry.stdout, "would send a readme of 10 bytes") and
         h.contains(dry.stdout, "dry run: nothing was sent"), dry.stdout);
 
@@ -427,15 +442,15 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     // --- a path dependency with a version: the path package is read beside the manifest named, not beside the
     // directory mopm runs in; and it must be the package the dependency names.
     const mono_manifest = try h.join(a, &.{ work, "mono", "app", "mopm.toml" });
-    try h.writeFile(mono_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\nutil = { path = \"../util\", version = \"0.3\" }\n"));
+    try h.writeFile(mono_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\n\"example/util\" = { path = \"../util\", version = \"0.3\" }\n"));
     try h.writeFile(try h.join(a, &.{ work, "mono", "util", "mopm.toml" }), try tomlText(a, "util", "0.3.4", ""));
     r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", mono_manifest, "--registry", dead, "--config-dir", conf, "--dry-run" }, null);
-    rep.check("a path dependency is read beside the manifest named, from any directory", r.code == 0 and h.contains(r.stdout, "would commit mojo-pubdemo 0.1.0") and r.stderr.len == 0, try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    rep.check("a path dependency is read beside the manifest named, from any directory", r.code == 0 and h.contains(r.stdout, "would commit example/pubdemo 0.1.0") and r.stderr.len == 0, try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     const other_manifest = try h.join(a, &.{ work, "mono_other", "app", "mopm.toml" });
-    try h.writeFile(other_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\nutil = { path = \"../util\", version = \"0.3\" }\n"));
+    try h.writeFile(other_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\n\"example/util\" = { path = \"../util\", version = \"0.3\" }\n"));
     try h.writeFile(try h.join(a, &.{ work, "mono_other", "util", "mopm.toml" }), try tomlText(a, "other", "0.3.4", ""));
     r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", other_manifest, "--registry", dead, "--config-dir", conf, "--dry-run" }, null);
-    rep.check("a path package named other than its dependency is refused", r.code == 1 and h.contains(r.stderr, "names the package other, but dependency 'util' calls it util") and !h.contains(r.stdout, "would commit"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    rep.check("a path package named other than its dependency is refused", r.code == 1 and h.contains(r.stderr, "names the package example/other, but dependency 'example/util' calls it example/util") and !h.contains(r.stdout, "would commit"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
 
     r = try m.run(&(pub_args ++ flags), null);
     rep.check("publishing without a login or MOPM_TOKEN says to log in", r.code == 1 and h.contains(r.stderr, "not logged in to beta; run 'mopm login' or set MOPM_TOKEN"), r.stderr);
@@ -444,13 +459,14 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     r = try m.run(&(pub_args ++ flags), api_token);
     try everything.appendSlice(r.stdout);
     try everything.appendSlice(r.stderr);
+    rep.check("publish of a package the registry already has does not say created", !h.contains(r.stdout, "created "), r.stdout);
     rep.check("publish ends with 'published'", r.code == 0 and h.contains(r.stdout, "uploaded " ++ conda_name) and
-        h.contains(r.stdout, "committed, publish ") and h.contains(r.stdout, "published mojo-pubdemo 0.1.0"), r.stdout);
-    resp = try h.request(a, "GET", fake.base, "/api/v1/packages/pubdemo/0.1.0", null, null);
+        h.contains(r.stdout, "committed, publish ") and h.contains(r.stdout, "published example/pubdemo 0.1.0"), r.stdout);
+    resp = try h.request(a, "GET", fake.base, "/api/v2/packages/example/pubdemo/0.1.0", null, null);
     rep.check("the version is served", resp.status == 200 and std.mem.eql(u8, h.jsonString(try h.parseJson(a, resp.body), "version") orelse "", "0.1.0"), resp.body);
-    resp = try h.request(a, "GET", fake.base, "/index/pu/bd/pubdemo", null, null);
+    resp = try h.request(a, "GET", fake.base, "/index/v2/ex/am/example/pubdemo", null, null);
     rep.check("the sparse index lists the version and its sha256", resp.status == 200 and h.contains(resp.body, "\"version\":\"0.1.0\"") and h.contains(resp.body, packed_sha), resp.body);
-    resp = try h.request(a, "GET", fake.base, "/channel/noarch/repodata.json", null, null);
+    resp = try h.request(a, "GET", fake.base, "/channel/example/noarch/repodata.json", null, null);
     {
         var sha_ok = false;
         if (resp.status == 200) {
@@ -467,7 +483,7 @@ test "mopm pack and publish against the fake registry, and a rejection against a
         }
         rep.check("the channel's repodata.json lists the file with the packed sha256", sha_ok, resp.body[0..@min(resp.body.len, 400)]);
     }
-    resp = try h.request(a, "GET", fake.base, "/channel/noarch/" ++ conda_name, null, null);
+    resp = try h.request(a, "GET", fake.base, "/channel/example/noarch/" ++ conda_name, null, null);
     rep.check("the channel serves the file", resp.status == 200 and pk != null and resp.body.len == pk.?.size, "wrong status or size");
 
     r = try m.run(&(pub_args ++ flags), api_token);
@@ -475,15 +491,25 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     try everything.appendSlice(r.stderr);
     rep.check("publishing the same version again fails with version_exists", r.code == 1 and h.contains(r.stderr, "already exists") and h.contains(r.stderr, "versions are immutable"), r.stderr);
 
+    // --- an account that cannot write the namespace is refused at the creation, before anything is uploaded
+    const outsider = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"outsider\"}"), "token") orelse "";
+    const third_manifest = try h.join(a, &.{ work, "third", "mopm.toml" });
+    try h.writeFile(third_manifest, try tomlText(a, "pubdemo", "0.1.2", ""));
+    r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", third_manifest, "--registry", fake.base, "--config-dir", try h.join(a, &.{ work, "conf4" }) }, outsider);
+    try everything.appendSlice(r.stdout);
+    try everything.appendSlice(r.stderr);
+    rep.check("a publish by an account that cannot write the namespace prints the registry's refusal and uploads nothing", r.code == 1 and
+        h.contains(r.stderr, "You cannot write in 'example'.") and !h.contains(r.stdout, "uploaded") and !h.contains(r.stdout, "created "), r.stderr);
+
     // --- the login's session is not a publish token
     const conf2 = try h.join(a, &.{ work, "conf2" });
-    try h.writeFile(try h.join(a, &.{ conf2, "credentials.json" }), try std.fmt.allocPrint(a, "{{\"{s}\":{{\"token\":\"{s}\",\"handle\":\"pub-user\"}}}}", .{ api, session }));
+    try h.writeFile(try h.join(a, &.{ conf2, "credentials.json" }), try std.fmt.allocPrint(a, "{{\"{s}\":{{\"token\":\"{s}\",\"handle\":\"example\"}}}}", .{ api, session }));
     const next_manifest = try h.join(a, &.{ work, "next", "mopm.toml" });
     try h.writeFile(next_manifest, try tomlText(a, "pubdemo", "0.1.1", ""));
     r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", next_manifest, "--registry", fake.base, "--config-dir", conf2 }, null);
     try everything.appendSlice(r.stdout);
     try everything.appendSlice(r.stderr);
-    rep.check("a stored session token is sent and the registry's refusal is printed", r.code == 1 and h.contains(r.stderr, "does not have the 'publish' scope for 'pubdemo'"), r.stderr);
+    rep.check("a stored session token is sent and the registry's refusal is printed", r.code == 1 and h.contains(r.stderr, "does not have the 'publish' scope for 'example/pubdemo'"), r.stderr);
 
     // --- a rejection, against the stand-in
     const stub = try a.create(Stub);
@@ -503,6 +529,9 @@ test "mopm pack and publish against the fake registry, and a rejection against a
         h.contains(r.stderr, "rejected: path_not_allowed: bin/tool is not an allowed path") and !h.contains(r.stdout, "published"), r.stderr);
     stub.mutex.lock();
     defer stub.mutex.unlock();
+    rep.check("publish creates the package before the first upload: PUT with the bearer token and no body, and says created", stub.package_put_seen and stub.begin_after_package and
+        std.mem.eql(u8, stub.package_put_auth, "Bearer " ++ stub_token) and stub.package_put_body_len == 0 and
+        h.contains(r.stdout, "created example/stubpkg on stub\n"), stub.package_put_auth);
     rep.check("the PUT carries the headers the registry named, as given", stub.put_seen and std.mem.eql(u8, stub.put_checksum, "abc=="), stub.put_checksum);
     rep.check("the PUT carries no Authorization header", stub.put_seen and !stub.put_has_authorization, "an Authorization header was sent");
     rep.check("the PUT sends the declared number of bytes", stub.put_seen and @as(i64, @intCast(stub.put_size)) == stub.begin_size, "wrong size");

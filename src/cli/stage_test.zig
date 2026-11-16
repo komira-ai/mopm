@@ -1,5 +1,5 @@
 //! Tests of `mopm stage` (stage_cmd.zig), by behaviour. A workspace is written to a temporary directory; the registry is a
-//! stand-in that answers `GET /packages/<name>/<version>` from a table, so the tests need no socket. The real fake
+//! stand-in that answers `GET /packages/<namespace>/<name>/<version>` from a table, so the tests need no socket. The real fake
 //! registry, over a socket, with `publish --staged` after it, is driven by tests/drivers/stage_test.zig.
 
 const std = @import("std");
@@ -9,10 +9,11 @@ const conda = core.conda;
 const http = core.http;
 const gp = @import("group_publish.zig");
 const plan_mod = @import("group_plan.zig");
-const stage = @import("stage_cmd.zig");const Net = gp.Net;
+const stage = @import("stage_cmd.zig");
+const Net = gp.Net;
 const Console = gp.Console;
 
-pub const api = "http://registry.test/api/v1";
+pub const api = "http://registry.test/api/v2";
 const not_found = "{\"error\":{\"code\":\"version_not_found\",\"message\":\"no such version\",\"hint\":\"\"}}";
 
 /// A registry that answers the version reads of a run from a table; a version it does not list is not found.
@@ -81,14 +82,14 @@ pub const Fx = struct {
 
     /// A member `name` at `version` in `ws/src/<name>`, with the lines of `[dependencies]`, and its noarch artifact.
     pub fn member(fx: Fx, name: []const u8, version: []const u8, deps: []const u8) !void {
-        const manifest = try std.fmt.allocPrint(fx.a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}\n", .{ name, version, deps });
+        const manifest = try std.fmt.allocPrint(fx.a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}\n", .{ name, version, deps });
         try fx.put(try std.fmt.allocPrint(fx.a, "ws/src/{s}/mopm.toml", .{name}), manifest);
-        try fx.put(try std.fmt.allocPrint(fx.a, "art/noarch/{s}.mojoc", .{name}), try std.fmt.allocPrint(fx.a, "the mojoc of {s}", .{name}));
+        try fx.put(try std.fmt.allocPrint(fx.a, "art/noarch/example/{s}.mojoc", .{name}), try std.fmt.allocPrint(fx.a, "the mojoc of {s}", .{name}));
     }
 
     /// `pkg_x = { path = "../pkg_x", version = "<req>" }`
     fn pathDep(fx: Fx, name: []const u8, req: []const u8) ![]const u8 {
-        return std.fmt.allocPrint(fx.a, "{s} = {{ path = \"../{s}\", version = \"{s}\" }}\n", .{ name, name, req });
+        return std.fmt.allocPrint(fx.a, "\"example/{s}\" = {{ path = \"../{s}\", version = \"{s}\" }}\n", .{ name, name, req });
     }
 
     pub fn flags(fx: Fx, out: []const u8, packages: []const []const u8) !stage.Flags {
@@ -107,7 +108,7 @@ const Ran = struct { code: u8, out: []const u8, err: []const u8 };
 
 pub fn runStage(fx: Fx, stub: *Stub, out: []const u8, packages: []const []const u8) !Ran {
     var console = Console.init(fx.a, null);
-    const code = try stage.run(.{ .arena = fx.a, .net = stub.net(), .console = &console, .api_url = api, .flags = try fx.flags(out, packages) });
+    const code = try stage.run(.{ .arena = fx.a, .net = stub.net(), .console = &console, .api_v2_url = api, .flags = try fx.flags(out, packages) });
     return .{ .code = code, .out = console.out.items, .err = console.err.items };
 }
 
@@ -161,7 +162,7 @@ test "a chain is staged in dependency order, whatever the order of the names" {
     const r = try runStage(fx, &stub, "chain", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
     const plan = try readPlan(fx, "chain");
-    try std.testing.expectEqualStrings("pkg_c,pkg_b,pkg_a", try names(a, plan));
+    try std.testing.expectEqualStrings("example/pkg_c,example/pkg_b,example/pkg_a", try names(a, plan));
     for (plan.members) |m| try std.testing.expectEqual(plan_mod.Action.upload, m.action);
     try std.testing.expect(contains(r.out, "staged 3 members"));
     try std.testing.expect(!stub.token_sent);
@@ -184,7 +185,7 @@ test "a diamond is staged with the base first and the top last, the middle by na
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "diamond", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
-    try std.testing.expectEqualStrings("base,left,right,top", try names(a, try readPlan(fx, "diamond")));
+    try std.testing.expectEqualStrings("example/base,example/left,example/right,example/top", try names(a, try readPlan(fx, "diamond")));
 }
 
 test "a registry dependency on a member is an edge, and a dev-dependency is not" {
@@ -193,14 +194,14 @@ test "a registry dependency on a member is an edge, and a dev-dependency is not"
     const a = st.allocator();
     var fx = try Fx.init(a);
     defer fx.deinit();
-    try fx.member("pkg_a", "1.0.0", "pkg_b = \"^1\"\n");
+    try fx.member("pkg_a", "1.0.0", "\"example/pkg_b\" = \"^1\"\n");
     try fx.member("pkg_b", "1.4.0", "");
     // pkg_b lists pkg_a as a dev-dependency: that would be a cycle if it counted.
-    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"1.4.0\"\nmojo = [\"1.0.0\"]\n\n[dev-dependencies]\npkg_a = { path = \"../pkg_a\" }\n");
+    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"example/pkg_b\"\nversion = \"1.4.0\"\nmojo = [\"1.0.0\"]\n\n[dev-dependencies]\n\"example/pkg_a\" = { path = \"../pkg_a\" }\n");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "reg", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
-    try std.testing.expectEqualStrings("pkg_b,pkg_a", try names(a, try readPlan(fx, "reg")));
+    try std.testing.expectEqualStrings("example/pkg_b,example/pkg_a", try names(a, try readPlan(fx, "reg")));
 }
 
 test "naming a package stages it and what it needs, and no more" {
@@ -216,8 +217,8 @@ test "naming a package stages it and what it needs, and no more" {
     var stub = newStub(a);
     var r = try runStage(fx, &stub, "named", &.{"pkg_b"});
     try std.testing.expectEqual(@as(u8, 0), r.code);
-    try std.testing.expectEqualStrings("pkg_a,pkg_b", try names(a, try readPlan(fx, "named")));
-    try std.testing.expect(!fx.exists("named/noarch/mojo-pkg_c-1.0.0-mojo1.0.0_0.conda"));
+    try std.testing.expectEqualStrings("example/pkg_a,example/pkg_b", try names(a, try readPlan(fx, "named")));
+    try std.testing.expect(!fx.exists("named/noarch/mojo-example.pkg_c-1.0.0-mojo1.0.0_0.conda"));
     r = try runStage(fx, &stub, "unknown", &.{"pkg_z"});
     try std.testing.expectEqual(@as(u8, 1), r.code);
     try std.testing.expect(contains(r.err, "pkg_z is not a member of the workspace"));
@@ -239,7 +240,7 @@ test "a cycle is refused with nothing staged and nothing asked of the registry" 
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "cycle", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
-    try std.testing.expect(contains(r.err, "pkg_a, pkg_b, pkg_c form a cycle"));
+    try std.testing.expect(contains(r.err, "example/pkg_a, example/pkg_b, example/pkg_c form a cycle"));
     try std.testing.expect(!contains(r.err, "pkg_ok"));
     try std.testing.expect(!fx.exists("cycle"));
     try std.testing.expectEqual(@as(usize, 0), stub.asked.items.len);
@@ -251,7 +252,7 @@ test "a package that needs itself is a cycle" {
     const a = st.allocator();
     var fx = try Fx.init(a);
     defer fx.deinit();
-    try fx.member("pkg_a", "1.0.0", "pkg_a = { path = \".\", version = \"1\" }\n");
+    try fx.member("pkg_a", "1.0.0", "\"example/pkg_a\" = { path = \".\", version = \"1\" }\n");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "self", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
@@ -269,13 +270,13 @@ test "a sibling whose version does not meet the requirement is refused, by path 
     var stub = newStub(a);
     var r = try runStage(fx, &stub, "path", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
-    try std.testing.expect(contains(r.err, "pkg_b requires pkg_a \"^2\", but the workspace has pkg_a 1.0.0"));
+    try std.testing.expect(contains(r.err, "example/pkg_b requires example/pkg_a \"^2\", but the workspace has example/pkg_a 1.0.0"));
     try std.testing.expect(!fx.exists("path"));
 
-    try fx.member("pkg_b", "1.0.0", "pkg_a = \">=1.1\"\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/pkg_a\" = \">=1.1\"\n");
     r = try runStage(fx, &stub, "name", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
-    try std.testing.expect(contains(r.err, "pkg_b requires pkg_a \">=1.1\", but the workspace has pkg_a 1.0.0"));
+    try std.testing.expect(contains(r.err, "example/pkg_b requires example/pkg_a \">=1.1\", but the workspace has example/pkg_a 1.0.0"));
     try std.testing.expect(!fx.exists("name"));
     try std.testing.expectEqual(@as(usize, 0), stub.asked.items.len);
 }
@@ -290,34 +291,34 @@ test "a dependency that cannot be staged is refused with the reason" {
     try fx.member("pkg_a", "1.0.0", "");
 
     // A path that is not a member.
-    try fx.member("pkg_b", "1.0.0", "outside = { path = \"../../../outside\", version = \"1\" }\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/outside\" = { path = \"../../../outside\", version = \"1\" }\n");
     var r = try runStage(fx, &stub, "o1", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b depends on 'outside' at the path '../../../outside', which is not a member of the workspace"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_b depends on 'example/outside' at the path '../../../outside', which is not a member of the workspace"));
 
     // A path to a member by another name.
-    try fx.member("pkg_b", "1.0.0", "other = { path = \"../pkg_a\", version = \"1\" }\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/other\" = { path = \"../pkg_a\", version = \"1\" }\n");
     r = try runStage(fx, &stub, "o2", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b calls the package at '../pkg_a' other, but it is pkg_a"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_b calls the package at '../pkg_a' example/other, but it is example/pkg_a"));
 
     // A path with no version.
-    try fx.member("pkg_b", "1.0.0", "pkg_a = { path = \"../pkg_a\" }\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/pkg_a\" = { path = \"../pkg_a\" }\n");
     r = try runStage(fx, &stub, "o3", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "is a path dependency with no version"));
 
     // A requirement that is not one (the manifest parser says so, naming the file).
-    try fx.member("pkg_b", "1.0.0", "pkg_a = \"^^\"\n");
+    try fx.member("pkg_b", "1.0.0", "\"example/pkg_a\" = \"^^\"\n");
     r = try runStage(fx, &stub, "o4", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b/mopm.toml:") and contains(r.err, "invalid version requirement"));
 
     // Native libraries are built for one platform: a noarch artifact cannot hold them.
-    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nmode = \"link\"\n");
+    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"example/pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nmode = \"link\"\n");
     r = try runStage(fx, &stub, "o5", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b declares native libraries, which are built for one platform"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_b declares native libraries, which are built for one platform"));
 
     // Native dependencies to link are not packed by anything yet: the packer says so.
-    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nzlib = { version = \">=1.2\", kind = \"shared\", mode = \"link\" }\n");
+    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"example/pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nzlib = { version = \">=1.2\", kind = \"shared\", mode = \"link\" }\n");
     r = try runStage(fx, &stub, "o6", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b: native dependency 'zlib' is mode = \"link\"; only mode = \"load\" is packed"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_b: native dependency 'zlib' is mode = \"link\"; only mode = \"load\" is packed"));
     for ([_][]const u8{ "o1", "o2", "o3", "o4", "o5", "o6" }) |o| try std.testing.expect(!fx.exists(o));
 }
 
@@ -334,9 +335,9 @@ test "a workspace that cannot be read is refused" {
 
     try fx.member("pkg_a", "1.0.0", "");
     try fx.member("pkg_a2", "1.0.0", "");
-    try fx.put("ws/src/pkg_a2/mopm.toml", "[package]\nname = \"pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("ws/src/pkg_a2/mopm.toml", "[package]\nname = \"example/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
     r = try runStage(fx, &stub, "twice", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "are both the package pkg_a"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "are both the package example/pkg_a"));
 
     try fx.put("ws/src/pkg_a2/mopm.toml", "[package\n");
     r = try runStage(fx, &stub, "broken", &.{});
@@ -345,7 +346,7 @@ test "a workspace that cannot be read is refused" {
     var flags = try fx.flags("missing_root", &.{});
     flags.workspace_root = try fx.path("no_such_dir");
     var console = Console.init(a, null);
-    const code = try stage.run(.{ .arena = a, .net = stub.net(), .console = &console, .api_url = api, .flags = flags });
+    const code = try stage.run(.{ .arena = a, .net = stub.net(), .console = &console, .api_v2_url = api, .flags = flags });
     try std.testing.expect(code == 1 and contains(console.err.items, "--workspace-root"));
 }
 
@@ -358,43 +359,127 @@ test "a member with no artifact, an empty one, a version that is not one, or a r
     var stub = newStub(a);
     try fx.member("pkg_a", "1.0.0", "");
 
-    try fx.tmp.dir.deleteFile("art/noarch/pkg_a.mojoc");
+    try fx.tmp.dir.deleteFile("art/noarch/example/pkg_a.mojoc");
     var r = try runStage(fx, &stub, "p1", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_a has no build artifact: expected "));
+    const want_missing = try std.fmt.allocPrint(a, "example/pkg_a has no build artifact: expected {s}/<subdir>/example/pkg_a.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{try fx.path("art")});
+    try std.testing.expect(r.code == 1 and contains(r.err, want_missing));
 
-    try fx.put("art/noarch/pkg_a.mojoc", "");
+    try fx.put("art/noarch/example/pkg_a.mojoc", "");
     r = try runStage(fx, &stub, "p2", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "pkg_a.mojoc is empty"));
 
-    try fx.put("art/noarch/pkg_a.mojoc", "bytes");
+    try fx.put("art/noarch/example/pkg_a.mojoc", "bytes");
     try fx.put("ws/src/pkg_a/README.md", "\xff\xfe not utf-8");
     r = try runStage(fx, &stub, "p3", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "is not UTF-8 text"));
 
     try fx.put("ws/src/pkg_a/README.md", "# a\n");
-    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"pkg_a\"\nversion = \"1.0.0\"\nreadme = \"DOCS.md\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"example/pkg_a\"\nversion = \"1.0.0\"\nreadme = \"DOCS.md\"\nmojo = [\"1.0.0\"]\n");
     r = try runStage(fx, &stub, "p4", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "DOCS.md: FileNotFound"));
 
-    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"pkg_a\"\nversion = \"1.0.0-rc.1\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"example/pkg_a\"\nversion = \"1.0.0-rc.1\"\nmojo = [\"1.0.0\"]\n");
     r = try runStage(fx, &stub, "p5", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "must be exactly MAJOR.MINOR.PATCH"));
 
-    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"example/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
     var flags = try fx.flags("p6", &.{});
     flags.compiler = "one";
     var console = Console.init(a, null);
-    const code = try stage.run(.{ .arena = a, .net = stub.net(), .console = &console, .api_url = api, .flags = flags });
+    const code = try stage.run(.{ .arena = a, .net = stub.net(), .console = &console, .api_v2_url = api, .flags = flags });
     try std.testing.expect(code == 1 and contains(console.err.items, "--compiler one"));
     for ([_][]const u8{ "p1", "p2", "p3", "p4", "p5", "p6" }) |o| try std.testing.expect(!fx.exists(o));
 }
 
+// ------------------------------------------------------------------- full names
+
+test "a member is named on the command line by its full name or its import name" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "1"));
+    try fx.member("pkg_c", "1.0.0", "");
+    var stub = newStub(a);
+    var r = try runStage(fx, &stub, "full", &.{"example/pkg_b"});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expectEqualStrings("example/pkg_a,example/pkg_b", try names(a, try readPlan(fx, "full")));
+    r = try runStage(fx, &stub, "import", &.{"pkg_b"});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expectEqualStrings("example/pkg_a,example/pkg_b", try names(a, try readPlan(fx, "import")));
+}
+
+test "two members with one import name are refused, even from different namespaces" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.member("pkg_a2", "1.0.0", "");
+    try fx.put("ws/src/pkg_a2/mopm.toml", "[package]\nname = \"other/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    const r = try runStage(fx, &stub, "same_import", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(contains(r.err, " are example/pkg_a and other/pkg_a, which have the same import name pkg_a; a staged set holds one package per import name"));
+    try std.testing.expect(!fx.exists("same_import"));
+    try std.testing.expectEqual(@as(usize, 0), stub.asked.items.len);
+}
+
+test "a path dependency whose package has another namespace than its key is refused naming both" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"other/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "1"));
+    const r = try runStage(fx, &stub, "namespace", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(contains(r.err, "example/pkg_b calls the package at '../pkg_a' example/pkg_a, but it is other/pkg_a"));
+    try std.testing.expect(!fx.exists("namespace"));
+}
+
+test "a registry dependency is an edge only to the member with its full name" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("json", "1.0.0", "");
+    // other/json is not the member example/json: no edge, so the two are ordered by name alone and the registry is asked about both.
+    try fx.member("app_x", "1.0.0", "\"other/json\" = \"^1\"\n");
+    var r = try runStage(fx, &stub, "other", &.{});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expectEqualStrings("example/app_x,example/json", try names(a, try readPlan(fx, "other")));
+    // example/json is the member: it comes first.
+    try fx.member("app_x", "1.0.0", "\"example/json\" = \"^1\"\n");
+    r = try runStage(fx, &stub, "same", &.{});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expectEqualStrings("example/json,example/app_x", try names(a, try readPlan(fx, "same")));
+}
+
 // ---------------------------------------------------------------------- registry
 
-fn publishedBody(a: Allocator, name: []const u8, version: []const u8, sha: []const u8, state: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(a, "{{\"state\":\"{s}\",\"yank_reason\":{s},\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"mojo-{s}-{s}-mojo1.0.0_0.conda\",\"sha256\":\"{s}\"}}]}}", .{
-        state, if (std.mem.eql(u8, state, "yanked")) "\"broken build\"" else "null", name, version, sha,
+/// A `getVersion` answer with every field the contract requires: `state`, `yank_reason` (JSON text) and `files` (JSON text).
+fn versionBody(a: Allocator, state: []const u8, yank_reason: []const u8, files: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "{{\"name\":\"example/pkg_a\",\"version\":\"1.0.0\",\"state\":\"{s}\",\"yank_reason\":{s},\"published_at\":\"2026-10-01T00:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"deps\":[],\"native\":[],\"files\":[{s}],\"manifest_sha256\":\"{s}\",\"provenance\":{{\"kind\":\"none\"}}}}", .{
+        state, yank_reason, files, "0" ** 64,
     });
+}
+
+fn fileJson(a: Allocator, subdir: []const u8, filename: []const u8, sha: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":100}}", .{ subdir, filename, sha });
+}
+
+fn publishedBody(a: Allocator, name: []const u8, version: []const u8, sha: []const u8, state: []const u8) ![]const u8 {
+    const filename = try std.fmt.allocPrint(a, "{s}-{s}-mojo1.0.0_0.conda", .{ try core.names.condaName(a, name), version });
+    return versionBody(a, state, if (std.mem.eql(u8, state, "yanked")) "\"broken build\"" else "null", try fileJson(a, "noarch", filename, sha));
 }
 
 test "a version published with the same bytes is skipped, and a rerun gives the same set" {
@@ -412,17 +497,17 @@ test "a version published with the same bytes is skipped, and a rerun gives the 
     const sha_a = first.members[0].files[0].sha256;
 
     // The registry now holds pkg_a 1.0.0 with those bytes.
-    const body = try publishedBody(a, "pkg_a", "1.0.0", sha_a, "published");
-    stub.entries = try answer(a, "/packages/pkg_a/1.0.0", 200, body);
+    const body = try publishedBody(a, "example/pkg_a", "1.0.0", sha_a, "published");
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, body);
     r = try runStage(fx, &stub, "second", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
     const second = try readPlan(fx, "second");
     try std.testing.expectEqual(plan_mod.Action.skip, second.members[0].action);
     try std.testing.expectEqualStrings("already published with these bytes", second.members[0].reason);
     try std.testing.expectEqual(plan_mod.Action.upload, second.members[1].action);
-    try std.testing.expect(!fx.exists("second/noarch/mojo-pkg_a-1.0.0-mojo1.0.0_0.conda"));
-    try std.testing.expect(fx.exists("second/noarch/mojo-pkg_b-1.0.0-mojo1.0.0_0.conda"));
-    try std.testing.expect(contains(r.out, "skip   pkg_a 1.0.0: already published with these bytes"));
+    try std.testing.expect(!fx.exists("second/noarch/mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda"));
+    try std.testing.expect(fx.exists("second/noarch/mojo-example.pkg_b-1.0.0-mojo1.0.0_0.conda"));
+    try std.testing.expect(contains(r.out, "skip   example/pkg_a 1.0.0: already published with these bytes"));
     try std.testing.expect(contains(r.out, "staged 2 members") and contains(r.out, "1 to upload, 1 skipped, 0 refused"));
     try std.testing.expect(!stub.token_sent);
     // The second set is publishable as it stands: every file is where the plan says, with the bytes it says.
@@ -440,16 +525,16 @@ test "a version published with different bytes is refused, and the plan says so"
     defer fx.deinit();
     try fx.member("pkg_a", "1.0.0", "");
     var stub = newStub(a);
-    const body = try publishedBody(a, "pkg_a", "1.0.0", "0" ** 64, "published");
-    stub.entries = try answer(a, "/packages/pkg_a/1.0.0", 200, body);
+    const body = try publishedBody(a, "example/pkg_a", "1.0.0", "0" ** 64, "published");
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, body);
     const r = try runStage(fx, &stub, "different", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
-    try std.testing.expect(contains(r.err, "pkg_a 1.0.0 is already published with different bytes"));
+    try std.testing.expect(contains(r.err, "example/pkg_a 1.0.0 is already published with different bytes"));
     try std.testing.expect(contains(r.err, "bump the version"));
     const plan = try readPlan(fx, "different");
     try std.testing.expectEqual(plan_mod.Action.refuse, plan.members[0].action);
     try std.testing.expect(plan_mod.refusedMember(plan) != null);
-    try std.testing.expect(!fx.exists("different/noarch/mojo-pkg_a-1.0.0-mojo1.0.0_0.conda"));
+    try std.testing.expect(!fx.exists("different/noarch/mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda"));
 }
 
 test "a published version with a file the stage does not have is refused" {
@@ -463,8 +548,12 @@ test "a published version with a file the stage does not have is refused" {
     var first = try runStage(fx, &stub, "probe", &.{});
     try std.testing.expectEqual(@as(u8, 0), first.code);
     const sha = (try readPlan(fx, "probe")).members[0].files[0].sha256;
-    const body = try std.fmt.allocPrint(a, "{{\"state\":\"published\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"mojo-pkg_a-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"{s}\"}},{{\"subdir\":\"linux-64\",\"filename\":\"mojo-pkg_a-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"{s}\"}}]}}", .{ sha, sha });
-    stub.entries = try answer(a, "/packages/pkg_a/1.0.0", 200, body);
+    const files = try std.fmt.allocPrint(a, "{s},{s}", .{
+        try fileJson(a, "noarch", "mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda", sha),
+        try fileJson(a, "linux-64", "mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda", sha),
+    });
+    const body = try versionBody(a, "published", "null", files);
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, body);
     first = try runStage(fx, &stub, "extra", &.{});
     try std.testing.expectEqual(@as(u8, 1), first.code);
     try std.testing.expect(contains(first.err, "is already published with 2 files and this stages 1"));
@@ -481,11 +570,11 @@ test "a yanked version is refused" {
     var r = try runStage(fx, &stub, "probe", &.{});
     const sha = (try readPlan(fx, "probe")).members[0].files[0].sha256;
     // Even with the same bytes: a yanked number is not for publishing again.
-    const body = try publishedBody(a, "pkg_a", "1.0.0", sha, "yanked");
-    stub.entries = try answer(a, "/packages/pkg_a/1.0.0", 200, body);
+    const body = try publishedBody(a, "example/pkg_a", "1.0.0", sha, "yanked");
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, body);
     r = try runStage(fx, &stub, "yanked", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
-    try std.testing.expect(contains(r.err, "pkg_a 1.0.0 is yanked: broken build"));
+    try std.testing.expect(contains(r.err, "example/pkg_a 1.0.0 is yanked: broken build"));
     const plan = try readPlan(fx, "yanked");
     try std.testing.expectEqual(plan_mod.Action.refuse, plan.members[0].action);
     try std.testing.expect(contains(plan.members[0].reason, "is yanked"));
@@ -499,8 +588,8 @@ test "a burned version is refused, and the message says to bump" {
     defer fx.deinit();
     try fx.member("pkg_a", "1.0.0", "");
     var stub = newStub(a);
-    const body = "{\"state\":\"tombstoned\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-pkg_a-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"" ++ "1" ** 64 ++ "\"}]}";
-    stub.entries = try answer(a, "/packages/pkg_a/1.0.0", 200, body);
+    const body = try versionBody(a, "tombstoned", "null", try fileJson(a, "noarch", "mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda", "1" ** 64));
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, body);
     const r = try runStage(fx, &stub, "burned", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
     try std.testing.expect(contains(r.err, "its number is burned; bump the version"));
@@ -517,32 +606,36 @@ test "a registry that cannot be asked, or answers what is not a version, stops t
     var stub = newStub(a);
     stub.broken = true;
     var r = try runStage(fx, &stub, "down", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "cannot ask the registry about pkg_a 1.0.0"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "cannot ask the registry about example/pkg_a 1.0.0"));
     stub.broken = false;
-    stub.entries = try answer(a, "/packages/pkg_a/1.0.0", 500, "oops");
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 500, "oops");
     r = try runStage(fx, &stub, "five", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "the registry answered HTTP 500 about pkg_a 1.0.0"));
-    stub.entries = try answer(a, "/packages/pkg_a/1.0.0", 200, "[]");
+    try std.testing.expect(r.code == 1 and contains(r.err, "the registry answered HTTP 500 about example/pkg_a 1.0.0"));
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, "[]");
     r = try runStage(fx, &stub, "junk", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "is not a version"));
-    stub.entries = try answer(a, "/packages/pkg_a/1.0.0", 200, "{\"state\":\"hidden\"}");
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, try versionBody(a, "hidden", "null", ""));
     r = try runStage(fx, &stub, "state", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "the state 'hidden'"));
     // A package the registry has never heard of is an upload, like a version it has not.
-    stub.entries = try answer(a, "/packages/pkg_a/1.0.0", 404, "{\"error\":{\"code\":\"package_not_found\",\"message\":\"x\",\"hint\":\"\"}}");
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 404, "{\"error\":{\"code\":\"package_not_found\",\"message\":\"x\",\"hint\":\"\"}}");
     r = try runStage(fx, &stub, "new", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
-    for ([_][]const u8{ "down", "five", "junk", "state" }) |o| try std.testing.expect(!fx.exists(o));
+    // A body that is not a complete version answer is not a version, whatever its state says.
+    stub.entries = try answer(a, "/packages/example/pkg_a/1.0.0", 200, "{\"state\":\"published\"}");
+    r = try runStage(fx, &stub, "partial", &.{});
+    try std.testing.expect(r.code == 1 and contains(r.err, "is not a version"));
+    for ([_][]const u8{ "down", "five", "junk", "state", "partial" }) |o| try std.testing.expect(!fx.exists(o));
 }
 
 // ---------------------------------------------------------------- the packages
 
 /// A member `pkg_n` with `[native.shim]` (a static library) and `pkg_a` (no native), the way a caller lays out artifacts:
-/// `art/linux-64/pkg_n.mojoc` and `art/linux-64/pkg_n.native/libshim.a`.
+/// `art/linux-64/example/pkg_n.mojoc` and `art/linux-64/example/pkg_n.native/libshim.a`.
 fn nativeWorkspace(fx: Fx) !void {
     try fx.member("pkg_a", "1.0.0", "");
-    try fx.put("ws/src/pkg_n/mopm.toml", "[package]\nname = \"pkg_n\"\nversion = \"1.2.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libshim\"\n");
-    try fx.put("art/linux-64/pkg_n.mojoc", "the mojoc of pkg_n");
+    try fx.put("ws/src/pkg_n/mopm.toml", "[package]\nname = \"example/pkg_n\"\nversion = \"1.2.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libshim\"\n");
+    try fx.put("art/linux-64/example/pkg_n.mojoc", "the mojoc of pkg_n");
 }
 
 const shim_archive = "!<arch>\nthe archive of shim, a long enough body\n";
@@ -554,7 +647,7 @@ test "a member with a native library is staged with its archive, byte for byte a
     var fx = try Fx.init(a);
     defer fx.deinit();
     try nativeWorkspace(fx);
-    try fx.put("art/linux-64/pkg_n.native/libshim.a", shim_archive);
+    try fx.put("art/linux-64/example/pkg_n.native/libshim.a", shim_archive);
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "out", &.{});
     try std.testing.expect(r.code == 0);
@@ -562,7 +655,7 @@ test "a member with a native library is staged with its archive, byte for byte a
     // The package the packer makes of the same member and files (`mopm pack` hands it the same input; the driver test
     // compares with the real `mopm pack`).
     const by_pack = try conda.pack(a, .{
-        .name = "pkg_n",
+        .name = "example/pkg_n",
         .version = "1.2.0",
         .compiler = "1.0.0",
         .subdir = "linux-64",
@@ -573,8 +666,8 @@ test "a member with a native library is staged with its archive, byte for byte a
     try std.testing.expectEqualSlices(u8, by_pack.bytes, staged);
     // `needs` and `exclusive` reach the package's metadata: the same member packed without either is other bytes, so a
     // stage that dropped one would not equal the line above, and these two lines say why that line has teeth.
-    const no_needs = try conda.pack(a, .{ .name = "pkg_n", .version = "1.2.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the mojoc of pkg_n", .natives = &.{.{ .id = "shim", .soname = "libshim.a", .exclusive = "libshim", .archive = shim_archive }} });
-    const no_exclusive = try conda.pack(a, .{ .name = "pkg_n", .version = "1.2.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the mojoc of pkg_n", .natives = &.{.{ .id = "shim", .soname = "libshim.a", .needs = &.{ "libz.so.1", "libcore_sys.a" }, .archive = shim_archive }} });
+    const no_needs = try conda.pack(a, .{ .name = "example/pkg_n", .version = "1.2.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the mojoc of pkg_n", .natives = &.{.{ .id = "shim", .soname = "libshim.a", .exclusive = "libshim", .archive = shim_archive }} });
+    const no_exclusive = try conda.pack(a, .{ .name = "example/pkg_n", .version = "1.2.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the mojoc of pkg_n", .natives = &.{.{ .id = "shim", .soname = "libshim.a", .needs = &.{ "libz.so.1", "libcore_sys.a" }, .archive = shim_archive }} });
     try std.testing.expect(!std.mem.eql(u8, no_needs.bytes, staged));
     try std.testing.expect(!std.mem.eql(u8, no_exclusive.bytes, staged));
     // The archive is in the package as lib/libshim.a, and the metadata declares the static native.
@@ -586,7 +679,7 @@ test "a member with a native library is staged with its archive, byte for byte a
     try std.testing.expect(contains(try fx.read("out/plan.json"), &by_pack.sha256));
 
     // A member without natives is packed with none, as before.
-    const plain = try conda.pack(a, .{ .name = "pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "the mojoc of pkg_a" });
+    const plain = try conda.pack(a, .{ .name = "example/pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "the mojoc of pkg_a" });
     try std.testing.expectEqualSlices(u8, plain.bytes, try fx.read(try std.fmt.allocPrint(a, "out/noarch/{s}", .{plain.file_name})));
 }
 
@@ -600,23 +693,23 @@ test "a native member whose archive is missing, not an archive, or for another s
     var stub = newStub(a);
 
     var r = try runStage(fx, &stub, "o1", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_n: native library 'shim' has no archive for linux-64") and contains(r.err, "pkg_n.native/libshim.a"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_n: native library 'shim' has no archive for linux-64") and contains(r.err, "pkg_n.native/libshim.a"));
 
-    try fx.put("art/linux-64/pkg_n.native/libshim.a", "not an archive at all");
+    try fx.put("art/linux-64/example/pkg_n.native/libshim.a", "not an archive at all");
     r = try runStage(fx, &stub, "o2", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_n: ") and contains(r.err, "libshim.a is not a static archive"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_n: ") and contains(r.err, "libshim.a is not a static archive"));
 
     // A second subdir whose mojoc has no archive of its own: the first one's does not stand in for it.
-    try fx.put("art/linux-64/pkg_n.native/libshim.a", shim_archive);
-    try fx.put("art/osx-arm64/pkg_n.mojoc", "the mojoc of pkg_n, for the Mac");
+    try fx.put("art/linux-64/example/pkg_n.native/libshim.a", shim_archive);
+    try fx.put("art/osx-arm64/example/pkg_n.mojoc", "the mojoc of pkg_n, for the Mac");
     r = try runStage(fx, &stub, "o3", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_n: native library 'shim' has no archive for osx-arm64"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_n: native library 'shim' has no archive for osx-arm64"));
 
     // Natives cannot ride in a noarch artifact.
-    try fx.tmp.dir.deleteFile("art/osx-arm64/pkg_n.mojoc");
-    try fx.put("art/noarch/pkg_n.mojoc", "noarch mojoc");
+    try fx.tmp.dir.deleteFile("art/osx-arm64/example/pkg_n.mojoc");
+    try fx.put("art/noarch/example/pkg_n.mojoc", "noarch mojoc");
     r = try runStage(fx, &stub, "o4", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_n declares native libraries, which are built for one platform"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_n declares native libraries, which are built for one platform"));
     for ([_][]const u8{ "o1", "o2", "o3", "o4" }) |o| try std.testing.expect(!fx.exists(o));
 }
 
@@ -635,7 +728,7 @@ test "packing is deterministic, and what is packed holds no URL, no lock entry a
     try std.testing.expect(r1.code == 0 and r2.code == 0);
     const plan1 = try fx.read("one/plan.json");
     try std.testing.expectEqualStrings(plan1, try fx.read("two/plan.json"));
-    for ([_][]const u8{ "pkg_a-1.0.0", "pkg_b-2.1.0" }) |stem| {
+    for ([_][]const u8{ "example.pkg_a-1.0.0", "example.pkg_b-2.1.0" }) |stem| {
         const rel = try std.fmt.allocPrint(a, "noarch/mojo-{s}-mojo1.0.0_0.conda", .{stem});
         const x = try fx.read(try std.fmt.allocPrint(a, "one/{s}", .{rel}));
         const y = try fx.read(try std.fmt.allocPrint(a, "two/{s}", .{rel}));
@@ -643,8 +736,8 @@ test "packing is deterministic, and what is packed holds no URL, no lock entry a
         for ([_][]const u8{ "127.0.0.1", "localhost", "mopm.lock", "../pkg_a", "://" }) |needle| try std.testing.expect(!contains(x, needle));
     }
     // The version requirement stays, in the conda spelling, and the path is gone.
-    const b = try fx.read("one/noarch/mojo-pkg_b-2.1.0-mojo1.0.0_0.conda");
-    try std.testing.expect(contains(b, "\"name\":\"pkg_a\",\"range\":\">=1.0,<2\""));
+    const b = try fx.read("one/noarch/mojo-example.pkg_b-2.1.0-mojo1.0.0_0.conda");
+    try std.testing.expect(contains(b, "\"name\":\"example/pkg_a\",\"range\":\">=1.0,<2\""));
 }
 
 test "a package that loads a system library records it as a conda dependency of every file" {
@@ -655,14 +748,14 @@ test "a package that loads a system library records it as a conda dependency of 
     defer fx.deinit();
     try fx.member("pkg_a", "1.0.0", "");
     try fx.member("pkg_b", "2.1.0", "");
-    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"2.1.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nlz4 = { version = \">=1.9.3\", kind = \"shared\", mode = \"load\" }\n");
+    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"example/pkg_b\"\nversion = \"2.1.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nlz4 = { version = \">=1.9.3\", kind = \"shared\", mode = \"load\" }\n");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "load", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
-    const b = try fx.read("load/noarch/mojo-pkg_b-2.1.0-mojo1.0.0_0.conda");
+    const b = try fx.read("load/noarch/mojo-example.pkg_b-2.1.0-mojo1.0.0_0.conda");
     try std.testing.expect(contains(b, "\"depends\":[\"mojo-compiler ==1.0.0\",\"lz4-c >=1.9.3\"]"));
     // The sibling that loads nothing records nothing.
-    const x = try fx.read("load/noarch/mojo-pkg_a-1.0.0-mojo1.0.0_0.conda");
+    const x = try fx.read("load/noarch/mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda");
     try std.testing.expect(contains(x, "\"depends\":[\"mojo-compiler ==1.0.0\"]"));
 }
 
@@ -670,14 +763,14 @@ test "the metadata check refuses a URL, a lock entry and a path, and passes a pl
     var st = arenaTest();
     defer st.deinit();
     const a = st.allocator();
-    const base = conda.Input{ .name = "pkg_b", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "x", .deps = &.{.{ .name = "pkg_a", .range = ">=1.0.0,<2.0.0" }} };
+    const base = conda.Input{ .name = "example/pkg_b", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "x", .deps = &.{.{ .name = "example/pkg_a", .range = ">=1.0.0,<2.0.0" }} };
     try std.testing.expect((try stage.metadataProblem(a, base, &.{"../pkg_a"})) == null);
     var in = base;
-    in.deps = &.{.{ .name = "pkg_a", .range = "http://127.0.0.1:9/x" }};
+    in.deps = &.{.{ .name = "example/pkg_a", .range = "http://127.0.0.1:9/x" }};
     try std.testing.expect(contains((try stage.metadataProblem(a, in, &.{})).?, "://"));
     in.deps = &.{.{ .name = "mopm.lock", .range = "" }};
     try std.testing.expect(contains((try stage.metadataProblem(a, in, &.{})).?, "mopm.lock"));
-    in.deps = &.{.{ .name = "pkg_a", .range = "../util" }};
+    in.deps = &.{.{ .name = "example/pkg_a", .range = "../util" }};
     try std.testing.expect(contains((try stage.metadataProblem(a, in, &.{"../util"})).?, "../util"));
 }
 
@@ -694,9 +787,9 @@ test "a readme is staged beside the package and named in the plan" {
     const r = try runStage(fx, &stub, "readme", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
     const plan = try readPlan(fx, "readme");
-    try std.testing.expectEqualStrings("pkg_a/README.md", plan.members[0].readme.?);
+    try std.testing.expectEqualStrings("example/pkg_a/README.md", plan.members[0].readme.?);
     try std.testing.expect(plan.members[1].readme == null);
-    try std.testing.expectEqualStrings("# pkg_a\n", try fx.read("readme/pkg_a/README.md"));
+    try std.testing.expectEqualStrings("# pkg_a\n", try fx.read("readme/example/pkg_a/README.md"));
 }
 
 /// `count` packages, each with a README of `len` bytes of `fill`; pkg_0's is `len + extra`.
@@ -743,7 +836,7 @@ test "readmes that would make a commit request over the limit are refused at sta
     const r = try runStage(fx, &stub, "over", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
     try expectContainsText(r.err, "the commit request of the 45 members to upload is ");
-    try expectContainsText(r.err, "; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: pkg_0 (130000 bytes in the request), ");
+    try expectContainsText(r.err, "; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: example/pkg_0 (130000 bytes in the request), ");
     try expectContainsText(r.err, "; nothing was written\n");
     try std.testing.expect(!fx.exists("over"));
 
@@ -751,8 +844,8 @@ test "readmes that would make a commit request over the limit are refused at sta
     try fx.put("again/plan.json", "the earlier plan");
     try fx.put("again/report.json", "the earlier report");
     try fx.put("again/state.json", "the earlier state");
-    try fx.put("again/noarch/mojo-pkg_0-1.0.0-mojo1.0.0_0.conda", "earlier package bytes");
-    try fx.put("again/pkg_0/README.md", "the earlier readme");
+    try fx.put("again/noarch/mojo-example.pkg_0-1.0.0-mojo1.0.0_0.conda", "earlier package bytes");
+    try fx.put("again/example/pkg_0/README.md", "the earlier readme");
     const before = try snapshot(fx, "again");
     const again = try runStage(fx, &stub, "again", &.{});
     try std.testing.expectEqual(@as(u8, 1), again.code);
@@ -789,7 +882,7 @@ test "the readmes of skipped members do not count toward the limit: only the mem
 
     // The registry holds pkg_70..pkg_79 with these bytes: staged alone first, to learn them.
     var only = std.ArrayList([]const u8).init(a);
-    for (70..80) |i| try only.append(try std.fmt.allocPrint(a, "pkg_{d}", .{i}));
+    for (70..80) |i| try only.append(try std.fmt.allocPrint(a, "example/pkg_{d}", .{i}));
     try std.testing.expectEqual(@as(u8, 0), (try runStage(fx, &stub, "probe", only.items)).code);
     const probe = try readPlan(fx, "probe");
     var held = std.ArrayList(Stub.Entry).init(a);
@@ -805,7 +898,7 @@ test "the readmes of skipped members do not count toward the limit: only the mem
     defer dir.close();
     const commit = try plan_mod.verify(a, dir, try readPlan(fx, "mixed"));
     try std.testing.expect(commit == .ok);
-    try std.testing.expect(!contains(try plan_mod.commitBody(a, commit.ok), "\"pkg_70\""));
+    try std.testing.expect(!contains(try plan_mod.commitBody(a, commit.ok), "\"example/pkg_70\""));
 }
 
 test "the staged plan is the one publish --staged reads: members, files and hashes check out" {
@@ -817,7 +910,7 @@ test "the staged plan is the one publish --staged reads: members, files and hash
     try fx.member("pkg_a", "1.0.0", "");
     try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "1"));
     // One member for two platforms.
-    try fx.put("art/linux-64/pkg_a.mojoc", "the linux mojoc of pkg_a");
+    try fx.put("art/linux-64/example/pkg_a.mojoc", "the linux mojoc of pkg_a");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "round", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
@@ -844,17 +937,17 @@ test "the plan's manifest_sha256 is the manifest hash mopm pack prints, not the 
     defer fx.deinit();
     try fx.member("pkg_a", "1.0.0", "");
     try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "1"));
-    try fx.put("art/linux-64/pkg_a.mojoc", "the linux mojoc of pkg_a");
+    try fx.put("art/linux-64/example/pkg_a.mojoc", "the linux mojoc of pkg_a");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "manifest", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
     const plan = try readPlan(fx, "manifest");
-    try std.testing.expectEqualStrings("pkg_a", plan.members[0].name);
+    try std.testing.expectEqualStrings("example/pkg_a", plan.members[0].name);
     // pkg_a has no dependencies, so the same input packed here is what the stage packed.
-    const want = try conda.pack(a, .{ .name = "pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "the mojoc of pkg_a" });
+    const want = try conda.pack(a, .{ .name = "example/pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "the mojoc of pkg_a" });
     try std.testing.expectEqualStrings(&want.manifest_sha256, plan.members[0].manifest_sha256);
     // It is the same for the other platform's file, and it is not the hash of any file.
-    const linux = try conda.pack(a, .{ .name = "pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the linux mojoc of pkg_a" });
+    const linux = try conda.pack(a, .{ .name = "example/pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the linux mojoc of pkg_a" });
     try std.testing.expectEqualStrings(&linux.manifest_sha256, plan.members[0].manifest_sha256);
     for (plan.members) |m| {
         try std.testing.expectEqual(@as(usize, 64), m.manifest_sha256.len);
@@ -874,7 +967,7 @@ test "a stage over a directory that holds an old plan replaces it" {
     const r = try runStage(fx, &stub, "again", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
     const plan = try readPlan(fx, "again");
-    try std.testing.expectEqualStrings("pkg_a", plan.members[0].name);
+    try std.testing.expectEqualStrings("example/pkg_a", plan.members[0].name);
 }
 
 // ------------------------------------------------------- what cannot be written
@@ -900,9 +993,9 @@ test "a directory that cannot be written stops the run with the file named, and 
 
     // A package file that is a directory cannot be written, and no plan is left to publish.
     try fx.put("half/plan.json", "{\"stale\":true}");
-    try fx.tmp.dir.makePath("half/noarch/mojo-pkg_a-1.0.0-mojo1.0.0_0.conda");
+    try fx.tmp.dir.makePath("half/noarch/mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda");
     r = try runStage(fx, &stub, "half", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "mojo-pkg_a-1.0.0-mojo1.0.0_0.conda: IsDir"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "mojo-example.pkg_a-1.0.0-mojo1.0.0_0.conda: IsDir"));
     try std.testing.expect(!fx.exists("half/plan.json"));
 }
 
@@ -928,7 +1021,7 @@ test "a set of more members than a group holds is refused before anything is pac
     var i: usize = 0;
     while (i <= plan_mod.max_members) : (i += 1) {
         const name = try std.fmt.allocPrint(a, "pkg_{d}", .{i});
-        try fx.put(try std.fmt.allocPrint(a, "ws/src/{s}/mopm.toml", .{name}), try std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n", .{name}));
+        try fx.put(try std.fmt.allocPrint(a, "ws/src/{s}/mopm.toml", .{name}), try std.fmt.allocPrint(a, "[package]\nname = \"example/{s}\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n", .{name}));
     }
     const r = try runStage(fx, &stub, "big", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "501 members; a group has at most 500"));
@@ -978,8 +1071,8 @@ test "the flags: all of them are needed, and --registry has no default" {
 
 /// A member `benchy` whose `[targets] bins` is `bins`, its artifact for `noarch` and two source files for programs.
 fn binsWorkspace(fx: Fx, bins: []const u8) !void {
-    try fx.put("ws/benchy/mopm.toml", try std.fmt.allocPrint(fx.a, "[package]\nname = \"benchy\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{s}]\n", .{bins}));
-    try fx.put("art/noarch/benchy.mojoc", "the mojoc of benchy");
+    try fx.put("ws/benchy/mopm.toml", try std.fmt.allocPrint(fx.a, "[package]\nname = \"example/benchy\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{s}]\n", .{bins}));
+    try fx.put("art/noarch/example/benchy.mojoc", "the mojoc of benchy");
     try fx.put("ws/benchy/src/agg.mojo", "def main(): print(\"agg\")\n");
     try fx.put("ws/benchy/bench/ring.mojo", "def main(): print(\"ring\")\n");
 }
@@ -994,7 +1087,7 @@ test "a member with programs is staged with their sources in every subdir's pack
     var fx = try Fx.init(a);
     defer fx.deinit();
     try binsWorkspace(fx, two_bins);
-    try fx.put("art/linux-64/benchy.mojoc", "the linux mojoc of benchy");
+    try fx.put("art/linux-64/example/benchy.mojoc", "the linux mojoc of benchy");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "out", &.{});
     try std.testing.expect(r.code == 0);
@@ -1005,10 +1098,10 @@ test "a member with programs is staged with their sources in every subdir's pack
     };
     for ([_][]const u8{ "noarch", "linux-64" }) |subdir| {
         const mojoc: []const u8 = if (std.mem.eql(u8, subdir, "noarch")) "the mojoc of benchy" else "the linux mojoc of benchy";
-        const want = try conda.pack(a, .{ .name = "benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = subdir, .mojoc = mojoc, .bins = &bins });
+        const want = try conda.pack(a, .{ .name = "example/benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = subdir, .mojoc = mojoc, .bins = &bins });
         const staged = try fx.read(try std.fmt.allocPrint(a, "out/{s}/{s}", .{ subdir, want.file_name }));
         try std.testing.expectEqualSlices(u8, want.bytes, staged);
-        const without = try conda.pack(a, .{ .name = "benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = subdir, .mojoc = mojoc });
+        const without = try conda.pack(a, .{ .name = "example/benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = subdir, .mojoc = mojoc });
         try std.testing.expect(!std.mem.eql(u8, without.bytes, staged));
         try std.testing.expect(contains(staged, "lib/mojo/benchy.bins/agg_state_bench.mojo") and contains(staged, "lib/mojo/benchy.bins/spsc_ring_bench.mojo"));
     }
@@ -1037,4 +1130,86 @@ test "a member whose program cannot be shipped is refused with the member named,
         try std.testing.expect(contains(r.err, c.why));
         try std.testing.expect(!fx.exists(out));
     }
+}
+
+// ------------------------------------------------------- the artifact layout by full name
+
+test "a member with no artifact is refused with the message naming the namespaced path, exactly" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.tmp.dir.deleteFile("art/noarch/example/pkg_a.mojoc");
+    const r = try runStage(fx, &stub, "none", &.{});
+    const want = try std.fmt.allocPrint(a, "example/pkg_a has no build artifact: expected {s}/<subdir>/example/pkg_a.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{try fx.path("art")});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(std.mem.indexOf(u8, r.err, want) != null);
+    try std.testing.expect(!fx.exists("none"));
+}
+
+test "a .mojoc left at the old path without the namespace is not read" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.tmp.dir.deleteFile("art/noarch/example/pkg_a.mojoc");
+    try fx.put("art/noarch/pkg_a.mojoc", "the mojoc at the old path");
+    const r = try runStage(fx, &stub, "old", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(contains(r.err, "example/pkg_a has no build artifact: expected "));
+    try std.testing.expect(contains(r.err, "/<subdir>/example/pkg_a.mojoc for one of"));
+    try std.testing.expect(!fx.exists("old"));
+}
+
+test "a member's .mojoc is read from the directory of its own namespace, not another's" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"other/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("art/noarch/example/pkg_a.mojoc", "the mojoc of example/pkg_a");
+    const r = try runStage(fx, &stub, "other_ns", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(contains(r.err, "other/pkg_a has no build artifact: expected "));
+    try std.testing.expect(contains(r.err, "/<subdir>/other/pkg_a.mojoc for one of"));
+
+    try fx.put("art/noarch/other/pkg_a.mojoc", "the mojoc of other/pkg_a");
+    const ok = try runStage(fx, &stub, "other_ok", &.{});
+    try std.testing.expectEqual(@as(u8, 0), ok.code);
+    const want = try conda.pack(a, .{ .name = "other/pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "the mojoc of other/pkg_a" });
+    try std.testing.expectEqualSlices(u8, want.bytes, try fx.read(try std.fmt.allocPrint(a, "other_ok/noarch/{s}", .{want.file_name})));
+}
+
+test "a native archive at the old path without the namespace is not read" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try nativeWorkspace(fx);
+    try fx.put("art/linux-64/pkg_n.native/libshim.a", shim_archive);
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "old_native", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    const want = try std.fmt.allocPrint(a, "example/pkg_n: native library 'shim' has no archive for linux-64: expected {s}/linux-64/example/pkg_n.native/libshim.a", .{try fx.path("art")});
+    try std.testing.expect(contains(r.err, want));
+    try std.testing.expect(!fx.exists("old_native"));
+}
+
+test "the registry check refuses a member name that is not a full name, without asking" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var stub = Stub{ .asked = std.ArrayList([]const u8).init(a) };
+    const got = try stage.check(a, stub.net(), api, "x", "1.0.0", &.{});
+    try std.testing.expectEqualStrings("'x' is not a full name <namespace>/<name>", got.bad);
+    try std.testing.expectEqual(@as(usize, 0), stub.asked.items.len);
 }

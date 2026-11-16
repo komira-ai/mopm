@@ -1,5 +1,8 @@
 //! Where mopm keeps its tokens: `<config dir>/credentials.json`, one entry
-//! per registry API URL, `{"<api_url>": {"token": "...", "handle": "..."}}`.
+//! per registry API URL, `{"<api_url>": {"token": "...", "handle": "...", "namespace": "..."}}`.
+//! `namespace`, the user namespace `mopm login` received, is optional: an entry
+//! written before namespaces, or by a login whose GitHub login is no namespace,
+//! has none.
 //!
 //! The file is written to a temporary name with mode 0600 and renamed into
 //! place, so it is never readable by others, not even for a moment. Nothing
@@ -10,7 +13,12 @@ const Allocator = std.mem.Allocator;
 
 pub const file_name = "credentials.json";
 
-pub const Entry = struct { token: []const u8, handle: []const u8 };
+pub const Entry = struct {
+    token: []const u8,
+    handle: []const u8,
+    /// The user namespace of the account on that registry; null when the login received none.
+    namespace: ?[]const u8 = null,
+};
 
 /// `$XDG_CONFIG_HOME/mopm`, else `$HOME/.config/mopm`.
 pub fn defaultDir(arena: Allocator) ![]const u8 {
@@ -71,13 +79,36 @@ pub fn load(arena: Allocator, dir_path: []const u8, api_url: []const u8) !?Entry
         .string => |s| s,
         else => "",
     };
-    return .{ .token = token, .handle = handle };
+    const namespace: ?[]const u8 = switch (e.get("namespace") orelse std.json.Value{ .null = {} }) {
+        .string => |s| if (s.len > 0) s else null,
+        else => null,
+    };
+    return .{ .token = token, .handle = handle, .namespace = namespace };
+}
+
+/// Whether any entry holds a namespace; false when there is no file or it cannot be read. A command that needs the
+/// stored namespace asks this first, so it reads no registry configuration when no login has stored one.
+pub fn anyNamespace(arena: Allocator, dir_path: []const u8) bool {
+    const all = readAll(arena, dir_path) catch return false;
+    var it = all.iterator();
+    while (it.next()) |kv| {
+        const e = switch (kv.value_ptr.*) {
+            .object => |o| o,
+            else => continue,
+        };
+        switch (e.get("namespace") orelse continue) {
+            .string => |n| if (n.len > 0) return true,
+            else => {},
+        }
+    }
+    return false;
 }
 
 pub fn store(arena: Allocator, dir_path: []const u8, api_url: []const u8, entry: Entry) !void {
     var all = try readAll(arena, dir_path);
     var e = std.json.ObjectMap.init(arena);
     try e.put("handle", .{ .string = entry.handle });
+    if (entry.namespace) |n| try e.put("namespace", .{ .string = n });
     try e.put("token", .{ .string = entry.token });
     try all.put(api_url, .{ .object = e });
     try writeAll(arena, dir_path, all);
@@ -109,4 +140,58 @@ test "store, load and remove, with mode 0600" {
     try std.testing.expect(try remove(a, dir, "http://127.0.0.1:1/api/v1"));
     try std.testing.expect(!try remove(a, dir, "http://127.0.0.1:1/api/v1"));
     try std.testing.expectEqualStrings("hubot", (try load(a, dir, "https://mopm.dev/api/v1")).?.handle);
+}
+
+test "the namespace is stored when the login received one, and absent from an entry written without it" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    try store(a, dir, "https://mopm.dev/api/v1", .{ .token = "mopm_a", .handle = "Ada", .namespace = "ada" });
+    try store(a, dir, "http://127.0.0.1:1/api/v1", .{ .token = "mopm_b", .handle = "hubot" });
+    try std.testing.expectEqualStrings("ada", (try load(a, dir, "https://mopm.dev/api/v1")).?.namespace.?);
+    try std.testing.expect((try load(a, dir, "http://127.0.0.1:1/api/v1")).?.namespace == null);
+    const text = try tmp.dir.readFileAlloc(a, file_name, 1 << 16);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"namespace\": \"ada\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "\"namespace\""));
+}
+
+test "an entry from before namespaces, or with a namespace that is not text or is empty, loads with none" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    try tmp.dir.writeFile(file_name,
+        \\{"https://a.test/api/v1": {"token": "t1", "handle": "h1"},
+        \\ "https://b.test/api/v1": {"token": "t2", "handle": "h2", "namespace": 7},
+        \\ "https://c.test/api/v1": {"token": "t3", "handle": "h3", "namespace": ""}}
+    );
+    for ([_][]const u8{ "https://a.test/api/v1", "https://b.test/api/v1", "https://c.test/api/v1" }) |url| {
+        const got = (try load(a, dir, url)).?;
+        try std.testing.expect(got.namespace == null);
+    }
+    try std.testing.expectEqualStrings("t2", (try load(a, dir, "https://b.test/api/v1")).?.token);
+}
+
+test "anyNamespace: no file, entries without one, and an empty one are none; one stored namespace is enough" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    try std.testing.expect(!anyNamespace(a, dir));
+    try std.testing.expect(!anyNamespace(a, try std.fs.path.join(a, &.{ dir, "missing" })));
+    try store(a, dir, "https://a.test/api/v1", .{ .token = "t1", .handle = "h1" });
+    try std.testing.expect(!anyNamespace(a, dir));
+    try store(a, dir, "https://b.test/api/v1", .{ .token = "t2", .handle = "h2", .namespace = "" });
+    try std.testing.expect(!anyNamespace(a, dir));
+    try store(a, dir, "https://c.test/api/v1", .{ .token = "t3", .handle = "h3", .namespace = "h3" });
+    try std.testing.expect(anyNamespace(a, dir));
+    try tmp.dir.writeFile(file_name, "not json");
+    try std.testing.expect(!anyNamespace(a, dir));
 }

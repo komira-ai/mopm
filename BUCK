@@ -17,7 +17,8 @@
 
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
-load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64", "MACOS_AARCH64")
+load("//platforms:macos.bzl", "host_run", "macos_gate", "zig_test_bin")
 load("@buildrules//ci:workflow_lint.bzl", "actionlint_check")
 load("//:buildrules.bzl", "cargo_workspace")
 load("//tests/compat:tree.bzl", "tree")
@@ -35,8 +36,8 @@ _TOOLS = {
 }
 
 # The files each root imports by a relative name (all siblings of the root).
-# src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig.
-_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json"])
+# src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig, std-modules.txt by src/core/names.zig and src/core/std_modules.zig.
+_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json", "src/core/toolchain/*.txt"])
 _CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig", "src/cli/build_options.zig"])
 _FAKE_SRCS = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig"])
 
@@ -104,7 +105,7 @@ zig_exe(
     src = "src/cli/main.zig",
     imports = _CLI_SRCS,
     deps = [":mopm_core", ":build_options"],
-    unit_tests = [":cli_test"],
+    unit_tests = [":cli_test", ":compat_namespaces"],
     visibility = ["PUBLIC"],
     **_TOOLS
 )
@@ -124,6 +125,46 @@ zig_exe(
     src = "tools/closure_gen.zig",
     deps = [":mopm_core"],
     visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+# ---- mopm-api-gen: the outputs of the registry API's protos ------------------------
+
+# tools/api_gen.zig reads spec/api/mopm/registry/v2/*.proto and writes spec/api/openapi-v2.yaml, service/api/src/gen/registry-v2.ts
+# and src/core/registry_v2.zig; api_gen_test fails when a checked-in output is not what it writes.
+_API_GEN_SRCS = glob(["tools/api_gen/*.zig"])
+
+zig_exe(
+    name = "mopm-api-gen",
+    src = "tools/api_gen.zig",
+    imports = _API_GEN_SRCS,
+    unit_tests = [":api_gen_test", ":registry_client_lint"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+zig_test(
+    name = "api_gen_test",
+    src = "tools/api_gen_test.zig",
+    imports = _API_GEN_SRCS,
+    # service/api is its own package: its generated file comes from there, staged at its path in the repository.
+    data = {f: f for f in glob(["spec/api/mopm/registry/v2/*.proto"]) + [
+        "spec/api/openapi-v2.yaml",
+        "src/core/registry_v2.zig",
+        "src/cli/registry_commands.zig",
+    ] + glob(["tests/golden/registry/**"])} | {"service/api/src/gen/registry-v2.ts": "//service/api:registry-v2.ts"},
+    **_TOOLS
+)
+
+# The hand-written files of src/cli reach the registry through the generated client, and every operation of it has a command.
+zig_test(
+    name = "registry_client_lint",
+    src = "tests/drivers/registry_client_lint_test.zig",
+    imports = ["tests/drivers/lint_common.zig", "tests/drivers/yaml.zig", "tests/drivers/registry_client_lint.zig"],
+    data = glob(["src/cli/*.zig"]) + [
+        "src/core/registry_v2.zig",
+        "src/core/ci_oidc.zig",
+    ],
     **_TOOLS
 )
 
@@ -212,7 +253,7 @@ zig_exe(  # buck-only: stands in for mojo and the test binary in :group_publish;
     **_TOOLS
 )
 
-zig_test(  # buck-only: mopm publish --staged and mopm yank --group against the fake registry
+zig_test(  # buck-only: mopm publish --staged and mopm group yank|unyank|status against the fake registry
     name = "group_publish",
     src = "tests/drivers/group_publish_test.zig",
     imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig"],
@@ -233,7 +274,7 @@ zig_module(  # buck-only: the client's group publisher and its parts, for :group
     deps = [":mopm_core"],
 )
 
-zig_module(  # buck-only: the fake registry's handler with the fixture of its group tests (registry/fake/groups_test.zig), for :group_readmes
+zig_module(  # the fake registry's handler with the fixture of its group tests (registry/fake/groups_test.zig), for :group_readmes and :compat_namespaces
     name = "fake_fixture",
     src = "registry/fake/groups_test.zig",
     imports = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig", "registry/fake/groups_test.zig"]),
@@ -251,8 +292,8 @@ zig_test(  # buck-only: readmes as uploaded objects, and the fall back to inline
 # (registry/fake). A file of the release that is byte for byte what the live tree holds is read from the live tree; only the files
 # that differ are vendored under tests/compat/v0.0.104 (README.md there; SHA256SUMS pins every file, and the test checks it).
 # The `tree` targets (tests/compat/tree.bzl) lay both out in one directory, where the release's files find each other by their relative imports.
-_PREV_FAKE_LIVE = ["api", "errors", "resp", "source_commit", "token_scopes", "util", "versions"]
-_PREV_CLI_LIVE = ["group_stage_token", "publish_cmd", "registry_cmd"]
+_PREV_FAKE_LIVE = ["errors", "resp", "source_commit", "token_scopes", "util", "versions"]
+_PREV_CLI_LIVE = []
 
 tree(  # buck-only: the fake registry of v0.0.104 as its files lay out at the tag, and the fixture that calls it
     name = "prev_fake_tree",
@@ -276,7 +317,7 @@ tree(  # buck-only: the files of src/cli of v0.0.104 that its group publisher re
 zig_module(  # buck-only: the v0.0.104 client's group publisher and the files it needs, for :compat_v0_0_104
     name = "prev_cli",
     src = ":prev_cli_tree[group_publish.zig]",
-    imports = [":prev_cli_tree[{}.zig]".format(n) for n in _PREV_CLI_LIVE + ["group_plan", "group_publish_test"]],
+    imports = [":prev_cli_tree[{}.zig]".format(n) for n in _PREV_CLI_LIVE + ["group_stage_token", "publish_cmd", "registry_cmd", "group_plan", "group_publish_test"]],
     deps = [":mopm_core"],
 )
 
@@ -302,6 +343,29 @@ zig_test(  # buck-only: the v0.0.104 client against this registry and this clien
     deps = [":mopm_core", ":cli_publish", ":fake_fixture", ":prev_cli", ":prev_fake"],
     # The files of the release, hashed by the test against its SHA256SUMS, and the request goldens the TypeScript registry's tests replay.
     data = _COMPAT_DATA,
+    **_TOOLS
+)
+
+# The previous release before namespaces (v0.0.108) against this code, for every row of the table in docs/design/namespaces.md,
+# section 11: its core readers and its fake registry, vendored byte for byte under tests/compat/v0.0.108 (README.md there; SHA256SUMS
+# pins every file, and the test checks it). The vendored core imports only its own files, so it builds as one module, which
+# `zig build test` builds too. Welded into :mopm: a CLI that misreads, or is misread by, the previous release is not built.
+zig_module(
+    name = "prev_v0_0_108",
+    src = "tests/compat/prev_v0_0_108.zig",
+    imports = glob(["tests/compat/v0.0.108/core/**", "tests/compat/v0.0.108/fake/*.zig"]),
+)
+
+# The files the test reads: the snapshot (hashed against its SHA256SUMS) and what each side writes for the other.
+_COMPAT_NS_DATA = {f: f for f in glob(["tests/compat/v0.0.108/**", "tests/contract/examples/lock/valid/*.json"])}
+_COMPAT_NS_DATA["tests/fixtures/env/linux/dup/lib/mojo/pkg_a.mopm.json"] = "tests/fixtures/env/linux/dup/lib/mojo/pkg_a.mopm.json"
+
+zig_test(
+    name = "compat_namespaces",
+    src = "tests/drivers/compat_namespaces_test.zig",
+    imports = ["tests/drivers/inproc_world.zig"],
+    deps = [":mopm_core", ":fake_fixture", ":prev_v0_0_108"],
+    data = _COMPAT_NS_DATA,
     **_TOOLS
 )
 
@@ -500,6 +564,7 @@ zig_test(  # buck-only: tests/contract/validate.py: the spec, the API cases and 
     ] + glob([
         "spec/**",
         "tests/contract/api/**",
+        "tests/contract/api-v2/**",
         "tests/contract/examples/**",
         "tests/fixtures/**",
     ]),
@@ -524,6 +589,27 @@ zig_test(  # buck-only: tests/contract/replay.py: the fake registry answers the 
         "tests/contract/api/**",
     ]),
     env_tools = {"MOPM_FAKE_REGISTRY": ":mopm-fake-registry"},
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the registry commands generated from the v2 protos, run as commands: help goldens, usage errors, the fake registry (needs the built mopm)
+    name = "registry_cli",
+    src = "tests/drivers/registry_cli_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    data = glob(["tests/golden/registry/**"]),
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm lock, tree and sync refuse two packages of one import name (needs the built mopm)
+    name = "import_clash_cli",
+    src = "tests/drivers/import_clash_cli_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    data = ["tests/mojo_env/mopm.lock"],  # the lock the version 1 and 2 case expects `mopm lock` to write
+    env_tools = {"MOPM": ":mopm"},
     **_TOOLS
 )
 
@@ -582,8 +668,14 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "src/cli/main.zig",
         "src/cli/build_options.zig",
         "tools/closure_gen.zig",
+        "tools/api_gen.zig",
+        "tools/api_gen_test.zig",
         "registry/fake/main.zig",
+        "registry/fake/groups_test.zig",
         "tests/drivers/group_e2e.zig",
+        "tests/drivers/compat_namespaces_test.zig",
+        "tests/drivers/registry_client_lint_test.zig",
+        "tests/compat/prev_v0_0_108.zig",
     ],
     **_TOOLS
 )
@@ -592,6 +684,114 @@ zig_test(  # buck-only: tools/macho_minos.zig, the Mach-O minos reader that the 
     name = "macho_minos",
     src = "tools/macho_minos.zig",
     **_TOOLS
+)
+
+# ---- macOS arm64, on the farm's Mac workers (farm-macos.yml) --------------------------------------------------
+# The macOS legs of `zig build test` and of the CLI build, as farm actions: each unit test is compiled on linux for aarch64-macos
+# (`zig_test_bin`, from the `zig_test` above) and run on a Mac (`host_run`), the CLI is cross-compiled for the pinned macOS target
+# and started there, and its Mach-O minimum is read on linux (platforms/macos.bzl). Every target is gated on the macOS worker set
+# (`macos_gate`): without one, as on every farm.yml build, they are incompatible and `//...` skips them. farm-macos.yml builds
+# the `macos-farm` targets (`attrfilter(labels, macos-farm, //...)`) after a push to main and in the release's beta stage.
+
+_MACOS = "aarch64-macos"
+
+# The release's macOS target (release-build.yml, `macos-arm64`): the lowest macOS the CLI runs on (release_lint.zig, `macos_min`).
+_MACOS_PINNED = "aarch64-macos.11.7.1"
+
+zig_exe(  # buck-only: the child processes of src/core/test_proc.zig's tests, for the Mac
+    name = "proc-child_macos",
+    src = "tests/drivers/proc_child.zig",
+    optimize = "ReleaseSafe",
+    target = _MACOS,
+    target_compatible_with = macos_gate(),
+    **_TOOLS
+)
+
+zig_test_bin(
+    name = "core_test_macos_bin",
+    target = _MACOS,
+    test = ":core_test",
+    target_compatible_with = macos_gate(),
+)
+
+host_run(
+    name = "core_test_macos",
+    exe = ":core_test_macos_bin",
+    data = _UNIT_DATA,
+    env_tools = {"MOPM_TEST_CHILD": ":proc-child_macos"},
+    exec_compatible_with = MACOS_AARCH64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
+)
+
+zig_test_bin(
+    name = "cli_test_macos_bin",
+    target = _MACOS,
+    test = ":cli_test",
+    target_compatible_with = macos_gate(),
+)
+
+host_run(
+    name = "cli_test_macos",
+    exe = ":cli_test_macos_bin",
+    exec_compatible_with = MACOS_AARCH64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
+)
+
+zig_test_bin(
+    name = "fake_test_macos_bin",
+    target = _MACOS,
+    test = ":fake_test",
+    target_compatible_with = macos_gate(),
+)
+
+host_run(
+    name = "fake_test_macos",
+    exe = ":fake_test_macos_bin",
+    exec_compatible_with = MACOS_AARCH64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
+)
+
+# The CLI for the release's macOS target, built only when its unit tests passed on a Mac.
+zig_exe(  # buck-only: the CLI for aarch64-macos.11.7.1, which build.zig makes with -Dtarget
+    name = "mopm_macos",
+    src = "src/cli/main.zig",
+    imports = _CLI_SRCS,
+    deps = [":mopm_core", ":build_options"],
+    target = _MACOS_PINNED,
+    unit_tests = [":cli_test_macos", ":core_test_macos"],
+    target_compatible_with = macos_gate(),
+    **_TOOLS
+)
+
+# It starts on a Mac (dyld loads it) and answers `--version`.
+host_run(
+    name = "mopm_macos_version",
+    exe = ":mopm_macos",
+    args = ["--version"],
+    exec_compatible_with = MACOS_AARCH64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
+)
+
+zig_exe(  # buck-only: tools/macho_minos.zig as a program, behind its tests (`zig run tools/macho_minos.zig` on the macOS runners)
+    name = "macho_minos_exe",
+    src = "tools/macho_minos.zig",
+    unit_tests = [":macho_minos"],
+    target_compatible_with = macos_gate(),
+    **_TOOLS
+)
+
+# Its Mach-O names a minimum macOS at most the pinned one, as release-build.yml checks the release's binary (on linux: the reader needs no Apple tool).
+host_run(
+    name = "mopm_macos_minos",
+    exe = ":macho_minos_exe",
+    args = ["--max", "11.7.1", "$(location :mopm_macos)"],
+    exec_compatible_with = LINUX_X86_64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
 )
 
 # ---- The validator corpus: files made by a Zig generator, and the test that they are what it makes ----
@@ -796,21 +996,44 @@ zig_test(  # buck-only: mopm test --retries, --deny-flaky, --ignored, --exact; t
 # ---- The registry API's specification files, staged as `spec/` for service/api:test ----
 # (Not a spec/BUCK or tests/contract/api/BUCK package: a package there would cut
 # its files out of the globs of the contract checks above.)
+# The registry's v2 protos, at the path service/api's test/gen/registry-v2.test.ts hashes them from.
+_SPEC_V2_PROTOS = {"api/" + f[len("spec/api/"):]: f for f in glob(["spec/api/mopm/registry/v2/*.proto"])}
 filegroup(
     name = "spec",
     srcs = {
         "api/openapi.yaml": "spec/api/openapi.yaml",
+        "api/openapi-v2.yaml": "spec/api/openapi-v2.yaml",
         "package-metadata.schema.json": "spec/package-metadata.schema.json",
         "index-record.schema.json": "spec/index-record.schema.json",
         "index-config.schema.json": "spec/index-config.schema.json",
         "takedowns.schema.json": "spec/takedowns.schema.json",
-    },
+    } | _SPEC_V2_PROTOS,
     visibility = ["//service/api:", "//service/infra/stacks:"],
+)
+
+# What service/api's test/names.test.ts holds the registry's name lists to: the Mojo versions and their standard library modules,
+# and the command line's keyword, builtin and reserved-name lists.
+filegroup(
+    name = "names_toolchain",
+    srcs = {f[len("toolchain/"):]: f for f in glob(["toolchain/versions.txt", "toolchain/mojo-*.std-modules.txt"])},
+    visibility = ["//service/api:"],
+)
+
+filegroup(
+    name = "names_core",
+    srcs = {"names.zig": "src/core/names.zig"},
+    visibility = ["//service/api:"],
 )
 
 filegroup(
     name = "contract_api",
     srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},
+    visibility = ["//service/api:"],
+)
+
+filegroup(
+    name = "contract_api_v2",
+    srcs = {f[len("tests/contract/api-v2/"):]: f for f in glob(["tests/contract/api-v2/*.json"])},
     visibility = ["//service/api:", "//site:"],
 )
 
@@ -940,8 +1163,8 @@ export_file(
 )
 
 export_file(
-    name = "site.src.cli.yank_cmd.zig",
-    src = "src/cli/yank_cmd.zig",
+    name = "site.src.cli.registry_commands.zig",
+    src = "src/cli/registry_commands.zig",
     visibility = ["//site:"],
 )
 
@@ -1038,6 +1261,12 @@ export_file(
 export_file(
     name = "site.src.core.metadata.zig",
     src = "src/core/metadata.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.names.zig",
+    src = "src/core/names.zig",
     visibility = ["//site:"],
 )
 
@@ -1361,7 +1590,7 @@ zig_coverage(
     blocks = False,
     floor = "coverage/cli.txt",
     test_targets = [":cli_test"],
-    # build_options.zig is a module of constants (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
+    # build_options.zig (constants) is a module of declarations (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
     expect = glob(["src/cli/*.zig"], exclude = ["src/cli/build_options.zig", "src/cli/test_cmd.zig"]),
 )
 
@@ -1397,6 +1626,17 @@ zig_coverage(
     floor = "coverage/build_parity.txt",
     test_targets = [":build_parity"],
     expect = ["tools/build_parity.zig"],
+)
+
+zig_coverage(
+    name = "api_gen_coverage",
+    blocks = False,
+    floor = "coverage/api_gen.txt",
+    test_targets = [":api_gen_test"],
+    # The generator's library; tools/api_gen.zig is its command line (arguments and file writes), run by `zig build gen-api`.
+    # zig_client_tail.zig is one string literal, the text the generator appends to src/core/registry_v2.zig (a declaration has no
+    # line); the code in it runs as part of that generated file, which core_coverage measures.
+    expect = glob(["tools/api_gen/*.zig"], exclude = ["tools/api_gen/zig_client_tail.zig"]),
 )
 
 zig_coverage(

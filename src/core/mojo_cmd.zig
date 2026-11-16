@@ -237,10 +237,10 @@ fn chainPlan(a: Allocator, os: Os) !link_planner.Plan {
         .macos => [_][]const u8{ "libb.1.dylib", "liba.1.dylib" },
     };
     const b = try std.fmt.allocPrint(a,
-        \\{{"schema": 1, "name": "b", "native": [{{"id": "b", "soname": "{s}", "file": "../{s}"}}]}}
+        \\{{"schema": 2, "name": "t/bb", "native": [{{"id": "b", "soname": "{s}", "file": "../{s}"}}]}}
     , .{ so[0], so[0] });
     const ap = try std.fmt.allocPrint(a,
-        \\{{"schema": 1, "name": "a", "deps": [{{"name": "b"}}], "native": [
+        \\{{"schema": 2, "name": "t/aa", "deps": [{{"name": "t/bb"}}], "native": [
         \\  {{"id": "a", "soname": "{s}", "file": "../{s}", "needs": ["{s}"]}}]}}
     , .{ so[1], so[1], so[0] });
     return link_planner.plan(a, &.{
@@ -311,7 +311,7 @@ test "build: a static archive is passed by path" {
     defer t.deinit();
     const a = t.allocator();
     const p = try link_planner.plan(a, &.{.{ .dir = "/e/lib/mojo", .meta = try metadata.parse(a,
-        \\{"schema": 1, "name": "s", "native": [{"id": "x", "soname": "libx.a", "kind": "static", "static_file": "../libx.a"}]}
+        \\{"schema": 2, "name": "t/ss", "native": [{"id": "x", "soname": "libx.a", "kind": "static", "static_file": "../libx.a"}]}
     ) }});
     const c = try construct(a, .{ .tool = .build, .prefix = "/e", .os = .linux, .file = "m.mojo" }, p);
     try expectArgv(&.{ "/e/bin/mojo", "build", "-Xlinker", "--push-state", "-Xlinker", "--no-as-needed", "-Xlinker", "/e/lib/libx.a", "-Xlinker", "--pop-state", "-Xlinker", "-rpath", "-Xlinker", "/e/lib", "m.mojo" }, c.argv);

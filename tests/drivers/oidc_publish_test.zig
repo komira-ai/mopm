@@ -13,13 +13,15 @@
 //! - outside Actions, with only one of the two variables, the command must stop before any request: it is pointed at an
 //!   address nothing listens on, so a client that went to the network would print "cannot reach", and the stand-in must
 //!   have been asked nothing;
-//! - a GitHub that refuses the identity request, and a registry that refuses the exchange (the package has no trusted
+//! - a GitHub that refuses the identity request, and a registry that refuses the exchange (the package's namespace has no trusted
 //!   publisher), must each end 1 with their own message and publish nothing;
 //! - `--dry-run --oidc` reads no environment and sends nothing; `pack` does not know `--oidc`;
 //! - a staged set, of one member or of three, asks GitHub once and exchanges once, in the `packages` form, and the one token
-//!   creates, uploads and commits the group: every member is served. A registry that does not trust the job's repository as
-//!   a CI publisher, and one where a name belongs to someone else, each refuse the exchange: the run ends 1 with the
-//!   registry's message, GitHub was asked once, and no group was made;
+//!   creates, uploads and commits the group: every member is served. A set wholly in a namespace that does not trust the job's
+//!   repository, and one that names a package of such a namespace beside a trusting one, each refuse the exchange: the run ends 1 with the
+//!   registry's message, GitHub was asked once, and no group was made (a namespace trusts a repository with /_fake/trusted,
+//!   and every package is made with PUT /api/v2/packages/<namespace>/<name>: an exchange creates nothing, and `mopm publish` sends that
+//!   PUT itself, with the exchanged token, before it uploads: the packages here exist already, so it answers 200 and says nothing);
 //! - `--no-commit --oidc` asks for a stage token: the fake registry counts the tokens its exchange mints by kind, and the staging
 //!   run's one exchange minted a stage token and no publish token (the fake enforces the scope, so the run staged with it and
 //!   printed no notice); the commit run's exchange minted a publish token and no stage token;
@@ -138,8 +140,9 @@ const Mopm = struct {
     }
 };
 
-fn tomlText(a: Allocator, name: []const u8, version: []const u8) ![]u8 {
-    return std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", .{ name, version });
+/// `full` is the package's full name, `<namespace>/<name>`.
+fn tomlText(a: Allocator, full: []const u8, version: []const u8) ![]u8 {
+    return std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", .{ full, version });
 }
 
 fn sha256Hex(a: Allocator, bytes: []const u8) ![]u8 {
@@ -148,13 +151,13 @@ fn sha256Hex(a: Allocator, bytes: []const u8) ![]u8 {
     return a.dupe(u8, &std.fmt.bytesToHex(digest, .lower));
 }
 
-/// Writes a staged directory of `uploads` (name, version) pairs, one file each under `noarch/`.
+/// Writes a staged directory of `uploads` (full name, version) pairs, one file each under `noarch/`.
 fn stage(a: Allocator, dir: []const u8, members: []const [2][]const u8) !void {
     var plan = std.ArrayList(u8).init(a);
-    try plan.appendSlice("{\"version\":1,\"members\":[");
+    try plan.appendSlice("{\"version\":2,\"members\":[");
     for (members, 0..) |m, i| {
         if (i != 0) try plan.append(',');
-        const filename = try std.fmt.allocPrint(a, "mojo-{s}-{s}-mojo1.0.0_0.conda", .{ m[0], m[1] });
+        const filename = try std.fmt.allocPrint(a, "mojo-{s}.{s}-{s}-mojo1.0.0_0.conda", .{ m[0][0..std.mem.indexOfScalar(u8, m[0], '/').?], m[0][std.mem.indexOfScalar(u8, m[0], '/').? + 1 ..], m[1] });
         const bytes = try std.fmt.allocPrint(a, "the bytes of {s}", .{m[0]});
         try h.writeFile(try h.join(a, &.{ dir, "noarch", filename }), bytes);
         try plan.writer().print(
@@ -175,7 +178,7 @@ fn minted(a: Allocator, fake: h.Fake) !Minted {
 }
 
 fn served(a: Allocator, fake: h.Fake, name: []const u8, version: []const u8) !?h.Response {
-    const r = try h.request(a, "GET", fake.base, try std.fmt.allocPrint(a, "/api/v1/packages/{s}/{s}", .{ name, version }), null, null);
+    const r = try h.request(a, "GET", fake.base, try std.fmt.allocPrint(a, "/api/v2/packages/{s}/{s}", .{ name, version }), null, null);
     return if (r.status == 200) r else null;
 }
 
@@ -217,21 +220,27 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     var fake = try h.Fake.start(a, fake_exe, try h.join(a, &.{ work, "fake" }));
     defer fake.close();
 
-    // An account that owns two names; only one has a trusted publisher, the repository the stand-in's tokens name.
-    const session = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"ci-owner\"}"), "token") orelse "";
-    for ([_][]const u8{ "oidcdemo", "untrusted" }) |n| {
-        const r = try h.request(a, "POST", fake.base, try std.fmt.allocPrint(a, "/api/v1/packages/{s}/claim", .{n}), "{}", session);
-        rep.check(try std.fmt.allocPrint(a, "{s} is claimed", .{n}), r.status == 201, r.body);
+    // Two accounts, and so two namespaces: `example` trusts the repository the stand-in's tokens name as a publisher, and
+    // `stranger` does not. Every package is made with PUT before anything publishes it: an exchange creates nothing.
+    const session = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"example\"}"), "token") orelse "";
+    const stranger = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"stranger\"}"), "token") orelse "";
+    for ([_][]const u8{ "example/oidcdemo", "example/solo", "example/grpa", "example/grpb", "example/grpc", "example/grpx", "example/grpy", "example/grpz" }) |n| {
+        const r = try h.request(a, "PUT", fake.base, try std.fmt.allocPrint(a, "/api/v2/packages/{s}", .{n}), null, session);
+        rep.check(try std.fmt.allocPrint(a, "{s} is created", .{n}), r.status == 201, r.body);
     }
-    _ = try fake.control(a, "/trusted", "{\"name\":\"oidcdemo\",\"repository\":\"" ++ repository ++ "\"}");
+    for ([_][]const u8{ "stranger/untrusted", "stranger/grpother", "stranger/grpq", "stranger/grpr", "stranger/grps" }) |n| {
+        const r = try h.request(a, "PUT", fake.base, try std.fmt.allocPrint(a, "/api/v2/packages/{s}", .{n}), null, stranger);
+        rep.check(try std.fmt.allocPrint(a, "{s} is created", .{n}), r.status == 201, r.body);
+    }
+    _ = try fake.control(a, "/trusted", "{\"namespace\":\"example\",\"repository\":\"" ++ repository ++ "\"}");
 
     const conf = try h.join(a, &.{ work, "conf" });
     const mojoc = try h.join(a, &.{ work, "pkg", "demo.mojoc" });
     try h.writeFile(mojoc, "not a real mojoc, only bytes\n");
     const trusted_toml = try h.join(a, &.{ work, "pkg", "mopm.toml" });
-    try h.writeFile(trusted_toml, try tomlText(a, "oidcdemo", "0.1.0"));
+    try h.writeFile(trusted_toml, try tomlText(a, "example/oidcdemo", "0.1.0"));
     const untrusted_toml = try h.join(a, &.{ work, "untrusted", "mopm.toml" });
-    try h.writeFile(untrusted_toml, try tomlText(a, "untrusted", "0.1.0"));
+    try h.writeFile(untrusted_toml, try tomlText(a, "stranger/untrusted", "0.1.0"));
     const publish = [_][]const u8{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--config-dir", conf, "--oidc" };
     const to_fake = [_][]const u8{ "--registry", fake.base };
     const to_dead = [_][]const u8{ "--registry", dead };
@@ -260,7 +269,7 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     r = try m.run(&(publish ++ with_trusted ++ to_fake), .both, null);
     rep.check("a GitHub that refuses the identity request ends 1, says so, and publishes nothing", r.code == 1 and
         h.contains(r.stderr, "GitHub refused the identity token request (HTTP 403)") and h.contains(r.stderr, "id-token: write") and
-        gh.calls == 1 and (try served(a, fake, "oidcdemo", "0.1.0")) == null, describe(a, r));
+        gh.calls == 1 and (try served(a, fake, "example/oidcdemo", "0.1.0")) == null, describe(a, r));
     gh.mutex.lock();
     gh.refuse = false;
     gh.calls = 0;
@@ -269,14 +278,15 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     // --- the registry refuses the exchange: the package has no trusted publisher
     r = try m.run(&(publish ++ with_untrusted ++ to_fake), .both, null);
     rep.check("a refused exchange ends 1 with the registry's message, and publishes nothing", r.code == 1 and
-        h.contains(r.stderr, "refused the identity token for untrusted 0.1.0") and h.contains(r.stderr, "No trusted publisher of 'untrusted' matches this CI identity") and
-        gh.calls == 1 and (try served(a, fake, "untrusted", "0.1.0")) == null, describe(a, r));
+        h.contains(r.stderr, "refused the identity token for stranger/untrusted 0.1.0") and h.contains(r.stderr, "No trusted publisher of 'stranger/untrusted' matches this CI identity") and
+        gh.calls == 1 and (try served(a, fake, "stranger/untrusted", "0.1.0")) == null, describe(a, r));
     gh.calls = 0;
 
     // --- a publish: the token is the job's, whatever MOPM_TOKEN says
     r = try m.run(&(publish ++ with_trusted ++ to_fake), .both, "bogus-token-that-must-not-be-used");
-    rep.check("--oidc publishes with the exchanged token, not with MOPM_TOKEN", r.code == 0 and h.contains(r.stdout, "published mojo-oidcdemo 0.1.0"), describe(a, r));
-    const version = try served(a, fake, "oidcdemo", "0.1.0");
+    rep.check("--oidc publishes with the exchanged token, not with MOPM_TOKEN", r.code == 0 and h.contains(r.stdout, "published example/oidcdemo 0.1.0"), describe(a, r));
+    rep.check("the package was made beforehand, so the exchanged token's PUT of it answers 200 and publish does not say created", !h.contains(r.stdout, "created "), r.stdout);
+    const version = try served(a, fake, "example/oidcdemo", "0.1.0");
     rep.check("the version is served, and its provenance names the trusted repository (only the exchange gives that)", version != null and
         h.contains(version.?.body, "\"kind\":\"oidc\"") and h.contains(version.?.body, "\"repository\":\"" ++ repository ++ "\""), if (version) |v| v.body else "not served");
     gh.mutex.lock();
@@ -291,17 +301,20 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
 
     // --- the same version again is the registry's refusal, and a fresh identity token was asked for
     r = try m.run(&(publish ++ with_trusted ++ to_fake), .both, null);
-    rep.check("a second run exchanges a new identity token and gets the registry's own answer for a version it holds", r.code == 1 and h.contains(r.stderr, "'oidcdemo' 0.1.0 already exists") and gh.calls == 2 and
+    rep.check("a second run exchanges a new identity token and gets the registry's own answer for a version it holds", r.code == 1 and h.contains(r.stderr, "'example/oidcdemo' 0.1.0 already exists") and gh.calls == 2 and
         !h.contains(r.stderr, "GitHub"), describe(a, r));
 
     // --- --staged
     const one = try h.join(a, &.{ work, "staged_one" });
-    try stage(a, one, &.{.{ "solo", "0.2.0" }});
-    // Two sets of three: one that names two packages a person owns, one of unclaimed names.
+    try stage(a, one, &.{.{ "example/solo", "0.2.0" }});
+    // Three sets of three: one wholly in the namespace that does not trust the repository, one that mixes it with a trusting
+    // namespace, and one wholly in the namespace that trusts it.
+    const distrusted = try h.join(a, &.{ work, "staged_distrusted" });
+    try stage(a, distrusted, &.{ .{ "stranger/grpq", "1.0.0" }, .{ "stranger/grpr", "1.1.0" }, .{ "stranger/grps", "1.2.0" } });
     const three = try h.join(a, &.{ work, "staged_three" });
-    try stage(a, three, &.{ .{ "oidcdemo", "0.3.0" }, .{ "untrusted", "0.3.0" }, .{ "grpother", "0.3.0" } });
+    try stage(a, three, &.{ .{ "example/oidcdemo", "0.3.0" }, .{ "stranger/untrusted", "0.3.0" }, .{ "stranger/grpother", "0.3.0" } });
     const fresh = try h.join(a, &.{ work, "staged_fresh" });
-    try stage(a, fresh, &.{ .{ "grpa", "1.0.0" }, .{ "grpb", "1.1.0" }, .{ "grpc", "1.2.0" } });
+    try stage(a, fresh, &.{ .{ "example/grpa", "1.0.0" }, .{ "example/grpb", "1.1.0" }, .{ "example/grpc", "1.2.0" } });
     const staged_base = [_][]const u8{ "publish", "--staged", one, "--config-dir", conf, "--oidc", "--wait", "30" };
     gh.calls = 0;
 
@@ -314,22 +327,22 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
 
     const fresh_args = [_][]const u8{ "publish", "--staged", fresh, "--config-dir", conf, "--oidc", "--wait", "30" };
 
-    // The registry does not trust the job's repository as a CI publisher yet: the exchange is refused, nothing is uploaded.
-    r = try m.run(&(fresh_args ++ to_fake), .both, null);
-    rep.check("a set exchanged by a repository the registry does not trust as a CI publisher stops with the registry's message, before any group", r.code == 1 and
+    // The namespace of the set does not have the job's repository as a publisher: the exchange is refused, nothing is uploaded.
+    const distrusted_args = [_][]const u8{ "publish", "--staged", distrusted, "--config-dir", conf, "--oidc", "--wait", "30" };
+    r = try m.run(&(distrusted_args ++ to_fake), .both, null);
+    rep.check("a set in a namespace that does not trust the job's repository stops with the registry's message, before any group", r.code == 1 and
         gh.calls == 1 and h.contains(r.stderr, "refused the identity token for the 3 packages of the set") and
-        h.contains(r.stderr, "No trusted publisher of '") and h.contains(r.stderr, "matches this CI identity") and
-        !exists(try h.join(a, &.{ fresh, "state.json" })) and (try served(a, fake, "grpa", "1.0.0")) == null, describe(a, r));
-    _ = try fake.control(a, "/ci_publisher", "{\"repository\":\"" ++ repository ++ "\"}");
+        h.contains(r.stderr, "No trusted publisher of 'stranger/grpq' matches this CI identity") and
+        !exists(try h.join(a, &.{ distrusted, "state.json" })) and (try served(a, fake, "stranger/grpq", "1.0.0")) == null, describe(a, r));
 
-    // Two of the names belong to a person, not to the publisher: not_owner, before any group.
+    // A set that names a package of a namespace that does not trust the repository, beside one that does: refused, before any group.
     gh.calls = 0;
     r = try m.run(&.{ "publish", "--staged", three, "--config-dir", conf, "--oidc", "--registry", fake.base }, .both, null);
-    rep.check("a set that names packages the CI publisher does not own stops with not_owner before any group", r.code == 1 and gh.calls == 1 and
-        h.contains(r.stderr, "refused the identity token for the 3 packages of the set") and h.contains(r.stderr, "not an owner of '") and
-        !exists(try h.join(a, &.{ three, "state.json" })) and (try served(a, fake, "grpother", "0.3.0")) == null, describe(a, r));
+    rep.check("a set that names a package of a namespace that does not trust the repository stops with the registry's message before any group", r.code == 1 and gh.calls == 1 and
+        h.contains(r.stderr, "refused the identity token for the 3 packages of the set") and h.contains(r.stderr, "No trusted publisher of 'stranger/untrusted' matches this CI identity") and
+        !exists(try h.join(a, &.{ three, "state.json" })) and (try served(a, fake, "example/oidcdemo", "0.3.0")) == null, describe(a, r));
 
-    // A set of three unclaimed names: one identity request, one exchange, one group.
+    // A set of three packages of the trusting namespace: one identity request, one exchange, one group.
     gh.calls = 0;
     const before_one_shot = try minted(a, fake);
     r = try m.run(&(fresh_args ++ to_fake), .both, null);
@@ -340,20 +353,20 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     gh.mutex.unlock();
     rep.check("a set of three is published as one group with one identity request, for the registry's audience", r.code == 0 and set_calls == 1 and
         std.mem.eql(u8, set_audience, "beta.mopm.dev") and h.contains(r.stdout, "published group") and
-        h.contains(r.stdout, "grpa 1.0.0") and h.contains(r.stdout, "grpb 1.1.0") and h.contains(r.stdout, "grpc 1.2.0"), describe(a, r));
+        h.contains(r.stdout, "example/grpa 1.0.0") and h.contains(r.stdout, "example/grpb 1.1.0") and h.contains(r.stdout, "example/grpc 1.2.0"), describe(a, r));
     rep.check("the one-shot run (stage and commit in one) asked for a publish token and no stage token", after_one_shot.publish == before_one_shot.publish + 1 and
         after_one_shot.stage == before_one_shot.stage, "the one-shot run's exchange did not mint exactly one publish token");
-    rep.check("every member is served at its version", (try served(a, fake, "grpa", "1.0.0")) != null and (try served(a, fake, "grpb", "1.1.0")) != null and
-        (try served(a, fake, "grpc", "1.2.0")) != null, "a member is not served");
+    rep.check("every member is served at its version", (try served(a, fake, "example/grpa", "1.0.0")) != null and (try served(a, fake, "example/grpb", "1.1.0")) != null and
+        (try served(a, fake, "example/grpc", "1.2.0")) != null, "a member is not served");
 
     // A set of one member takes the same path.
     gh.calls = 0;
     r = try m.run(&(staged_base ++ to_fake), .both, null);
     rep.check("a set of one member asks GitHub once and is published as a group", r.code == 0 and gh.calls == 1 and
-        (try served(a, fake, "solo", "0.2.0")) != null, describe(a, r));
+        (try served(a, fake, "example/solo", "0.2.0")) != null, describe(a, r));
     // Stage with one identity exchange, commit with a second one: a fresh token, the same group.
     const split = try h.join(a, &.{ work, "staged_split" });
-    try stage(a, split, &.{ .{ "grpx", "2.0.0" }, .{ "grpy", "2.1.0" } });
+    try stage(a, split, &.{ .{ "example/grpx", "2.0.0" }, .{ "example/grpy", "2.1.0" } });
     const split_args = [_][]const u8{ "publish", "--staged", split, "--config-dir", conf, "--oidc", "--wait", "30" };
     gh.calls = 0;
     const before_stage = try minted(a, fake);
@@ -362,7 +375,7 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     const staged_calls = gh.calls;
     const staged_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ split, "state.json" }))), "group_id") orelse "";
     rep.check("--staged --oidc --no-commit exchanges once and stops with the group open and nothing served", r.code == 0 and staged_calls == 1 and h.contains(r.stdout, "staged group grp_") and
-        staged_group.len > 0 and (try served(a, fake, "grpx", "2.0.0")) == null and (try served(a, fake, "grpy", "2.1.0")) == null, describe(a, r));
+        staged_group.len > 0 and (try served(a, fake, "example/grpx", "2.0.0")) == null and (try served(a, fake, "example/grpy", "2.1.0")) == null, describe(a, r));
     // The fake counts what the exchange minted: the staging run's one exchange made a stage token and no publish token, and the
     // group was created and filled with it (the fake refuses a stage token only for a commit, which this run never tries).
     rep.check("the staging run asked for, got and used a stage token: it staged, and printed no notice about a publish token", r.code == 0 and
@@ -374,21 +387,20 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     const resumed_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ split, "state.json" }))), "group_id") orelse "";
     rep.check("the commit run asks GitHub and the registry for a new token (the second exchange of the same packages passes) and commits the SAME group", r.code == 0 and gh.calls == 1 and
         h.contains(r.stdout, "resuming group") and h.contains(r.stdout, "2 file(s) were already in the registry's storage") and std.mem.eql(u8, staged_group, resumed_group) and
-        (try served(a, fake, "grpx", "2.0.0")) != null and (try served(a, fake, "grpy", "2.1.0")) != null, describe(a, r));
+        (try served(a, fake, "example/grpx", "2.0.0")) != null and (try served(a, fake, "example/grpy", "2.1.0")) != null, describe(a, r));
 
-    rep.check("the commit run asked for a publish token and no stage token", after_commit.publish == after_stage.publish + 1 and after_commit.stage == after_stage.stage,
-        "the commit run's exchange did not mint exactly one publish token");
+    rep.check("the commit run asked for a publish token and no stage token", after_commit.publish == after_stage.publish + 1 and after_commit.stage == after_stage.stage, "the commit run's exchange did not mint exactly one publish token");
 
     // The failure job: --abort with its own exchange ends a staged group.
     const lost = try h.join(a, &.{ work, "staged_lost" });
-    try stage(a, lost, &.{.{ "grpz", "3.0.0" }});
+    try stage(a, lost, &.{.{ "example/grpz", "3.0.0" }});
     const lost_args = [_][]const u8{ "publish", "--staged", lost, "--config-dir", conf, "--oidc", "--wait", "30" };
     r = try m.run(&(lost_args ++ [_][]const u8{"--no-commit"} ++ to_fake), .both, null);
     gh.calls = 0;
     const lost_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ lost, "state.json" }))), "group_id") orelse "";
     r = try m.run(&(lost_args ++ [_][]const u8{"--abort"} ++ to_fake), .both, null);
     rep.check("--abort --oidc exchanges once and ends the staged group; nothing is served", r.code == 0 and gh.calls == 1 and h.contains(r.stdout, "aborted group grp_") and
-        lost_group.len > 0 and h.contains(r.stdout, lost_group) and (try served(a, fake, "grpz", "3.0.0")) == null, describe(a, r));
+        lost_group.len > 0 and h.contains(r.stdout, lost_group) and (try served(a, fake, "example/grpz", "3.0.0")) == null, describe(a, r));
     rep.check("and no credentials file was written by any command", !exists(conf), "the config directory exists");
 
     // --- nothing secret was printed

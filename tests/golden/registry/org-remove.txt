@@ -1,0 +1,22 @@
+usage: mopm org remove <namespace> <user> [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Remove a member from a namespace.
+
+Needs a fresh session of an `owner`. The removal takes effect at once: the next write of that account in the
+namespace is `not_namespace_member`. An owner may remove themselves while another owner remains; the only
+owner is `last_owner`. An account that is not a member is `member_not_found`.
+
+arguments:
+  <namespace>
+      The namespace of the package, a GitHub login in lower case.
+  <user>
+      A mopm username, the user namespace of an account (its GitHub login in lower case).
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends DELETE /api/v2/namespaces/{namespace}/members/{user} (removeMember) with the token 'mopm login' stored, or $MOPM_TOKEN.

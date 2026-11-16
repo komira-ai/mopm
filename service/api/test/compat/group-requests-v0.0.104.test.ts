@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { RegistryError } from '../../src/errors';
 import { DEFAULT_PUBLISH_CONFIG } from '../../src/publish/config';
 import { PublishError } from '../../src/publish/errors';
 import { parseGroupCommit } from './v0.0.104/group-commit';
@@ -10,7 +11,8 @@ import { groupIdFor, parseGroupRequest } from './v0.0.104/group-request';
  * This command line's requests through the previous release's parsers (test/compat/v0.0.104, pinned; README.md there). The bodies are
  * the files test/fixtures/new-client/{create,commit}.json, which //:compat_v0_0_104 holds to what the current client sends for a set
  * (alpha with a readme, beta with an empty one, gamma with none), and test/fixtures/released-client-v0.0.104/ for the released client's
- * own requests for the same set.
+ * own requests for the same set. The current client names members by full name (docs/design/namespaces.md, section 11): the previous
+ * registry refuses its create request instead of misreading it.
  */
 
 const VENDORED = join(__dirname, 'v0.0.104');
@@ -26,15 +28,27 @@ test('the vendored parsers are the files SHA256SUMS names', () => {
 });
 
 describe('the create request of the current client, read by the previous registry', () => {
-  test('declares the same set as the released client\'s, so the group id is the same: the readme of a member is ignored', () => {
+  test('the released client\'s request for the set is read, with its flat names', () => {
     const released = parseGroupRequest(DEFAULT_PUBLISH_CONFIG, fixture('released-client-v0.0.104', 'create.json'));
-    const current = parseGroupRequest(DEFAULT_PUBLISH_CONFIG, fixture('new-client', 'create.json'));
-    expect(current).toEqual(released);
-    expect(current.members.map((m) => m.name)).toEqual(['alpha', 'beta', 'gamma']);
-    expect(groupIdFor('octocat', current)).toBe(groupIdFor('octocat', released));
-    // The new client did declare a readme (it would be a different request if the previous registry read it).
-    const body = fixture('new-client', 'create.json') as { members: Array<{ readme?: unknown }> };
+    expect(released.members.map((m) => m.name)).toEqual(['alpha', 'beta', 'gamma']);
+    expect(groupIdFor('octocat', released)).toMatch(/^grp_[0-9a-f]{32}$/);
+  });
+
+  test('is refused as invalid_name, naming the first member\'s full name: a full name is never misread as a flat one', () => {
+    const body = fixture('new-client', 'create.json') as { members: Array<{ name: string; readme?: unknown }> };
+    // The current client names every member by its full name, and declares the readme of alpha.
+    expect(body.members.map((m) => m.name)).toEqual(['example/alpha', 'example/beta', 'example/gamma']);
     expect(body.members[0]!.readme).toEqual({ sha256: expect.stringMatching(/^[0-9a-f]{64}$/), size: expect.any(Number) });
+    let refused: unknown;
+    try {
+      parseGroupRequest(DEFAULT_PUBLISH_CONFIG, body);
+    } catch (e) {
+      refused = e;
+    }
+    expect(refused).toBeInstanceOf(RegistryError);
+    expect((refused as RegistryError).code).toBe('invalid_name');
+    expect((refused as RegistryError).message).toBe("'example/alpha' is not a valid package name.");
+    expect((refused as RegistryError).detail).toEqual({ name: 'example/alpha' });
   });
 });
 

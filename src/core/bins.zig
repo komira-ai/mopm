@@ -1,7 +1,7 @@
 //! The programs a package ships: `[targets] bins` of a published package, as source.
 //!
 //! A package lists programs in `[targets] bins = [{ name = "fetch", path = "src/fetch.mojo" }]`. `mopm pack` and
-//! `mopm stage` put the Mojo file of each one in the package at `lib/mojo/<package>.bins/<name>.mojo`; they never
+//! `mopm stage` put the Mojo file of each one in the package at `lib/mojo/<import name>.bins/<name>.mojo`; they never
 //! pack an executable (the registry refuses one, and a program built on one machine would not run on another). The
 //! program is built where it is used: `mopm run --bin <package>:<name>` runs that file with the environment's
 //! packages importable (src/cli/bin_run.zig).
@@ -77,7 +77,7 @@ fn parseWith(a: Allocator, bins: []const u8) !manifest.Manifest {
     var diag: manifest.Diagnostic = .{};
     return manifest.parse(a, try std.fmt.allocPrint(a,
         \\[package]
-        \\name = "benchy"
+        \\name = "example/benchy"
         \\version = "1.0.0"
         \\
         \\[toolchain]
@@ -162,7 +162,7 @@ test "pack: a program is at lib/mojo/<name>.bins/<bin>.mojo, the same bytes twic
         .{ .name = "spsc_ring_bench", .source = "def main(): print(1)\n" },
         .{ .name = "agg_state_bench", .source = "def main(): print(2)\n" },
     };
-    const base = conda.Input{ .name = "benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC" };
+    const base = conda.Input{ .name = "example/benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC" };
     var with = base;
     with.bins = &bins;
     const p1 = try conda.pack(a, with);
@@ -191,7 +191,7 @@ test "pack: a program with a name the registry refuses, a name used twice or no 
     var st = testArena();
     defer st.deinit();
     const a = st.allocator();
-    const base = conda.Input{ .name = "benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC" };
+    const base = conda.Input{ .name = "example/benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC" };
     const bad = [_][]const conda.Bin{
         &.{.{ .name = "Upper", .source = "x" }},
         &.{.{ .name = "has-dash", .source = "x" }},
@@ -208,14 +208,14 @@ test "pack: a program with a name the registry refuses, a name used twice or no 
 }
 
 // Defect caught: an install that drops the program, or puts it where `mopm run --bin` does not look.
-test "install: the program is unpacked at lib/mojo/<package>.bins/<bin>.mojo of the environment" {
+test "install: the program is unpacked at lib/mojo/<import name>.bins/<bin>.mojo of the environment" {
     var st = testArena();
     defer st.deinit();
     const a = st.allocator();
     const window = try std.testing.allocator.alloc(u8, unpack.window_size);
     defer std.testing.allocator.free(window);
     const source = "def main(): print(\"bench\")\n";
-    const packed_ = try conda.pack(a, .{ .name = "benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC", .bins = &.{.{ .name = "agg_state_bench", .source = source }} });
+    const packed_ = try conda.pack(a, .{ .name = "example/benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC", .bins = &.{.{ .name = "agg_state_bench", .source = source }} });
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

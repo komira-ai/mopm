@@ -130,6 +130,21 @@ describe.each(STAGES)('ChannelStack %s', (stage) => {
     });
   });
 
+  test('a namespace channel path is covered: `*` crosses slashes, so <ns>/<subdir>/repodata.json takes the short TTL and <ns>/<subdir>/*.conda the default immutable one', () => {
+    const dist = Object.values(t.findResources('AWS::CloudFront::Distribution'))[0] as any;
+    const cfg = dist.Properties.DistributionConfig;
+    const policies = Object.values(t.findResources('AWS::CloudFront::CachePolicy')) as any[];
+    const nameOf = (ref: any) => policies.find((_p, i) => Object.keys(t.findResources('AWS::CloudFront::CachePolicy'))[i] === ref?.Ref)?.Properties.CachePolicyConfig.Name;
+    const matches = (pattern: string, path: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`).test(path);
+    const behaviourFor = (path: string) => cfg.CacheBehaviors.find((b: any) => matches(b.PathPattern, path)) ?? cfg.DefaultCacheBehavior;
+    const policyOf = (path: string) => nameOf(behaviourFor(path).CachePolicyId);
+    expect(policyOf('noarch/repodata.json')).toBe(`mopm-${stage}-repodata`);
+    expect(policyOf('komira-ai/noarch/repodata.json')).toBe(`mopm-${stage}-repodata`);
+    expect(policyOf('komira-ai/linux-64/repodata.json.zst')).toBe(`mopm-${stage}-repodata`);
+    expect(policyOf('noarch/mojo-x-1.0-0.conda')).toBe(`mopm-${stage}-immutable`);
+    expect(policyOf('komira-ai/noarch/mojo-komira-ai.x-1.0-0.conda')).toBe(`mopm-${stage}-immutable`);
+  });
+
   test('certificate is DNS validated for the conda host', () => {
     t.hasResourceProperties('AWS::CertificateManager::Certificate', {
       DomainName: stage === 'prod' ? 'conda.mopm.dev' : `conda.${stage}.mopm.dev`,

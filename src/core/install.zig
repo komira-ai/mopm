@@ -29,7 +29,7 @@
 //! list has the same stamp, and whose environment `checkInstalled` and
 //! `verifyItems` find intact, downloads nothing. `checkInstalled` checks each
 //! locked package's `conda-meta` record names the locked sha256, its
-//! `lib/mojo/<name>.mopm.json` is there, every native library the lock gives
+//! `lib/mojo/<import name>.mopm.json` is there, every native library the lock gives
 //! a sha256 hashes to it, each system library's record names its sha256, and
 //! no `lib/mojo/*.mopm.json` is installed that the lock does not name.
 //! `verifyItems` checks that every item has its record with the item's sha256
@@ -52,6 +52,7 @@ const semver = @import("semver.zig");
 const plan = @import("install_plan.zig");
 const closure = @import("closure.zig");
 const lock_libs = @import("lock_libs.zig");
+const pkg_names = @import("names.zig");
 
 /// Where `mopm sync` keeps the environment, relative to the project: the
 /// directory, the environment's name in it and its path, and the directory
@@ -125,7 +126,7 @@ pub fn staleness(arena: Allocator, toolchains: []const []const u8, roots: []cons
             error.Invalid => return try std.fmt.allocPrint(arena, "mopm.toml: {s} = \"{s}\": {s}", .{ r.name, r.requirement, why }),
             error.OutOfMemory => return error.OutOfMemory,
         };
-        // A version 2 lock may hold one version per Mojo version: each must fit.
+        // A lock may hold one version per Mojo version: each must fit.
         for (l.packages) |q| {
             if (!std.mem.eql(u8, q.name, r.name)) continue;
             const v = resolve.semverOf(q.version);
@@ -136,19 +137,19 @@ pub fn staleness(arena: Allocator, toolchains: []const []const u8, roots: []cons
         _ = have;
     }
     for (paths) |d| {
-        const e = lockedEntry(l, d.name) orelse
-            return try std.fmt.allocPrint(arena, "mopm.toml needs {s} (path {s}), which mopm.lock does not lock", .{ d.name, d.path });
+        const e = lockedEntry(l, d.full()) orelse
+            return try std.fmt.allocPrint(arena, "mopm.toml needs {s} (path {s}), which mopm.lock does not lock", .{ d.full(), d.path });
         if (e.source != .path or !std.mem.eql(u8, e.path, d.path)) {
-            return try std.fmt.allocPrint(arena, "{s} is the path dependency {s}, but mopm.lock has {s} {s}{s}{s}", .{ d.name, d.path, e.name, e.version, if (e.source == .path) " at " else " from ", if (e.source == .path) e.path else e.channel });
+            return try std.fmt.allocPrint(arena, "{s} is the path dependency {s}, but mopm.lock has {s} {s}{s}{s}", .{ d.full(), d.path, e.name, e.version, if (e.source == .path) " at " else " from ", if (e.source == .path) e.path else e.channel });
         }
         if (!std.mem.eql(u8, e.version, d.version)) {
-            return try std.fmt.allocPrint(arena, "{s}/mopm.toml says {s} {s}, but mopm.lock has {s} {s}", .{ d.path, d.name, d.version, d.name, e.version });
+            return try std.fmt.allocPrint(arena, "{s}/mopm.toml says {s} {s}, but mopm.lock has {s} {s}", .{ d.path, d.full(), d.version, d.full(), e.version });
         }
     }
     var needed = std.StringHashMap(void).init(arena);
     var todo = std.ArrayList([]const u8).init(arena);
     for (roots) |r| try todo.append(r.name);
-    for (paths) |d| try todo.append(d.name);
+    for (paths) |d| try todo.append(d.full());
     while (todo.popOrNull()) |name| {
         if (needed.contains(name)) continue;
         try needed.put(name, {});
@@ -190,9 +191,9 @@ pub fn forSubdir(arena: Allocator, l: lock.Lock, subdir: []const u8) Allocator.E
     return .{ .ok = out.items };
 }
 
-/// The conda file name of a lock entry.
+/// The conda file name of a lock entry: `mojo-<namespace>.<name>-<version>-<build>.conda` (`p.name` is the full name).
 pub fn fileName(arena: Allocator, p: lock.Package) Allocator.Error![]const u8 {
-    return std.fmt.allocPrint(arena, "mojo-{s}-{s}-{s}.conda", .{ p.name, p.version, p.build });
+    return std.fmt.allocPrint(arena, "{s}-{s}-{s}.conda", .{ try pkg_names.condaName(arena, p.name), p.version, p.build });
 }
 
 pub fn sha256Hex(arena: Allocator, bytes: []const u8) Allocator.Error![]const u8 {
@@ -215,7 +216,7 @@ pub fn checkBytes(arena: Allocator, p: lock.Package, bytes: []const u8) Allocato
 }
 /// One file to install: a locked package, a system library the lock pins, or one of the toolchain's.
 pub const Item = struct {
-    /// The conda package name (`mojo-<name>` for a locked package).
+    /// The conda package name (`mojo-<namespace>.<name>` for a locked package).
     name: []const u8,
     version: []const u8,
     file_name: []const u8,
@@ -302,7 +303,7 @@ pub fn planInstall(arena: Allocator, pkgs: []const lock.Package, libs: []const l
         items.items[at] = item;
     }
     for (pkgs) |p| {
-        const conda_name = try std.fmt.allocPrint(arena, "mojo-{s}", .{p.name});
+        const conda_name = try pkg_names.condaName(arena, p.name);
         if (names.contains(conda_name)) {
             const holder = if (lib_names.contains(conda_name)) "the lock's system libraries" else try std.fmt.allocPrint(arena, "the Mojo {s} toolchain", .{c.mojo});
             return .{ .bad = try std.fmt.allocPrint(arena, "the locked package {s} would install as {s}, which {s} already hold{s}; refused", .{ p.name, conda_name, holder, if (lib_names.contains(conda_name)) "" else "s" }) };
@@ -400,9 +401,10 @@ pub fn checkInstalled(arena: Allocator, env: std.fs.Dir, pkgs: []const lock.Pack
         }
     }
     for (pkgs) |p| {
-        const record = try std.fmt.allocPrint(arena, "conda-meta/mojo-{s}-{s}-{s}.json", .{ p.name, p.version, p.build });
+        const conda = try pkg_names.condaName(arena, p.name);
+        const record = try std.fmt.allocPrint(arena, "conda-meta/{s}-{s}-{s}.json", .{ conda, p.version, p.build });
         const text = env.readFileAlloc(arena, record, 64 << 20) catch |e| switch (e) {
-            error.FileNotFound => return try std.fmt.allocPrint(arena, "mojo-{s} {s} ({s}) is not installed: no {s}", .{ p.name, p.version, p.build, record }),
+            error.FileNotFound => return try std.fmt.allocPrint(arena, "{s} {s} ({s}) is not installed: no {s}", .{ conda, p.version, p.build, record }),
             else => return e,
         };
         const v = std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch
@@ -410,18 +412,18 @@ pub fn checkInstalled(arena: Allocator, env: std.fs.Dir, pkgs: []const lock.Pack
         const sha = if (v == .object) v.object.get("sha256") else null;
         if (sha == null or sha.? != .string or !std.mem.eql(u8, sha.?.string, p.sha256)) {
             const got = if (sha != null and sha.? == .string) sha.?.string else "none";
-            return try std.fmt.allocPrint(arena, "installed mojo-{s} {s} has sha256 {s}; mopm.lock pins {s}; refused", .{ p.name, p.version, got, p.sha256 });
+            return try std.fmt.allocPrint(arena, "installed {s} {s} has sha256 {s}; mopm.lock pins {s}; refused", .{ conda, p.version, got, p.sha256 });
         }
-        const meta = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{p.name});
-        env.access(meta, .{}) catch return try std.fmt.allocPrint(arena, "mojo-{s} {s} is installed without {s}: a corrupt package", .{ p.name, p.version, meta });
+        const meta = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{pkg_names.importName(p.name)});
+        env.access(meta, .{}) catch return try std.fmt.allocPrint(arena, "{s} {s} is installed without {s}: a corrupt package", .{ conda, p.version, meta });
         for (p.native) |n| {
             const want = n.sha256 orelse continue;
             const path = try std.fmt.allocPrint(arena, "lib/{s}", .{n.soname});
             const bytes = env.readFileAlloc(arena, path, 1 << 30) catch
-                return try std.fmt.allocPrint(arena, "mojo-{s} {s}: its native library {s} is not installed", .{ p.name, p.version, path });
+                return try std.fmt.allocPrint(arena, "{s} {s}: its native library {s} is not installed", .{ conda, p.version, path });
             const got = try sha256Hex(arena, bytes);
             if (!std.mem.eql(u8, got, want)) {
-                return try std.fmt.allocPrint(arena, "{s} of mojo-{s} {s} has sha256 {s}; mopm.lock pins {s}; refused", .{ path, p.name, p.version, got, want });
+                return try std.fmt.allocPrint(arena, "{s} of {s} {s} has sha256 {s}; mopm.lock pins {s}; refused", .{ path, conda, p.version, got, want });
             }
         }
     }
@@ -439,7 +441,7 @@ pub fn checkInstalled(arena: Allocator, env: std.fs.Dir, pkgs: []const lock.Pack
         if (!std.mem.endsWith(u8, entry.name, suffix)) continue;
         const name = entry.name[0 .. entry.name.len - suffix.len];
         var locked = false;
-        for (pkgs) |p| locked = locked or std.mem.eql(u8, p.name, name);
+        for (pkgs) |p| locked = locked or std.mem.eql(u8, pkg_names.importName(p.name), name);
         if (!locked) return try std.fmt.allocPrint(arena, "lib/mojo/{s} is installed but mopm.lock does not lock {s}; refused", .{ entry.name, name });
     }
     return null;
@@ -466,13 +468,13 @@ fn pkg(name: []const u8, version: []const u8, subdir: []const u8, deps: []const 
 }
 
 const app_lock = lock.Lock{ .mojo = "1.0.0", .channels = &.{"https://conda.mopm.dev/"}, .packages = &.{
-    pkg("crypto", "2.0.1", "linux-64", &.{}),
-    pkg("crypto", "2.0.1", "osx-arm64", &.{}),
-    pkg("http_client", "0.4.0", "linux-64", &.{ "crypto", "http_core" }),
-    pkg("http_core", "1.2.5", "noarch", &.{}),
+    pkg("komira-ai/crypto", "2.0.1", "linux-64", &.{}),
+    pkg("komira-ai/crypto", "2.0.1", "osx-arm64", &.{}),
+    pkg("komira-ai/http_client", "0.4.0", "linux-64", &.{ "komira-ai/crypto", "komira-ai/http_core" }),
+    pkg("komira-ai/http_core", "1.2.5", "noarch", &.{}),
 } };
 
-const app_roots = [_]resolve.Root{ .{ .name = "http_client", .requirement = "0.4" }, .{ .name = "http_core", .requirement = "~1.2" } };
+const app_roots = [_]resolve.Root{ .{ .name = "komira-ai/http_client", .requirement = "0.4" }, .{ .name = "komira-ai/http_core", .requirement = "~1.2" } };
 
 test "a lock that matches mopm.toml is fresh; each kind of drift is named" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -483,11 +485,11 @@ test "a lock that matches mopm.toml is fresh; each kind of drift is named" {
     const Case = struct { []const []const u8, []const resolve.Root, []const u8 };
     const cases = [_]Case{
         .{ &.{"1.1.0"}, &app_roots, "mopm.lock is for mojo 1.0.0; mopm.toml's [toolchain] allows 1.1.0" },
-        .{ &.{"1.0.0"}, &.{ app_roots[0], app_roots[1], .{ .name = "tls", .requirement = "1" } }, "mopm.toml needs tls, which mopm.lock does not lock" },
-        .{ &.{"1.0.0"}, &.{ .{ .name = "http_client", .requirement = "0.5" }, app_roots[1] }, "mopm.toml needs http_client \"0.5\", but mopm.lock has http_client 0.4.0" },
-        .{ &.{"1.0.0"}, &.{ app_roots[0], .{ .name = "http_core", .requirement = ">=1.3" } }, "mopm.toml needs http_core \">=1.3\", but mopm.lock has http_core 1.2.5" },
-        .{ &.{"1.0.0"}, &.{.{ .name = "http_core", .requirement = "1" }}, "mopm.lock locks crypto 2.0.1, which nothing in mopm.toml needs" },
-        .{ &.{"1.0.0"}, &.{ app_roots[0], .{ .name = "http_core", .requirement = "1.x.2" } }, "mopm.toml: http_core = \"1.x.2\": " },
+        .{ &.{"1.0.0"}, &.{ app_roots[0], app_roots[1], .{ .name = "komira-ai/tls", .requirement = "1" } }, "mopm.toml needs komira-ai/tls, which mopm.lock does not lock" },
+        .{ &.{"1.0.0"}, &.{ .{ .name = "komira-ai/http_client", .requirement = "0.5" }, app_roots[1] }, "mopm.toml needs komira-ai/http_client \"0.5\", but mopm.lock has komira-ai/http_client 0.4.0" },
+        .{ &.{"1.0.0"}, &.{ app_roots[0], .{ .name = "komira-ai/http_core", .requirement = ">=1.3" } }, "mopm.toml needs komira-ai/http_core \">=1.3\", but mopm.lock has komira-ai/http_core 1.2.5" },
+        .{ &.{"1.0.0"}, &.{.{ .name = "komira-ai/http_core", .requirement = "1" }}, "mopm.lock locks komira-ai/crypto 2.0.1, which nothing in mopm.toml needs" },
+        .{ &.{"1.0.0"}, &.{ app_roots[0], .{ .name = "komira-ai/http_core", .requirement = "1.x.2" } }, "mopm.toml: komira-ai/http_core = \"1.x.2\": " },
     };
     for (cases) |case| {
         const got = (try staleness(a, case[0], case[1], &.{}, app_lock)) orelse {
@@ -510,7 +512,7 @@ test "one file per name: the host's subdir, else noarch" {
     try std.testing.expectEqualStrings("linux-64", linux[0].subdir);
     try std.testing.expectEqualStrings("noarch", linux[2].subdir);
     const arm = try forSubdir(a, app_lock, "linux-aarch64");
-    try std.testing.expectEqualStrings("mopm.lock has no file of crypto for linux-aarch64 (nor a noarch one)", arm.bad);
+    try std.testing.expectEqualStrings("mopm.lock has no file of komira-ai/crypto for linux-aarch64 (nor a noarch one)", arm.bad);
     try std.testing.expectEqualStrings("linux-64", subdirOf(.linux, .x86_64).?);
     try std.testing.expectEqualStrings("linux-aarch64", subdirOf(.linux, .aarch64).?);
     try std.testing.expectEqualStrings("osx-arm64", subdirOf(.macos, .aarch64).?);
@@ -522,12 +524,12 @@ test "downloaded bytes: the pinned ones pass; a changed byte or length is refuse
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const p = pkg("greet", "1.0.0", "linux-64", &.{});
+    const p = pkg("komira-ai/greet", "1.0.0", "linux-64", &.{});
     try std.testing.expectEqual(@as(?[]const u8, null), try checkBytes(a, p, "abc"));
     const flipped = (try checkBytes(a, p, "abd")).?;
-    try std.testing.expect(std.mem.startsWith(u8, flipped, "mojo-greet-1.0.0-mojo1.0.0_0.conda: sha256 mismatch: mopm.lock pins " ++ sha_abc ++ ", the file is "));
+    try std.testing.expect(std.mem.startsWith(u8, flipped, "mojo-komira-ai.greet-1.0.0-mojo1.0.0_0.conda: sha256 mismatch: mopm.lock pins " ++ sha_abc ++ ", the file is "));
     try std.testing.expect(std.mem.endsWith(u8, flipped, "; refused"));
-    try std.testing.expectEqualStrings("mojo-greet-1.0.0-mojo1.0.0_0.conda: mopm.lock pins 3 bytes, the file has 4; refused", (try checkBytes(a, p, "abcd")).?);
+    try std.testing.expectEqualStrings("mojo-komira-ai.greet-1.0.0-mojo1.0.0_0.conda: mopm.lock pins 3 bytes, the file has 4; refused", (try checkBytes(a, p, "abcd")).?);
 }
 
 test "the installed environment: exactly the lock, or a refusal that says what differs" {
@@ -539,19 +541,19 @@ test "the installed environment: exactly the lock, or a refusal that says what d
     const env = tmp.dir;
     try env.makePath("conda-meta");
     try env.makePath("lib/mojo");
-    var greet = pkg("greet", "1.0.0", "linux-64", &.{});
+    var greet = pkg("komira-ai/greet", "1.0.0", "linux-64", &.{});
     greet.native = &.{.{ .id = "greet", .soname = "libgreet.so", .sha256 = sha_abc }};
     const pkgs = [_]lock.Package{greet};
 
-    try std.testing.expectEqualStrings("mojo-greet 1.0.0 (mojo1.0.0_0) is not installed: no conda-meta/mojo-greet-1.0.0-mojo1.0.0_0.json", (try checkInstalled(a, env, &pkgs, &.{})).?);
-    try env.writeFile("conda-meta/mojo-greet-1.0.0-mojo1.0.0_0.json", "{\"name\":\"mojo-greet\",\"sha256\":\"" ++ sha_other ++ "\"}");
-    try std.testing.expectEqualStrings("installed mojo-greet 1.0.0 has sha256 " ++ sha_other ++ "; mopm.lock pins " ++ sha_abc ++ "; refused", (try checkInstalled(a, env, &pkgs, &.{})).?);
-    try env.writeFile("conda-meta/mojo-greet-1.0.0-mojo1.0.0_0.json", "{\"name\":\"mojo-greet\",\"sha256\":\"" ++ sha_abc ++ "\"}");
-    try std.testing.expectEqualStrings("mojo-greet 1.0.0 is installed without lib/mojo/greet.mopm.json: a corrupt package", (try checkInstalled(a, env, &pkgs, &.{})).?);
+    try std.testing.expectEqualStrings("mojo-komira-ai.greet 1.0.0 (mojo1.0.0_0) is not installed: no conda-meta/mojo-komira-ai.greet-1.0.0-mojo1.0.0_0.json", (try checkInstalled(a, env, &pkgs, &.{})).?);
+    try env.writeFile("conda-meta/mojo-komira-ai.greet-1.0.0-mojo1.0.0_0.json", "{\"name\":\"mojo-komira-ai.greet\",\"sha256\":\"" ++ sha_other ++ "\"}");
+    try std.testing.expectEqualStrings("installed mojo-komira-ai.greet 1.0.0 has sha256 " ++ sha_other ++ "; mopm.lock pins " ++ sha_abc ++ "; refused", (try checkInstalled(a, env, &pkgs, &.{})).?);
+    try env.writeFile("conda-meta/mojo-komira-ai.greet-1.0.0-mojo1.0.0_0.json", "{\"name\":\"mojo-komira-ai.greet\",\"sha256\":\"" ++ sha_abc ++ "\"}");
+    try std.testing.expectEqualStrings("mojo-komira-ai.greet 1.0.0 is installed without lib/mojo/greet.mopm.json: a corrupt package", (try checkInstalled(a, env, &pkgs, &.{})).?);
     try env.writeFile("lib/mojo/greet.mopm.json", "{}");
-    try std.testing.expectEqualStrings("mojo-greet 1.0.0: its native library lib/libgreet.so is not installed", (try checkInstalled(a, env, &pkgs, &.{})).?);
+    try std.testing.expectEqualStrings("mojo-komira-ai.greet 1.0.0: its native library lib/libgreet.so is not installed", (try checkInstalled(a, env, &pkgs, &.{})).?);
     try env.writeFile("lib/libgreet.so", "abd");
-    try std.testing.expect(std.mem.startsWith(u8, (try checkInstalled(a, env, &pkgs, &.{})).?, "lib/libgreet.so of mojo-greet 1.0.0 has sha256 "));
+    try std.testing.expect(std.mem.startsWith(u8, (try checkInstalled(a, env, &pkgs, &.{})).?, "lib/libgreet.so of mojo-komira-ai.greet 1.0.0 has sha256 "));
     try env.writeFile("lib/libgreet.so", "abc");
     try std.testing.expectEqual(@as(?[]const u8, null), try checkInstalled(a, env, &pkgs, &.{}));
     try env.writeFile("lib/mojo/stray.mopm.json", "{}");
@@ -563,24 +565,24 @@ test "path dependencies: locked at their path and version, never selected for do
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const with_path = lock.Lock{ .mojo = "1.0.0", .channels = &.{"https://conda.mopm.dev/"}, .packages = &.{
-        pkg("crypto", "2.0.1", "linux-64", &.{}),
-        pkg("http_client", "0.4.0", "linux-64", &.{ "crypto", "http_core" }),
-        pkg("http_core", "1.2.5", "noarch", &.{}),
-        .{ .name = "local", .version = "0.3.0", .source = .path, .path = "local", .deps = &.{"http_client"} },
+        pkg("komira-ai/crypto", "2.0.1", "linux-64", &.{}),
+        pkg("komira-ai/http_client", "0.4.0", "linux-64", &.{ "komira-ai/crypto", "komira-ai/http_core" }),
+        pkg("komira-ai/http_core", "1.2.5", "noarch", &.{}),
+        .{ .name = "komira-ai/local", .version = "0.3.0", .source = .path, .path = "local", .deps = &.{"komira-ai/http_client"} },
     } };
     // local's own mopm.toml requires http_client; the project requires only local.
-    const roots = [_]resolve.Root{.{ .name = "http_client", .requirement = "0.4", .from = "local/mopm.toml" }};
-    const paths = [_]plan.PathDep{.{ .name = "local", .version = "0.3.0", .path = "local", .deps = &.{"http_client"} }};
+    const roots = [_]resolve.Root{.{ .name = "komira-ai/http_client", .requirement = "0.4", .from = "local/mopm.toml" }};
+    const paths = [_]plan.PathDep{.{ .name = "local", .full_name = "komira-ai/local", .version = "0.3.0", .path = "local", .deps = &.{"komira-ai/http_client"} }};
     try std.testing.expectEqual(@as(?[]const u8, null), try staleness(a, &.{"1.0.0"}, &roots, &paths, with_path));
 
     const Case = struct { []const resolve.Root, []const plan.PathDep, []const u8 };
     const cases = [_]Case{
-        .{ &roots, &.{.{ .name = "local", .version = "0.3.1", .path = "local" }}, "local/mopm.toml says local 0.3.1, but mopm.lock has local 0.3.0" },
-        .{ &roots, &.{.{ .name = "local", .version = "0.3.0", .path = "../moved" }}, "local is the path dependency ../moved, but mopm.lock has local 0.3.0 at local" },
-        .{ &roots, &.{ paths[0], .{ .name = "crypto", .version = "2.0.1", .path = "vendor/crypto" } }, "crypto is the path dependency vendor/crypto, but mopm.lock has crypto 2.0.1 from https://conda.mopm.dev/" },
-        .{ &roots, &.{ paths[0], .{ .name = "other", .version = "1.0.0", .path = "other" } }, "mopm.toml needs other (path other), which mopm.lock does not lock" },
-        .{ &.{ roots[0], .{ .name = "local", .requirement = "0.3" } }, &paths, "mopm.toml needs local \"0.3\" from the registry, but mopm.lock has it as a path dependency" },
-        .{ &roots, &.{}, "mopm.lock locks local 0.3.0, which nothing in mopm.toml needs" },
+        .{ &roots, &.{.{ .name = "local", .full_name = "komira-ai/local", .version = "0.3.1", .path = "local" }}, "local/mopm.toml says komira-ai/local 0.3.1, but mopm.lock has komira-ai/local 0.3.0" },
+        .{ &roots, &.{.{ .name = "local", .full_name = "komira-ai/local", .version = "0.3.0", .path = "../moved" }}, "komira-ai/local is the path dependency ../moved, but mopm.lock has komira-ai/local 0.3.0 at local" },
+        .{ &roots, &.{ paths[0], .{ .name = "crypto", .full_name = "komira-ai/crypto", .version = "2.0.1", .path = "vendor/crypto" } }, "komira-ai/crypto is the path dependency vendor/crypto, but mopm.lock has komira-ai/crypto 2.0.1 from https://conda.mopm.dev/" },
+        .{ &roots, &.{ paths[0], .{ .name = "other", .full_name = "komira-ai/other", .version = "1.0.0", .path = "other" } }, "mopm.toml needs komira-ai/other (path other), which mopm.lock does not lock" },
+        .{ &.{ roots[0], .{ .name = "komira-ai/local", .requirement = "0.3" } }, &paths, "mopm.toml needs komira-ai/local \"0.3\" from the registry, but mopm.lock has it as a path dependency" },
+        .{ &roots, &.{}, "mopm.lock locks komira-ai/local 0.3.0, which nothing in mopm.toml needs" },
     };
     for (cases) |case| {
         const got = (try staleness(a, &.{"1.0.0"}, case[0], case[1], with_path)) orelse {
@@ -595,7 +597,7 @@ test "path dependencies: locked at their path and version, never selected for do
 
     const selected = (try forSubdir(a, with_path, "linux-64")).ok;
     try std.testing.expectEqual(@as(usize, 3), selected.len);
-    for (selected) |p| try std.testing.expect(p.source == .registry and !std.mem.eql(u8, p.name, "local"));
+    for (selected) |p| try std.testing.expect(p.source == .registry and !std.mem.eql(u8, p.name, "komira-ai/local"));
 }
 
 test "planInstall: the toolchain first, then the locked packages; a name the toolchain holds is refused" {
@@ -609,32 +611,35 @@ test "planInstall: the toolchain first, then the locked packages; a name the too
         .packages = &.{
             .{ .name = "mojo", .version = "1.0.0", .build = "release", .subdir = "linux-64", .channel = "max", .path = "linux-64/mojo-1.0.0-release.conda", .sha256 = "a" ** 64, .md5 = "m", .size = 10 },
             .{ .name = "mojo-python", .version = "1.0.0", .build = "release", .subdir = "noarch", .channel = "max", .path = "noarch/mojo-python-1.0.0-release.conda", .sha256 = "b" ** 64, .size = 20 },
+            .{ .name = "mojo-komira-ai.python", .version = "1.0.0", .build = "release", .subdir = "noarch", .channel = "max", .path = "noarch/mojo-komira-ai.python-1.0.0-release.conda", .sha256 = "c" ** 64, .size = 30 },
         },
     };
-    var greet = pkg("greet", "1.0.0", "linux-64", &.{});
-    greet.url = "https://conda.mopm.dev/linux-64/mojo-greet-1.0.0-mojo1.0.0_0.conda";
+    var greet = pkg("komira-ai/greet", "1.0.0", "linux-64", &.{});
+    greet.url = "https://conda.mopm.dev/linux-64/mojo-komira-ai.greet-1.0.0-mojo1.0.0_0.conda";
     const items = (try planInstall(a, &.{greet}, &.{}, c)).ok.items;
-    try std.testing.expectEqual(@as(usize, 3), items.len);
+    try std.testing.expectEqual(@as(usize, 4), items.len);
     try std.testing.expectEqualStrings("mojo", items[0].name);
     try std.testing.expectEqualStrings("mojo-1.0.0-release.conda", items[0].file_name);
     try std.testing.expectEqualStrings("https://conda.example/max/linux-64/mojo-1.0.0-release.conda", items[0].url);
     try std.testing.expectEqualStrings("m", items[0].md5);
     try std.testing.expect(items[0].locked == null);
     try std.testing.expectEqualStrings("https://conda.example/max/noarch/mojo-python-1.0.0-release.conda", items[1].url);
-    try std.testing.expectEqualStrings("mojo-greet", items[2].name);
-    try std.testing.expectEqualStrings("mojo-greet-1.0.0-mojo1.0.0_0.conda", items[2].file_name);
-    try std.testing.expectEqualStrings(greet.url, items[2].url);
-    try std.testing.expectEqual(@as(u64, 3), items[2].size);
-    try std.testing.expectEqualStrings("greet", items[2].locked.?.name);
+    try std.testing.expectEqualStrings("mojo-komira-ai.greet", items[3].name);
+    try std.testing.expectEqualStrings("mojo-komira-ai.greet-1.0.0-mojo1.0.0_0.conda", items[3].file_name);
+    try std.testing.expectEqualStrings(greet.url, items[3].url);
+    try std.testing.expectEqual(@as(u64, 3), items[3].size);
+    try std.testing.expectEqualStrings("komira-ai/greet", items[3].locked.?.name);
 
     // With no locked package, the toolchain alone.
-    try std.testing.expectEqual(@as(usize, 2), (try planInstall(a, &.{}, &.{}, c)).ok.items.len);
+    try std.testing.expectEqual(@as(usize, 3), (try planInstall(a, &.{}, &.{}, c)).ok.items.len);
 
-    // A package called "python" would install as mojo-python, which the toolchain holds.
+    // The package komira-ai/python installs as mojo-komira-ai.python, which the toolchain holds here; mojo-python
+    // (the toolchain's own) is no clash for a locked package of any namespace.
     try std.testing.expectEqualStrings(
-        "the locked package python would install as mojo-python, which the Mojo 1.0.0 toolchain already holds; refused",
-        (try planInstall(a, &.{pkg("python", "1.0.0", "linux-64", &.{})}, &.{}, c)).bad,
+        "the locked package komira-ai/python would install as mojo-komira-ai.python, which the Mojo 1.0.0 toolchain already holds; refused",
+        (try planInstall(a, &.{pkg("komira-ai/python", "1.0.0", "linux-64", &.{})}, &.{}, c)).bad,
     );
+    try std.testing.expect((try planInstall(a, &.{pkg("komira-ai/pythons", "1.0.0", "linux-64", &.{})}, &.{}, c)) == .ok);
 }
 
 test "stampOf: the same files give the same stamp; another hash, size, file or order gives another" {
@@ -642,7 +647,7 @@ test "stampOf: the same files give the same stamp; another hash, size, file or o
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const one = Item{ .name = "mojo", .version = "1.0.0", .file_name = "mojo-1.0.0-r.conda", .url = "https://a/mojo", .sha256 = "a" ** 64, .size = 10, .channel = "max" };
-    const two = Item{ .name = "mojo-greet", .version = "1.0.0", .file_name = "mojo-greet-1.0.0-b.conda", .url = "https://b/g", .sha256 = "b" ** 64, .size = 3, .channel = "c" };
+    const two = Item{ .name = "mojo-komira-ai.greet", .version = "1.0.0", .file_name = "mojo-komira-ai.greet-1.0.0-b.conda", .url = "https://b/g", .sha256 = "b" ** 64, .size = 3, .channel = "c" };
     const s = try stampOf(a, "/p/.mopm/env", &.{ one, two });
     try std.testing.expectEqual(@as(usize, 64), s.len);
     try std.testing.expectEqualStrings(s, try stampOf(a, "/p/.mopm/env", &.{ one, two }));
@@ -656,7 +661,7 @@ test "stampOf: the same files give the same stamp; another hash, size, file or o
     var other_size = two;
     other_size.size = 4;
     var other_file = two;
-    other_file.file_name = "mojo-greet-1.0.0-c.conda";
+    other_file.file_name = "mojo-komira-ai.greet-1.0.0-c.conda";
     var other_version = two;
     other_version.version = "1.0.1";
     for ([_][]const Item{ &.{ one, other_sha }, &.{ one, other_size }, &.{ one, other_file }, &.{ one, other_version }, &.{ two, one }, &.{one} }) |list| {
@@ -697,7 +702,7 @@ test "planInstall with system libraries: toolchain, libraries, locked packages; 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const greet = pkg("greet", "1.0.0", "linux-64", &.{});
+    const greet = pkg("komira-ai/greet", "1.0.0", "linux-64", &.{});
     const libs = [_]lock_libs.Lib{lib("libffi", "https://conda.example/forge/noarch/libffi-1.3.1-h0.conda", "c" ** 64)};
     const planned = (try planInstall(a, &.{greet}, &libs, tc_two)).ok;
     try std.testing.expectEqual(@as(usize, 0), planned.warnings.len);
@@ -711,7 +716,7 @@ test "planInstall with system libraries: toolchain, libraries, locked packages; 
     try std.testing.expectEqualStrings("https://conda.example/forge", items[2].channel);
     try std.testing.expectEqualStrings("https://conda.example/forge/noarch/libffi-1.3.1-h0.conda", items[2].url);
     try std.testing.expectEqual(@as(u64, 7), items[2].size);
-    try std.testing.expectEqualStrings("mojo-greet", items[3].name);
+    try std.testing.expectEqualStrings("mojo-komira-ai.greet", items[3].name);
     try std.testing.expect(!items[3].lib and !items[0].lib);
 }
 
@@ -750,8 +755,8 @@ test "planInstall with system libraries: an unusable url or file name, a locked 
         try std.testing.expect(std.mem.startsWith(u8, got.bad, "the lock's system library libz 1.3.1 has the url '"));
         try std.testing.expect(std.mem.endsWith(u8, got.bad, "', which does not end in <subdir>/<file>.conda; refused"));
     }
-    const clash = (try planInstall(a, &.{pkg("libffi", "1.0.0", "linux-64", &.{})}, &.{lib("mojo-libffi", libz_url, "d" ** 64)}, tc_two)).bad;
-    try std.testing.expectEqualStrings("the locked package libffi would install as mojo-libffi, which the lock's system libraries already hold; refused", clash);
+    const clash = (try planInstall(a, &.{pkg("komira-ai/libffi", "1.0.0", "linux-64", &.{})}, &.{lib("mojo-komira-ai.libffi", libz_url, "d" ** 64)}, tc_two)).bad;
+    try std.testing.expectEqualStrings("the locked package komira-ai/libffi would install as mojo-komira-ai.libffi, which the lock's system libraries already hold; refused", clash);
 }
 
 test "planInstall: a locked package whose file name is not one path component is refused" {
@@ -759,7 +764,7 @@ test "planInstall: a locked package whose file name is not one path component is
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const bad = (try planInstall(a, &.{pkg("evil/../x", "1.0.0", "linux-64", &.{})}, &.{}, tc_two)).bad;
-    try std.testing.expectEqualStrings("the locked package evil/../x has the file name 'mojo-evil/../x-1.0.0-mojo1.0.0_0.conda', which is not a safe file name; refused", bad);
+    try std.testing.expectEqualStrings("the locked package evil/../x has the file name 'mojo-evil.../x-1.0.0-mojo1.0.0_0.conda', which is not a safe file name; refused", bad);
     var tc = tc_two;
     tc.packages = &.{.{ .name = "mojo", .version = "1.0.0", .build = "r", .subdir = "linux-64", .channel = "max", .path = "linux-64/..", .sha256 = "a" ** 64, .size = 10 }};
     try std.testing.expectEqualStrings("the Mojo 1.0.0 toolchain has the file name '..', which is not a safe file name; refused", (try planInstall(a, &.{}, &.{}, tc)).bad);

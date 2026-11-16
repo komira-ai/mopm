@@ -2,7 +2,7 @@ import { DEFAULT_PUBLISH_CONFIG, publishConfigFromEnv } from '../../src/publish/
 import { Harness } from './harness';
 
 const err = (r: { body: string }) => JSON.parse(r.body).error as { code: string; message: string; hint: string };
-const claim = (h: Harness, token: string, name: string, body?: unknown) => h.call('POST', `/api/v1/packages/${name}/claim`, token, body);
+const claim = (h: Harness, token: string, name: string, body?: unknown) => h.claimService(token, name, body);
 
 /** An account with a row in the users table, and `n` API tokens of it (each its own token counter). */
 async function account(h: Harness, id: number, n = 1): Promise<string[]> {

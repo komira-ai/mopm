@@ -1,0 +1,13 @@
+usage: mopm health [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--json]
+
+Show whether the registry is up and in which mode.
+
+options:
+  --registry <prod|gamma|beta|url>
+      the registry (default prod)
+  --config-dir <dir>
+      where 'mopm login' keeps credentials.json (default ~/.config/mopm)
+  --json
+      print the registry's answer as JSON instead of text
+
+Sends GET /api/v2/health (getHealth).

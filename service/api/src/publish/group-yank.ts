@@ -1,6 +1,6 @@
 import type { GroupMembers } from '../group';
 import { bitmapHas, bitmapIndexes, bitmapSet, memberAuditId, type GroupRecord, type GroupYank } from '../group-store';
-import { progressed, requireMembers, stale, touchedSubdirs, writeOrderOf, type ChainQueues, type HopDeps } from './group-chain';
+import { progressed, requireMembers, stale, touchedDirs, writeOrderOf, type ChainQueues, type HopDeps } from './group-chain';
 import { groupAudit } from './group-lifecycle';
 import type { Queue } from './ports';
 import type { GroupHop, IndexMessage, IndexPkgMessage, YankGroupMessage } from './types';
@@ -52,12 +52,12 @@ export const runningOp = (y: GroupYank): YankOp => (y.state === 'unyanking' ? 'u
 
 /** The member indexes in `yanked_set`. */
 const yankedIndexes = (y: GroupYank, members: GroupMembers): number[] => bitmapIndexes(y.yanked_set).filter((i) => i < members.members.length);
-const subdirsOf = (y: GroupYank, members: GroupMembers): string[] => touchedSubdirs({ members: yankedIndexes(y, members).map((i) => members.members[i]!) });
+const subdirsOf = (y: GroupYank, members: GroupMembers): string[] => touchedDirs({ members: yankedIndexes(y, members).map((i) => members.members[i]!) });
 
 /** One step of a yank or unyank. `finish` has no message: whoever finds it next does it. */
 export type YankStep = { kind: 'rows' } | { kind: 'repodata'; subdir: string } | { kind: 'index'; position: number; name: string } | { kind: 'finish' };
 
-/** The first step the header does not show done: the rows, then a repodata hop for each subdir of the yanked members, then an index hop for each of them in `write_order`, then the end. */
+/** The first step the header does not show done: the rows, then a repodata hop for each repodata directory of the yanked members, then an index hop for each of them in `write_order`, then the end. */
 export function nextYankStep(h: YankedGroup, members: GroupMembers): YankStep {
   const y = h.yank;
   if (!y.rows_done) return { kind: 'rows' };
@@ -189,9 +189,9 @@ export async function yankRows(d: YankDeps, msg: YankGroupMessage): Promise<Yank
 type YankHop = GroupHop & { yank: NonNullable<GroupHop['yank']> };
 
 /**
- * The gate of a repodata hop of a yank or unyank: set the subdir in `yank.repodata_done` (already set is fine), and answer the member
- * list, or undefined when the hop is not for a yank that is running at its attempt with its rows done, or for a subdir none of the
- * yanked members has a file in. The caller builds the subdir's repodata only when this answers.
+ * The gate of a repodata hop of a yank or unyank: set the repodata directory (the hop's `subdir`) in `yank.repodata_done` (already set is fine), and answer the member
+ * list, or undefined when the hop is not for a yank that is running at its attempt with its rows done, or for a directory none of the
+ * yanked members has a file in. The caller builds that directory's repodata only when this answers.
  */
 export async function releaseYankRepodata(d: HopDeps, hop: YankHop, subdir: string): Promise<GroupMembers | undefined> {
   const { op, seq } = hop.yank;

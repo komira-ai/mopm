@@ -1,11 +1,14 @@
 import { posix } from 'node:path';
 import { fail } from './codes';
+import { condaNameOf, splitFullName } from '../names';
 import { canonicalVersion, isValidVersion } from '../version';
 import { CONDA_NAME, MIRROR_MAX_AGE_MS } from './native-mirror';
 import type { NativeMirror } from './native-mirror';
 
 /** Constants drawn from spec/package-metadata.schema.json; a test fails if the schema file drifts from them. */
 export const METADATA_SCHEMA_VERSION = 1;
+/** The schema of a package of a full name `<namespace>/<name>`; a flat name keeps METADATA_SCHEMA_VERSION. */
+export const FULL_NAME_SCHEMA_VERSION = 2;
 export const SONAME_PATTERN = /^lib[^./]+\..+$/;
 /** An exclusivity group is compared exactly, so it has no edge space and no control character (tab, newline and DEL included). */
 export const EXCLUSIVE_PATTERN = /^[^ \u0000-\u001f\u007f](?:[^\u0000-\u001f\u007f]*[^ \u0000-\u001f\u007f])?$/;
@@ -47,8 +50,8 @@ const isStr = (v: unknown): v is string => typeof v === 'string';
 const bad = (m: string): never => fail('manifest_schema', `<name>.mopm.json: ${m}`);
 
 /** Validate `<name>.mopm.json` against spec/package-metadata.schema.json (hand-written; the schema is small). */
-export function checkMopm(o: Record<string, unknown>): Mopm {
-  if (o.schema !== METADATA_SCHEMA_VERSION) return bad(`'schema' must be ${METADATA_SCHEMA_VERSION}`);
+export function checkMopm(o: Record<string, unknown>, schema: 1 | 2 = METADATA_SCHEMA_VERSION): Mopm {
+  if (o.schema !== schema) return bad(`'schema' must be ${schema}`);
   if (!isStr(o.name) || o.name.length < 1) return bad("'name' must be a non-empty string");
   if (o.version !== undefined && !isStr(o.version)) return bad("'version' must be a string");
   if (o.version !== undefined && !isValidVersion(o.version as string)) {
@@ -61,6 +64,9 @@ export function checkMopm(o: Record<string, unknown>): Mopm {
       if (typeof d !== 'object' || d === null || Array.isArray(d)) return bad("'deps' items must be objects");
       const r = d as Record<string, unknown>;
       if (!isStr(r.name) || r.name.length < 1) return bad("a dependency needs a non-empty 'name'");
+      if (schema === FULL_NAME_SCHEMA_VERSION && splitFullName(r.name) === undefined) {
+        return bad(`dependency '${r.name}' is not a full name <namespace>/<name>`);
+      }
       if (r.range !== undefined && !isStr(r.range)) return bad("a dependency 'range' must be a string");
       if (r.path !== undefined && !isStr(r.path)) return bad("a dependency 'path' must be a string");
       // Cargo's rule: a path is only for development; what is published must say which versions of the dependency work.
@@ -137,6 +143,8 @@ export interface DepOptions {
   /** The conda-forge name mirror, when it could be read; without it a native dependency's name cannot be checked, and that is a warning. */
   nativeMirror?: NativeMirror;
   now?: Date;
+  /** The metadata schema of the package: with 2 the `deps` are full names and their conda names are `mojo-<namespace>.<name>`. Default 1. */
+  schema?: 1 | 2;
 }
 
 export interface DependsVerdict {
@@ -195,7 +203,7 @@ export function checkDepends(idx: CondaIndex, mopm: Mopm, opt: DepOptions = {}):
     if ('bad' in spec) return fail('dependency_not_allowed', `dependency '${d.slice(0, 80)}' ${spec.bad}`);
     natives.push(spec.name);
   }
-  const declared = new Set(mopm.deps.map((x) => `mojo-${x.name}`));
+  const declared = new Set(mopm.deps.map((x) => (opt.schema === FULL_NAME_SCHEMA_VERSION ? condaNameOf(x.name) : `mojo-${x.name}`)));
   const same = declared.size === mojoDeps.size && [...declared].every((x) => mojoDeps.has(x));
   if (!same) {
     return fail('deps_mismatch', `info/index.json depends [${[...mojoDeps].sort().join(', ')}] differ from the metadata deps [${[...declared].sort().join(', ')}]`);

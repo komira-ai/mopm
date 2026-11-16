@@ -1,6 +1,6 @@
 // Runtime guards for read API responses: JSON from the network becomes a typed value or a DecodeError.
 //
-// Rules (the API is additive-only, spec/api/openapi.yaml):
+// Rules (the API is additive-only, spec/api/openapi-v2.yaml):
 //  - an unknown field is ignored (and not copied);
 //  - an enum value this build does not know becomes 'unknown' (the raw string is kept for display where useful);
 //  - a missing or mistyped required field is an error;
@@ -8,7 +8,7 @@
 //  - a file's subdir may be any string.
 
 import type {
-  Dep, FileRef, Health, Native, Owner, PackageInfo, PackageList, PackageSummary, Provenance, Tombstone,
+  Dep, FileRef, Health, NamespaceInfo, Native, PackageInfo, PackageList, PackageSummary, Provenance, Tombstone,
   VersionDetail, VersionState, VersionSummary,
 } from './types.js';
 
@@ -121,9 +121,14 @@ export function decodePackageList(v: unknown): PackageList {
   };
 }
 
-function decodeOwner(v: unknown, path: string): Owner {
+function decodeNamespace(v: unknown, path: string): NamespaceInfo {
   const o = obj(v, path);
-  return { github_id: num(o, 'github_id', path), handle: str(o, 'handle', path) };
+  return {
+    namespace: str(o, 'namespace', path),
+    kind: enumOf(o, 'kind', path, ['user', 'org'] as const),
+    github_id: num(o, 'github_id', path),
+    login: str(o, 'login', path),
+  };
 }
 
 function decodeVersionSummary(v: unknown, path: string): VersionSummary {
@@ -141,7 +146,7 @@ export function decodePackageInfo(v: unknown): PackageInfo {
     {
       name: str(o, 'name', p),
       state: enumOf(o, 'state', p, ['claimed', 'active'] as const),
-      owners: arr(o, 'owners', p, decodeOwner),
+      namespace: decodeNamespace(o.namespace, `${p}.namespace`),
       latest: strOrNull(o, 'latest', p),
       repository: strOrNull(o, 'repository', p),
       license: strOrNull(o, 'license', p),
