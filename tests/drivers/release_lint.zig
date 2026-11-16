@@ -5,7 +5,8 @@
 //! release-beta-user.yml, the matrix of the user-level beta.
 //!
 //! The pipeline (RELEASING.md): a push to main that changes more than docs or CI runs `beta` (the
-//! whole of ci.yml) and `lint` (the whole of lint.yml), then `plan` (the version), `build` (the
+//! whole of ci.yml), `lint` (the whole of lint.yml) and `beta-macos` (farm-macos.yml, the macOS checks on the farm's Mac
+//! workers), then `plan` (the version), `build` (the
 //! candidate: three targets, at that version), `beta-user` (the candidate tested as a user on every
 //! platform), `attest` (SHA256SUMS, cosign signatures and build provenance), `verify` (the checks of the
 //! built files, read-only), `tag` (the annotated tag v<version>, the one write before the release) and
@@ -14,8 +15,9 @@
 //! tags and publishes nothing.
 //!
 //! - **Who may write.** `contents: write` only in `publish` (under the exact push-to-main `if:`; it creates the
-//!   release of an existing tag, and the tool passes `--verify-tag`, `publishToolProblems`); `id-token: write` and
-//!   `attestations: write` only in `attest`. No other job holds any write scope, and no job may set `permissions`
+//!   release of an existing tag, and the tool passes `--verify-tag`, `publishToolProblems`); `attestations: write` only in
+//!   `attest`, and `id-token: write` only in `attest`, in `beta-macos` (for farm-connect in the workflow it calls) and in the apt
+//!   jobs that hold the cloud role. No other job holds any write scope, and no job may set `permissions`
 //!   to a bare string such as write-all.
 //! - **The tokens.** `tag` creates the tag, and `bump` (after `publish`, under the same `if:`) opens the
 //!   komira-internal pull request that moves its `mopm` submodule; both write through a token of the App
@@ -37,7 +39,7 @@
 //!   `if: steps.gate.outputs.enabled == 'true'`, so a job without the owner's settings does nothing and ends green; the retries start only on a lost
 //!   write; nothing needs an apt job. `aptToolProblems` holds the puts of tools/apt_publish.zig: If-None-Match on every .deb, If-Match on the ETag
 //!   read (If-None-Match when there was none) on every object of the index, the .debs, then the by-hash files (If-None-Match), then the index, and the invalidation last.
-//! - **The order.** `plan` needs `beta` and `lint`, `build` needs `plan`, `beta-user` needs `build`, `attest`
+//! - **The order.** `plan` needs `beta`, `lint` and `beta-macos`, `build` needs `plan`, `beta-user` needs `build`, `attest`
 //!   needs `beta-user` (so a red platform leg stops the release before anything is signed), `verify` needs
 //!   `build` and `attest`, `tag` needs `beta-user` and `verify` (no tag without verified files), `publish`
 //!   needs `verify` and `tag`: a red stage stops everything after it.
@@ -66,7 +68,7 @@ const Out = c.Out;
 pub const prefix = "release-lint: ";
 
 /// The jobs of the release itself, in the order they run.
-pub const base_jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "attest", "verify", "tag", "publish", "tap", "bump" };
+pub const base_jobs = [_][]const u8{ "beta", "lint", "beta-macos", "plan", "build", "beta-user", "attest", "verify", "tag", "publish", "tap", "bump" };
 
 /// The apt jobs (RELEASING.md, "The apt repository"), after `publish`: three attempts of read (the cloud role, OIDC), index (the signing
 /// key, no cloud) and write (the cloud role, OIDC). A lost write (412) hands over to the next attempt, which reads again.
@@ -117,13 +119,15 @@ pub const not_complete = "${{ needs.plan.outputs.complete != 'true' }}";
 /// The `(job, scope)` pairs that may be `write`.
 pub const writers = [_][2][]const u8{
     .{ "attest", "id-token" },
+    // farm-connect's token, in the workflow beta-macos calls (farm-macos.yml): it joins the farm's network, and writes nothing.
+    .{ "beta-macos", "id-token" },
     .{ "attest", "attestations" },
     .{ "publish", "contents" },
 };
 
 /// What each job must (directly) need.
 const needs = [_]struct { job: []const u8, needs: []const []const u8 }{
-    .{ .job = "plan", .needs = &.{ "beta", "lint" } },
+    .{ .job = "plan", .needs = &.{ "beta", "lint", "beta-macos" } },
     .{ .job = "build", .needs = &.{"plan"} },
     .{ .job = "beta-user", .needs = &.{ "plan", "build" } },
     .{ .job = "attest", .needs = &.{ "plan", "build", "beta-user" } },
@@ -310,7 +314,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
                 while (it.next()) |e| {
                     if (!c.isStr(e.value_ptr.*, "write")) continue;
                     if (!isWriter(name, e.key_ptr.*)) {
-                        try c.problem(a, out, prefix ++ "release.yml: {s}: {s}: write is not allowed here (only publish holds contents: write; only attest holds id-token and attestations; tag, tap and bump hold contents: read: their writes go through the App tokens)", .{ name, e.key_ptr.* });
+                        try c.problem(a, out, prefix ++ "release.yml: {s}: {s}: write is not allowed here (only publish holds contents: write; only attest holds attestations, and id-token only attest, beta-macos (farm-connect) and the apt jobs that hold the cloud role; tag, tap and bump hold contents: read: their writes go through the App tokens)", .{ name, e.key_ptr.* });
                     }
                 }
             }
@@ -398,6 +402,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
     const calls = [_][2][]const u8{
         .{ "beta", "./.github/workflows/ci.yml" },
         .{ "lint", "./.github/workflows/lint.yml" },
+        .{ "beta-macos", "./.github/workflows/farm-macos.yml" },
         .{ "build", "./.github/workflows/release-build.yml" },
         .{ "beta-user", "./.github/workflows/release-beta-user.yml" },
     };

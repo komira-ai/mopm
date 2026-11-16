@@ -17,7 +17,8 @@
 
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
-load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64", "MACOS_AARCH64")
+load("//platforms:macos.bzl", "host_run", "macos_gate", "zig_test_bin")
 load("@buildrules//ci:workflow_lint.bzl", "actionlint_check")
 load("//:buildrules.bzl", "cargo_workspace")
 load("//tests/compat:tree.bzl", "tree")
@@ -592,6 +593,114 @@ zig_test(  # buck-only: tools/macho_minos.zig, the Mach-O minos reader that the 
     name = "macho_minos",
     src = "tools/macho_minos.zig",
     **_TOOLS
+)
+
+# ---- macOS arm64, on the farm's Mac workers (farm-macos.yml) --------------------------------------------------
+# The macOS legs of `zig build test` and of the CLI build, as farm actions: each unit test is compiled on linux for aarch64-macos
+# (`zig_test_bin`, from the `zig_test` above) and run on a Mac (`host_run`), the CLI is cross-compiled for the pinned macOS target
+# and started there, and its Mach-O minimum is read on linux (platforms/macos.bzl). Every target is gated on the macOS worker set
+# (`macos_gate`): without one, as on every farm.yml build, they are incompatible and `//...` skips them. farm-macos.yml builds
+# the `macos-farm` targets (`attrfilter(labels, macos-farm, //...)`) after a push to main and in the release's beta stage.
+
+_MACOS = "aarch64-macos"
+
+# The release's macOS target (release-build.yml, `macos-arm64`): the lowest macOS the CLI runs on (release_lint.zig, `macos_min`).
+_MACOS_PINNED = "aarch64-macos.11.7.1"
+
+zig_exe(  # buck-only: the child processes of src/core/test_proc.zig's tests, for the Mac
+    name = "proc-child_macos",
+    src = "tests/drivers/proc_child.zig",
+    optimize = "ReleaseSafe",
+    target = _MACOS,
+    target_compatible_with = macos_gate(),
+    **_TOOLS
+)
+
+zig_test_bin(
+    name = "core_test_macos_bin",
+    target = _MACOS,
+    test = ":core_test",
+    target_compatible_with = macos_gate(),
+)
+
+host_run(
+    name = "core_test_macos",
+    exe = ":core_test_macos_bin",
+    data = _UNIT_DATA,
+    env_tools = {"MOPM_TEST_CHILD": ":proc-child_macos"},
+    exec_compatible_with = MACOS_AARCH64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
+)
+
+zig_test_bin(
+    name = "cli_test_macos_bin",
+    target = _MACOS,
+    test = ":cli_test",
+    target_compatible_with = macos_gate(),
+)
+
+host_run(
+    name = "cli_test_macos",
+    exe = ":cli_test_macos_bin",
+    exec_compatible_with = MACOS_AARCH64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
+)
+
+zig_test_bin(
+    name = "fake_test_macos_bin",
+    target = _MACOS,
+    test = ":fake_test",
+    target_compatible_with = macos_gate(),
+)
+
+host_run(
+    name = "fake_test_macos",
+    exe = ":fake_test_macos_bin",
+    exec_compatible_with = MACOS_AARCH64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
+)
+
+# The CLI for the release's macOS target, built only when its unit tests passed on a Mac.
+zig_exe(  # buck-only: the CLI for aarch64-macos.11.7.1, which build.zig makes with -Dtarget
+    name = "mopm_macos",
+    src = "src/cli/main.zig",
+    imports = _CLI_SRCS,
+    deps = [":mopm_core", ":build_options"],
+    target = _MACOS_PINNED,
+    unit_tests = [":cli_test_macos", ":core_test_macos"],
+    target_compatible_with = macos_gate(),
+    **_TOOLS
+)
+
+# It starts on a Mac (dyld loads it) and answers `--version`.
+host_run(
+    name = "mopm_macos_version",
+    exe = ":mopm_macos",
+    args = ["--version"],
+    exec_compatible_with = MACOS_AARCH64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
+)
+
+zig_exe(  # buck-only: tools/macho_minos.zig as a program, behind its tests (`zig run tools/macho_minos.zig` on the macOS runners)
+    name = "macho_minos_exe",
+    src = "tools/macho_minos.zig",
+    unit_tests = [":macho_minos"],
+    target_compatible_with = macos_gate(),
+    **_TOOLS
+)
+
+# Its Mach-O names a minimum macOS at most the pinned one, as release-build.yml checks the release's binary (on linux: the reader needs no Apple tool).
+host_run(
+    name = "mopm_macos_minos",
+    exe = ":macho_minos_exe",
+    args = ["--max", "11.7.1", "$(location :mopm_macos)"],
+    exec_compatible_with = LINUX_X86_64,
+    labels = ["macos-farm"],
+    target_compatible_with = macos_gate(),
 )
 
 # ---- The validator corpus: files made by a Zig generator, and the test that they are what it makes ----

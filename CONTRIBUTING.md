@@ -6,6 +6,8 @@
   checks and the release run after the merge). The other platforms, Linux aarch64 and macOS (arm64), run after the merge
   (push to `main`, as the beta stage of the release), nightly and on manual dispatch; a pull request never runs them
   and no label asks for them, so a change that touches platform-specific code is checked on those platforms once it is on `main`.
+  On macOS that is also the build farm's Mac workers: `farm-macos.yml` (a push to `main`, and the release's `beta-macos` stage)
+  runs the unit tests and the CLI there as Buck2 actions (`./buck2 build` of the `macos-farm` targets, `platforms/macos.bzl`).
 - The rules every change is written and reviewed against are in
   [AGENTS.md](AGENTS.md), each with an id: among them, a bug fix comes with a
   test that failed before the fix (T5), a behaviour change updates the golden

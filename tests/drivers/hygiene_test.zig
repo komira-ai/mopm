@@ -567,6 +567,80 @@ test "farm.yml: a push to main or a pull request from this repository, no secret
     , &.{"job build grants id-token but does not skip pull requests from forks"});
 }
 
+test "farm-macos.yml: a push to main or a call from release.yml, a Linux x86_64 runner, no secret, no environment" {
+    const jobs_ok =
+        \\jobs:
+        \\  macos:
+        \\    runs-on: ubuntu-24.04
+        \\    permissions:
+        \\      id-token: write
+        \\
+    ;
+    const on_ok = "on:\n  push:\n    branches: [main]\n  workflow_call:\n";
+    try expectStructure("farm-macos.yml", header ++ on_ok ++ jobs_ok, &.{});
+    // A pull request (alone or beside the two), a push to any branch or without branches, a missing call and a third trigger are refused.
+    inline for ([_][]const u8{
+        "on:\n  pull_request:\n  push:\n    branches: [main]\n  workflow_call:\n",
+        "on:\n  pull_request:\n    branches: [main]\n",
+        "on:\n  push:\n    branches: ['*']\n  workflow_call:\n",
+        "on:\n  push:\n  workflow_call:\n",
+        "on:\n  push:\n    branches: [main, next]\n  workflow_call:\n",
+        "on:\n  push:\n    branches: [main]\n    paths: ['src/**']\n  workflow_call:\n",
+        "on:\n  push:\n    branches: [main]\n",
+        "on:\n  workflow_call:\n",
+        "on:\n  push:\n    branches: [main]\n  workflow_call:\n  workflow_dispatch:\n",
+        "on: [push, workflow_call]\n",
+    }) |on| {
+        try expectStructure("farm-macos.yml", header ++ on ++ jobs_ok, &.{"triggers must be exactly push of branches [main] and workflow_call"});
+    }
+    try expectStructure("farm-macos.yml", header ++ on_ok ++
+        \\jobs:
+        \\  macos:
+        \\    environment: beta
+        \\    runs-on: ubuntu-24.04
+        \\
+    , &.{"must not use secrets or an environment"});
+    try expectStructure("farm-macos.yml", header ++ on_ok ++
+        \\jobs:
+        \\  macos:
+        \\    runs-on: ubuntu-24.04
+        \\    steps:
+        \\      - run: echo ${{ secrets.X }}
+        \\
+    , &.{"must not use secrets or an environment"});
+    // The Macs are reached through the farm: a macOS, an Arm or a Windows runner is refused, and so is a job that names none.
+    inline for ([_][]const u8{ "macos-15", "ubuntu-24.04-arm", "windows-2022", "self-hosted" }) |runner| {
+        try expectStructure("farm-macos.yml", header ++ on_ok ++ "jobs:\n  macos:\n    runs-on: " ++ runner ++ "\n", &.{"job macos runs on " ++ runner ++ "; it must run on a hosted Linux x86_64 runner"});
+    }
+    try expectStructure("farm-macos.yml", header ++ on_ok ++ "jobs:\n  macos:\n    uses: ./.github/workflows/x.yml\n", &.{"job macos runs on no runner it names"});
+    // The same file under another name gets the rules of any workflow: no id-token outside the files allowed one.
+    try expectStructure("farm-mac.yml", header ++ on_ok ++ jobs_ok, &.{"an id-token permission is only allowed in deploy.yml, e2e.yml, promote.yml"});
+}
+
+test "release.yml: only the job that calls farm-macos.yml may call a workflow with an id-token grant" {
+    const release = header ++
+        \\on:
+        \\  push:
+        \\    branches: [main]
+        \\  workflow_dispatch:
+        \\jobs:
+        \\  beta-macos:
+        \\    permissions:
+        \\      contents: read
+        \\      id-token: write
+        \\    uses: ./.github/workflows/farm-macos.yml
+        \\
+    ;
+    try expectStructure("release.yml", release, &.{});
+    // Defect caught: the grant on a job that calls another workflow (the linux farm build, the beta, a near spelling).
+    inline for ([_][]const u8{ "./.github/workflows/farm.yml", "./.github/workflows/ci.yml", "./.github/workflows/farm-macos.yaml", "farm-macos.yml" }) |callee| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const faulty = try std.mem.replaceOwned(u8, arena.allocator(), release, "./.github/workflows/farm-macos.yml", callee);
+        try c.expectLines(callee, try structure(arena.allocator(), "release.yml", faulty), &.{"job beta-macos calls a workflow and grants id-token"});
+    }
+}
+
 test "a workflow that cannot be read is a finding, not a pass" {
     try expectStructure("ci.yml", "on: [push\n", &.{"not readable as YAML"});
 }
