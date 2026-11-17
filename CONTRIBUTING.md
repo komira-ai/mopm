@@ -8,6 +8,8 @@
   and no label asks for them, so a change that touches platform-specific code is checked on those platforms once it is on `main`.
   On macOS that is also the build farm's Mac workers: `farm-macos.yml` (a push to `main`, and the release's `beta-macos` stage)
   runs the unit tests and the CLI there as Buck2 actions (`./buck2 build` of the `macos-farm` targets, `platforms/macos.bzl`).
+  With the repository variable `MACOS_ON_FARM` set to `true` it is the only place they run on macOS: `ci.yml`'s `test` and
+  `registry-build` then drop their `macos-15` leg (RELEASING.md, `beta-macos`).
 - The rules every change is written and reviewed against are in
   [AGENTS.md](AGENTS.md), each with an id: among them, a bug fix comes with a
   test that failed before the fix (T5), a behaviour change updates the golden

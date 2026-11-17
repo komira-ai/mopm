@@ -10,7 +10,8 @@ name: release
 #   lint       the whole of lint.yml (hygiene, workflow lint, the release lint) on the pushed commit.
 #   beta-macos farm-macos.yml on the pushed commit: the macOS arm64 checks as farm actions on the Mac workers (the unit tests, the CLI
 #              for the pinned macOS target, its Mach-O minimum). Green with a notice, building nothing, while the macOS workers are not
-#              configured; the macos-15 legs below run the same checks until it has passed through a release.
+#              configured and the repository variable MACOS_ON_FARM is not true; then the macos-15 legs of ci.yml's test and
+#              registry-build run the same checks. MACOS_ON_FARM true drops those two legs, and this stage then fails without the workers.
 #              Gamma and bake time are a slot for later stages between these three (beta, lint, beta-macos) and plan.
 #   plan       the version the release will have (cut_release plan --sha): the VERSION file's MAJOR.MINOR
 #              and the next PATCH. It refuses a commit that a newer release supersedes, and a base below
@@ -96,7 +97,8 @@ jobs:
     uses: ./.github/workflows/lint.yml
 
   # The macOS arm64 checks on the farm's Mac workers (farm-macos.yml). id-token is farm-connect's, as in farm.yml; until the macOS
-  # workers are configured the called job is green with a notice, and the macos-15 legs of beta, build and beta-user run as before.
+  # workers are configured the called job is green with a notice (a failure when MACOS_ON_FARM is true, which drops the macos-15
+  # legs of beta's test and registry-build). The macos-15 legs of build and beta-user run either way.
   beta-macos:
     permissions:
       contents: read
