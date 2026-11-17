@@ -25,6 +25,7 @@ const release_path = ".github/workflows/release.yml";
 const user_path = ".github/workflows/release-beta-user.yml";
 const build_path = ".github/workflows/release-build.yml";
 const ci_path = ".github/workflows/ci.yml";
+const farm_macos_path = ".github/workflows/farm-macos.yml";
 
 fn real(a: Allocator, path: []const u8) ![]u8 {
     const tree = try c.loadTree(a);
@@ -39,15 +40,18 @@ fn problemsOf(a: Allocator, path: []const u8, text: []const u8) ![]const []const
         try rl.buildDebProblems(a, text, &out);
     } else if (std.mem.eql(u8, path, ci_path)) {
         try rl.ciMinosProblems(a, text, &out);
+        try rl.ciSwitchProblems(a, text, &out);
+    } else if (std.mem.eql(u8, path, farm_macos_path)) {
+        try rl.farmMacosSwitchProblems(a, text, &out);
     } else try rl.problems(a, text, &out);
     return out.items;
 }
 
-test "the real release.yml, release-beta-user.yml, and release-build.yml pass every rule" {
+test "the real release.yml, release-beta-user.yml, release-build.yml, ci.yml and farm-macos.yml pass every rule" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ release_path, user_path, build_path, ci_path }) |p| {
+    for ([_][]const u8{ release_path, user_path, build_path, ci_path, farm_macos_path }) |p| {
         const got = try problemsOf(a, p, try real(a, p));
         for (got) |l| std.debug.print("{s}\n", .{l});
         try std.testing.expectEqual(@as(usize, 0), got.len);
@@ -577,6 +581,56 @@ test "defect: the minos check reads another file than the tarball's binary, or c
     try defectIn(ci_path, "ci.yml limit raised", "--max 11.7.1 zig-pinned/bin/mopm", "--max 14.0 zig-pinned/bin/mopm", "registry-build must check zig-pinned/bin/mopm");
     try defectIn(ci_path, "ci.yml checks the native build", "--max 11.7.1 zig-pinned/bin/mopm", "--max 11.7.1 zig-out/bin/mopm", "registry-build must check zig-pinned/bin/mopm");
     try defectIn(ci_path, "ci.yml check on every leg", "if: runner.os == 'macOS'\n        run: |\n          zig build -Doptimize", "run: |\n          zig build -Doptimize", "the macOS minos step must run on the macOS leg");
+}
+
+/// The macOS switch (MACOS_ON_FARM): the matrix expression of ci.yml's switched jobs, as the real file spells it.
+const switched_os_line = "        os: " ++ rl.switched_os ++ "\n";
+const unswitched_os_line = "        os: ${{ fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]') }}\n";
+
+test "defect: the macOS switch drops another leg than macos-15, or is missing from a job the farm covers" {
+    try defectAfter(ci_path, "\n  test:\n", "switch on drops linux arm64 too", "'[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]'", "'[\"ubuntu-24.04\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]'", "test: matrix.os is");
+    try defectAfter(ci_path, "\n  registry-build:\n", "switch on keeps macos-15", "'[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]'", "'[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]'", "registry-build: matrix.os is");
+    try defectAfter(ci_path, "\n  test:\n", "switch inverted (macos-15 dropped while the switch is off)", "vars.MACOS_ON_FARM == 'true'", "vars.MACOS_ON_FARM != 'true'", "test: matrix.os is");
+    try defectAfter(ci_path, "\n  registry-build:\n", "registry-build without the switch", switched_os_line, unswitched_os_line, "registry-build: matrix.os is");
+    try defectAfter(ci_path, "\n  test:\n", "test without the switch: named once", switched_os_line, unswitched_os_line, "is named 1 times outside comments, expected 2");
+    try defectAfter(ci_path, "\n  test:\n", "the test job is gone", "\n  test:\n", "\n  unit:\n", "there is no test job, whose macOS leg");
+}
+
+test "defect: the macOS switch reaches a beta-tier leg the farm does not run" {
+    try defectIn(ci_path, "mojo-e2e switched too", "        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]\n", "        os: ${{ fromJSON(vars.MACOS_ON_FARM == 'true' && '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]') }}\n", "is named 3 times outside comments, expected 2");
+    try defectAfter(ci_path, "\n  installer:\n", "installer skipped by the switch", "    if: github.event_name != 'pull_request'\n", "    if: github.event_name != 'pull_request' && vars.MACOS_ON_FARM != 'true'\n", "is named 3 times outside comments, expected 2");
+}
+
+test "the macOS switch named in a comment of ci.yml is not counted" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = try real(a, ci_path);
+    const commented = try std.mem.concat(a, u8, &.{ "# " ++ rl.macos_switch ++ " " ++ rl.macos_switch ++ "\n", text });
+    const got = try problemsOf(a, ci_path, commented);
+    for (got) |l| std.debug.print("{s}\n", .{l});
+    try std.testing.expectEqual(@as(usize, 0), got.len);
+}
+
+fn farmDefect(name: []const u8, from: []const u8, to: []const u8, needle: []const u8) !void {
+    return defectIn(farm_macos_path, name, from, to, needle);
+}
+
+const farm_refuse_step = "      - name: the macOS checks are on the farm, but the macOS workers are not configured\n";
+
+test "defect: farm-macos.yml skips green while the switch has dropped ci.yml's macOS legs" {
+    try farmDefect("the notice step not guarded by the switch", "if: " ++ rl.farm_skip_if, "if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_DARWIN_ARM64_PROPERTIES == '' || vars.FARM_DARWIN_MACOS_HOSTS == '' }}", "the step that skips with a notice has if:");
+    try farmDefect("the refusal on the switch off", "if: " ++ rl.farm_refuse_if, "if: " ++ rl.farm_skip_if, "the step that refuses has if:");
+    try farmDefect("the refusal does not fail", "Set them, or unset MACOS_ON_FARM.\"\n          exit 1\n", "Set them, or unset MACOS_ON_FARM.\"\n", "the step that refuses must end with exit 1");
+    try farmDefect("the refusal may fail and continue", farm_refuse_step, farm_refuse_step ++ "        continue-on-error: true\n", "the step that refuses must not set continue-on-error");
+    try farmDefect("no refusal step", "::error title=farm-macos::", "::warning title=farm-macos::", "macos has no step that fails, with an ::error");
+    try farmDefect("no notice step", "::notice title=farm-macos::", "farm-macos: ", "macos has no step that says, with a ::notice");
+}
+
+test "defect: farm-macos.yml builds only when the switch is on, or has no build or no macos job" {
+    try farmDefect("build gated on the switch", "if: " ++ rl.farm_build_if ++ "\n        run: |\n          set -o pipefail", "if: ${{ vars.MACOS_ON_FARM == 'true' && vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}\n        run: |\n          set -o pipefail", "the buck2 build step has if:");
+    try farmDefect("no buck2 build", "./buck2 build \"@$RUNNER_TEMP/targets\"", "./buck2 targets \"@$RUNNER_TEMP/targets\"", "macos has no buck2 build step");
+    try farmDefect("the job renamed", "\n  macos:\n", "\n  mac:\n", "there is no macos job");
 }
 
 test "defect: the matrix gives a leg the wrong Debian architecture" {

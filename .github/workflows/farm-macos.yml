@@ -10,10 +10,12 @@
 # FARM_DARWIN_MACOS_HOSTS, and farm.yml's); this repository holds no endpoint and no worker property set. .buckconfig hands the
 # macOS keys to buildrules, which registers the macOS execution platform (platforms/BUCK).
 #
-# Until the macOS variables are set the job does nothing and says so, and it is green: the macOS legs of ci.yml,
-# release-build.yml and release-beta-user.yml (GitHub's macos-15 runners) still run the same checks, so no merge goes unbuilt on
-# macOS. Setting the variables turns this build on; once it has passed through a release, those macos-15 legs are removed and a
-# push with no macOS workers fails here instead, as farm.yml's does.
+# Setting the macOS variables turns this build on. The repository variable MACOS_ON_FARM says which runs the macOS legs of ci.yml's
+# unit tier (`test` and `registry-build`, the checks the `macos-farm` targets duplicate): unset, GitHub's macos-15 runners still run
+# them, so while the macOS variables are not all set the job does nothing, says so, and is green. `true` drops those macos-15 legs
+# from ci.yml, and this job is then the only macOS run of those checks: with the macOS variables not all set it fails, as farm.yml's
+# does with no workers, instead of skipping. The macOS legs of release-build.yml and release-beta-user.yml and the beta tier of ci.yml
+# are not Buck2 targets and stay on macos-15 either way. tests/drivers/release_lint.zig holds the switch (`farmMacosSwitchProblems`).
 # The hygiene and workflow lints allow the id-token grant and farm-connect in this file and farm.yml only, and release.yml's
 # beta-macos job (the one job there that calls a workflow with an id-token grant) to call this file alone.
 name: farm-macos
@@ -40,9 +42,15 @@ jobs:
           persist-credentials: false
       # The condition reads the variables without putting their values in a step's environment, which GitHub prints in the log.
       - name: the macOS workers are not configured
-        if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_DARWIN_ARM64_PROPERTIES == '' || vars.FARM_DARWIN_MACOS_HOSTS == '' }}
+        if: ${{ vars.MACOS_ON_FARM != 'true' && (vars.FARM_ADDRESS == '' || vars.FARM_DARWIN_ARM64_PROPERTIES == '' || vars.FARM_DARWIN_MACOS_HOSTS == '') }}
         run: |
-          echo "::notice title=farm-macos::the repository variables FARM_ADDRESS, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set, so there are no macOS workers to run on. Skipping; nothing was built. The macos-15 legs of ci.yml, release-build.yml and release-beta-user.yml run the macOS checks."
+          echo "::notice title=farm-macos::the repository variables FARM_ADDRESS, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set, so there are no macOS workers to run on. Skipping; nothing was built. MACOS_ON_FARM is not true, so the macos-15 legs of ci.yml run the macOS checks."
+      # MACOS_ON_FARM took the macos-15 legs out of ci.yml: a skip here would leave the commit unbuilt on macOS.
+      - name: the macOS checks are on the farm, but the macOS workers are not configured
+        if: ${{ vars.MACOS_ON_FARM == 'true' && (vars.FARM_ADDRESS == '' || vars.FARM_DARWIN_ARM64_PROPERTIES == '' || vars.FARM_DARWIN_MACOS_HOSTS == '') }}
+        run: |
+          echo "::error title=farm-macos::MACOS_ON_FARM is true, so ci.yml runs no macos-15 leg of test and registry-build, but FARM_ADDRESS, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set: nothing would build this commit on macOS. Set them, or unset MACOS_ON_FARM."
+          exit 1
       # The same komira commit as commit_hash in .buckconfig and farm.yml's; bump them together.
       - name: connect to the farm (linux and macOS workers)
         if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}

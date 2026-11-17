@@ -826,6 +826,8 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
     try rl.userBetaProblems(a, try ctx.read(a, "release-beta-user.yml"), out);
     try rl.buildDebProblems(a, try ctx.read(a, "release-build.yml"), out);
     try rl.ciMinosProblems(a, try ctx.read(a, "ci.yml"), out);
+    try rl.ciSwitchProblems(a, try ctx.read(a, "ci.yml"), out);
+    try rl.farmMacosSwitchProblems(a, try ctx.read(a, "farm-macos.yml"), out);
 
     // promote.yml
     {

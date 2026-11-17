@@ -15,6 +15,12 @@
 # to main, the nightly schedule and workflow_dispatch run it too, each with the full matrix below. There is no label that opts a pull
 # request into macOS: the macOS queue waits 50 to 120 minutes, and a macOS job per pushed commit of a pull request used up the
 # organisation's hosted macOS runners. tests/drivers/hygiene.zig holds this (a pull_request workflow names a Linux x86_64 runner and nothing else).
+#
+# The macOS legs of the unit tier (`test` and `registry-build`) are also farm-macos.yml's `macos-farm` targets, run on the build farm's
+# Mac workers. The repository variable MACOS_ON_FARM switches between the two: unset (or anything but `true`), these jobs keep their
+# macos-15 leg; `true` drops it, and farm-macos.yml then fails instead of skipping when the macOS workers are not configured, so no
+# merge goes unbuilt on macOS. The beta tier's macOS legs (`mojo-e2e`, `pixi-channels`, `installer`) are not Buck2 targets and stay on
+# macos-15 either way. tests/drivers/release_lint.zig holds the switch (`ciSwitchProblems`, `farmMacosSwitchProblems`).
 name: ci
 
 on:
@@ -38,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || vars.MACOS_ON_FARM == 'true' && '["ubuntu-24.04","ubuntu-24.04-arm"]' || '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Zig 0.12.0 (sha256-pinned)
@@ -111,7 +117,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || vars.MACOS_ON_FARM == 'true' && '["ubuntu-24.04","ubuntu-24.04-arm"]' || '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

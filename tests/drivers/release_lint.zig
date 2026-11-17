@@ -2,7 +2,8 @@
 //! `problems` reads the workflow and reports each way it differs; the real file must report none
 //! (workflow_lint.zig runs it over release.yml, //:workflows), and release_lint_test.zig injects each
 //! defect on it and requires the matching message. `userBetaProblems` does the same for
-//! release-beta-user.yml, the matrix of the user-level beta.
+//! release-beta-user.yml, the matrix of the user-level beta. `ciSwitchProblems` and `farmMacosSwitchProblems` hold the switch
+//! (the repository variable MACOS_ON_FARM) that moves the macOS legs of ci.yml's `test` and `registry-build` to farm-macos.yml.
 //!
 //! The pipeline (RELEASING.md): a push to main that changes more than docs or CI runs `beta` (the
 //! whole of ci.yml), `lint` (the whole of lint.yml) and `beta-macos` (farm-macos.yml, the macOS checks on the farm's Mac
@@ -1131,6 +1132,77 @@ pub fn ciMinosProblems(a: Allocator, text: []const u8, out: *Out) !void {
         try c.problem(a, out, prefix ++ f ++ "registry-build must check zig-pinned/bin/mopm, the output of that build, with --max " ++ macos_min, .{});
     }
     if (!c.isStr(c.get(step, "if"), "runner.os == 'macOS'")) try c.problem(a, out, prefix ++ f ++ "the macOS minos step must run on the macOS leg (if: runner.os == 'macOS')", .{});
+}
+
+/// The repository variable that moves the macOS legs of ci.yml's unit tier to the farm's Mac workers (farm-macos.yml).
+pub const macos_switch = "vars.MACOS_ON_FARM";
+
+/// The jobs of ci.yml whose macOS leg the switch may drop: the checks the `macos-farm` targets of BUCK run on a Mac (the unit tests; the
+/// CLI for the pinned target, started, and its Mach-O minimum). The beta tier's macOS legs have no farm counterpart.
+pub const switched_jobs = [_][]const u8{ "test", "registry-build" };
+
+/// The matrix of each switched job: Linux x86_64 alone on a pull request; with the switch on, every platform but macOS; otherwise all three.
+pub const switched_os = "${{ fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\"]' || " ++ macos_switch ++
+    " == 'true' && '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]') }}";
+
+/// ci.yml: the switch drops the macos-15 leg of `test` and `registry-build` and nothing else. Each of the two has exactly `switched_os`
+/// (so the switch cannot drop Linux arm64, nor reach a pull request), and the switch is named nowhere else in the file (so no beta-tier
+/// leg, which the farm does not run, is switched off with it).
+pub fn ciSwitchProblems(a: Allocator, text: []const u8, out: *Out) !void {
+    const f = "ci.yml: ";
+    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ f ++ "not readable as YAML: {s}", .{@errorName(err)});
+    for (switched_jobs) |name| {
+        const job = c.get(c.get(doc, "jobs"), name) orelse {
+            try c.problem(a, out, prefix ++ f ++ "there is no {s} job, whose macOS leg " ++ macos_switch ++ " moves to the farm", .{name});
+            continue;
+        };
+        const os = c.get(c.get(c.get(job, "strategy"), "matrix"), "os");
+        if (!c.isStr(os, switched_os)) {
+            try c.problem(a, out, prefix ++ f ++ "{s}: matrix.os is {s}, expected exactly " ++ switched_os ++ " (Linux x86_64 on a pull request; " ++ macos_switch ++ " true drops macos-15 and nothing else)", .{ name, try c.inspect(a, os) });
+        }
+    }
+    const code = try c.nonCommentLines(a, text);
+    const named = std.mem.count(u8, code, macos_switch);
+    if (named != switched_jobs.len) {
+        try c.problem(a, out, prefix ++ f ++ macos_switch ++ " is named {d} times outside comments, expected {d}: it may switch only the macOS legs of test and registry-build, which the farm's macos-farm targets run; the other macOS legs have no farm counterpart", .{ named, switched_jobs.len });
+    }
+}
+
+/// The condition of farm-macos.yml's steps that build: every macOS variable is set.
+const farm_configured = "vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != ''";
+/// Its negation, the condition of the two steps that say why nothing was built.
+const farm_unconfigured = "vars.FARM_ADDRESS == '' || vars.FARM_DARWIN_ARM64_PROPERTIES == '' || vars.FARM_DARWIN_MACOS_HOSTS == ''";
+pub const farm_skip_if = "${{ " ++ macos_switch ++ " != 'true' && (" ++ farm_unconfigured ++ ") }}";
+pub const farm_refuse_if = "${{ " ++ macos_switch ++ " == 'true' && (" ++ farm_unconfigured ++ ") }}";
+pub const farm_build_if = "${{ " ++ farm_configured ++ " }}";
+
+/// farm-macos.yml, job `macos`: with the switch on, a run with the macOS workers not configured fails. The step that skips with a notice
+/// has `farm_skip_if`, so it is never the outcome when ci.yml has dropped its macOS legs; a step with `farm_refuse_if` exits 1 and may not
+/// continue on error; and the build runs whenever the workers are configured, whatever the switch says (`farm_build_if`), so the farm is
+/// seen green before the switch is turned on.
+pub fn farmMacosSwitchProblems(a: Allocator, text: []const u8, out: *Out) !void {
+    const f = "farm-macos.yml: ";
+    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ f ++ "not readable as YAML: {s}", .{@errorName(err)});
+    const job = c.get(c.get(doc, "jobs"), "macos") orelse return c.problem(a, out, prefix ++ f ++ "there is no macos job", .{});
+    if (stepRunning(job, "::notice title=farm-macos::")) |skip| {
+        if (!c.isStr(c.get(skip, "if"), farm_skip_if)) {
+            try c.problem(a, out, prefix ++ f ++ "the step that skips with a notice has if: {s}, expected " ++ farm_skip_if ++ " (never a green skip while " ++ macos_switch ++ " has dropped ci.yml's macOS legs)", .{try c.inspect(a, c.get(skip, "if"))});
+        }
+    } else try c.problem(a, out, prefix ++ f ++ "macos has no step that says, with a ::notice, why nothing was built", .{});
+    if (stepRunning(job, "::error title=farm-macos::")) |refuse| {
+        if (!c.isStr(c.get(refuse, "if"), farm_refuse_if)) {
+            try c.problem(a, out, prefix ++ f ++ "the step that refuses has if: {s}, expected " ++ farm_refuse_if, .{try c.inspect(a, c.get(refuse, "if"))});
+        }
+        if (!std.mem.endsWith(u8, std.mem.trimRight(u8, c.str(c.get(refuse, "run")) orelse "", "\n "), "exit 1")) {
+            try c.problem(a, out, prefix ++ f ++ "the step that refuses must end with exit 1", .{});
+        }
+        if (c.get(refuse, "continue-on-error") != null) try c.problem(a, out, prefix ++ f ++ "the step that refuses must not set continue-on-error", .{});
+    } else try c.problem(a, out, prefix ++ f ++ "macos has no step that fails, with an ::error, when " ++ macos_switch ++ " is true and the macOS workers are not configured", .{});
+    if (stepRunning(job, "buck2 build")) |build| {
+        if (!c.isStr(c.get(build, "if"), farm_build_if)) {
+            try c.problem(a, out, prefix ++ f ++ "the buck2 build step has if: {s}, expected " ++ farm_build_if ++ " (it runs whenever the macOS workers are configured, whatever " ++ macos_switch ++ " says)", .{try c.inspect(a, c.get(build, "if"))});
+        }
+    } else try c.problem(a, out, prefix ++ f ++ "macos has no buck2 build step", .{});
 }
 
 /// The package matrix of release-build.yml, exactly: the three release targets, each on its runner with its Zig target.
