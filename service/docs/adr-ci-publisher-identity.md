@@ -128,7 +128,8 @@ would have given new names to a repository identity instead, and would have refu
 5. **Prod loads only such rows.** `parseCiPublishers` accepts a value on beta (any row) and on prod only when every row carries
    `acts_for`; every other stage, and a prod row without it, stops the function from starting. The stack sets the variable on prod
    (`PROD_CI_PUBLISHERS`, environment `prod`, `push` only) and not on gamma; beta's row is unchanged. No groups policy is set on prod: the
-   `groups_enabled` item stays the human switch.
+   `groups_enabled` item stays the human switch. (Amended by the namespace addendum below: prod also loads a row that carries
+   `namespace` instead.)
 
 ### Consequences
 

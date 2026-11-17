@@ -222,16 +222,17 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
 - **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
   trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
   config-table item for it), so the fastest stop is the deploy.
-- **Gamma gets none of it, and prod only the acting-for row below.** Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the create route's, `PUT /api/v2/packages/{namespace}/{name}`, on every stage, and there is no CI-only grant), and answers the `packages`
+- **Gamma gets none of it, and prod only the two rows below** (acting for an account, and publishing in `komira-ai`). Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the create route's, `PUT /api/v2/packages/{namespace}/{name}`, on every stage, and there is no CI-only grant), and answers the `packages`
   form of the exchange with `oidc_not_trusted`. The handler also refuses to start on gamma if the variable is present, and on prod if a
-  row does not carry `acts_for`, so a function that fails to start with "may be set on the beta stage only" or "trusts only rows that
-  carry 'acts_for'" means the variable reached the wrong stage or has the wrong shape: fix it in the stack and redeploy. Trusting a CI
+  row carries neither `acts_for` nor `namespace`, so a function that fails to start with "may be set on the beta stage only" or "trusts
+  only rows that carry 'acts_for' or 'namespace'" means the variable reached the wrong stage or has the wrong shape: fix it in the stack and redeploy. Trusting a CI
   identity at gamma stays a deliberate human decision.
 
 ### Prod trusts a CI identity that acts for an account
 
-`PROD_CI_PUBLISHERS` in the same file is the prod stage's `CI_PUBLISHERS`: the same release workflow on main, `push` only, with
-`job_workflow_ref` pinned, in the **`prod` environment**, with `acts_for` set to the owner account's GitHub id. Design and reasons: the
+The first row of `PROD_CI_PUBLISHERS` in the same file (the prod stage's `CI_PUBLISHERS`): the same release workflow on main, `push`
+only, with `job_workflow_ref` pinned, in the **`prod` environment**, with `acts_for` set to the owner account's GitHub id. The second
+row, the `komira-ai` namespace publisher, is the next section. Design and reasons: the
 addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-ci-publisher-identity.md`.
 
 - **What it does.** The `packages` form of the exchange mints a 10 minute, single-use-`jti` token whose principal is that account: the
@@ -247,8 +248,8 @@ addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-
   request. A human's own publish has none. `via` is not in the public read API.
 - **A job that dies between stage and commit** leaves an open group holding the account's slot until its deadline (12 hours by default).
   Abort it with a fresh exchange for the same packages and `DELETE /api/v1/groups/<id>` (the release workflow's abort job does that).
-- **Removing the trust.** Delete the entry: in `api-stack.ts` make the prod `CI_PUBLISHERS` variable absent (remove `PROD_CI_PUBLISHERS`
-  and its line) in a pull request and promote it to prod. A deployed value cannot be switched off at runtime; tokens already minted
+- **Removing the trust.** Delete the `acts_for` row from `PROD_CI_PUBLISHERS` in `api-stack.ts` in a pull request and promote it to
+  prod; the namespace row stays. (Removing the whole constant and its line in the stack also removes the namespace publisher.) A deployed value cannot be switched off at runtime; tokens already minted
   stay valid until their 10 minutes end, and a deploy without the row refuses every later exchange with `oidc_not_trusted`. The
   account's own tokens, groups and `groups_enabled` item are untouched. To stop CI groups without a deploy, remove `u:<id>` from
   `groups_enabled` (that also stops the human account).
