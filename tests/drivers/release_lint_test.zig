@@ -612,6 +612,21 @@ test "the macOS switch named in a comment of ci.yml is not counted" {
     try std.testing.expectEqual(@as(usize, 0), got.len);
 }
 
+test "a ci.yml or farm-macos.yml that is not readable as YAML is refused by the switch rules" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const broken = "jobs:\n\tx: 1\n";
+    var ci = c.Out.init(a);
+    try rl.ciSwitchProblems(a, broken, &ci);
+    try std.testing.expectEqual(@as(usize, 1), ci.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, ci.items[0], "release-lint: ci.yml: not readable as YAML: ") != null);
+    var farm = c.Out.init(a);
+    try rl.farmMacosSwitchProblems(a, broken, &farm);
+    try std.testing.expectEqual(@as(usize, 1), farm.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, farm.items[0], "release-lint: farm-macos.yml: not readable as YAML: ") != null);
+}
+
 fn farmDefect(name: []const u8, from: []const u8, to: []const u8, needle: []const u8) !void {
     return defectIn(farm_macos_path, name, from, to, needle);
 }
