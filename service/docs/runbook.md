@@ -265,7 +265,27 @@ addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-
   identity. `oidc_token_invalid` "token already used": a CI token is exchanged once.
 - **Namespace publishers.** A `CI_PUBLISHERS` row may name a `namespace` instead of `acts_for` (prod accepts either, never both): the
   `/api/v2` exchange then mints a token for full names in that namespace, when the job's `repository_owner_id` is the namespace's GitHub
-  id. It creates nothing; `mopm publish` creates a package with `PUT /api/v2/packages/{namespace}/{name}` using that token.
+  id. It creates nothing; `mopm publish` creates a package with `PUT /api/v2/packages/{namespace}/{name}` using that token. A
+  namespace row serves `/api/v2` only, so one repository may carry a row without a namespace (for `/api/v1`) and one row per namespace;
+  two rows of one repository for the same exchange stop the function from starting ("a repository is named twice for the same
+  namespace, or twice without one").
+
+### Prod trusts the komira release as the publisher of `komira-ai`
+
+`PROD_CI_PUBLISHERS` holds a second row for the same release workflow (main, `push` only, `job_workflow_ref` pinned, environment
+`prod`) with `namespace: komira-ai`. It is how the release publishes `komira-ai/<name>` once komira's packages are renamed; until then
+the `acts_for` row above keeps serving the flat names, so neither side has to land first.
+
+- **What the release needs on prod besides the row.** The `komira-ai` namespace, registered (its GitHub id is the row's
+  `repository_owner_id`, 305577347). And, for its group publish, the actor `ci:gh-repo:1376408823` on the `groups_enabled` item of
+  `mopm-prod-config`: a namespace token's actor is the repository identity, not the account, so the account's `u:<id>` on that item
+  does not admit it. Add the actor to the item's `actors`, keeping the ones there (a `put-item` replaces the whole item; see "The
+  `groups_enabled` item" below). Without it the group create answers `route_not_found`.
+- **Telling it apart.** Its records carry the actor `ci:gh-repo:1376408823` and its token `ci_namespace: komira-ai`; the `acts_for`
+  row's records carry the actor `u:<id>` and `via`.
+- **After the move.** When komira's release publishes only `komira-ai/` names, remove the `acts_for` row in a pull request and promote
+  it; the namespace row stays. Removing the namespace row instead is the same kind of change, and stops every `/api/v2` exchange of
+  the release with `oidc_not_trusted`.
 
 ## Organization namespaces
 

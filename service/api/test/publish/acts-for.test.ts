@@ -388,6 +388,36 @@ describe.each(RIGS)('a CI identity that acts for an account: %s', (_label, make)
       expect(row?.acts_via).toBeUndefined();
     });
   });
+
+  // Prod while the release moves into its namespace: the same identity has this row and a `namespace` row. The namespace row serves
+  // /api/v2 only, so the /api/v1 exchange still acts for the account, whichever row comes first.
+  describe('beside a namespace row of the same repository', () => {
+    const NS_ROW: CiPublisher = { ...(({ acts_for: _a, ...r }) => r)(PUBLISHER), namespace: 'komira-ai' };
+
+    test.each([
+      ['the namespace row first', [NS_ROW, PUBLISHER]],
+      ['the acts_for row first', [PUBLISHER, NS_ROW]],
+    ])('%s: the token is still the account\'s, for the packages it owns', async (_n, rows) => {
+      build(rows);
+      await env.own(ACCOUNT, HANDLE, ['widgets', 'gadgets']);
+      const token = await exchange([widgets, gadgets]);
+      const principal = await new Authenticator({ store: env.authStore, now: env.clock.now }).authenticate(`Bearer ${token}`);
+      expect(principal).toMatchObject({ kind: 'oidc', github_id: ACCOUNT, acts_via: 'gh-repo:1376408823', packages: ['widgets', 'gadgets'] });
+      expect(principal.ci_owner).toBeUndefined();
+      expect(principal.ci_namespace).toBeUndefined();
+    });
+
+    test('the namespace row alone does not serve /api/v1: oidc_not_trusted, and the CI token is unspent', async () => {
+      build([NS_ROW]);
+      await env.own(ACCOUNT, HANDLE, ['widgets']);
+      const j = jwt();
+      await expect(oidc.exchange({ jwt: j, packages: [{ name: 'widgets', version: widgets.version }] })).rejects.toMatchObject({ code: 'oidc_not_trusted', status: 403 });
+      expect(ciTokens()).toEqual([]);
+      build([NS_ROW, PUBLISHER]);
+      await env.own(ACCOUNT, HANDLE, ['widgets']);
+      await expect(oidc.exchange({ jwt: j, packages: [{ name: 'widgets', version: widgets.version }] })).resolves.toMatchObject({ packages: [{ name: 'widgets', version: widgets.version }] });
+    });
+  });
 });
 
 describe('viaOf', () => {
