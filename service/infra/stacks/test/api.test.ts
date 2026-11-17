@@ -377,20 +377,22 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       expect(JSON.parse(values[0])).toEqual(BETA_CI_PUBLISHERS);
       expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
     } else if (stage === 'prod') {
-      // Prod trusts the same workflow only as an identity that ACTS FOR the owner account: its environment is prod, the row carries
-      // acts_for, and nothing else about the claim pins is looser than beta's.
+      // Prod trusts the same workflow as an identity that ACTS FOR the owner account (/api/v1) and as the publisher of the komira-ai
+      // namespace (/api/v2): its environment is prod, each row carries acts_for or namespace, and nothing else about the claim pins is
+      // looser than beta's.
+      const pins = {
+        repository_id: '1376408823',
+        repository_owner_id: '305577347',
+        workflow: '.github/workflows/release.yml',
+        ref: 'refs/heads/main',
+        job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+        events: ['push'],
+        environment: 'prod',
+      };
       expect(values).toHaveLength(1);
       expect(JSON.parse(values[0])).toEqual([
-        {
-          repository_id: '1376408823',
-          repository_owner_id: '305577347',
-          workflow: '.github/workflows/release.yml',
-          ref: 'refs/heads/main',
-          job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
-          events: ['push'],
-          environment: 'prod',
-          acts_for: '15257031',
-        },
+        { ...pins, acts_for: '15257031' },
+        { ...pins, namespace: 'komira-ai' },
       ]);
       expect(JSON.parse(values[0])).toEqual(PROD_CI_PUBLISHERS);
       expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
@@ -402,15 +404,16 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     }
   });
 
-  // The handler's loader refuses a prod row that does not act for an account (and any row off beta and prod), which stops the function
-  // from starting: every row a template carries on prod names an account, and beta's rows name none.
-  test(stage === 'gamma' ? 'gamma: no CI row at all' : `${stage}: every CI row ${stage === 'prod' ? 'acts for the account' : 'acts for no account'}`, () => {
+  // The handler's loader refuses a prod row with neither acts_for nor namespace (and any row off beta and prod), which stops the function
+  // from starting: every row a template carries on prod names an account or a namespace, and beta's rows name neither. (That the
+  // handler loads these exact prod rows, in this order, is service/api/test/auth-ci-publishers.test.ts.)
+  test(stage === 'gamma' ? 'gamma: no CI row at all' : `${stage}: every CI row ${stage === 'prod' ? 'acts for the account or names the komira-ai namespace' : 'names no account and no namespace'}`, () => {
     const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
     const values = fns.map((f) => f.Properties.Environment?.Variables?.[CI_PUBLISHERS_ENV]).filter((v) => v !== undefined);
-    const rows = values.flatMap((v) => JSON.parse(v) as Array<{ acts_for?: string }>);
+    const rows = values.flatMap((v) => JSON.parse(v) as Array<{ acts_for?: string; namespace?: string }>);
     if (stage === 'gamma') expect(rows).toEqual([]);
-    else if (stage === 'prod') expect(rows.map((r) => r.acts_for)).toEqual(['15257031']);
-    else expect(rows.map((r) => r.acts_for)).toEqual([undefined]);
+    else if (stage === 'prod') expect(rows.map((r) => [r.acts_for, r.namespace])).toEqual([['15257031', undefined], [undefined, 'komira-ai']]);
+    else expect(rows.map((r) => [r.acts_for, r.namespace])).toEqual([[undefined, undefined]]);
   });
 
   // The groups policy is beta's alone too: the variable exists on the beta template, names exactly the CI actor of the trusted

@@ -211,6 +211,28 @@ describe('parseCiPublishers: a row that publishes in a namespace', () => {
     expect(() => parseCiPublishers('gamma', json([NS_ENTRY]))).toThrow(/beta stage only/);
   });
 
+  test('prod loads the move into a namespace: one repository with an acts_for row and a namespace row, in either order', () => {
+    for (const rows of [[PROD_ENTRY, NS_ENTRY], [NS_ENTRY, PROD_ENTRY]]) {
+      expect(parseCiPublishers('prod', json(rows))).toEqual(rows);
+    }
+  });
+
+  test('one repository twice for the same exchange is refused, whole, with the rule named', () => {
+    const message = 'CI_PUBLISHERS is not valid: a repository is named twice for the same namespace, or twice without one';
+    // two rows that serve /api/v1: an acts_for row and a row with neither (beta), or two acts_for rows for different accounts
+    expect(() => parseCiPublishers('beta', json([{ ...ENTRY, environment: 'prod', acts_for: '15257031' }, ENTRY]))).toThrow(message);
+    expect(() => parseCiPublishers('prod', json([PROD_ENTRY, { ...PROD_ENTRY, acts_for: '5' }]))).toThrow(message);
+    // two rows of one namespace, even in different environments
+    expect(() => parseCiPublishers('prod', json([NS_ENTRY, { ...NS_ENTRY, environment: 'release' }]))).toThrow(message);
+  });
+
+  test('one repository may publish in two namespaces, and two repositories in one', () => {
+    const two = [NS_ENTRY, { ...NS_ENTRY, namespace: 'acme-labs' }];
+    expect(parseCiPublishers('prod', json(two)).map((r) => r.namespace)).toEqual(['komira-ai', 'acme-labs']);
+    const repos = [NS_ENTRY, { ...NS_ENTRY, repository_id: '5' }];
+    expect(parseCiPublishers('prod', json(repos)).map((r) => r.repository_id)).toEqual(['1376408823', '5']);
+  });
+
   test('the handler wiring starts on prod with a namespace row and stops on a prod row with neither', () => {
     const doc = new FakeAuthDoc({});
     const env = (v: unknown) => ({ MOPM_OAUTH_SECRET_NAME: 'mopm/x/github-oauth', [CI_PUBLISHERS_ENV]: json(v) });

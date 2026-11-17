@@ -128,7 +128,8 @@ would have given new names to a repository identity instead, and would have refu
 5. **Prod loads only such rows.** `parseCiPublishers` accepts a value on beta (any row) and on prod only when every row carries
    `acts_for`; every other stage, and a prod row without it, stops the function from starting. The stack sets the variable on prod
    (`PROD_CI_PUBLISHERS`, environment `prod`, `push` only) and not on gamma; beta's row is unchanged. No groups policy is set on prod: the
-   `groups_enabled` item stays the human switch.
+   `groups_enabled` item stays the human switch. (Amended by the namespace addendum below: prod also loads a row that carries
+   `namespace` instead.)
 
 ### Consequences
 
@@ -142,3 +143,33 @@ would have given new names to a repository identity instead, and would have refu
 - **Removing the trust is a deploy without the row** (runbook: "Prod trusts a CI identity that acts for an account"). Tokens already
   minted live out their ten minutes. `groups_enabled` is the way to stop groups at once, for the human account too.
 - The template diff between gamma and prod gains exactly one difference: the API function's `CI_PUBLISHERS` variable.
+
+## Addendum: the komira release publishes in the `komira-ai` namespace, on prod
+
+Touches: the prod CI publisher rows (`PROD_CI_PUBLISHERS`), the loader's rule on a repository named twice, and which rows the
+`/api/v1` exchange matches.
+
+### Context
+
+Packages now live in namespaces (docs/design/namespaces.md), and the design moves the prod CI publisher from acting for an account to
+publishing in `komira-ai`. The komira release publishes on every push to main and is switched to full names by a separate change in
+komira; the prod deploy of this repository is automatic after a merge. Replacing the `acts_for` row would break the release from the
+deploy until komira switches, and adding the namespace row after komira switches would break it the other way.
+
+### Decision
+
+1. **Prod carries both rows for the release while it moves**: the `acts_for` row unchanged, and a row with `namespace: komira-ai` and
+   the same pins. The `acts_for` row is removed in a later change, after komira's release publishes only `komira-ai/` names.
+2. **A namespace row serves `/api/v2` only.** The `/api/v1` exchange matches rows without a namespace; `/api/v2` already matched only the
+   rows of the request's namespace. So which row answers never depends on the order of the rows.
+3. **A repository may be named once without a namespace and once per namespace.** Two rows of one repository for the same exchange are
+   still refused, so a match is never ambiguous.
+4. **Groups stay a human switch.** The namespace row's actor is `ci:gh-repo:<repository_id>`; prod's `groups_enabled` item must list it
+   for the release's group publish, and that is an operator's change to the config table, not configuration in the stack.
+
+### Consequences
+
+- Until the `acts_for` row is removed, the release identity can publish both the account's flat packages and `komira-ai/` packages.
+  Both rows have the same pins, so no one who could not publish before can publish now: what is gained by pushing to komira's main and
+  approving its `prod` environment is the right to write `komira-ai/` names as well.
+- A beta or prod value that names one repository twice for the same exchange still stops the function from starting.

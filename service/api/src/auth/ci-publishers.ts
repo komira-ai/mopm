@@ -48,7 +48,8 @@ export interface CiPublisher {
   acts_for?: string;
   /**
    * Optional: an owner namespace this identity publishes in through `/api/v2`'s `packages` exchange. The row's `repository_owner_id`
-   * must be the namespace's GitHub id (checked at exchange). Such a row creates nothing; it cannot also carry `acts_for`.
+   * must be the namespace's GitHub id (checked at exchange). Such a row creates nothing; it cannot also carry `acts_for`, and it does
+   * not serve `/api/v1`'s exchange (the same repository's row without a namespace, if there is one, does).
    */
   namespace?: string;
 }
@@ -74,7 +75,8 @@ const bad = (detail: string) => new Error(`${CI_PUBLISHERS_ENV} is not valid: ${
 /**
  * The CI publishers named by the environment value. Absent or empty: none. Present on any stage but beta and prod: an error,
  * so the function does not start (a mistake in infrastructure cannot turn the trust on elsewhere). On prod every row must carry
- * `acts_for` or `namespace`; a row with neither is an error there. A row with both is an error on every stage. Malformed: an error naming what is wrong, never a partial list.
+ * `acts_for` or `namespace`; a row with neither is an error there. A row with both is an error on every stage. A repository is
+ * named at most once without a namespace and at most once per namespace. Malformed: an error naming what is wrong, never a partial list.
  */
 export function parseCiPublishers(stage: string, raw: string | undefined): CiPublisher[] {
   if (raw === undefined || raw === '') return [];
@@ -125,6 +127,11 @@ export function parseCiPublishers(stage: string, raw: string | undefined): CiPub
       environment: str('environment', ENVIRONMENT),
     });
   }
-  if (new Set(out.map((p) => p.repository_id)).size !== out.length) throw bad('a repository is named twice');
+  // A repository may hold one row that serves `/api/v1` (no namespace) and one row per namespace it publishes in through `/api/v2`,
+  // so a release can move into a namespace without a window in which neither exchange trusts it. Two rows of one repository that serve
+  // the same exchange would make the match depend on their order, so they are refused.
+  if (new Set(out.map((p) => `${p.repository_id}\0${p.namespace ?? ''}`)).size !== out.length) {
+    throw bad('a repository is named twice for the same namespace, or twice without one');
+  }
   return out;
 }

@@ -374,7 +374,8 @@ export class OidcExchange {
     if (new Set(wanted.map((w) => w.name)).size !== wanted.length) throw bad("'packages' names a package twice");
 
     const claims = await this.o.verifier.verify(input.jwt);
-    const publisher = this.o.registry ? this.o.ciPublishers?.find((p) => matchesCiPublisher(p, claims)) : undefined;
+    // A namespace row serves `/api/v2` only (exchangeV2); the same repository's row without a namespace is the one that serves this form.
+    const publisher = this.o.registry ? this.o.ciPublishers?.find((p) => p.namespace === undefined && matchesCiPublisher(p, claims)) : undefined;
     if (!publisher || !this.o.registry) {
       throw new AuthError('oidc_not_trusted', `No trusted publisher of '${wanted[0]!.name}' matches this CI identity.`, { name: wanted[0]!.name });
     }

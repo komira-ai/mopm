@@ -180,6 +180,26 @@ describe('the packages form: a configured publisher of the namespace', () => {
     }
   });
 
+  test('beside an acts_for row of the same repository (prod while a release moves into its namespace), in either order, the namespace row serves it', async () => {
+    const { namespace: _n, ...rest } = CONFIGURED;
+    const actsFor: CiPublisher = { ...rest, acts_for: '15257031' };
+    for (const publishers of [[actsFor, CONFIGURED], [CONFIGURED, actsFor]]) {
+      const s = await setup({ publishers });
+      const r = (await s.oidc.exchangeV2({ jwt: s.jwt(), packages: set })) as Record<string, unknown>;
+      const p = await s.auth.authenticate(`Bearer ${r.token}`);
+      expect(p).toMatchObject({ kind: 'oidc', ci_namespace: 'komira-ai', ci_owner: CI_OWNER, packages: ['komira-ai/json', 'komira-ai/http'] });
+      expect(p.github_id).toBeUndefined();
+      expect(p.acts_via).toBeUndefined();
+    }
+  });
+
+  test('an acts_for row alone does not serve the packages form of /api/v2: oidc_not_trusted', async () => {
+    const { namespace: _n, ...rest } = CONFIGURED;
+    const s = await setup({ publishers: [{ ...rest, acts_for: '15257031' }] });
+    await refused(s.oidc.exchangeV2({ jwt: s.jwt(), packages: set }), 'oidc_not_trusted', 403);
+    expect(tokens(s)).toEqual([]);
+  });
+
   test('it creates no package, whether or not the names exist', async () => {
     const s = await setup();
     await s.oidc.exchangeV2({ jwt: s.jwt(), packages: set });

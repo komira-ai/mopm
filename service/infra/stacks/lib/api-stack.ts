@@ -139,11 +139,15 @@ export const BETA_CI_PUBLISHERS = [
 ];
 
 /**
- * The CI identity the PROD stage trusts by configuration, and only as one that ACTS FOR an account: the same komira release workflow
- * (main, push only, `job_workflow_ref` pinned) in its `prod` environment. Its exchange mints a token whose principal is the account
- * (`acts_for`, GitHub's numeric id of asuresh8): the packages must already be that account's, none is created, and no CI owner is set.
- * Whether it may create a group is the account's `groups_enabled` item in the config table (a human flip), not configuration here.
- * Removing this trust is a deploy without the row (service/docs/runbook.md). Set on the prod stage only; beta keeps BETA_CI_PUBLISHERS
+ * The CI identity the PROD stage trusts by configuration: the same komira release workflow (main, push only, `job_workflow_ref`
+ * pinned) in its `prod` environment, in two rows while the release moves its packages into the `komira-ai` namespace.
+ * - The `acts_for` row serves `/api/v1`'s exchange: it mints a token whose principal is the owner account (its GitHub numeric id),
+ *   the packages must already be that account's flat names, none is created, and no CI owner is set. Its groups are the account's
+ *   (`u:<id>` on the `groups_enabled` item of the config table).
+ * - The `namespace` row serves `/api/v2`'s exchange: it mints a token for full names in `komira-ai` (whose GitHub id is the repository's
+ *   owner id, 305577347), with which `mopm publish` creates a missing package. Its group actor is `ci:gh-repo:1376408823`, which the
+ *   `groups_enabled` item must list (a human flip, not configuration here).
+ * Removing either trust is a deploy without its row (service/docs/runbook.md). Set on the prod stage only; beta keeps BETA_CI_PUBLISHERS
  * and gamma has none.
  */
 export const PROD_CI_PUBLISHERS = [
@@ -156,6 +160,16 @@ export const PROD_CI_PUBLISHERS = [
     events: ['push'],
     environment: 'prod',
     acts_for: '15257031',
+  },
+  {
+    repository_id: '1376408823',
+    repository_owner_id: '305577347',
+    workflow: '.github/workflows/release.yml',
+    ref: 'refs/heads/main',
+    job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+    events: ['push'],
+    environment: 'prod',
+    namespace: 'komira-ai',
   },
 ];
 
@@ -275,7 +289,7 @@ export class ApiStack extends Stack {
         MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
         // Beta only: the CI identity this stage trusts (BETA_CI_PUBLISHERS). Absent elsewhere, and the handler refuses it elsewhere.
         ...(c.stage === 'beta' ? { [CI_PUBLISHERS_ENV]: JSON.stringify(BETA_CI_PUBLISHERS) } : {}),
-        // Prod only: the CI identity that acts for an account (PROD_CI_PUBLISHERS). Gamma has none; the handler refuses a row without `acts_for` here.
+        // Prod only: the CI identity that acts for an account or publishes in a namespace (PROD_CI_PUBLISHERS). Gamma has none; the handler refuses a row with neither here.
         ...(c.stage === 'prod' ? { [CI_PUBLISHERS_ENV]: JSON.stringify(PROD_CI_PUBLISHERS) } : {}),
         // Beta only: who may create a group (BETA_GROUPS_POLICY: that CI identity). Absent elsewhere, and the handler refuses it elsewhere.
         ...(c.stage === 'beta' ? { [GROUPS_POLICY_ENV]: JSON.stringify(BETA_GROUPS_POLICY) } : {}),

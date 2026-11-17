@@ -222,16 +222,17 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
 - **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
   trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
   config-table item for it), so the fastest stop is the deploy.
-- **Gamma gets none of it, and prod only the acting-for row below.** Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the create route's, `PUT /api/v2/packages/{namespace}/{name}`, on every stage, and there is no CI-only grant), and answers the `packages`
+- **Gamma gets none of it, and prod only the two rows below** (acting for an account, and publishing in `komira-ai`). Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the create route's, `PUT /api/v2/packages/{namespace}/{name}`, on every stage, and there is no CI-only grant), and answers the `packages`
   form of the exchange with `oidc_not_trusted`. The handler also refuses to start on gamma if the variable is present, and on prod if a
-  row does not carry `acts_for`, so a function that fails to start with "may be set on the beta stage only" or "trusts only rows that
-  carry 'acts_for'" means the variable reached the wrong stage or has the wrong shape: fix it in the stack and redeploy. Trusting a CI
+  row carries neither `acts_for` nor `namespace`, so a function that fails to start with "may be set on the beta stage only" or "trusts
+  only rows that carry 'acts_for' or 'namespace'" means the variable reached the wrong stage or has the wrong shape: fix it in the stack and redeploy. Trusting a CI
   identity at gamma stays a deliberate human decision.
 
 ### Prod trusts a CI identity that acts for an account
 
-`PROD_CI_PUBLISHERS` in the same file is the prod stage's `CI_PUBLISHERS`: the same release workflow on main, `push` only, with
-`job_workflow_ref` pinned, in the **`prod` environment**, with `acts_for` set to the owner account's GitHub id. Design and reasons: the
+The first row of `PROD_CI_PUBLISHERS` in the same file (the prod stage's `CI_PUBLISHERS`): the same release workflow on main, `push`
+only, with `job_workflow_ref` pinned, in the **`prod` environment**, with `acts_for` set to the owner account's GitHub id. The second
+row, the `komira-ai` namespace publisher, is the next section. Design and reasons: the
 addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-ci-publisher-identity.md`.
 
 - **What it does.** The `packages` form of the exchange mints a 10 minute, single-use-`jti` token whose principal is that account: the
@@ -247,8 +248,8 @@ addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-
   request. A human's own publish has none. `via` is not in the public read API.
 - **A job that dies between stage and commit** leaves an open group holding the account's slot until its deadline (12 hours by default).
   Abort it with a fresh exchange for the same packages and `DELETE /api/v1/groups/<id>` (the release workflow's abort job does that).
-- **Removing the trust.** Delete the entry: in `api-stack.ts` make the prod `CI_PUBLISHERS` variable absent (remove `PROD_CI_PUBLISHERS`
-  and its line) in a pull request and promote it to prod. A deployed value cannot be switched off at runtime; tokens already minted
+- **Removing the trust.** Delete the `acts_for` row from `PROD_CI_PUBLISHERS` in `api-stack.ts` in a pull request and promote it to
+  prod; the namespace row stays. (Removing the whole constant and its line in the stack also removes the namespace publisher.) A deployed value cannot be switched off at runtime; tokens already minted
   stay valid until their 10 minutes end, and a deploy without the row refuses every later exchange with `oidc_not_trusted`. The
   account's own tokens, groups and `groups_enabled` item are untouched. To stop CI groups without a deploy, remove `u:<id>` from
   `groups_enabled` (that also stops the human account).
@@ -265,7 +266,27 @@ addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-
   identity. `oidc_token_invalid` "token already used": a CI token is exchanged once.
 - **Namespace publishers.** A `CI_PUBLISHERS` row may name a `namespace` instead of `acts_for` (prod accepts either, never both): the
   `/api/v2` exchange then mints a token for full names in that namespace, when the job's `repository_owner_id` is the namespace's GitHub
-  id. It creates nothing; `mopm publish` creates a package with `PUT /api/v2/packages/{namespace}/{name}` using that token.
+  id. It creates nothing; `mopm publish` creates a package with `PUT /api/v2/packages/{namespace}/{name}` using that token. A
+  namespace row serves `/api/v2` only, so one repository may carry a row without a namespace (for `/api/v1`) and one row per namespace;
+  two rows of one repository for the same exchange stop the function from starting ("a repository is named twice for the same
+  namespace, or twice without one").
+
+### Prod trusts the komira release as the publisher of `komira-ai`
+
+`PROD_CI_PUBLISHERS` holds a second row for the same release workflow (main, `push` only, `job_workflow_ref` pinned, environment
+`prod`) with `namespace: komira-ai`. It is how the release publishes `komira-ai/<name>` once komira's packages are renamed; until then
+the `acts_for` row above keeps serving the flat names, so neither side has to land first.
+
+- **What the release needs on prod besides the row.** The `komira-ai` namespace, registered (its GitHub id is the row's
+  `repository_owner_id`, 305577347). And, for its group publish, the actor `ci:gh-repo:1376408823` on the `groups_enabled` item of
+  `mopm-prod-config`: a namespace token's actor is the repository identity, not the account, so the account's `u:<id>` on that item
+  does not admit it. Add the actor to the item's `actors`, keeping the ones there (a `put-item` replaces the whole item; see "The
+  `groups_enabled` item" below). Without it the group create answers `route_not_found`.
+- **Telling it apart.** Its records carry the actor `ci:gh-repo:1376408823` and its token `ci_namespace: komira-ai`; the `acts_for`
+  row's records carry the actor `u:<id>` and `via`.
+- **After the move.** When komira's release publishes only `komira-ai/` names, remove the `acts_for` row in a pull request and promote
+  it; the namespace row stays. Removing the namespace row instead is the same kind of change, and stops every `/api/v2` exchange of
+  the release with `oidc_not_trusted`.
 
 ## Organization namespaces
 
