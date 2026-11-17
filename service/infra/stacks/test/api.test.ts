@@ -159,6 +159,20 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     }
   });
 
+  // One permission for the whole API keeps the function's resource policy under Lambda's 20480-byte cap at any route count.
+  test('the API function has one invoke permission, for this API, however many routes it serves', () => {
+    const handlerId = Object.entries(t.findResources('AWS::Lambda::Function'))
+      .find(([, f]) => (f as any).Properties.Handler === 'http/lambda.handler')![0];
+    const apiId = Object.keys(t.findResources('AWS::ApiGatewayV2::Api'))[0]!;
+    const perms = Object.values(t.findResources('AWS::Lambda::Permission'))
+      .filter((p: any) => p.Properties.Principal === 'apigateway.amazonaws.com' && JSON.stringify(p.Properties.FunctionName).includes(handlerId)) as any[];
+    expect(perms).toHaveLength(1);
+    expect(perms[0].Properties.Action).toBe('lambda:InvokeFunction');
+    const arn = JSON.stringify(perms[0].Properties.SourceArn);
+    expect(arn).toContain(apiId);
+    expect(arn).toContain('/*/*');
+  });
+
   // The route added for `mopm whoami` (GET /api/v1/me): a stage that named it in RouteSettings before CloudFormation created it would
   // fail the update, so no stage setting names it (the index routes are the only ones), and the route exists exactly once.
   test('GET /api/v1/me is one gateway route to the API function and no stage RouteSettings entry names it', () => {
