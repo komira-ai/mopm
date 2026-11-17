@@ -18,8 +18,9 @@
 #
 # The macOS legs of the unit tier (`test` and `registry-build`) are also farm-macos.yml's `macos-farm` targets, run on the build farm's
 # Mac workers. The repository variable MACOS_ON_FARM switches between the two: unset (or anything but `true`), these jobs keep their
-# macos-15 leg; `true` drops it, and farm-macos.yml then fails instead of skipping when the macOS workers are not configured, so no
-# merge goes unbuilt on macOS. The beta tier's macOS legs (`mojo-e2e`, `pixi-channels`, `installer`) are not Buck2 targets and stay on
+# macos-15 leg; `true` drops it on every trigger, and farm-macos.yml then fails instead of skipping when the macOS workers are not
+# configured, so no merge goes unbuilt on macOS. farm-macos.yml runs on a push to main and in the release only: with the switch on, the
+# nightly and manual runs of these two jobs have no macOS leg (a commit on main was built on macOS when it was pushed). The beta tier's macOS legs (`mojo-e2e`, `pixi-channels`, `installer`) are not Buck2 targets and stay on
 # macos-15 either way. tests/drivers/release_lint.zig holds the switch (`ciSwitchProblems`, `farmMacosSwitchProblems`).
 name: ci
 
