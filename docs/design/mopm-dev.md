@@ -433,6 +433,9 @@ frequently searched names that do not exist: it would be a list of names to regi
 
 ## 4. Web login and account
 
+[tutorial-sign-in.md](tutorial-sign-in.md) builds the part of this section the interactive tutorial needs (start,
+callback, logout, `/me` with the cookie) under `/api/v2` instead of `/api/v1`.
+
 ### 4.1 Topology: the API under the site's own host
 
 **Decision (Q3): CloudFront serves `/api/*` on the site host** (`https://mopm.dev/api/v1/...`); `api.<site>` stays for
