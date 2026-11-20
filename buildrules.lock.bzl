@@ -6,7 +6,7 @@ RUSTC = "1.95.0"
 TARGET = "x86_64-unknown-linux-gnu"
 CARGO_LOCK_SHA256 = "c1dbdf9936c84bfad0e180681fab680044d9fca21898a3b99b39ee01945bfee9"
 MANIFEST_SHA256 = {
-    "Cargo.toml": "308def3108d2a6adad0d5d93011aeb47b9583e26678a737a06bb9d1a57e6e261",
+    "Cargo.toml": "af70d9a9878216d235fa087033209a5657c00c1898b3bf16211623adf8e895c4",
     "rust-toolchain.toml": "ff097e90fee22d7e1c49e937914a5b32e2fdd50a70df97214ff64fb9d3eb34ae",
     "service/lambda/aws/Cargo.toml": "1a12a35eaf3b128e9299b197b32f7496bd10772349aa7fd7568e0b95ee37cba5",
     "service/lambda/core/Cargo.toml": "f53649aa7a0db4bef04ff4a222c7d202c5721e51eab7ccedd6935f1b49377c14",
@@ -38,7 +38,7 @@ TOOLCHAIN = {
 # Policy read from [workspace.metadata.buildrules] and clippy.toml; lints from [workspace.lints]; both baked here.
 WORKSPACE = {
     "actions": {
-        "ci": ["lint", "test"],
+        "ci": ["fmt", "lint", "test"],
     },
     "default_action": "ci",
     "clippy_conf": None,
@@ -55,9 +55,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "fn_web_login": {
@@ -69,9 +69,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "fn_web_session": {
@@ -83,9 +83,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "mopm_aws": {
@@ -97,9 +97,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "mopm_canary": {
@@ -111,9 +111,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "mopm_core": {
@@ -125,9 +125,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "mopm_e2b": {
@@ -139,9 +139,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "mopm_ports": {
@@ -153,9 +153,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "mopm_testing": {
@@ -167,9 +167,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "mopm_validate": {
@@ -181,9 +181,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
     "mopm_web": {
@@ -195,9 +195,9 @@ PACKAGES = {
             "clippy": [],
         },
         "actions": {
-            "ci": ["lint", "test"],
+            "ci": ["fmt", "lint", "test"],
         },
-        "deny_warnings": False,
+        "deny_warnings": True,
         "default_action": "ci",
     },
 }

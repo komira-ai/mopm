@@ -109,8 +109,11 @@ strip = "debuginfo"
 [workspace.metadata.buildrules]
 default-action = "ci"
 
+# `//:ci` builds `//:fmt` (the pinned rustfmt with its defaults, as there is no rustfmt.toml: red on any difference),
+# `//:lint` (clippy over every lib, bin and test target, with `-D warnings`: red on any clippy or rustc warning) and
+# `//:test`. Build scripts are not linted (buildrules' `:lint`, like `cargo clippy`).
 [workspace.metadata.buildrules.actions]
-ci = ["lint", "test"]
+ci = ["fmt", "lint", "test"]
 
 [workspace.metadata.buildrules.lint]
-deny-warnings = false
+deny-warnings = true

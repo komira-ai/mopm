@@ -24,7 +24,7 @@ load("//:buildrules.bzl", "cargo_workspace")
 load("//tests/compat:tree.bzl", "tree")
 
 # The Rust workspace (Cargo.toml): `:check` (is the generated table what Cargo.toml / Cargo.lock / rust-toolchain.toml say),
-# and one aggregate per step, `:lint :debug :test :release`, over every member. Each member's BUCK file has one
+# one aggregate per step, `:fmt :lint :debug :test :release`, over every member, and `:ci` (Cargo.toml's action: fmt, lint, test). Each member's BUCK file has one
 # `cargo_package` call. `buildrules sync` regenerates buildrules.lock.bzl, buildrules.bzl and third_party/buildrules/BUCK.
 cargo_workspace(path = ".")
 
