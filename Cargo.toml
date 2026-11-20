@@ -16,6 +16,7 @@ members = [
     "service/lambda/ports",
     "service/lambda/testing",
     "service/lambda/validate",
+    "service/lambda/web",
     "tools/lambda",
 ]
 

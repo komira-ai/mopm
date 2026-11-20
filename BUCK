@@ -1075,6 +1075,21 @@ export_file(
     visibility = ["//service/lambda/core:"],
 )
 
+# The website's contract examples, for mopm_web's error envelope test.
+export_file(
+    name = "lambda.contract.v2.web-auth.json",
+    src = "tests/contract/api-v2/web-auth.json",
+    mode = "reference",
+    visibility = ["//service/lambda/web:"],
+)
+
+export_file(
+    name = "lambda.contract.v2.tutorial-sandbox.json",
+    src = "tests/contract/api-v2/tutorial-sandbox.json",
+    mode = "reference",
+    visibility = ["//service/lambda/web:"],
+)
+
 # The unit table `buildrules sync` writes, for the canary's graph_test (tools/lambda/canary/graph_test.rs): TLS on AWS-LC, no ring.
 export_file(
     name = "lambda.unit_table",
@@ -1396,6 +1411,7 @@ _LINT_PACKAGES = [
     "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",
+    "service/lambda/web",
     "site",
     "tools/lambda",
     "tools/node",
