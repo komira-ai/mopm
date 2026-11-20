@@ -442,7 +442,8 @@ impl<'a> Exprs<'a> {
             } else if let Some(x) = c.strip_prefix("attribute_exists(").and_then(|r| r.strip_suffix(')')) {
                 let a = self.name(x)?;
                 existing.is_some_and(|i| i.contains_key(&a))
-            } else if let Some((l, r)) = c.split_once(" > ") {
+            } else if let Some((l, r)) = c.split_once(" > ").filter(|(l, _)| !l.contains('(')) {
+                // A comparison of an attribute; a function on the left (`size(#x) > :v`) is a form the fake does not know.
                 let a = self.name(l.trim())?;
                 let bound = integer(self.value(r.trim())?).ok_or_else(|| Fail::validation(format!("fake: unsupported comparison operand {}", r.trim())))?;
                 // As in DynamoDB, an absent attribute or one of another type compares false.

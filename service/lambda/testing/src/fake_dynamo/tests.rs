@@ -619,6 +619,9 @@ async fn a_greater_than_on_anything_but_integer_numbers_is_unsupported() {
     let fake = start();
     refused(&fake, "UpdateItem", later_than(s("1")), VALIDATION, "fake: unsupported comparison operand :b").await;
     refused(&fake, "UpdateItem", later_than(n("1.5")), VALIDATION, "fake: unsupported comparison operand :b").await;
+    let mut size = later_than(n("1"));
+    size["ConditionExpression"] = json!("size(#e) > :b");
+    refused(&fake, "UpdateItem", size, VALIDATION, "fake: unsupported condition size(#e) > :b").await;
     fake.seed(PKG, json!({"name": s("a"), "expires": n("1.5")}));
     refused(&fake, "UpdateItem", later_than(n("1")), VALIDATION, r#"fake: unsupported comparison of {"N":"1.5"}"#).await;
 }
