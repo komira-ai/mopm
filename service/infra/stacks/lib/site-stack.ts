@@ -17,6 +17,7 @@ import { DOC_SLUG, NAME, NAME_SEPARATORS, NAMESPACE, NAMESPACE_MAX, VERSION, VER
 import { HSTS_MAX_AGE_SECONDS, PERMISSIONS_POLICY, contentSecurityPolicy as sitePolicy } from '../../../../site/tools/headers';
 import { StageConfig, edgeOriginSecretName, siteBucketName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
+import { e2bDomain } from './stage-settings';
 
 export interface SiteStackProps extends StackProps {
   config: StageConfig;
@@ -51,9 +52,13 @@ export const API_READ_TIMEOUT = Duration.seconds(30);
 /** The CSP of the API's responses on the site host: JSON, never a document that runs or embeds anything. */
 export const API_CONTENT_SECURITY_POLICY = "default-src 'none'; sandbox; frame-ancestors 'none'";
 
-/** The Content-Security-Policy of a stage: nothing but the site itself, and the stage's own API for fetch. */
+/**
+ * The Content-Security-Policy of a stage's pages: nothing but the site itself, and for fetch the site itself (its API is
+ * under `/api/*` on the same host) and the tutorial's E2B sandboxes, `https://*.<E2B domain>` with the stage's
+ * `e2b_domain` setting (lib/stage-settings.ts).
+ */
 export function contentSecurityPolicy(c: StageConfig): string {
-  return sitePolicy(`https://${c.apiDomain}`);
+  return sitePolicy(`'self' https://*.${e2bDomain(c)}`);
 }
 
 export { PERMISSIONS_POLICY };

@@ -1,13 +1,35 @@
-// T2: only the three site hostnames map to an API, each to its own; anything else gets no API (and no call).
-import { apiBase, condaBase } from '../src/host';
+// T2: only the three site hostnames (and the local preview's) have an API, on the page's own origin under the relative
+// /api/v2, and each its own channel; anything else gets no API (and no call).
+import { client, type FetchFn } from '../src/api';
+import { API_BASE, apiBase, condaBase } from '../src/host';
 
 test.each([
-  ['mopm.dev', 'https://api.mopm.dev/api/v2', 'https://conda.mopm.dev/'],
-  ['beta.mopm.dev', 'https://api.beta.mopm.dev/api/v2', 'https://conda.beta.mopm.dev/'],
-  ['gamma.mopm.dev', 'https://api.gamma.mopm.dev/api/v2', 'https://conda.gamma.mopm.dev/'],
-])('%s maps to its own API and channel', (host, api, conda) => {
-  expect(apiBase(host)).toBe(api);
+  ['mopm.dev', 'https://conda.mopm.dev/'],
+  ['beta.mopm.dev', 'https://conda.beta.mopm.dev/'],
+  ['gamma.mopm.dev', 'https://conda.gamma.mopm.dev/'],
+])('%s reads the API on its own origin, /api/v2, and has its own channel', (host, conda) => {
+  expect(apiBase(host)).toBe('/api/v2');
+  expect(API_BASE).toBe('/api/v2');
   expect(condaBase(host)).toBe(conda);
+});
+
+// The URL a page fetches is relative: no scheme, no host, so the browser sends it to the page's own origin, which the
+// site distribution answers from the stage's API (/api/*). api.<site host> is never named.
+test.each(['mopm.dev', 'beta.mopm.dev', 'gamma.mopm.dev', '127.0.0.1', 'localhost'])('%s: the fetch URL is relative', async (host) => {
+  const urls: string[] = [];
+  const fetchFn: FetchFn = async (url) => {
+    urls.push(url);
+    return new Response('{}', { status: 404 });
+  };
+  const api = client(fetchFn, apiBase(host)!);
+  await api.getHealth();
+  await api.getPackage({ namespace: 'komira-ai', name: 'json' });
+  expect(urls).toEqual(['/api/v2/health', '/api/v2/packages/komira-ai/json']);
+  for (const u of urls) {
+    expect(u.startsWith('/api/v2/')).toBe(true);
+    expect(u.startsWith('//')).toBe(false);
+    expect(u).not.toContain('://');
+  }
 });
 
 // A host that ends with the string 'mopm.dev' but is not under it: a suffix match without a dot boundary would accept

@@ -182,15 +182,16 @@ jobs:
           esac
       # The site host serves the real build (site/, service/infra/stacks/lib/site-stack.ts): the home page with its hashed
       # assets, the app shell for a package route (a package that does not exist is the shell's to report), the 404 page
-      # with status 404 for anything else, and the stage's Content-Security-Policy. Read-only, no token; runs in every
-      # e2e run, after beta, gamma and prod deploys alike.
+      # with status 404 for anything else, and the stage's Content-Security-Policy, whose connect-src is the site's own
+      # origin (its /api/*) and E2B's sandboxes. Read-only, no token; runs in every e2e run, after beta, gamma and prod
+      # deploys alike.
       - name: Read-only checks, site
         env:
           STAGE: ${{ inputs.stage }}
         run: |
           set -euo pipefail
           site=$(jq -r .siteDomain "service/config/${STAGE}.json")
-          apihost=$(jq -r .apiDomain "service/config/${STAGE}.json")
+          e2b=$(jq -r '.tutorial.e2bDomain // "e2b.app"' "service/config/${STAGE}.json")
           out=$(mktemp)
           hdr=$(mktemp)
           # get <path>: prints the status code; the body is left in $out and the headers in $hdr.
@@ -208,8 +209,8 @@ jobs:
           grep -q '/assets/' "$out" || fail "/ names no /assets/ file"
           csp=$(header content-security-policy)
           case "$csp" in
-            *"connect-src https://${apihost};"*) echo "ok: CSP connects only to https://${apihost}" ;;
-            *) fail "CSP lacks connect-src https://${apihost}: $csp" ;;
+            *"connect-src 'self' https://*.${e2b};"*) echo "ok: CSP connects only to 'self' and https://*.${e2b}" ;;
+            *) fail "CSP lacks connect-src 'self' https://*.${e2b}: $csp" ;;
           esac
           asset=$({ grep -o '/assets/[0-9a-f]*/main\.js' "$out" || true; } | head -n 1)
           [ -n "$asset" ] || fail "/ names no /assets/<id>/main.js"

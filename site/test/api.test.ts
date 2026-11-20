@@ -1,10 +1,14 @@
 // T4: every valid read fixture replays through the client: the URL is built from the request, the body decodes to
 // exactly the fields that were sent (less the spec-only ones the site never reads), and the request id is kept.
-// T5: the request is a simple CORS GET: no headers (so no preflight), no credentials.
+// T5: the request is a GET on the page's own origin: a relative URL under the site host's base, mode and credentials
+// 'same-origin', no headers.
 import { client, type FetchFn } from '../src/api';
+import { apiBase } from '../src/host';
 import { type ContractCase, responseOf, validReadCases } from './fixtures';
 
-const BASE = 'https://api.mopm.dev/api/v2';
+/** What a page on mopm.dev passes: the relative '/api/v2'. */
+const BASE = apiBase('mopm.dev')!;
+const PAGE_ORIGIN = 'https://mopm.dev';
 
 function recorder(res: () => Response): { fetchFn: FetchFn; calls: { url: string; init: RequestInit }[] } {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -63,8 +67,10 @@ test.each(cases.map((c) => [`${c.operationId}: ${c.name}`, c] as const))('%s', a
   const r = await result;
 
   expect(calls).toHaveLength(1);
-  const url = new URL(calls[0].url);
-  expect(url.origin + url.pathname).toBe(BASE + path);
+  // The URL is relative: resolved against the page, it stays on the page's origin.
+  const url = new URL(calls[0].url, PAGE_ORIGIN);
+  expect(url.origin).toBe(PAGE_ORIGIN);
+  expect(url.pathname).toBe(BASE + path);
   const sent = Object.fromEntries(url.searchParams);
   const want = Object.fromEntries(Object.entries(c.request.query ?? {}).map(([k, v]) => [k, String(v)]));
   expect(sent).toEqual(want);
@@ -108,18 +114,20 @@ test('spec-only fields the server never sends are not decoded (readme_html is ne
 });
 
 describe('T5 request shape', () => {
-  test('a GET with mode cors, credentials omit, no headers and an abort signal', async () => {
+  test('a GET with mode and credentials same-origin, no headers and an abort signal, to a path on the page origin', async () => {
     const c = cases.find((x) => x.operationId === 'getPackage')!;
     const { fetchFn, calls } = recorder(() => responseOf(c));
     await client(fetchFn, BASE).getPackage({ namespace: 'komira-ai', name: 'json' });
     const init = calls[0].init;
     expect(init.method).toBe('GET');
-    expect(init.mode).toBe('cors');
-    expect(init.credentials).toBe('omit');
+    expect(init.mode).toBe('same-origin');
+    expect(init.credentials).toBe('same-origin');
     expect(init.headers).toBeUndefined();
     expect(init.body).toBeUndefined();
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(Object.keys(init).sort()).toEqual(['credentials', 'method', 'mode', 'signal']);
+    // Relative: the browser resolves it against the page, so it names no host and no scheme.
+    expect(calls[0].url).toBe('/api/v2/packages/komira-ai/json');
   });
 
   test('path segments are encoded', async () => {

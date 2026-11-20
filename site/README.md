@@ -13,7 +13,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 |---|---|
 | `src/routes.ts` | URL routes, the namespace, package name and version grammar, full names, path builders, the search a flat address is sent to |
 | `src/host.ts` | the API and conda channel for the hostname a page is served on (three known hosts, nothing else) |
-| `src/api.ts`, `src/errors.ts`, `src/decode.ts`, `src/types.ts` | the read API client: one simple CORS GET per call, error mapping, runtime decoding |
+| `src/api.ts`, `src/errors.ts`, `src/decode.ts`, `src/types.ts` | the read API client: one same-origin GET per call under `/api/v2`, error mapping, runtime decoding |
 | `src/doc.ts` | the Doc port: element and text nodes through a tag and attribute allowlist (`h()`); DOM and string backends |
 | `src/links.ts` | URL checking, the only source of `SafeHref` |
 | `src/markdown/` | a restricted Markdown parser (linear time) and its renderer, for package readmes and repo docs |
@@ -150,12 +150,15 @@ or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.m
 - **API.** `/api/*` goes to the stage's API (`api.<site host>`) over HTTPS, uncached, with every viewer header but
   `Host`, the cookies and the query string, a 30 s origin read timeout, and an `x-mopm-edge` origin header whose value
   is the generated secret `mopm/<stage>/edge-origin`. Its responses get their own headers: `nosniff`, `no-referrer`,
-  HSTS and `Content-Security-Policy: default-src 'none'; sandbox; frame-ancestors 'none'`. No page calls it yet.
-- **Headers.** The CSP `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src
-  https://api.<site host>; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none';
-  require-trusted-types-for 'script'; trusted-types 'none'`, plus HSTS, `X-Content-Type-Options`,
+  HSTS and `Content-Security-Policy: default-src 'none'; sandbox; frame-ancestors 'none'`. The pages read the API
+  here, on their own host (`src/host.ts` gives the relative `/api/v2`); `api.<site host>` stays as it is for the CLI
+  and CI.
+- **Headers.** The CSP `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'
+  https://*.<E2B domain>; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none';
+  require-trusted-types-for 'script'; trusted-types 'none'`, where the E2B domain is the stage's `e2b_domain` setting
+  (the `tutorial` block's `e2bDomain`, `e2b.app` by default), plus HSTS, `X-Content-Type-Options`,
   `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy` and
   `Cross-Origin-Resource-Policy` `same-origin`, and a `Permissions-Policy` that turns off camera, microphone,
   geolocation, payment and USB.
 - **Smoke test.** e2e.yml checks the site host after every deploy: the home page and one of its assets, the app shell
-  for a package route, a 404 for an unknown file, and the CSP's API host.
+  for a package route, a 404 for an unknown file, and the CSP's `connect-src`.
