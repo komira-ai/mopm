@@ -1370,6 +1370,7 @@ _LINT_PACKAGES = [
     "service/infra/stacks",
     "service/lambda/aws",
     "service/lambda/core",
+    "service/lambda/e2b",
     "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",

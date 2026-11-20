@@ -12,6 +12,7 @@ resolver = "3"
 members = [
     "service/lambda/aws",
     "service/lambda/core",
+    "service/lambda/e2b",
     "service/lambda/ports",
     "service/lambda/testing",
     "service/lambda/validate",
