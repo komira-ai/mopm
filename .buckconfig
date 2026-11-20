@@ -34,7 +34,7 @@
   fbsource = none
   fbcode_macros = none
   buck = none
-  # komira 9504a2daf names its own tests cell in a few visibility lists; the alias
+  # komira aefee5326 names its own tests cell in a few visibility lists; the alias
   # makes those patterns resolve (to packages that are not there). Nothing is built from it.
   tests = komira
 
@@ -47,8 +47,10 @@
   git_origin = https://github.com/komira-ai/komira.git
   # komira, kept for the Mojo compiler of the end-to-end tests (komira//tools/build/toolchains:mojo_compiler): the Zig,
   # node, C/C++ and Rust rules, and AWS-LC, are buildrules'. Bump it with farm.yml.
-  # 9504a2daf: komira main at the commit whose farm-connect action takes the tls input.
-  commit_hash = 9504a2daf88754de25d93f62a76ea2955ebc38c8
+  # aefee5326: komira main at the merge of komira-ai/komira#2094, whose farm-connect gives a farm PING 60 s
+  # to come back and sends at most 4 blobs of an action at once (a slow farm connection is no longer dropped
+  # with KeepAliveTimedOut).
+  commit_hash = aefee53266277c55b40ccbf35782a296ceecf687
 
 [external_cell_buildrules]
   # buildrules: its Rust (cargo_unit, the cargo_package front door), Zig, node, cxx, coverage and AWS-LC rules and the CLI.
