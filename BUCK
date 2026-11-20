@@ -848,6 +848,7 @@ _AUTOLINK_DATA = [
     "tests/e2e/prog_outer.mojo",
     "tests/e2e/repl.stdin",
     "tests/e2e/repl_outer.stdin",
+    "tutorial/lessons/hello",
 ]
 zig_test(  # buck-only: the group-publish check (tests/drivers/group_e2e.zig) against a loopback registry that serves the group routes
     name = "group_e2e",

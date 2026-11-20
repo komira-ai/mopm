@@ -71,7 +71,7 @@ test "the schema accepts a test action, arguments, and nested and dot-file edita
     const schemas = try tl.loadSchemas(a);
     try expectAccepted(a, schemas, "actions.test", "\"mopm test\"");
     try expectAccepted(a, schemas, "actions.test", "\"mopm test --list tests/test_hello.mojo\"");
-    try expectAccepted(a, schemas, "actions.run", "\"mopm run --bin hello\"");
+    try expectAccepted(a, schemas, "actions.run", "\"mopm run --bin tutorial/hello:hello\"");
     try expectAccepted(a, schemas, "editable", "[\"src/main.mojo\", \"tests/test_hello.mojo\", \"mopm.toml\", \".config/x.y\"]");
 }
 
@@ -120,18 +120,18 @@ test "the schema refuses a lesson without a run action" {
     try std.testing.expect((try lessonErrors(a, schemas, doc)).len != 0);
 }
 
-test "the schema refuses an action that is not its mopm command, or holds what a shell would read" {
+test "the schema refuses an action that is not its mopm command (bare mopm run names no program), or holds what a shell would read" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const schemas = try tl.loadSchemas(a);
-    const runs = [_][]const u8{ "mopm publish", "mopm test", "mopm", "mopm run ", "mopm  run", "mopm run; rm x", "mopm run $(id)", "mopm run | cat", "mopm run \\\"x\\\"", "/bin/mopm run", "" };
+    const runs = [_][]const u8{ "mopm run", "mopm publish", "mopm test", "mopm", "mopm run ", "mopm  run", "mopm run; rm x", "mopm run $(id)", "mopm run | cat", "mopm run \\\"x\\\"", "/bin/mopm run", "" };
     for (runs) |r| {
         try expectRefused(a, schemas, "actions.run", try std.fmt.allocPrint(a, "\"{s}\"", .{r}), "/actions/run");
     }
-    try expectRefused(a, schemas, "actions.test", "\"mopm run\"", "/actions/test");
+    try expectRefused(a, schemas, "actions.test", "\"mopm run src/main.mojo\"", "/actions/test");
     try expectRefused(a, schemas, "actions.run", "[\"mopm\", \"run\"]", "/actions/run");
-    try expectRefused(a, schemas, "actions.build", "\"mopm run\"", "/actions");
+    try expectRefused(a, schemas, "actions.build", "\"mopm run src/main.mojo\"", "/actions");
 }
 
 test "the schema refuses an unknown top-level key" {

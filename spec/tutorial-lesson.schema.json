@@ -32,12 +32,12 @@
       "items": { "$ref": "#/$defs/ProjectPath" }
     },
     "actions": {
-      "description": "The buttons of the page, each the mopm command it runs in the lesson's directory: `run` always, `test` when the lesson has tests. A command is `mopm run` or `mopm test` and arguments of letters, digits and _ . / = : - separated by single spaces, so it holds nothing a shell would read.",
+      "description": "The buttons of the page, each the mopm command it runs in the lesson's directory: `run` always, `test` when the lesson has tests. A command is `mopm run` with at least one argument (the program, such as `mopm run src/main.mojo`, as mopm run requires) or `mopm test`, and arguments of letters, digits and _ . / = : - separated by single spaces, so it holds nothing a shell would read.",
       "type": "object",
       "required": ["run"],
       "additionalProperties": false,
       "properties": {
-        "run": { "type": "string", "maxLength": 200, "pattern": "^mopm run( [A-Za-z0-9_./=:-]+)*$" },
+        "run": { "type": "string", "maxLength": 200, "pattern": "^mopm run( [A-Za-z0-9_./=:-]+)+$" },
         "test": { "type": "string", "maxLength": 200, "pattern": "^mopm test( [A-Za-z0-9_./=:-]+)*$" }
       }
     }

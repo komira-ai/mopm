@@ -3,5 +3,5 @@
   "summary": "Run your first Mojo program with mopm.",
   "order": 1,
   "editable": ["src/main.mojo"],
-  "actions": { "run": "mopm run" }
+  "actions": { "run": "mopm run src/main.mojo" }
 }

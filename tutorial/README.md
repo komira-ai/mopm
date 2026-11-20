@@ -18,11 +18,12 @@ tutorial/lessons/<id>/
   - `order`, the lesson's place from 1, one lesson per number;
   - `editable`, the files the page shows in an editor, as paths relative to `project/` (no `..`, no absolute path,
     no backslash); each must be a file under `project/`;
-  - `actions`: `run` (`mopm run ...`) always, and `test` (`mopm test ...`) when the lesson has tests; the command
-    each button runs in the lesson's directory.
+  - `actions`: `run` always, and `test` when the lesson has tests: the command each button runs in the lesson's
+    directory. `run` names the program, as `mopm run` requires (`mopm run src/main.mojo`); `test` is `mopm test ...`.
 - `project/mopm.lock` is what `mopm lock` writes for `project/mopm.toml`: after changing the manifest, run
   `mopm lock` in `project/` and commit both.
 
 `//:tutorial_lessons` (`tests/drivers/tutorial_lessons.zig`) checks every lesson here against all of this on each
-pull request. `hello` is the first lesson; the tutorial's pages add further lessons under the same schema and may
+pull request. `//:autolink` (after the merge, with the real Mojo) runs `hello`'s `run` action in a copy of its project
+and checks that it prints `Hello, world!`. `hello` is the first lesson; the tutorial's pages add further lessons under the same schema and may
 change `hello`.
