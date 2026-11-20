@@ -41,10 +41,10 @@ fn settings_item() -> Value {
         "key": {"S": "stage_settings"},
         "redirect_uri": {"S": "https://mopm.test/api/v2/auth/web/callback"},
         "site_origin": {"S": "https://mopm.test"},
-        "require_two_factor": {"BOOL": true},
+        "require_2fa": {"BOOL": true},
         "e2b_template_id": {"S": "tpl-test"},
         "e2b_domain": {"S": "e2b.test"},
-        "sandbox_timeout_seconds": {"N": "1800"},
+        "sandbox_timeout_s": {"N": "1800"},
     })
 }
 

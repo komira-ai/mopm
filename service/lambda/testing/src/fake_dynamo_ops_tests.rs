@@ -970,3 +970,30 @@ async fn a_transaction_put_that_breaks_a_table_rule_is_refused_and_writes_nothin
     assert_refused(&got, VALIDATION, "Requested resource not found: table nope");
     assert!(fake.dump(PACKAGES).is_empty());
 }
+
+/// The web session function's grants: a read of `users`, `tokens` and `config` is served, and so is the update of a
+/// `tokens` row; a write it was not given (a put of `tokens`), and every table it was not given, are denied.
+#[tokio::test]
+async fn the_web_session_grants_serve_its_calls_and_deny_the_rest() {
+    let fake = FakeDynamo::start(FakeConfig::web_session("t"));
+    for (table, key) in [
+        ("mopm-t-users", json!({"github_id": {"S": "1"}})),
+        ("mopm-t-tokens", json!({"token_hash": {"S": "h"}})),
+        ("mopm-t-config", json!({"key": {"S": "stage_settings"}})),
+    ] {
+        let got = call(&fake, "GetItem", &json!({"TableName": table, "Key": key})).await;
+        assert_eq!(got.status, 200, "{table}");
+    }
+    let touch = json!({
+        "TableName": "mopm-t-tokens",
+        "Key": {"token_hash": {"S": "h"}},
+        "UpdateExpression": "SET #u = :at",
+        "ExpressionAttributeNames": {"#u": "last_used_at"},
+        "ExpressionAttributeValues": {":at": {"S": "x"}}
+    });
+    assert_eq!(call(&fake, "UpdateItem", &touch).await.status, 200);
+    let put = call(&fake, "PutItem", &json!({"TableName": "mopm-t-tokens", "Item": {"token_hash": {"S": "h"}}})).await;
+    assert_refused_denied(&put, "dynamodb:PutItem", "mopm-t-tokens");
+    let other = call(&fake, "GetItem", &json!({"TableName": "mopm-t-namespaces", "Key": {"namespace": {"S": "a"}}})).await;
+    assert_refused_denied(&other, "dynamodb:GetItem", "mopm-t-namespaces");
+}

@@ -52,10 +52,10 @@ fn settings_item() -> Value {
         "key": {"S": "stage_settings"},
         "redirect_uri": {"S": "https://mopm.test/api/v2/auth/web/callback"},
         "site_origin": {"S": "https://mopm.test"},
-        "require_two_factor": {"BOOL": true},
+        "require_2fa": {"BOOL": true},
         "e2b_template_id": {"S": "tpl-test"},
         "e2b_domain": {"S": "e2b.test"},
-        "sandbox_timeout_seconds": {"N": "1800"},
+        "sandbox_timeout_s": {"N": "1800"},
     })
 }
 
@@ -80,10 +80,10 @@ async fn the_config_table_gives_an_item_as_json_with_its_numbers_as_numbers() {
             "key": "stage_settings",
             "redirect_uri": "https://mopm.test/api/v2/auth/web/callback",
             "site_origin": "https://mopm.test",
-            "require_two_factor": true,
+            "require_2fa": true,
             "e2b_template_id": "tpl-test",
             "e2b_domain": "e2b.test",
-            "sandbox_timeout_seconds": 1800,
+            "sandbox_timeout_s": 1800,
         })
     );
     assert_eq!(table.get_item("other").await.unwrap(), None);
@@ -280,10 +280,10 @@ async fn a_start_without_its_settings_or_secrets_fails_by_name() {
         "the config table has no stage_settings item"
     );
     let mut broken = settings_item();
-    broken.as_object_mut().unwrap().remove("require_two_factor");
+    broken.as_object_mut().unwrap().remove("require_2fa");
     assert_eq!(
         start_failure(Some(broken), both.clone()).await,
-        "the stage_settings item is not valid: missing field `require_two_factor`"
+        "the stage_settings item is not valid: missing field `require_2fa`"
     );
     assert_eq!(
         start_failure(Some(settings_item()), vec![("mopm/t/github-oauth", OAUTH)]).await,

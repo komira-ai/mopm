@@ -137,6 +137,14 @@ publish `published`. See "The sparse index writer" below.
   functions read it at cold start (docs/design/tutorial-sign-in.md, section 5). Change a value in `service/config/<stage>.json`
   and deploy; a hand `put-item` lasts only until a deploy changes a value. It is written only when the API stack is given the
   Rust functions' zips, which no deploy does yet.
+- **E2B key (tutorial sandbox).** The secret `mopm/<stage>/e2b`, JSON `{"api_key": "<key>"}`, is created by the API stack (with
+  the Rust functions' zips) with no value: nothing is generated, and the stack never writes one. Until the owner stores the key
+  with the held step (`service/infra/access/BOOTSTRAP.md`, "E2B API key"; `npm --prefix service/infra/access run -s e2b-secret`),
+  `POST /api/v2/tutorial/sandbox` answers 503 `tutorial_unavailable` and the function's log line says `secret_missing`; it reads
+  the secret again on the next request, so storing the key needs no redeploy. The secret's resource policy denies
+  `secretsmanager:GetSecretValue` to every principal except the `mopm-<stage>-tutorial-sandbox` function's role (writing a value
+  and CloudFormation are not denied), so nobody else can read the key, an administrator included, short of editing that policy.
+  The same 503 with `template_missing` means the stage's `tutorial.e2bTemplateId` is not set.
 - **Groups switch.** `POST /groups`, `GET /groups/{id}` and `DELETE /groups/{id}` are deployed with the API, and a create is
   answered 404 `route_not_found` unless the item `groups_enabled` of the stage's config table admits the caller. The item is
   `{"key": "groups_enabled", "mode": "allow", "actors": ["u:<github id>"]}` for a list of accounts, or `{"key": "groups_enabled", "mode":

@@ -1,0 +1,22 @@
+[
+  {
+    "created_at": {
+      "S": "2026-11-18T11:06:40.000Z"
+    },
+    "github_id": {
+      "S": "42"
+    },
+    "github_id_num": {
+      "N": "42"
+    },
+    "handle": {
+      "S": "alice"
+    },
+    "last_login_at": {
+      "S": "2026-11-18T11:06:40.000Z"
+    },
+    "two_factor": {
+      "BOOL": true
+    }
+  }
+]

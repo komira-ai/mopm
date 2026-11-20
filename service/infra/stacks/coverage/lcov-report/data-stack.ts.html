@@ -1,0 +1,430 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for data-stack.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="prettify.css" />
+    <link rel="stylesheet" href="base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="index.html">All files</a> data-stack.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>21/21</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">90.9% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>10/11</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>1/1</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>21/21</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-yes">95x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">95x</span>
+<span class="cline-any cline-yes">95x</span>
+<span class="cline-any cline-yes">95x</span>
+<span class="cline-any cline-yes">95x</span>
+<span class="cline-any cline-yes">95x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">95x</span>
+<span class="cline-any cline-yes">1520x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1520x</span>
+<span class="cline-any cline-yes">570x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1520x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1520x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1520x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { Stack, StackProps } from 'aws-cdk-lib';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import { Construct } from 'constructs';
+import { StageConfig, isDisposable, tableName } from './config';
+import { anyone, assertRegion, deleteAllowedRoleArns, notNamedRoles, removalPolicyFor } from './common';
+&nbsp;
+export interface DataStackProps extends StackProps {
+  config: StageConfig;
+}
+&nbsp;
+const S = dynamodb.AttributeType.STRING;
+&nbsp;
+interface TableDef {
+  id: string;
+  pk: string;
+  sk?: string;
+  /** Attribute holding an epoch-seconds expiry. DynamoDB TTL is lazy cleanup only; code checks expiry on every read. */
+  ttl?: string;
+  /** A global secondary index. `include` projects only those attributes (plus the keys); absent projects everything. */
+  gsi?: { name: string; pk: string; sk?: string; include?: string[] };
+  /** Rows are never deleted by anyone (append-only). */
+  appendOnly?: boolean;
+}
+&nbsp;
+/** Tables from the design (data model). Versions are create-once via conditional writes in code. */
+export const TABLES: TableDef[] = [
+  // Name search (service/api/src/dynamo-store.ts, SEARCH_INDEX, writes `search_bucket` and reads this index): every
+  // row has the same `search_bucket`, so a prefix search is one Query with begins_with on `name`, in name order. One
+  // partition is deliberate: a GSI partition serves ~3000 reads a second, far above search traffic over thousands of
+  // names, and "browse everything" stays a single ordered Query. The index is sparse: a row without the attribute
+  // (written before this index existed) is not searchable until it is backfilled. Projection is what a search result
+  // shows, so the Lambda never reads the table for it; repository and license stay out of the index.
+  { id: 'packages', pk: 'name', gsi: { name: 'by_search_bucket', pk: 'search_bucket', sk: 'name', include: ['description', 'state', 'created_at'] } },
+  { id: 'versions', pk: 'name', sk: 'version' },
+  { id: 'owners', pk: 'name', sk: 'github_id', gsi: { name: 'by_github_id', pk: 'github_id', sk: 'name' } },
+  { id: 'invitations', pk: 'id', ttl: 'expires_at' },
+  { id: 'users', pk: 'github_id' },
+  { id: 'uploads', pk: 'upload_id', ttl: 'expires_at' },
+  // Token rows are read by hash (every request) and listed by account: the index serves the list and revocation by id.
+  { id: 'tokens', pk: 'token_hash', ttl: 'expires_at', gsi: { name: 'by_github_id', pk: 'github_id', sk: 'id' } },
+  // A started device login (CLI sign-in), keyed by the hash of the code the CLI holds. Lives ten minutes; TTL cleans up.
+  { id: 'device_logins', pk: 'id', ttl: 'expires_at' },
+  // A started web sign-in (docs/design/tutorial-sign-in.md, section 6), keyed by the hash of the id in the browser's login
+  // cookie (service/lambda/ports/src/web_login.rs). Lives ten minutes; TTL cleans up, and the function checks expiry itself.
+  { id: 'web_logins', pk: 'id', ttl: 'expires_at' },
+  { id: 'trusted_publishers', pk: 'name', sk: 'publisher' },
+  // Owner namespaces (docs/design/namespaces.md): keyed by the namespace string, bound to a GitHub numeric id. A login makes
+  // the user's own (service/api/src/auth/namespaces.ts); the index lists an account's namespaces for whoami.
+  { id: 'namespaces', pk: 'namespace', gsi: { name: 'by_github_id', pk: 'github_id', sk: 'namespace' } },
+  // The members of an organization namespace, managed in mopm: one row per (namespace, member), the member being the
+  // account's GitHub numeric id as a string. The index lists the organization namespaces an account is in.
+  { id: 'namespace_members', pk: 'namespace', sk: 'member', gsi: { name: 'by_member', pk: 'member', sk: 'namespace' } },
+  { id: 'audit', pk: 'name', sk: 'ts_seq', appendOnly: true },
+  { id: 'reserved_names', pk: 'name' },
+  // Publish pipeline. `publishes` holds publish records, the per-version commit lock and the rate counters (told apart by
+  // key prefix; the TTL attribute cleans up the counters). `config` holds runtime switches, e.g. {key: 'read_only', value: true},
+  // and the `stage_settings` item the API stack writes for the Rust functions (lib/stage-settings.ts).
+  //
+  // The index `by_sweep` is sparse and holds the headers of groups that are not over (`sweep_pk` is 'active' while a group is
+  // open, validating or committed and not visible, and the header has none once it is over), ordered by `sweep_at`: the
+  // sweeper that resumes a stalled group reads only this. Nothing reads it yet; the headers carry the keys from the first group on.
+  { id: 'publishes', pk: 'publish_id', ttl: 'expires_at', gsi: { name: 'by_sweep', pk: 'sweep_pk', sk: 'sweep_at', include: ['status', 'attempt', 'actor', 'rev', 'progress_at', 'deadline_at', 'resend'] } },
+  { id: 'config', pk: 'key' },
+];
+&nbsp;
+export class DataStack extends Stack {
+  readonly tables: Record&lt;string, dynamodb.Table&gt; = {};
+&nbsp;
+  constructor(scope: Construct, id: string, props: DataStackProps) {
+    super(scope, id, props);
+    assertRegion(this);
+    const c = props.config;
+    const prod = !isDisposable(c.stage);
+    const allowed = deleteAllowedRoleArns(this, c);
+&nbsp;
+    for (const d of TABLES) {
+      const t = new dynamodb.Table(this, d.id, {
+        tableName: tableName(c.stage, d.id),
+        partitionKey: { name: d.pk, type: S },
+        ...(d.sk ? { sortKey: { name: d.sk, type: S } } : {}),
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        pointInTimeRecovery: true,
+        deletionProtection: prod,
+        encryption: dynamodb.TableEncryption.AWS_MANAGED,
+        removalPolicy: removalPolicyFor(c),
+        ...(d.ttl ? { timeToLiveAttribute: d.ttl } : {}),
+      });
+      if (d.gsi) {
+        t.addGlobalSecondaryIndex({
+          indexName: d.gsi.name,
+          partitionKey: { name: d.gsi.pk, type: S },
+          ...(d.gsi.sk ? { sortKey: { name: d.gsi.sk, type: S } } : <span class="branch-1 cbranch-no" title="branch not covered" >{})</span>,
+          ...(d.gsi.include
+            ? { projectionType: dynamodb.ProjectionType.INCLUDE, nonKeyAttributes: d.gsi.include }
+            : { projectionType: dynamodb.ProjectionType.ALL }),
+        });
+      }
+&nbsp;
+      // Resource policy: nobody deletes rows except the named roles; audit is append-only for everyone.
+      const stmt = new iam.PolicyStatement({
+        sid: 'DenyDeleteItem',
+        effect: iam.Effect.DENY,
+        principals: [anyone()],
+        actions: ['dynamodb:DeleteItem'],
+        resources: ['*'],
+        ...(d.appendOnly ? {} : { conditions: notNamedRoles(allowed) }),
+      });
+      (t.node.defaultChild as dynamodb.CfnTable).addPropertyOverride('ResourcePolicy', {
+        PolicyDocument: new iam.PolicyDocument({ statements: [stmt] }).toJSON(),
+      });
+      this.tables[d.id] = t;
+    }
+  }
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-11-20T15:22:12.184Z
+            </div>
+        <script src="prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="sorter.js"></script>
+        <script src="block-navigation.js"></script>
+    </body>
+</html>
+    

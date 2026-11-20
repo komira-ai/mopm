@@ -123,10 +123,10 @@ pub fn settings(require_two_factor: bool) -> StageSettings {
     StageSettings::from_item(json!({
         "redirect_uri": format!("{SITE}/api/v2/auth/web/callback"),
         "site_origin": SITE,
-        "require_two_factor": require_two_factor,
+        "require_2fa": require_two_factor,
         "e2b_template_id": "tpl-test",
         "e2b_domain": "e2b.test",
-        "sandbox_timeout_seconds": 1800,
+        "sandbox_timeout_s": 1800,
     }))
     .expect("valid settings")
 }

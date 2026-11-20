@@ -15,6 +15,16 @@ cargo_package(
     ],
 )
 
+# The stage_settings item as the API stack writes it (tests/fixtures/stage_settings_item.json, DynamoDB JSON): the stack's
+# test (service/infra/stacks/test/stage-settings.test.ts) holds its writer to it, and the tests of fn_web_session and
+# fn_tutorial_sandbox read it through the DynamoDB config adapter into StageSettings.
+export_file(
+    name = "stage_settings_item.json",
+    src = "tests/fixtures/stage_settings_item.json",
+    mode = "reference",
+    visibility = ["//service/infra/stacks:", "//service/lambda/fn_tutorial_sandbox:", "//service/lambda/fn_web_session:"],
+)
+
 # This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
 filegroup(
     name = "lint_files",
