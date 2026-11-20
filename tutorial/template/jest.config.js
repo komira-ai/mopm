@@ -3,7 +3,8 @@ module.exports = {
   roots: ['<rootDir>/test'],
   // The package's own code, for jest --coverage (buildrules' rules/coverage/README.md, `jest_test(coverage = True)`).
   // build.ts is not listed: it only forwards to src/cli.ts's main, which the tests run.
-  collectCoverageFrom: ['src/**/*.ts'],
+  // guide/ is the code of docs/tutorial-author-guide.md, run by the guide-*.test.ts files.
+  collectCoverageFrom: ['guide/**/*.ts', 'src/**/*.ts'],
   testMatch: ['**/*.test.ts'],
   // TypeScript first: a stray compiled test/x.js must never shadow test/x.ts.
   moduleFileExtensions: ['ts', 'js', 'json'],

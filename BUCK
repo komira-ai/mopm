@@ -1383,6 +1383,13 @@ export_file(
     visibility = ["//tutorial/template:"],
 )
 
+# The tutorial author's guide: the template's test/guide-doc.test.ts holds its code blocks to tutorial/template/guide.
+export_file(
+    name = "tutorial_template.tutorial-author-guide.md",
+    src = "docs/tutorial-author-guide.md",
+    visibility = ["//tutorial/template:"],
+)
+
 filegroup(
     name = "tutorial_template_lessons",
     srcs = {f[len("tutorial/lessons/"):]: f for f in glob(["tutorial/lessons/**"])},

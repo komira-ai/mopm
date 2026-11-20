@@ -11,5 +11,5 @@
     "types": ["node", "jest"],
     "noEmit": true
   },
-  "include": ["build.ts", "src", "test"]
+  "include": ["build.ts", "guide", "src", "test"]
 }

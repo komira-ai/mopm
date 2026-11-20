@@ -9,10 +9,12 @@ load("@buildrules//rules/coverage:jest_cover.bzl", "jest_coverage_floor")
 
 _NODE = "//tools/node:node"
 
-# The tests read the repository's VERSION and every lesson under tutorial/lessons (test/fixture.ts's
-# REPO_ROOT), at their paths in the repository.
+# The tests read the repository's VERSION, every lesson under tutorial/lessons and the tutorial author's guide,
+# whose code blocks test/guide-doc.test.ts holds to guide/ (test/fixture.ts's REPO_ROOT), at their paths in the
+# repository.
 _TEST_DATA = {
     "VERSION": "//:tutorial_template.VERSION",
+    "docs/tutorial-author-guide.md": "//:tutorial_template.tutorial-author-guide.md",
     "tutorial/lessons": "//:tutorial_template_lessons",
 }
 
@@ -31,7 +33,7 @@ jest_test(
     data = _TEST_DATA,
     modules = ":node_modules",
     node = _NODE,
-    srcs = glob(["src/**", "test/**"]) + [
+    srcs = glob(["guide/**", "src/**", "test/**"]) + [
         "build.ts",
         "jest.config.js",
         "package.json",
