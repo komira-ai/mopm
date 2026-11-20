@@ -450,3 +450,7 @@ mod tests {
         assert_eq!(s.read("b").await.unwrap(), None);
     }
 }
+
+#[cfg(test)]
+#[path = "memory_publish_tests.rs"]
+mod more_tests;

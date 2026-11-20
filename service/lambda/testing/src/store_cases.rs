@@ -328,3 +328,7 @@ macro_rules! contract_tests {
         )+
     };
 }
+
+#[cfg(test)]
+#[path = "store_cases_tests.rs"]
+mod tests;
