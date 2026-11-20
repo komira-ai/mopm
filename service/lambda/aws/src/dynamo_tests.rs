@@ -6,7 +6,7 @@ use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_dynamodb::Client;
 use mopm_testing::fake_dynamo::{FakeConfig, FakeDynamo};
 
-use crate::dynamo::{AuthTables, DynamoAuthStore, DynamoPublishStore, DynamoStore, PublishTables, Tables};
+use crate::dynamo::{AuthTables, DynamoAuthStore, DynamoNamespaceStore, DynamoPublishStore, DynamoStore, DynamoWebLoginStore, PublishTables, Tables};
 
 fn client(endpoint: &str) -> Client {
     let config = aws_sdk_dynamodb::Config::builder()
@@ -38,6 +38,15 @@ fn publish_store() -> DynamoPublishStore {
     DynamoPublishStore::new(client(&fake(FakeConfig::registry("t"))), &PublishTables::for_stage("t"))
 }
 
+// The web sign-in's stores run under the sign-in function's grants, so a call the role lacks (any DeleteItem) fails the case.
+fn namespace_store() -> DynamoNamespaceStore {
+    DynamoNamespaceStore::new(client(&fake(FakeConfig::web_login("t"))), DynamoNamespaceStore::table_for_stage("t"))
+}
+
+fn web_login_store() -> DynamoWebLoginStore {
+    DynamoWebLoginStore::new(client(&fake(FakeConfig::web_login("t"))), DynamoWebLoginStore::table_for_stage("t"))
+}
+
 mod store_contract {
     use super::*;
     mopm_testing::store_contract_tests!(store);
@@ -51,4 +60,14 @@ mod auth_contract {
 mod publish_contract {
     use super::*;
     mopm_testing::publish_contract_tests!(publish_store);
+}
+
+mod namespace_contract {
+    use super::*;
+    mopm_testing::namespace_contract_tests!(namespace_store);
+}
+
+mod web_login_contract {
+    use super::*;
+    mopm_testing::web_login_contract_tests!(web_login_store);
 }

@@ -4,8 +4,9 @@
 //!
 //! Operations: GetItem, PutItem, DeleteItem, UpdateItem, Query (a table or an index, paged), Scan (paged),
 //! TransactWriteItems (Puts only: all conditions checked, then all writes, atomically). Expressions: the
-//! forms the adapters use (`attribute_exists`, `attribute_not_exists`, `#x = :v` joined by AND; `SET a = :v,
-//! ...` with an optional `REMOVE`; key conditions `#p = :p`, with `AND begins_with(#s, :v)` or `AND #s = :v`).
+//! forms the adapters use (`attribute_exists`, `attribute_not_exists`, `#x = :v`, and `#x > :v` on integer numbers,
+//! joined by AND; `SET a = :v, ...` with an optional `REMOVE`, answering `ReturnValues` `NONE` or `ALL_NEW`; key
+//! conditions `#p = :p`, with `AND begins_with(#s, :v)` or `AND #s = :v`).
 //! Anything else is a `ValidationException` naming it, so a new expression in an adapter fails here instead
 //! of being accepted. As DynamoDB does, it also refuses: a raw attribute name in an expression (reserved
 //! words), an `ExpressionAttributeNames`/`Values` entry no expression uses, an empty `begins_with` operand,
@@ -49,12 +50,14 @@ fn table(stage_prefix: &str, name: &str, pk: &str, sk: Option<&str>, ttl: Option
     TableDef { name: format!("{stage_prefix}{name}"), pk: pk.into(), sk: sk.map(Into::into), indexes, ttl: ttl.map(Into::into) }
 }
 
-/// The tables of the data stack (service/infra/stacks/lib/data-stack.ts) for `mopm-<stage>-`.
+/// The tables of the data stack (service/infra/stacks/lib/data-stack.ts) for `mopm-<stage>-`, and `web_logins`, the web
+/// sign-in's (`docs/design/tutorial-sign-in.md`, section 6: key `id`, TTL `expires_at`).
 pub fn registry_tables(stage: &str) -> Vec<TableDef> {
     let p = format!("mopm-{stage}-");
     let search = IndexDef { name: "by_search_bucket".into(), pk: "search_bucket".into(), sk: "name".into(), projected: Some(vec!["description".into(), "state".into(), "created_at".into()]) };
     let by_account = IndexDef { name: "by_github_id".into(), pk: "github_id".into(), sk: "id".into(), projected: None };
     let owned = IndexDef { name: "by_github_id".into(), pk: "github_id".into(), sk: "name".into(), projected: None };
+    let namespaces_by_account = IndexDef { name: "by_github_id".into(), pk: "github_id".into(), sk: "namespace".into(), projected: None };
     vec![
         table(&p, "packages", "name", None, None, vec![search]),
         table(&p, "versions", "name", Some("version"), None, vec![]),
@@ -67,8 +70,17 @@ pub fn registry_tables(stage: &str) -> Vec<TableDef> {
         table(&p, "uploads", "upload_id", None, Some("expires_at"), vec![]),
         table(&p, "publishes", "publish_id", None, Some("expires_at"), vec![]),
         table(&p, "config", "key", None, None, vec![]),
+        table(&p, "namespaces", "namespace", None, None, vec![namespaces_by_account]),
+        table(&p, "web_logins", "id", None, Some("expires_at"), vec![]),
     ]
 }
+
+/// The web sign-in function's grants (`docs/design/tutorial-sign-in.md`, section 5) on the two tables of its
+/// own stores, and on no other table (its `users` and `tokens` grants are not here yet): `web_logins` (put, and the
+/// conditional update that consumes a row) and `namespaces` (the conditional put that creates a user namespace, and
+/// the read of a row another create holds). No `DeleteItem`: rows leave by TTL or never. In the format of
+/// [`Grants::parse`].
+pub const WEB_LOGIN_GRANTS: &str = include_str!("../tests/fixtures/web_login_grants.json");
 
 /// What a role may call, per table (`service/api/test/fixtures/lambda-auth-grants.json`):
 /// `{ "<table>": { "actions": ["dynamodb:GetItem", ...], "indexes": ["by_github_id"] } }`. A table the grants do
@@ -100,6 +112,13 @@ impl FakeConfig {
     /// All tables of the data stack for `stage`, pages of two, no grants.
     pub fn registry(stage: &str) -> FakeConfig {
         FakeConfig { tables: registry_tables(stage), page_size: 2, grants: None }
+    }
+
+    /// All tables of the data stack for `stage`, restricted to the web sign-in function's grants on `web_logins` and
+    /// `namespaces` ([`WEB_LOGIN_GRANTS`]); every other table is denied.
+    pub fn web_login(stage: &str) -> FakeConfig {
+        let grants = Grants::parse(WEB_LOGIN_GRANTS).expect("the web sign-in grants are JSON");
+        FakeConfig::registry(stage).with_grants(&format!("mopm-{stage}-"), grants)
     }
 
     /// Restrict the role to `grants`; table names are `<prefix><table>`.
@@ -411,7 +430,7 @@ impl<'a> Exprs<'a> {
         self.values.get(t).ok_or_else(|| Fail::validation(format!("undefined value {t}")))
     }
 
-    /// `attribute_not_exists(#x)`, `attribute_exists(#x)` and `#x = :v`, joined by AND.
+    /// `attribute_not_exists(#x)`, `attribute_exists(#x)`, `#x = :v` and `#x > :v`, joined by AND.
     fn holds(&self, cond: Option<&str>, existing: Option<&Item>) -> Result<bool, Fail> {
         let Some(cond) = cond else { return Ok(true) };
         let mut all = true;
@@ -423,6 +442,15 @@ impl<'a> Exprs<'a> {
             } else if let Some(x) = c.strip_prefix("attribute_exists(").and_then(|r| r.strip_suffix(')')) {
                 let a = self.name(x)?;
                 existing.is_some_and(|i| i.contains_key(&a))
+            } else if let Some((l, r)) = c.split_once(" > ").filter(|(l, _)| !l.contains('(')) {
+                // A comparison of an attribute; a function on the left (`size(#x) > :v`) is a form the fake does not know.
+                let a = self.name(l.trim())?;
+                let bound = integer(self.value(r.trim())?).ok_or_else(|| Fail::validation(format!("fake: unsupported comparison operand {}", r.trim())))?;
+                // As in DynamoDB, an absent attribute or one of another type compares false.
+                match existing.and_then(|i| i.get(&a)).filter(|v| v.get("N").is_some()) {
+                    None => false,
+                    Some(v) => integer(v).ok_or_else(|| Fail::validation(format!("fake: unsupported comparison of {v}")))? > bound,
+                }
             } else if let Some((l, r)) = c.split_once(" = ") {
                 let a = self.name(l.trim())?;
                 let want = self.value(r.trim())?;
@@ -434,6 +462,11 @@ impl<'a> Exprs<'a> {
         }
         Ok(all)
     }
+}
+
+/// An `N` value that is an integer.
+fn integer(v: &Value) -> Option<i64> {
+    v.get("N").and_then(Value::as_str).and_then(|n| n.parse().ok())
 }
 
 fn check_grant(cfg: &FakeConfig, table: &str, action: &str, index: Option<&str>) -> Result<(), Fail> {
@@ -507,6 +540,11 @@ fn update_item(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, F
     let key = item_of(req, "Key")?;
     let k = key_of(def, &key)?;
     let e = Exprs::new(req, &["ConditionExpression", "UpdateExpression"])?;
+    let all_new = match req.get("ReturnValues").and_then(Value::as_str) {
+        None | Some("NONE") => false,
+        Some("ALL_NEW") => true,
+        Some(other) => return Err(Fail::validation(format!("fake: unsupported ReturnValues {other}"))),
+    };
     let current = st.tables[t].get(&k).cloned();
     if !e.holds(req.get("ConditionExpression").and_then(Value::as_str), current.as_ref())? {
         return Err(Fail::ConditionFailed);
@@ -529,8 +567,9 @@ fn update_item(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, F
         }
     }
     check_item(def, &item)?;
+    let reply = if all_new { json!({"Attributes": item}) } else { json!({}) };
     st.tables.get_mut(t).expect("checked").insert(k, item);
-    Ok(json!({}))
+    Ok(reply)
 }
 
 fn page(items: Vec<Item>, key_attrs: &[String], start: Option<&Item>, limit: usize, page_size: usize) -> Value {
