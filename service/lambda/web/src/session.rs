@@ -59,6 +59,16 @@ impl<S: AuthStore, C: Clock> SessionAuth<S, C> {
         SessionAuth { edge, csrf, store, clock }
     }
 
+    /// The auth store, for what a route does with a session it has checked (a logout revokes its row).
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
+    /// The clock the expiry check reads, for the time a route stamps on what it writes.
+    pub fn clock(&self) -> &C {
+        &self.clock
+    }
+
     /// The session of a `GET` (`GET /api/v2/auth/web/session`): steps 1 to 3, 5 and 6.
     pub async fn session(&self, req: &WebRequest) -> Result<WebSession, RegistryError> {
         let secret = self.cookie_token(req)?;

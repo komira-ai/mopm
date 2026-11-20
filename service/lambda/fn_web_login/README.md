@@ -31,7 +31,7 @@ Any other path or method is `invalid_request` (400): `route_not_found` is in no 
   * the token exchange (`access_denied` is `access_denied`, `bad_verification_code` is `login_expired`, any other error, status,
     answer that is not the expected JSON, or no answer is `unavailable`), then `GET /user` (anything but a 200 with the account
     is `unavailable`); GitHub's token is used for that one request and dropped, never stored or logged;
-  * the two-factor rule (the stage's `require_two_factor`): off is `two_factor_required` and nothing is stored;
+  * the two-factor rule (the stage's `require_2fa`): off is `two_factor_required` and nothing is stored;
   * `upsert_user`, then `ensure_user_namespace` (no namespace does not stop the login), as `auth/device-login.ts` does: the rows
     are held equal to the TypeScript ones by `tests/fixtures/device_login_rows.json`;
   * the session the browser held (exactly one `__Host-mopm_session` that is a token) is revoked, then the new one is stored:
@@ -49,7 +49,7 @@ exact equality and look for each of those values in the whole log).
 
 ## Start
 
-At cold start, once: the `stage_settings` item of `mopm-<stage>-config` (`redirect_uri`, `site_origin`, `require_two_factor`), the
+At cold start, once: the `stage_settings` item of `mopm-<stage>-config` (`redirect_uri`, `site_origin`, `require_2fa`), the
 secret `mopm/<stage>/edge-origin`, the secret `mopm/<stage>/github-oauth` (`{"client_id", "client_secret"}`; the id must match
 `^[A-Za-z0-9._-]{4,100}$` as the TypeScript device flow requires, the secret must not be empty), and the system's root certificates
 for HTTPS to GitHub. Anything missing or invalid fails the start by name, without the secret's content. The only environment

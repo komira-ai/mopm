@@ -1430,6 +1430,7 @@ _LINT_PACKAGES = [
     "service/lambda/core",
     "service/lambda/e2b",
     "service/lambda/fn_web_login",
+    "service/lambda/fn_web_session",
     "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",

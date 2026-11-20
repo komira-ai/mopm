@@ -1002,6 +1002,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "fn_web_session"
+version = "0.0.0"
+dependencies = [
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-secretsmanager",
+ "aws_lambda_events",
+ "base64 0.23.1",
+ "jiff",
+ "lambda_runtime",
+ "mopm_aws",
+ "mopm_core",
+ "mopm_ports",
+ "mopm_testing",
+ "mopm_web",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

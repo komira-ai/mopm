@@ -27,8 +27,8 @@ const event =
 /// The item `stage_settings` of `mopm-e2e-config`, as DynamoDB's GetItem answers it.
 const settings_answer =
     \\{"Item":{"key":{"S":"stage_settings"},"redirect_uri":{"S":"https://mopm.test/api/v2/auth/web/callback"},
-    \\"site_origin":{"S":"https://mopm.test"},"require_two_factor":{"BOOL":true},"e2b_template_id":{"S":"tpl-e2e"},
-    \\"e2b_domain":{"S":"e2b.test"},"sandbox_timeout_seconds":{"N":"1800"}}}
+    \\"site_origin":{"S":"https://mopm.test"},"require_2fa":{"BOOL":true},"e2b_template_id":{"S":"tpl-e2e"},
+    \\"e2b_domain":{"S":"e2b.test"},"sandbox_timeout_s":{"N":"1800"}}}
 ;
 
 const edge_answer =

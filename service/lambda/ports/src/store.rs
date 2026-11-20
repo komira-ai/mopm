@@ -75,6 +75,21 @@ mod tests {
         AuditEntry { name: "p".into(), ts: ts.into(), id: id.into(), actor: "a".into(), action: "x".into(), version: None, detail: None }
     }
 
+    fn version(v: &str) -> VersionRecord {
+        serde_json::from_value(serde_json::json!({
+            "name": "p", "version": v, "canonical": v, "build": "b", "state": "published", "published_at": "2026-11-20T12:00:00.000Z",
+            "requires_mojo": ">=25.1", "deps": [], "native": [], "files": [], "manifest_sha256": "0", "rev": 1
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn records_order_by_version_and_an_invalid_version_compares_equal() {
+        assert_eq!(by_version(&version("1.2.0"), &version("1.10.0")), Ordering::Less);
+        assert_eq!(by_version(&version("2.0.0"), &version("1.10.0")), Ordering::Greater);
+        assert_eq!(by_version(&version("not a version"), &version("1.0.0")), Ordering::Equal);
+    }
+
     #[test]
     fn the_audit_key_is_time_then_id() {
         assert_eq!(audit_sort_key(&entry("2026-10-13T12:00:00Z", "id000001")), "2026-10-13T12:00:00Z#id000001");
