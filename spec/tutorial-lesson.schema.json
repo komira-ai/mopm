@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mopm.dev/schema/tutorial-lesson-1.json",
+  "title": "lesson.json",
+  "description": "One lesson of the interactive tutorial: tutorial/lessons/<id>/lesson.json, beside lesson.md (the text) and project/ (a mopm project with mopm.toml and mopm.lock). The site build reads lesson.md and this file; the sandbox template build takes project/. The lesson id is the directory's name and must be a LessonId. What JSON Schema cannot say (the id, each editable path names a file under project/, no two lessons share an order) is checked by the //:tutorial_lessons target (tests/drivers/tutorial_lessons.zig). Changes are additive only.",
+  "$defs": {
+    "LessonId": {
+      "description": "The name of the lesson's directory, and the <lesson> of the page's route /tutorial/<lesson>: lower-case letters and digits in words joined by single hyphens.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "ProjectPath": {
+      "description": "A file of the lesson's project, relative to project/ (and to the lesson's directory in the sandbox): segments joined by '/', each of letters, digits, '_', '-' and '.', none empty, '.' or '..' (a segment may start with one '.', as a dotfile does). So no absolute path, no backslash and nothing outside project/.",
+      "type": "string",
+      "maxLength": 255,
+      "pattern": "^\\.?[A-Za-z0-9_-][A-Za-z0-9_.-]*(/\\.?[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$"
+    }
+  },
+  "type": "object",
+  "required": ["title", "summary", "order", "editable", "actions"],
+  "additionalProperties": false,
+  "properties": {
+    "title": { "description": "The lesson's title, as the tutorial's index and the page's heading show it.", "type": "string", "minLength": 1, "maxLength": 80 },
+    "summary": { "description": "One sentence on what the lesson teaches, for the tutorial's index.", "type": "string", "minLength": 1, "maxLength": 280 },
+    "order": { "description": "The lesson's place in the tutorial, from 1; no two lessons share one.", "type": "integer", "minimum": 1 },
+    "editable": {
+      "description": "The files of the project the page shows in an editor, in this order. Each one is written to the sandbox before an action runs.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/ProjectPath" }
+    },
+    "actions": {
+      "description": "The buttons of the page, each the mopm command it runs in the lesson's directory: `run` always, `test` when the lesson has tests. A command is `mopm run` with at least one argument (the program, such as `mopm run src/main.mojo`, as mopm run requires) or `mopm test`, and arguments of letters, digits and _ . / = : - separated by single spaces, so it holds nothing a shell would read.",
+      "type": "object",
+      "required": ["run"],
+      "additionalProperties": false,
+      "properties": {
+        "run": { "type": "string", "maxLength": 200, "pattern": "^mopm run( [A-Za-z0-9_./=:-]+)+$" },
+        "test": { "type": "string", "maxLength": 200, "pattern": "^mopm test( [A-Za-z0-9_./=:-]+)*$" }
+      }
+    }
+  }
+}
