@@ -464,6 +464,24 @@ describe('createPackage: the default daily limits of a CI namespace and of an ac
     await nothingWritten(r, 'alice/pkg050');
   });
 
+  test('a CI token with a ci_owner is counted on its namespace: 60 creates pass and both counters read 60', async () => {
+    const r = await rig();
+    const set = names(60);
+    const t = await r.ci('komira-ai', set.map((n) => `komira-ai/${n}`), { scopes: ['stage'], ci_owner: 'gh-repo:99' });
+    for (const n of set) expect((await put(r, t, 'komira-ai', n)).statusCode).toBe(201);
+    expect(counters(r)).toEqual({ 'rl#ct#<token>#2026-10-14': 60, 'rl#cu#ns:komira-ai#2026-10-14': 60 });
+  });
+
+  test('a CI override that cannot be read keeps the CI namespace limit, not the account limits', async () => {
+    const r = await rig({ config: { claimRatePerCiNamespacePerDay: 1, claimRatePerAccountPerDay: 5, claimRatePerTokenPerDay: 5 } });
+    r.flags.claimLimits.set('ci:ns:komira-ai', 9);
+    r.flags.claimLimitsBroken = true;
+    const c = await r.ci('komira-ai', ['komira-ai/one', 'komira-ai/two']);
+    expect(await r.creates.create(c, 'komira-ai', 'one')).toEqual({ created: true });
+    expect((await refused(r.creates.create(c, 'komira-ai', 'two'))).code).toBe('rate_limited');
+    await nothingWritten(r, 'komira-ai/two');
+  });
+
   test('a claim_limits entry for the CI actor replaces the CI namespace default, below it and above it', async () => {
     const r = await rig({ config: { claimRatePerCiNamespacePerDay: 2 } });
     r.flags.claimLimits.set('ci:ns:komira-ai', 3);
