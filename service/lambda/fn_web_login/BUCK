@@ -1,0 +1,75 @@
+# fn_web_login: the website's sign-in function (GET /api/v2/auth/web/start and /callback), a Rust Lambda. Built from Cargo.toml by
+# buildrules' cargo_package (this package is a Cargo package, `fn_web_login`: the library, the executable `web_login`, and the
+# integration test `process`). See README.md.
+#
+#   :release           the release profile's library and executable (cargo_package's step)
+#   :release_exe       the executable `web_login` alone, stored as `bootstrap` in the zip
+#   :test              the unit tests of the library, and tests/process.rs, which runs the executable against fakes on loopback
+#   :e2e_test          runs the release executable against a fake Lambda runtime API, DynamoDB and Secrets Manager (e2e_test.zig)
+#   :zip               the deployment package; not built unless :test and :e2e_test passed on that binary
+#
+# Nothing deploys it from here: the stack takes the zip (service/infra/stacks, `rustZipDir`) and the promote workflow builds it.
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_test")
+load("//:buildrules.bzl", "cargo_package")
+load("//tools/lambda:lambda.bzl", "lambda_zip", "release_exe")
+
+# The unit tests read the two fixtures below with `include_str!` at their real paths, so `cargo test` finds them too;
+# `extra_srcs` makes them inputs of the test build.
+cargo_package(
+    path = ".",
+    extra_srcs = [
+        ":device_login_rows.json",
+        ":role_grants.json",
+    ],
+)
+
+# The executable alone: `:release` holds the library's `.rlib` too, and the zip and the e2e test take a target's first output.
+release_exe(
+    name = "release_exe",
+    release = ":release",
+    exe = "web_login",
+)
+
+zig_test(  # buck-only: no build.zig counterpart; it runs the Rust executable of :release_exe
+    name = "e2e_test",
+    src = "e2e_test.zig",
+    env_tools = {"BOOTSTRAP": ":release_exe"},
+    busybox = "buildrules//rules/pins:busybox",
+    exec_compatible_with = LINUX_X86_64,
+    zig = "buildrules//rules/pins:zig",
+)
+
+lambda_zip(
+    name = "zip",
+    bootstrap = ":release_exe",
+    welded_tests = [":e2e_test", ":test"],
+    visibility = ["PUBLIC"],
+)
+
+# The users and namespaces rows the TypeScript device login writes for one GitHub user at one time, and the Rust sign-in writes
+# alike: this package's test holds the Rust rows to them, and service/api's jest test (test/auth/device-login-rows.test.ts)
+# holds the TypeScript device login to the same file.
+export_file(
+    name = "device_login_rows.json",
+    src = "tests/fixtures/device_login_rows.json",
+    mode = "reference",
+    visibility = ["//service/api:"],
+)
+
+# The function role's DynamoDB grants per table: this package's tests run the fake DynamoDB under exactly these, and the stack
+# test (service/infra/stacks) holds the role the stack creates to them.
+export_file(
+    name = "role_grants.json",
+    src = "tests/fixtures/role_grants.json",
+    mode = "reference",
+    visibility = ["//service/infra/stacks:"],
+)
+
+# This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"]) + [],
+    copy = True,
+    visibility = ["//:"],
+)

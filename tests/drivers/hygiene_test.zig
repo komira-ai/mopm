@@ -927,7 +927,7 @@ test "dependabot.yml: every npm entry waits 7 days, and every package-lock.json 
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default_days: 7"), tree, &out);
     try c.expectLines("a misspelled key", out.items, &.{"npm entry /service/api: needs"});
-    // Defect caught: an entry without a cooldown block at all (the one for /site, the last).
+    // Defect caught: an entry without a cooldown block at all (the one for /site).
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, "    directory: /site\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n", "    directory: /site\n    schedule:\n      interval: weekly\n"), tree, &out);
     try c.expectLines("no cooldown", out.items, &.{"npm entry /site: needs"});
