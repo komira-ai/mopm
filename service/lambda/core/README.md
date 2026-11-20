@@ -14,11 +14,21 @@ Lambdas that come after it.
 | `error` | `errors.ts`, `auth/errors.ts`, `publish/errors.ts`, the three catalogues, `render`, `errorView` | the `x-mopm-errors` table of `spec/api/openapi.yaml` (message, hint, status, per entry) and every rendered error of `tests/contract/api/errors.json` |
 | `limits` | `validate/limits.ts` | the seven numbers |
 | `display` | `publish/display.ts`: the display metadata of a commit request | every message and bound of the TS function; JavaScript's `length` (UTF-16 units) and `\s` |
+| `token` | `auth/tokens.ts`: `generateTokenSecret` from bytes the caller supplies, `hashToken`, the row's `prefix`, `TOKEN_PATTERN`; the fields of a web session's row (`web login`, `fresh_until` = `created_at`, 7 days) | `tests/fixtures/token_vectors.json` and `tests/fixtures/web_session_record.json`, which `service/api/test/auth/*.test.ts` hold `tokens.ts` and the TypeScript `Authenticator` to |
+| `csrf` | the CSRF value of docs/design/tutorial-sign-in.md section 2 (no TypeScript yet) | the vectors' `csrf`, computed with Node's crypto in the same jest test |
+| `return_to` | the `return_to` rule of appendix C.1 of docs/design/mopm-dev-appendix.md, falling back to `/tutorial` | the route vectors of `site/test/fixtures/routes.json`: a path is kept exactly when the edge router serves a page for it |
 
 The oracles are files the TypeScript side already holds itself to, read by `include_str!` at their real paths
-(`service/api/test/fixtures/repodata.*.json`, `spec/api/openapi.yaml`, `tests/contract/api/errors.json`; `extra_srcs` in `BUCK` makes them inputs): a change to one of
-them that the Rust does not follow is a red build here. No Node ran to make a golden: expected values that are not
-in those files are derived from reading the TypeScript.
+(`service/api/test/fixtures/repodata.*.json`, `spec/api/openapi.yaml`, `tests/contract/api/errors.json`,
+`site/test/fixtures/routes.json`; `extra_srcs` in `BUCK` makes them inputs): a change to one of
+them that the Rust does not follow is a red build here. Except for the token fixtures, no Node ran to make a golden:
+expected values that are not in those files are derived from reading the TypeScript. The token fixtures
+(`tests/fixtures`) were computed with Node's crypto, and the jest tests in `service/api/test/auth` check them against
+`tokens.ts` on every run, so both languages are held to the same file.
+
+The route grammar of `return_to` is written twice: in `site/src/routes.ts` (the site and its edge router) and in
+`return_to.rs`. The shared route vectors hold the two equal for `/`, `/search`, `/packages/...` and `/docs/...`. The
+tutorial routes are not in `routes.ts` yet, so `/tutorial/<lesson>` is held only by this crate's own tests.
 
 ## Group publish rows
 

@@ -7,7 +7,8 @@
 # `:debug`, `:release`. The unit tests run as build actions (`:test`; `:debug` does not wait for them, `:ci` does both).
 # They read, as files, what the TypeScript side holds itself to: the repodata its index writer produced for the golden
 # records, the error table of the API specification, and the rendered errors of the contract fixtures. The sources
-# `include_str!` them at their real paths, so `cargo test` finds them too; `extra_srcs` makes them inputs.
+# `include_str!` them at their real paths, so `cargo test` finds them too; `extra_srcs` makes them inputs. The site's route
+# vectors hold `return_to` (tests/return_to_routes.rs); this package's own tests/fixtures are inputs of its tests already.
 load("//:buildrules.bzl", "cargo_package")
 
 cargo_package(
@@ -18,8 +19,18 @@ cargo_package(
         "//service/api:repodata.linux-64.json",
         "//service/api:repodata.noarch.json",
         "//service/api:repodata.osx-arm64.json",
+        "//site:routes.json",
     ],
 )
+
+# The web session row the Rust writes (tests/fixtures/web_session_record.json): mopm_ports' test holds its TokenRecord to
+# it, and service/api's jest test feeds it to the TypeScript Authenticator. The token vectors are read by that jest test too.
+[export_file(
+    name = f,
+    src = "tests/fixtures/" + f,
+    mode = "reference",
+    visibility = ["//service/lambda/ports:", "//service/api:"],
+) for f in ["token_vectors.json", "web_session_record.json"]]
 
 # This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
 filegroup(

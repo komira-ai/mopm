@@ -11,7 +11,8 @@ load("@buildrules//rules/coverage:jest_cover.bzl", "jest_coverage_floor")
 _NODE = "//tools/node:node"
 
 # The tests read the specification and the contract cases at their paths in the repository
-# (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`, `.../tests/contract/api-v2`, `.../toolchain`, `.../src/core/names.zig`), and the validator's tests run
+# (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`, `.../tests/contract/api-v2`, `.../toolchain`, `.../src/core/names.zig`,
+# `../../../lambda/core/tests/fixtures`), and the validator's tests run
 # `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
 _TEST_DATA = {
     "spec": "//:spec",
@@ -20,6 +21,9 @@ _TEST_DATA = {
     "tests/contract/api": "//:contract_api",
     "tests/contract/api-v2": "//:contract_api_v2",
     "tests/validator_corpus": "//:validator_corpus_files",
+    # The token vectors and the web session row the Rust core is held to (test/auth/*.test.ts).
+    "service/lambda/core/tests/fixtures/token_vectors.json": "//service/lambda/core:token_vectors.json",
+    "service/lambda/core/tests/fixtures/web_session_record.json": "//service/lambda/core:web_session_record.json",
 }
 
 _TEST_TOOLS = {"bzip2": "buildrules//rules/pins:busybox"}

@@ -250,6 +250,36 @@ mod tests {
     }
 
     #[test]
+    fn a_web_session_row_from_the_cores_fields_is_the_fixture_the_typescript_authenticator_accepts() {
+        // service/api/test/auth/web-session-row.test.ts authenticates the same `record` with the TypeScript Authenticator.
+        let doc: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/fixtures/web_session_record.json")).unwrap();
+        let secret = mopm_core::token::TokenSecret::parse(doc["token"].as_str().unwrap()).unwrap();
+        let now: jiff::Timestamp = doc["now"].as_str().unwrap().parse().unwrap();
+        let f = mopm_core::token::web_session_fields(&secret, now).unwrap();
+        let row = TokenRecord {
+            id: "tok_000102030405060708090a0b".into(),
+            kind: TokenKind::Session,
+            github_id: Some(4242),
+            name: f.name.into(),
+            hash: f.hash,
+            prefix: f.prefix,
+            scopes: vec![],
+            packages: vec![],
+            all_current: false,
+            version: None,
+            fresh_until: Some(f.fresh_until),
+            created_at: f.created_at,
+            expires_at: f.expires_at,
+            revoked_at: None,
+            last_used_at: None,
+            issued_to: None,
+        };
+        assert_eq!(serde_json::to_value(&row).unwrap(), doc["record"]);
+        assert_eq!(serde_json::from_value::<TokenRecord>(doc["record"].clone()).unwrap(), row);
+    }
+
+    #[test]
     fn queue_messages_carry_their_type_tag() {
         let v = QueueBody::Validate { publish_id: "p1".into() };
         assert_eq!(serde_json::to_string(&v).unwrap(), r#"{"type":"validate","publish_id":"p1"}"#);
