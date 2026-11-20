@@ -54,7 +54,7 @@ management on the web; changes to device login or publish authorization; the Nod
 
 `site/` on branch `site/v1` (reviewed, **not merged**) is plain TypeScript compiled by `tsc`, no framework or bundler;
 every DOM write goes through the `Doc` port, links through `SafeHref`, READMEs through a restricted Markdown renderer.
-The site stack's go-live (PR 3) serves the real build behind a CSP, an edge router and interim error responses (4.1).
+The site stack's go-live (PR 3) serves the real build behind a CSP and an edge router; the interim error responses it had went when `/api/*` landed on the site host (4.1).
 `dist/` has 86,990 bytes of JavaScript.
 
 The registry API is TypeScript Lambdas in `service/api`; `searchPackages` (`GET /packages?q=`) matches a name prefix
@@ -450,11 +450,11 @@ the CLI and CI.
   sandbox` CSP for JSON); page CSP in [appendix C.3](mopm-dev-appendix.md#c3-headers-and-csp). Until the API is
   under the site host (Q3), go-live's page CSP has `connect-src https://api.<site>`; the PR adding `/api/*` makes it
   `connect-src 'self'`.
-- **No distribution-wide error responses** (they would turn JSON errors into HTML): the edge router serves the 404 page
-  outside the route grammar (**unverified** that a CloudFront Function can return the whole page; fallback, a redirect
-  to `/404`). **Interim:** until `/api/*` on the site host lands (Q3), go-live maps 403 and 404 to `/404.html` (status
-  404) distribution-wide, which serves only the bucket today; the PR adding that behaviour removes them and has the
-  edge router answer 404. Each stage's OAuth app gets the exact callback, wildcard off.
+- **No distribution-wide error responses** (they would turn JSON errors into HTML): the edge router, which knows the
+  build's files, rewrites anything that is no file of the build to `/404.html`, and the same function turns that
+  response's 200 into 404 on viewer-response (a CloudFront Function cannot read the page, so it does not return it
+  itself). Go-live mapped 403 and 404 to `/404.html` distribution-wide until `/api/*` on the site host landed (Q3);
+  that change removed them. Each stage's OAuth app gets the exact callback, wildcard off.
 - **Rejected**: the browser calling `api.<site>` with credentials (credentialed CORS on every route, the CLI's too).
 
 ### 4.2 Endpoints, cookies and CSRF

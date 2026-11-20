@@ -275,6 +275,18 @@ export const REQUIRED: Record<string, Needs> = {
       ['cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'cloudwatch:DescribeAlarms', 'cloudwatch:TagResource', 'cloudwatch:ListTagsForResource'],
       `arn:aws:cloudwatch:${REGION}:${c.account}:alarm:${physical(c, id, 'AlarmName')}`,
     ),
+  // The site's edge-origin secret, generated at creation: GetRandomPassword names no resource, so only '*' allows it. The
+  // distribution's origin header is a dynamic reference to the secret, which CloudFormation resolves with GetSecretValue.
+  'AWS::SecretsManager::Secret': (_r, id, c) => [
+    ...each(
+      [
+        'secretsmanager:CreateSecret', 'secretsmanager:DescribeSecret', 'secretsmanager:UpdateSecret', 'secretsmanager:DeleteSecret',
+        'secretsmanager:TagResource', 'secretsmanager:UntagResource', 'secretsmanager:GetSecretValue',
+      ],
+      `arn:aws:secretsmanager:${REGION}:${c.account}:secret:${physical(c, id, 'Name')}-AbCdEf`,
+    ),
+    ...each(['secretsmanager:GetRandomPassword'], '*'),
+  ],
   'AWS::ApiGatewayV2::Api': apigw('/apis/abc123'),
   'AWS::ApiGatewayV2::Stage': apigw('/apis/abc123/stages/$default'),
   'AWS::ApiGatewayV2::Integration': apigw('/apis/abc123/integrations/def456'),
