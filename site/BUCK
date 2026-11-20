@@ -131,6 +131,13 @@ export_file(
     visibility = ["//service/infra/stacks:"],
 )
 
+# The site's security headers, which the site stack sends and tools/preview.ts sends too (one builder for both).
+export_file(
+    name = "headers.ts",
+    src = "tools/headers.ts",
+    visibility = ["//service/infra/stacks:"],
+)
+
 export_file(
     name = "routes.json",
     src = "test/fixtures/routes.json",

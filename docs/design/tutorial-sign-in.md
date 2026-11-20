@@ -136,7 +136,7 @@ the SDK. E2B's `base` template has no Mojo toolchain, so before tu-X2's template
 such as `echo` or `python3 -c`. The key is read from the environment, as E2B's own tools read it. That is the one
 setting that is not a flag, because it is secret material (S2). The preview never writes it anywhere.
 
-Until tu-S1 lands, a fake `fetch` for our two routes (the session example of section 2 and the error table above) is
+In tests, `replayGate` of `site/src/tutorial/gate.ts` answers the contract examples through the real client, which is
 enough to build every state of the page except a real run.
 
 ## Decisions at a glance

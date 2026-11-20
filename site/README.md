@@ -25,7 +25,8 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/enhance.ts` | what the page script adds once a page is on screen: the copy buttons and the home page's recently updated list, against a small DOM port |
 | `src/main.ts` | the page script: connects `app.ts`, `mount.ts` and `enhance.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
-| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/` |
+| `src/tutorial/gate.ts` | the tutorial's gate: the session, a sandbox and sign-out over the site's own `/api/v2` routes (`credentials: 'same-origin'`, the CSRF header), the sign-in link, and `replayGate`, a fake that replays recorded answers; no page imports it yet |
+| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
 
 ## Rules
 
@@ -84,6 +85,38 @@ The home page copy is held to `README.md`, `src/cli/main.zig`, `VERSION` and `st
 names, the verification commands or the version series change there, the page has to change too. The page names the
 version series (`0.0.x`), never a patch number, because a release is cut on every merge. Route vectors are in `test/fixtures/routes.json`; the
 site stack's edge router is tested against the same file. The Markdown attack corpus is `test/fixtures/attacks.md`.
+
+## Preview
+
+`npm run preview` serves the built site on `127.0.0.1` and plays our side of the tutorial's sign-in and sandbox
+routes, so the tutorial pages can be written before those routes are deployed (`docs/design/tutorial-sign-in.md`,
+"Running it locally against the stub"). It is a local tool: nothing of it is in `dist/`.
+
+```sh
+npm ci --ignore-scripts --no-audit --no-fund && npm run build
+npm run preview -- --scenario signed-out        # the session route answers 401 session_required
+npm run preview -- --scenario signed-in         # a fixed login and CSRF value; with no key, a sandbox is tutorial_unavailable
+E2B_API_KEY=<a key from your own E2B account> \
+  npm run preview -- --scenario signed-in --e2b-template base   # creates real sandboxes, internet access off
+npm run preview -- --scenario csrf-failed       # the sandbox and sign-out routes answer 403 csrf_failed
+npm run preview -- --scenario unavailable       # the sandbox route answers 503 tutorial_unavailable, Retry-After: 30
+npm run preview -- --scenario session-expired   # the session route answers 200, then the sandbox route 401
+```
+
+It prints its address, `http://127.0.0.1:<port>/tutorial` (the system picks the port), and serves `dist/` there with
+the site's security headers (`tools/headers.ts`, the builder the site stack uses), whose `connect-src` is the page's
+own origin and `https://*.e2b.app`. It answers `GET /api/v2/auth/web/session`, `POST /api/v2/auth/web/logout` and
+`POST /api/v2/tutorial/sandbox` with the contract's statuses and bodies; any other `/api/` path is 404
+`route_not_found`. The sandbox and sign-out routes make the real route's checks: no `Authorization` header, a session,
+`X-Mopm-CSRF` equal to the session's value, `Origin` equal to the page's origin, `Sec-Fetch-Site: same-origin`, and no
+body. A sign-out ends the fake session until the preview is started again. `/tutorial` and `/tutorial/<lesson>` serve
+`tutorial.html` once the build has one, and the 404 page until then.
+
+`E2B_API_KEY` is the one setting read from the environment, because it is secret material; the preview sends it to E2B
+and never prints or writes it. Get a key from your own E2B account. With it, the signed-in scenario sends E2B the
+create call of the design's section 4 (`templateID` from `--e2b-template`, `base` when it is not given, `timeout`
+1800, internet access off) and answers what the browser needs to reach that sandbox. E2B's `base` template has no Mojo
+toolchain, so run commands such as `echo` or `python3 -c` until the tutorial's own template exists.
 
 ## How it is served
 
