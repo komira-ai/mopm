@@ -1,8 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Template } from 'aws-cdk-lib/assertions';
-import { STAGES, Stage } from '../lib/config';
-import { DUMMY_ACCOUNT, DUMMY_ZONE_ID, build } from './util';
+import { HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
+import { STAGES, Stage, stageConfig } from '../lib/config';
+import { RustFunction } from '../lib/rust-function';
+import { DUMMY_ACCOUNT, DUMMY_ZONE_ID, RUST_ZIP_STUB_DIR, build } from './util';
 
 // Does the scoped CloudFormation execution policy (service/infra/access/cfn-exec-policy.template.json, rendered the
 // way the bootstrap command renders it) allow everything CloudFormation must do to create, update and delete the resources
@@ -233,6 +235,9 @@ export const REQUIRED: Record<string, Needs> = {
   ],
   // The custom resource of BucketDeployment: CloudFormation invokes its provider function.
   'Custom::CDKBucketDeployment': (r, _id, c) => each(['lambda:InvokeFunction'], functionArn(c, r.Properties.ServiceToken)),
+  // The `stage_settings` writer (an AwsCustomResource, lib/stage-settings.ts): CloudFormation invokes its provider function,
+  // whose own role makes the PutItem.
+  'Custom::AWS': (r, _id, c) => each(['lambda:InvokeFunction'], functionArn(c, r.Properties.ServiceToken)),
   'AWS::IAM::Role': (r, id, c) => {
     const role = `arn:aws:iam::${c.account}:role/${physical(c, id, 'RoleName')}`;
     return [
@@ -376,6 +381,34 @@ describe.each(STAGES)('cfn-exec policy covers the %s stacks', (stage) => {
   test('an unmapped resource type is reported', () => {
     const fake = { 'mopm-x-fake': { Resources: { Q: { Type: 'AWS::Foo::Bar', Properties: {} } } } };
     expect(check(stage, fake, policy).unmapped).toEqual(['mopm-x-fake Q: AWS::Foo::Bar']);
+  });
+});
+
+// The Rust switch (ApiStack's rustZipDir) adds the stage_settings writer and the Rust functions. Checked here with a
+// RustFunction of the stub zips on the API, so the deploy that turns the switch on does not meet a refusal first.
+describe.each(STAGES)('cfn-exec policy covers the %s stacks with the Rust functions on', (stage) => {
+  const s = build(stage, { rustZipDir: RUST_ZIP_STUB_DIR });
+  new RustFunction(s.api, 'FixtureFunction', {
+    config: stageConfig(stage, DUMMY_ZONE_ID, {}),
+    name: 'fixture-a',
+    zipDir: RUST_ZIP_STUB_DIR,
+    api: s.api.api,
+    routes: [{ method: HttpMethod.GET, path: '/api/v2/fixture' }],
+    tables: [{ table: 'tokens', actions: ['dynamodb:GetItem'] }],
+    secrets: [`mopm/${stage}/github-oauth`],
+  });
+  const templates = Object.fromEntries(Object.values(s).map((st) => [st.stackName, Template.fromStack(st).toJSON()]));
+  const report = check(stage, templates, renderPolicy(stage));
+
+  test('the writer and the function are in the templates checked', () => {
+    expect(report.types).toContain('Custom::AWS');
+    const fns = Object.values<Json>(templates[`mopm-${stage}-api`].Resources).filter((r) => r.Type === 'AWS::Lambda::Function');
+    expect(fns.map((f) => f.Properties.FunctionName)).toContain(`mopm-${stage}-fixture-a`);
+  });
+
+  test('every resource type is mapped and the rendered policy allows every action, with no Deny in the way', () => {
+    expect(report.unmapped).toEqual([]);
+    expect(report.failures).toEqual([]);
   });
 });
 

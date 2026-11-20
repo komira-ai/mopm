@@ -593,6 +593,15 @@ describe('the daily limits a stage may tune', () => {
     expect(none.MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY).toBeUndefined();
   });
 
+  test('the upload counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
+    const env = handlerEnv({ ratePerAccountPerDay: 40, ratePerTokenPerDay: 9 });
+    expect(env.MOPM_RATE_PER_ACCOUNT_DAY).toBe('40');
+    expect(env.MOPM_RATE_PER_TOKEN_DAY).toBe('9');
+    const none = handlerEnv();
+    expect(none.MOPM_RATE_PER_ACCOUNT_DAY).toBeUndefined();
+    expect(none.MOPM_RATE_PER_TOKEN_DAY).toBeUndefined();
+  });
+
   test('the group counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
     const env = handlerEnv({ groupRatePerAccountPerDay: 123, groupRatePerTokenPerDay: 45 });
     expect(env.MOPM_GROUP_RATE_PER_ACCOUNT_DAY).toBe('123');

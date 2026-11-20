@@ -1,2 +1,2 @@
-lines 98.42
-branches 83.33
+lines 99.00
+branches 99.00

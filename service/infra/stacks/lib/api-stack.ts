@@ -12,6 +12,7 @@ import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
 import { StageConfig, channelBucketName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
+import { StageSettingsWriter } from './stage-settings';
 
 export interface ApiStackProps extends StackProps {
   config: StageConfig;
@@ -21,9 +22,17 @@ export interface ApiStackProps extends StackProps {
   commit: string;
   /** Directory holding the built handler (`http/lambda.js`). Defaults to service/api/dist; tests pass a stub. */
   handlerDir?: string;
+  /**
+   * Directory of the Rust functions' zips (lambda_zip's output, `<function>.zip` each). Absent (every deploy today): no Rust
+   * function and no `stage_settings` item is deployed. Tests pass a stub.
+   */
+  rustZipDir?: string;
   /** New uploads are refused and /health says so. (The runtime switch is the `read_only` item of the config table.) */
   readOnly?: boolean;
-  /** Interactive publishing needs a GitHub account with two-factor authentication on (the CEO's rule). On unless set false. */
+  /**
+   * Interactive publishing, and the web sign-in (the `require_2fa` of the `stage_settings` item), need a GitHub account with
+   * two-factor authentication on (the CEO's rule). On unless set false.
+   */
   require2fa?: boolean;
   /** Rate limits of begin-upload per UTC day; the code's defaults (generous) apply when absent. */
   limits?: { ratePerAccountPerDay?: number; ratePerTokenPerDay?: number; groupRatePerAccountPerDay?: number; groupRatePerTokenPerDay?: number; claimRatePerAccountPerDay?: number; claimRatePerTokenPerDay?: number; claimRatePerCiNamespacePerDay?: number };
@@ -477,5 +486,19 @@ export class ApiStack extends Stack {
     );
     new route53.ARecord(this, 'ARecord', { zone, recordName: c.apiDomain, target });
     new route53.AaaaRecord(this, 'AaaaRecord', { zone, recordName: c.apiDomain, target });
+
+    if (props.rustZipDir !== undefined) this.addRustFunctions(c, props.rustZipDir, props.require2fa ?? true);
+  }
+
+  /**
+   * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, section 5). Today that is the `stage_settings`
+   * item they read at cold start; no function is declared yet. A function is a RustFunction (lib/rust-function.ts) created here
+   * from `zipDir`.
+   */
+  private addRustFunctions(c: StageConfig, zipDir: string, require2fa: boolean): void {
+    if (!fs.existsSync(zipDir)) {
+      throw new Error(`the Rust function zips are missing: ${zipDir} does not exist`);
+    }
+    new StageSettingsWriter(this, 'StageSettings', { config: c, require2fa });
   }
 }
