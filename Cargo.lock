@@ -913,6 +913,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "fn_tutorial_sandbox"
+version = "0.0.0"
+dependencies = [
+ "aws-sdk-dynamodb",
+ "aws-sdk-secretsmanager",
+ "aws_lambda_events",
+ "jiff",
+ "lambda_runtime",
+ "mopm_aws",
+ "mopm_core",
+ "mopm_e2b",
+ "mopm_ports",
+ "mopm_testing",
+ "mopm_web",
+ "serde_dynamo",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -9,13 +9,14 @@
 //! { "key": "stage_settings",
 //!   "redirect_uri": "https://mopm.dev/api/v2/auth/web/callback",
 //!   "site_origin": "https://mopm.dev",
-//!   "require_two_factor": true,
-//!   "e2b_template_id": "<template id>",
+//!   "require_2fa": true,
+//!   "e2b_template_id": "<template id, when named>",
 //!   "e2b_domain": "e2b.app",
-//!   "sandbox_timeout_seconds": 1800 }
+//!   "sandbox_timeout_s": 1800 }
 //! ```
 //!
-//! Every field is required, and an item that breaks a rule below fails the cold start by name: a wrong
+//! Every field is required except `e2b_template_id` (absent until the stage's configuration names a template). An
+//! item that breaks a rule below fails the cold start by name: a wrong
 //! setting is a deploy mistake, and no function answers with half of it. Fields the item has beyond these are
 //! ignored, so a newer stack's item still loads.
 
@@ -127,13 +128,14 @@ pub struct StageSettings {
     /// of the callback's redirect.
     pub site_origin: String,
     /// Whether a GitHub account without two-factor authentication is refused at sign-in.
-    pub require_two_factor: bool,
-    /// The E2B template the tutorial's sandboxes start from.
-    pub e2b_template_id: String,
+    pub require_2fa: bool,
+    /// The E2B template the tutorial's sandboxes start from; absent until the stage's configuration names one (the
+    /// sandbox function then answers `tutorial_unavailable`), present means not empty.
+    pub e2b_template_id: Option<String>,
     /// The base domain of a sandbox's address when E2B's answer has none.
     pub e2b_domain: String,
     /// How long E2B keeps a sandbox, in seconds; more than zero.
-    pub sandbox_timeout_seconds: u64,
+    pub sandbox_timeout_s: u32,
 }
 
 fn is_origin(s: &str) -> bool {
@@ -151,11 +153,11 @@ impl StageSettings {
         if !s.redirect_uri.strip_prefix(&s.site_origin).is_some_and(|path| path.starts_with('/')) {
             return invalid("redirect_uri is not a path under site_origin");
         }
-        if s.e2b_template_id.is_empty() || s.e2b_domain.is_empty() {
+        if s.e2b_template_id.as_deref() == Some("") || s.e2b_domain.is_empty() {
             return invalid("e2b_template_id and e2b_domain must not be empty");
         }
-        if s.sandbox_timeout_seconds == 0 {
-            return invalid("sandbox_timeout_seconds must be more than zero");
+        if s.sandbox_timeout_s == 0 {
+            return invalid("sandbox_timeout_s must be more than zero");
         }
         Ok(s)
     }
@@ -246,10 +248,10 @@ mod tests {
             "key": "stage_settings",
             "redirect_uri": "https://beta.mopm.dev/api/v2/auth/web/callback",
             "site_origin": "https://beta.mopm.dev",
-            "require_two_factor": true,
+            "require_2fa": true,
             "e2b_template_id": "tpl-123",
             "e2b_domain": "e2b.app",
-            "sandbox_timeout_seconds": 1800
+            "sandbox_timeout_s": 1800
         })
     }
 
@@ -265,10 +267,10 @@ mod tests {
             StageSettings {
                 redirect_uri: "https://beta.mopm.dev/api/v2/auth/web/callback".to_string(),
                 site_origin: "https://beta.mopm.dev".to_string(),
-                require_two_factor: true,
-                e2b_template_id: "tpl-123".to_string(),
+                require_2fa: true,
+                e2b_template_id: Some("tpl-123".to_string()),
                 e2b_domain: "e2b.app".to_string(),
-                sandbox_timeout_seconds: 1800,
+                sandbox_timeout_s: 1800,
             }
         );
     }
@@ -306,16 +308,16 @@ mod tests {
 
     #[test]
     fn each_missing_or_mistyped_field_is_refused() {
-        for field in ["redirect_uri", "site_origin", "require_two_factor", "e2b_template_id", "e2b_domain", "sandbox_timeout_seconds"] {
+        for field in ["redirect_uri", "site_origin", "require_2fa", "e2b_domain", "sandbox_timeout_s"] {
             let mut i = item();
             i.as_object_mut().unwrap().remove(field);
             assert_eq!(refused(i), format!("the stage_settings item is not valid: missing field `{field}`"));
         }
         let mut i = item();
-        i["require_two_factor"] = json!("true");
+        i["require_2fa"] = json!("true");
         assert!(refused(i).starts_with("the stage_settings item is not valid: invalid type: string \"true\", expected a boolean"));
         let mut i = item();
-        i["sandbox_timeout_seconds"] = json!(-1);
+        i["sandbox_timeout_s"] = json!(-1);
         assert!(refused(i).starts_with("the stage_settings item is not valid: invalid value: integer `-1`"));
     }
 
@@ -346,11 +348,18 @@ mod tests {
             assert_eq!(refused(i), "the stage_settings item is not valid: e2b_template_id and e2b_domain must not be empty", "{field}");
         }
         let mut i = item();
-        i["sandbox_timeout_seconds"] = json!(0);
-        assert_eq!(refused(i), "the stage_settings item is not valid: sandbox_timeout_seconds must be more than zero");
+        i["sandbox_timeout_s"] = json!(0);
+        assert_eq!(refused(i), "the stage_settings item is not valid: sandbox_timeout_s must be more than zero");
         let mut i = item();
-        i["sandbox_timeout_seconds"] = json!(1);
-        assert_eq!(StageSettings::from_item(i).unwrap().sandbox_timeout_seconds, 1);
+        i["sandbox_timeout_s"] = json!(1);
+        assert_eq!(StageSettings::from_item(i).unwrap().sandbox_timeout_s, 1);
+    }
+
+    #[test]
+    fn an_item_without_a_template_loads_with_none() {
+        let mut i = item();
+        i.as_object_mut().unwrap().remove("e2b_template_id");
+        assert_eq!(StageSettings::from_item(i).unwrap().e2b_template_id, None);
     }
 
     #[test]

@@ -1,0 +1,5 @@
+{
+  "tokens": { "actions": ["dynamodb:GetItem", "dynamodb:UpdateItem"] },
+  "users": { "actions": ["dynamodb:GetItem"] },
+  "config": { "actions": ["dynamodb:GetItem"] }
+}

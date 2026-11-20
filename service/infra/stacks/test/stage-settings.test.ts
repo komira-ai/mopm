@@ -138,14 +138,29 @@ describe.each(STAGES)('the Rust switch (rustZipDir) on %s', (stage) => {
     expect(runtimes.every((r) => r === 'nodejs22.x')).toBe(true);
   });
 
-  test('present: every resource of the stack without it is there and unchanged; what is added is only the writer', () => {
+  test('present: every resource of the stack without it is there and unchanged; what is added is only the writer, the tutorial-sandbox function with its route and role, and the E2B secret with its policy', () => {
     const a = Template.fromStack(off.api).toJSON().Resources as Record<string, any>;
     const b = Template.fromStack(on.api).toJSON().Resources as Record<string, any>;
     for (const [id, r] of Object.entries(a)) expect(b[id]).toEqual(r);
     const added = Object.keys(b).filter((id) => !(id in a)).map((id) => b[id].Type).sort();
-    expect(added).toEqual(['AWS::IAM::Policy', 'AWS::IAM::Role', 'AWS::Lambda::Function', 'AWS::Logs::LogGroup', 'Custom::AWS']);
+    expect(added).toEqual([
+      'AWS::ApiGatewayV2::Integration',
+      'AWS::ApiGatewayV2::Route',
+      'AWS::IAM::Policy',
+      'AWS::IAM::Policy',
+      'AWS::IAM::Role',
+      'AWS::IAM::Role',
+      'AWS::Lambda::Function',
+      'AWS::Lambda::Function',
+      'AWS::Lambda::Permission',
+      'AWS::Logs::LogGroup',
+      'AWS::Logs::LogGroup',
+      'AWS::SecretsManager::ResourcePolicy',
+      'AWS::SecretsManager::Secret',
+      'Custom::AWS',
+    ]);
     const runtimes = Object.values(b).filter((r) => r.Type === 'AWS::Lambda::Function').map((r) => r.Properties.Runtime);
-    expect(runtimes).not.toContain('provided.al2023');
+    expect(runtimes.filter((r) => r === 'provided.al2023')).toHaveLength(1);
   });
 
   test('the other stacks do not change with it', () => {

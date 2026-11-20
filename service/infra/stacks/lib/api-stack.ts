@@ -9,8 +9,10 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
-import { StageConfig, channelBucketName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
+import { StageConfig, channelBucketName, e2bSecretName, edgeOriginSecretName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
+import { RustFunction } from './rust-function';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 import { StageSettingsWriter } from './stage-settings';
 
@@ -491,14 +493,54 @@ export class ApiStack extends Stack {
   }
 
   /**
-   * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, section 5). Today that is the `stage_settings`
-   * item they read at cold start; no function is declared yet. A function is a RustFunction (lib/rust-function.ts) created here
-   * from `zipDir`.
+   * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, section 5): the `stage_settings` item they read
+   * at cold start, and the tutorial sandbox function with the E2B secret only it may read. A function is a RustFunction
+   * (lib/rust-function.ts) created here from `zipDir`.
    */
   private addRustFunctions(c: StageConfig, zipDir: string, require2fa: boolean): void {
     if (!fs.existsSync(zipDir)) {
       throw new Error(`the Rust function zips are missing: ${zipDir} does not exist`);
     }
     new StageSettingsWriter(this, 'StageSettings', { config: c, require2fa });
+
+    // L1, not the L2 Secret: the L2 generates a value when given none. This one has no value until the operator writes the key.
+    const e2b = new secretsmanager.CfnSecret(this, 'E2bSecret', {
+      name: e2bSecretName(c.stage),
+      description: `The E2B API key of the mopm ${c.stage} tutorial sandboxes, {"api_key": "<key>"}; written by the operator, never generated`,
+    });
+    e2b.applyRemovalPolicy(removalPolicyFor(c));
+
+    const sandbox = new RustFunction(this, 'TutorialSandbox', {
+      config: c,
+      name: 'tutorial-sandbox',
+      zipDir,
+      api: this.api,
+      routes: [{ method: apigw.HttpMethod.POST, path: '/api/v2/tutorial/sandbox' }],
+      tables: [
+        { table: 'tokens', actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'] },
+        { table: 'users', actions: ['dynamodb:GetItem'] },
+      ],
+      secrets: [edgeOriginSecretName(c.stage), e2bSecretName(c.stage)],
+    });
+
+    // Only the sandbox function's role reads the key. Deny, not an allow list: no other principal in the account can read it,
+    // whatever its own policy says. Writing the value (PutSecretValue) and CloudFormation are not denied.
+    new secretsmanager.CfnResourcePolicy(this, 'E2bSecretPolicy', {
+      secretId: e2b.ref,
+      blockPublicPolicy: true,
+      resourcePolicy: {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Sid: 'OnlyTheSandboxFunctionReads',
+            Effect: 'Deny',
+            Principal: { AWS: '*' },
+            Action: 'secretsmanager:GetSecretValue',
+            Resource: '*',
+            Condition: { ArnNotEquals: { 'aws:PrincipalArn': sandbox.role.roleArn } },
+          },
+        ],
+      },
+    });
   }
 }

@@ -41,13 +41,14 @@ included.
 { "key": "stage_settings",
   "redirect_uri": "https://mopm.dev/api/v2/auth/web/callback",
   "site_origin": "https://mopm.dev",
-  "require_two_factor": true,
-  "e2b_template_id": "<template id>",
+  "require_2fa": true,
+  "e2b_template_id": "<template id, when named>",
   "e2b_domain": "e2b.app",
-  "sandbox_timeout_seconds": 1800 }
+  "sandbox_timeout_s": 1800 }
 ```
 
-Every field is required. `site_origin` is `https://` and a lower-case host with no path, `redirect_uri` is a path
-under it, the E2B fields are not empty and the timeout is more than zero; anything else fails the cold start by name.
+Every field is required except `e2b_template_id`, which the stack leaves out until the stage names a template (the sandbox
+function then answers `tutorial_unavailable`; present and empty is refused). `site_origin` is `https://` and a lower-case host with no path, `redirect_uri` is a path
+under it, the E2B fields are not empty when present and the timeout is more than zero; anything else fails the cold start by name.
 Other fields are ignored, so a newer stack's item still loads. `ConfigTable` has the memory implementation here
-(`BTreeMap<String, serde_json::Value>`); the DynamoDB one comes with the first function.
+(`BTreeMap<String, serde_json::Value>`); the DynamoDB one lives in the first function that reads it (`fn_tutorial_sandbox`).
