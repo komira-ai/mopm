@@ -6,6 +6,7 @@ async-stream 0.3.6 13823
 async-stream-impl 0.3.6 4312
 atomic-waker 1.1.2 12422
 autocfg 1.5.1 18911
+aws-config 1.8.5 135841
 aws-credential-types 1.2.10 21578
 aws-lc-rs 1.11.1 198572
 aws-lc-sys 0.23.1 8026946
@@ -15,6 +16,7 @@ aws-sdk-dynamodb 1.82.0 819456
 aws-sdk-s3 1.96.0 1521430
 aws-sdk-secretsmanager 1.78.0 284614
 aws-sdk-sqs 1.74.0 303423
+aws-sdk-sts 1.84.0 176498
 aws-sigv4 1.3.6 96198
 aws-smithy-async 1.2.6 23856
 aws-smithy-checksums 0.63.11 18871
@@ -23,6 +25,7 @@ aws-smithy-http 0.62.5 29932
 aws-smithy-http-client 1.0.6 73920
 aws-smithy-json 0.61.7 27346
 aws-smithy-observability 0.1.4 15679
+aws-smithy-query 0.60.8 9434
 aws-smithy-runtime 1.8.6 116375
 aws-smithy-runtime-api 1.9.2 78495
 aws-smithy-types 1.3.4 92193
@@ -204,6 +207,7 @@ unicode-ident 1.0.27 48807
 unicode-normalization 0.1.25 128462
 untrusted 0.9.0 14447
 url 2.5.8 86512
+urlencoding 2.1.3 6538
 utf8_iter 1.0.4 10437
 uuid 1.26.1 65928
 version_check 0.9.5 15554

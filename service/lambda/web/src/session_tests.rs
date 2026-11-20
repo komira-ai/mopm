@@ -395,3 +395,11 @@ async fn debug_of_a_session_hides_the_token() {
     let shown = format!("{s:?}");
     assert!(!shown.contains(secret(1).expose()), "{shown}");
 }
+
+#[tokio::test]
+async fn the_authenticator_hands_out_its_store_and_clock() {
+    let rig = live().await;
+    assert_eq!(rig.auth.clock().now(), at(NOW_MS));
+    rig.auth.store().revoke_token(&session_row(&secret(1)).hash, "2026-11-19T12:00:00.000Z").await.unwrap();
+    assert_eq!(refused(rig.auth.session(&get(&cookie(&secret(1)))).await, ErrorCode::SessionRequired), "not signed in: the session was revoked");
+}
