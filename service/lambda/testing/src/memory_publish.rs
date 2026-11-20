@@ -440,3 +440,7 @@ mod tests {
         assert!(f.read_only().await.unwrap());
     }
 }
+
+#[cfg(test)]
+#[path = "memory_publish_tests.rs"]
+mod more_tests;

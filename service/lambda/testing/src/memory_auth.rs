@@ -127,3 +127,7 @@ impl AuthStore for MemoryAuthStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "memory_auth_tests.rs"]
+mod tests;
