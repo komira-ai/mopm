@@ -27,3 +27,8 @@ pub mod zstd;
 mod error_tests;
 #[cfg(test)]
 mod fixtures;
+
+/// A clippy warning (`needless_return`) that only `-D warnings` turns into a failure. Reverted by the next commit.
+pub fn lint_fixture() -> u32 {
+    return 1;
+}
