@@ -7,12 +7,10 @@
 //! * [`handler`]: the request, [`Function`]: the checks in order, the E2B call, the answer and its one log line;
 //! * [`key`]: the E2B key, kept once it has been read;
 //! * [`log`]: the log lines;
-//! * [`config_table`]: `mopm_web`'s settings table on DynamoDB;
 //! * [`clock`]: the system's time.
 
 pub mod args;
 pub mod clock;
-pub mod config_table;
 pub mod handler;
 pub mod key;
 pub mod log;

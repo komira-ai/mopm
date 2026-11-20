@@ -1,13 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Template } from 'aws-cdk-lib/assertions';
-import { STAGES, Stage, stageConfig } from '../lib/config';
-import { stageSettings, stageSettingsItem } from '../lib/stage-settings';
-import { DUMMY_ACCOUNT, DUMMY_ZONE_ID, RUST_ZIP_STUB_DIR, build, cfnFlat } from './util';
+import { STAGES, Stage } from '../lib/config';
+import { DUMMY_ACCOUNT, RUST_ZIP_STUB_DIR, build, cfnFlat } from './util';
 
 const A = DUMMY_ACCOUNT;
 const GRANTS_FILE = path.resolve(__dirname, '../../../lambda/fn_tutorial_sandbox/tests/fixtures/grants.json');
-const ITEM_FILE = path.join(__dirname, 'fixtures/stage-settings-item.json');
 
 type Grants = Record<string, { actions: string[] }>;
 /** The grants the function's own tests run under (service/lambda/fn_tutorial_sandbox/tests/fixtures/grants.json). */
@@ -321,13 +319,5 @@ describe('the E2B secret policy check fails on a defect', () => {
         for (const [k, r] of Object.entries<any>(json.Resources)) if (r.Type === 'AWS::SecretsManager::ResourcePolicy') delete json.Resources[k];
       }),
     ).toEqual(['expected one resource policy on the secret, found 0']);
-  });
-});
-
-describe('the stage settings item the function reads', () => {
-  test('the item the stack writes for beta with a template id is the checked-in fixture the function tests load', () => {
-    const item = stageSettingsItem(stageSettings(stageConfig('beta', DUMMY_ZONE_ID, { e2bTemplateId: 'mopm-tutorial-beta' }), true));
-    expect(JSON.parse(fs.readFileSync(ITEM_FILE, 'utf8'))).toEqual(item);
-    expect(fs.readFileSync(ITEM_FILE, 'utf8')).toBe(JSON.stringify(item, null, 2) + '\n');
   });
 });

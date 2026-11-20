@@ -5,7 +5,9 @@
 //! 3. the edge secret `mopm/<stage>/edge-origin`;
 //! 4. the E2B key `mopm/<stage>/e2b`, once ([`KeyCache`]).
 //!
-//! A failure of 1 to 3 fails the start, and nothing answers. A key that is not there does not (see [`crate::key`]).
+//! A failure of 1 to 3 fails the start, and nothing answers; so does a `sandbox_timeout_s` above `u32::MAX` (the type of E2B's
+//! `timeout`), a wrong setting like any other, whether or not the stage names a template. A key that is not there does not
+//! fail the start (see [`crate::key`]).
 //!
 //! The AWS clients are built without `aws-config`: the region from `AWS_REGION` and static credentials from
 //! `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and, when there is one, `AWS_SESSION_TOKEN`; Lambda sets all of them.
@@ -17,7 +19,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 
 use aws_sdk_dynamodb::config::BehaviorVersion;
-use mopm_aws::dynamo::{AuthTables, DynamoAuthStore};
+use mopm_aws::dynamo::{AuthTables, DynamoAuthStore, DynamoConfigTable};
 use mopm_aws::services::SecretsManagerReader;
 use mopm_e2b::Settings;
 use mopm_ports::env::Clock;
@@ -30,7 +32,6 @@ use thiserror::Error;
 
 use crate::args::{ArgsError, Options};
 use crate::clock::SharedClock;
-use crate::config_table::DynamoConfigTable;
 use crate::handler::Function;
 use crate::key::KeyCache;
 use crate::log::Sink;
@@ -50,6 +51,9 @@ pub enum StartError {
     /// An environment variable the AWS clients need is not set.
     #[error("{0} is not set")]
     MissingEnv(&'static str),
+    /// The stage's sandbox timeout is more seconds than E2B's create call takes (a `u32`).
+    #[error("the stage_settings item is not valid: sandbox_timeout_s {0} is more than {max} seconds", max = u32::MAX)]
+    TimeoutTooLong(u64),
 }
 
 /// The environment variables the function reads, as the process has them.
@@ -184,11 +188,13 @@ pub async fn start<H: HttpClient>(
     // The key is read once now. Whatever the result, the function starts: only a key that is there is kept.
     let _ = key.get(&secrets).await;
 
+    let timeout_s = u32::try_from(settings.sandbox_timeout_seconds)
+        .map_err(|_| StartError::TimeoutTooLong(settings.sandbox_timeout_seconds))?;
     let e2b = settings.e2b_template_id.map(|template_id| Settings {
         api_base: parts.e2b_api,
         stage: stage.as_str().to_string(),
         template_id,
-        timeout_s: settings.sandbox_timeout_s,
+        timeout_s,
         e2b_domain: settings.e2b_domain,
     });
     Ok(Function {

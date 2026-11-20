@@ -140,7 +140,7 @@ where
         drop(token);
         let github_id = account.id;
         let fail = |refusal: Refusal| refusal.for_account(github_id);
-        if self.settings.require_2fa && account.two_factor != Some(true) {
+        if self.settings.require_two_factor && account.two_factor != Some(true) {
             return Err(fail(Refusal::new(
                 FailureCode::TwoFactorRequired,
                 "two-factor authentication is off on the account",

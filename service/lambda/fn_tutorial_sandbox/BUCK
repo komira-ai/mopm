@@ -3,8 +3,9 @@
 # the tests. `:e2e_test` runs the release executable against one loopback server that plays both the Lambda runtime API
 # and the AWS endpoint; `:zip` is the deployment package, not built unless `:test` and `:e2e_test` passed. See README.md.
 #
-# The tests read the website's contract examples (tests/contract/api-v2/tutorial-sandbox.json) and the stack's
-# `stage_settings` item (service/infra/stacks/test/fixtures/stage-settings-item.json) and its grants with `include_str!` at their real
+# The tests read the website's contract examples (tests/contract/api-v2/tutorial-sandbox.json), the stack's
+# `stage_settings` item (mopm_web's tests/fixtures/stage_settings_item.json; the tests' own item is it with test values set over
+# it) and the function's grants with `include_str!` at their real
 # paths, so `cargo test` finds them too; `extra_srcs` makes them inputs.
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/zig:zig.bzl", "zig_test")
@@ -15,7 +16,7 @@ cargo_package(
     path = ".",
     extra_srcs = [
         "//:lambda.contract.v2.tutorial-sandbox.json",
-        "//service/infra/stacks:stage_settings_item.json",
+        "//service/lambda/web:stage_settings_item.json",
         ":grants.json",
     ],
 )

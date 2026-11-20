@@ -3,27 +3,27 @@
 //! environment variable these functions read), and the stage's settings, the item `stage_settings` of the
 //! stage's `config` table, which the stack writes at deploy.
 //!
-//! The item (key `key`, as every item of that table):
+//! The item (key `key`, as every item of that table), as the API stack writes it (`stageSettingsItem` of
+//! service/infra/stacks/lib/stage-settings.ts; both sides are held to `tests/fixtures/stage_settings_item.json`):
 //!
 //! ```json
 //! { "key": "stage_settings",
 //!   "redirect_uri": "https://mopm.dev/api/v2/auth/web/callback",
 //!   "site_origin": "https://mopm.dev",
 //!   "require_2fa": true,
-//!   "e2b_template_id": "<template id, when named>",
+//!   "e2b_template_id": "<template id>",
 //!   "e2b_domain": "e2b.app",
 //!   "sandbox_timeout_s": 1800 }
 //! ```
 //!
-//! Every field is required except `e2b_template_id` (absent until the stage's configuration names a template). An
-//! item that breaks a rule below fails the cold start by name: a wrong
-//! setting is a deploy mistake, and no function answers with half of it. Fields the item has beyond these are
-//! ignored, so a newer stack's item still loads.
+//! Every field is required but `e2b_template_id`, which the stack writes only once the stage's configuration names a
+//! template. An item that breaks a rule below fails the cold start by name: a wrong setting is a deploy mistake, and
+//! no function answers with half of it. Fields the item has beyond these are ignored, so a newer stack's item still
+//! loads.
 
-use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::future::Future;
 
+pub use mopm_ports::config::ConfigTable;
 use mopm_ports::error::{PortError, PortResult};
 use serde::Deserialize;
 use thiserror::Error;
@@ -107,18 +107,6 @@ pub fn function_name_from_env() -> Result<FunctionName, SetupError> {
     parse_function_name(std::env::var_os(FUNCTION_NAME_ENV).as_deref())
 }
 
-/// The stage's `config` table, by item key. Each item comes back as JSON, its numbers as numbers.
-pub trait ConfigTable: Send + Sync {
-    fn get_item(&self, key: &str) -> impl Future<Output = PortResult<Option<serde_json::Value>>> + Send;
-}
-
-/// A table in memory, for tests.
-impl ConfigTable for BTreeMap<String, serde_json::Value> {
-    async fn get_item(&self, key: &str) -> PortResult<Option<serde_json::Value>> {
-        Ok(self.get(key).cloned())
-    }
-}
-
 /// The stage's settings (the item above).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct StageSettings {
@@ -127,15 +115,17 @@ pub struct StageSettings {
     /// The site's origin, `https://<site>` with no path: the exact `Origin` a `POST` must carry and the base
     /// of the callback's redirect.
     pub site_origin: String,
-    /// Whether a GitHub account without two-factor authentication is refused at sign-in.
-    pub require_2fa: bool,
-    /// The E2B template the tutorial's sandboxes start from; absent until the stage's configuration names one (the
-    /// sandbox function then answers `tutorial_unavailable`), present means not empty.
+    /// Whether a GitHub account without two-factor authentication is refused at sign-in (the item's `require_2fa`).
+    #[serde(rename = "require_2fa")]
+    pub require_two_factor: bool,
+    /// The E2B template the tutorial's sandboxes start from; `None` until the stage's configuration names one.
+    #[serde(default)]
     pub e2b_template_id: Option<String>,
     /// The base domain of a sandbox's address when E2B's answer has none.
     pub e2b_domain: String,
-    /// How long E2B keeps a sandbox, in seconds; more than zero.
-    pub sandbox_timeout_s: u32,
+    /// How long E2B keeps a sandbox, in seconds; more than zero (the item's `sandbox_timeout_s`).
+    #[serde(rename = "sandbox_timeout_s")]
+    pub sandbox_timeout_seconds: u64,
 }
 
 fn is_origin(s: &str) -> bool {
@@ -153,11 +143,11 @@ impl StageSettings {
         if !s.redirect_uri.strip_prefix(&s.site_origin).is_some_and(|path| path.starts_with('/')) {
             return invalid("redirect_uri is not a path under site_origin");
         }
-        if s.e2b_template_id.as_deref() == Some("") || s.e2b_domain.is_empty() {
+        if s.e2b_template_id.as_deref().is_some_and(str::is_empty) || s.e2b_domain.is_empty() {
             return invalid("e2b_template_id and e2b_domain must not be empty");
         }
-        if s.sandbox_timeout_s == 0 {
-            return invalid("sandbox_timeout_s must be more than zero");
+        if s.sandbox_timeout_seconds == 0 {
+            return invalid("sandbox_timeout_seconds must be more than zero");
         }
         Ok(s)
     }
@@ -178,6 +168,7 @@ impl StageSettings {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     fn os(s: &str) -> Option<&OsStr> {
         Some(OsStr::new(s))
@@ -267,10 +258,10 @@ mod tests {
             StageSettings {
                 redirect_uri: "https://beta.mopm.dev/api/v2/auth/web/callback".to_string(),
                 site_origin: "https://beta.mopm.dev".to_string(),
-                require_2fa: true,
+                require_two_factor: true,
                 e2b_template_id: Some("tpl-123".to_string()),
                 e2b_domain: "e2b.app".to_string(),
-                sandbox_timeout_s: 1800,
+                sandbox_timeout_seconds: 1800,
             }
         );
     }
@@ -349,17 +340,33 @@ mod tests {
         }
         let mut i = item();
         i["sandbox_timeout_s"] = json!(0);
-        assert_eq!(refused(i), "the stage_settings item is not valid: sandbox_timeout_s must be more than zero");
+        assert_eq!(refused(i), "the stage_settings item is not valid: sandbox_timeout_seconds must be more than zero");
         let mut i = item();
         i["sandbox_timeout_s"] = json!(1);
-        assert_eq!(StageSettings::from_item(i).unwrap().sandbox_timeout_s, 1);
+        assert_eq!(StageSettings::from_item(i).unwrap().sandbox_timeout_seconds, 1);
     }
 
-    #[test]
-    fn an_item_without_a_template_loads_with_none() {
+    #[tokio::test]
+    async fn an_item_without_a_template_id_loads_with_none() {
         let mut i = item();
         i.as_object_mut().unwrap().remove("e2b_template_id");
-        assert_eq!(StageSettings::from_item(i).unwrap().e2b_template_id, None);
+        assert_eq!(StageSettings::load(&table(Some(i))).await.unwrap().e2b_template_id, None);
+    }
+
+    /// The item names of an earlier draft of this module are not the stack's: an item that has only those is
+    /// refused by the stack's name, not read.
+    #[test]
+    fn the_long_field_names_are_not_the_items() {
+        let mut i = item();
+        let m = i.as_object_mut().unwrap();
+        let v = m.remove("require_2fa").unwrap();
+        m.insert("require_two_factor".into(), v);
+        assert_eq!(refused(i), "the stage_settings item is not valid: missing field `require_2fa`");
+        let mut i = item();
+        let m = i.as_object_mut().unwrap();
+        let v = m.remove("sandbox_timeout_s").unwrap();
+        m.insert("sandbox_timeout_seconds".into(), v);
+        assert_eq!(refused(i), "the stage_settings item is not valid: missing field `sandbox_timeout_s`");
     }
 
     #[test]

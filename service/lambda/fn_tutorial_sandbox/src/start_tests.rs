@@ -234,7 +234,53 @@ async fn an_item_that_is_not_valid_fails_the_start_by_name() {
         ..Spec::default()
     })
     .await;
-    assert!(error.starts_with("reading the stage_settings item: infrastructure fault: the item of mopm-beta-config is not JSON"), "{error}");
+    assert_eq!(
+        error,
+        "reading the stage_settings item: infrastructure fault: invalid type: byte array, expected any valid JSON value"
+    );
+}
+
+#[tokio::test]
+async fn the_item_the_stack_writes_gives_the_e2b_settings() {
+    let rig = try_rig(Spec {
+        config: Some(STACK_ITEM.to_string()),
+        ..Spec::default()
+    })
+    .await
+    .expect("the function starts");
+    let e2b = rig.function.e2b.clone().expect("the item names a template");
+    assert_eq!(
+        (
+            e2b.stage.as_str(),
+            e2b.template_id.as_str(),
+            e2b.timeout_s,
+            e2b.e2b_domain.as_str()
+        ),
+        ("beta", "tpl-abc_1", 600, "e2b.example")
+    );
+}
+
+#[tokio::test]
+async fn a_timeout_longer_than_e2b_takes_fails_the_start_by_name() {
+    let longest =
+        item_with(|item| item["sandbox_timeout_s"] = serde_json::json!({"N": "4294967295"}));
+    let rig = try_rig(Spec {
+        config: Some(longest),
+        ..Spec::default()
+    })
+    .await
+    .expect("u32::MAX seconds is taken");
+    assert_eq!(rig.function.e2b.expect("a template").timeout_s, u32::MAX);
+    let longer =
+        item_with(|item| item["sandbox_timeout_s"] = serde_json::json!({"N": "4294967296"}));
+    assert_eq!(
+        start_error(Spec {
+            config: Some(longer),
+            ..Spec::default()
+        })
+        .await,
+        "the stage_settings item is not valid: sandbox_timeout_s 4294967296 is more than 4294967295 seconds"
+    );
 }
 
 #[tokio::test]
@@ -245,7 +291,10 @@ async fn a_config_table_the_role_cannot_read_fails_the_start() {
         ..Spec::default()
     })
     .await;
-    assert!(error.starts_with("reading the stage_settings item: infrastructure fault: dynamodb GetItem mopm-beta-config:"), "{error}");
+    assert!(
+        error.starts_with("reading the stage_settings item: infrastructure fault: get config item: service error: unhandled error (AccessDeniedException)"),
+        "{error}"
+    );
 }
 
 #[tokio::test]

@@ -9,7 +9,6 @@ signed-in browser a sandbox on E2B and what it needs to reach it. A Rust functio
 | `src/handler.rs` | `Function`: the checks in order, the E2B call, the answer and its log line; the API Gateway adapter |
 | `src/start.rs` | the cold start: stage, settings, edge secret, E2B key; the two AWS clients |
 | `src/key.rs` | the E2B key: read at the cold start, kept once it is there, read again until then |
-| `src/config_table.rs` | `mopm_web`'s `ConfigTable` on DynamoDB (`GetItem` of `stage_settings`) |
 | `src/log.rs` | the four log lines |
 | `src/args.rs` | the command line (one flag) |
 | `src/clock.rs` | the system's time, shared |
@@ -80,7 +79,9 @@ is installed). No line holds the E2B key, the sandbox's access token, the sessio
 3. The edge secret `mopm/<stage>/edge-origin`.
 4. The E2B secret `mopm/<stage>/e2b`, a JSON object `{"api_key": "<key>"}`, once.
 
-A failure of 1 to 3 fails the start, by name (the process exits with the error, and nothing answers). A key that is present is
+A failure of 1 to 3 fails the start, by name (the process exits with the error, and nothing answers), and so does a
+`sandbox_timeout_s` above `u32::MAX`, the type of E2B's `timeout`: a wrong setting, like any other, whether or not the stage
+names a template. A key that is present is
 kept for the life of the process. A key that is absent, empty, malformed or unreadable does not fail the start and is not kept:
 the next request that passes the checks above reads it again, so the operator writing the key takes effect without a redeploy.
 
@@ -97,8 +98,9 @@ Lambda passes no argument. Any other argument, the flag without a value, or the 
 ## Tests
 
 All hermetic: fakes on `127.0.0.1` port 0, a fixed clock, no sleeps and no timing assertions. The function always runs over a fake
-DynamoDB restricted to `tests/fixtures/grants.json` (so the grants suffice), seeded with the `stage_settings` item the stack writes
-(`service/infra/stacks/test/fixtures/stage-settings-item.json`), a fake Secrets Manager, the fake E2B API (plain HTTP, through a
+DynamoDB restricted to `tests/fixtures/grants.json` (so the grants suffice), seeded with a `stage_settings` item made from the one the stack writes
+(`mopm_web`'s `tests/fixtures/stage_settings_item.json`, the item the stack's test holds its writer to) with the beta test
+values set over it (template `mopm-tutorial-beta`, 1800 s, `e2b.app`, two-factor on), so its shape is the stack's, a fake Secrets Manager, the fake E2B API (plain HTTP, through a
 small test client: the production client refuses `http://`) or a scripted client.
 
 | test file | behaviour |

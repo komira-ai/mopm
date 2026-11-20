@@ -119,11 +119,11 @@ pub fn stage() -> Stage {
         .stage
 }
 
-pub fn settings(require_2fa: bool) -> StageSettings {
+pub fn settings(require_two_factor: bool) -> StageSettings {
     StageSettings::from_item(json!({
         "redirect_uri": format!("{SITE}/api/v2/auth/web/callback"),
         "site_origin": SITE,
-        "require_2fa": require_2fa,
+        "require_2fa": require_two_factor,
         "e2b_template_id": "tpl-test",
         "e2b_domain": "e2b.test",
         "sandbox_timeout_s": 1800,
@@ -209,7 +209,7 @@ impl Rig<Loopback> {
 }
 
 impl<H: HttpClient> Rig<H> {
-    pub async fn with(grants: &str, require_2fa: bool, http: H) -> Rig<H> {
+    pub async fn with(grants: &str, require_two_factor: bool, http: H) -> Rig<H> {
         let config = FakeConfig::registry("t")
             .with_grants("mopm-t-", Grants::parse(grants).expect("grants are JSON"));
         let dynamo = FakeDynamo::start(config);
@@ -218,7 +218,7 @@ impl<H: HttpClient> Rig<H> {
         let client = dynamo_client(&dynamo.endpoint());
         let shared: Arc<dyn Clock> = clock.clone();
         let login = WebLogin {
-            settings: settings(require_2fa),
+            settings: settings(require_two_factor),
             edge: edge_check().await,
             app: oauth_app().await,
             github: GitHubEndpoints::new(&github.endpoint(), &github.endpoint()),

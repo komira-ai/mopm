@@ -40,9 +40,20 @@ pub const GITHUB_ID: u64 = 42;
 pub const NOW_MS: i64 = 1_795_168_800_000;
 pub const REQUEST_ID: &str = "req-7f3a2c19d0e4";
 pub const GRANTS: &str = include_str!("../tests/fixtures/grants.json");
-/// The `stage_settings` item the stack writes for beta (template `mopm-tutorial-beta`, two-factor on), as DynamoDB JSON.
-pub const STAGE_ITEM: &str =
-    include_str!("../../../infra/stacks/test/fixtures/stage-settings-item.json");
+/// The `stage_settings` item the API stack writes, as `mopm_web`'s fixture holds it (the stack's test holds its writer to
+/// it).
+pub const STACK_ITEM: &str = include_str!("../../web/tests/fixtures/stage_settings_item.json");
+
+/// The `stage_settings` item the tests run with: the stack's ([`STACK_ITEM`]), so it has the shape the stack writes, with the
+/// beta test values set over it (template `mopm-tutorial-beta`, 30 minutes, `e2b.app`, two-factor on), as DynamoDB JSON.
+pub fn stage_item() -> String {
+    let mut item: Value = serde_json::from_str(STACK_ITEM).expect("the stack's item is JSON");
+    item["require_2fa"] = serde_json::json!({"BOOL": true});
+    item["e2b_template_id"] = serde_json::json!({"S": "mopm-tutorial-beta"});
+    item["e2b_domain"] = serde_json::json!({"S": "e2b.app"});
+    item["sandbox_timeout_s"] = serde_json::json!({"N": "1800"});
+    item.to_string()
+}
 pub const CONFIG_TABLE: &str = "mopm-beta-config";
 
 /// The session's secret: the one cookie the signed-in browser holds.
@@ -52,7 +63,7 @@ pub fn session_secret() -> TokenSecret {
 
 /// The stage item with `change` applied to its JSON.
 pub fn item_with(change: impl FnOnce(&mut Value)) -> String {
-    let mut item: Value = serde_json::from_str(STAGE_ITEM).expect("the stack's fixture is JSON");
+    let mut item: Value = serde_json::from_str(&stage_item()).expect("the test item is JSON");
     change(&mut item);
     item.to_string()
 }
@@ -270,7 +281,7 @@ pub struct Spec {
 impl Default for Spec {
     fn default() -> Spec {
         Spec {
-            config: Some(STAGE_ITEM.to_string()),
+            config: Some(stage_item()),
             grants: GRANTS.to_string(),
             edge: Stored::Value(EDGE.to_string()),
             e2b_secret: Stored::key(E2B_KEY),

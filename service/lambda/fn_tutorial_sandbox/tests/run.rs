@@ -8,8 +8,8 @@ use mopm_ports::http::{HttpClient, HttpRequest, HttpResponse};
 use mopm_testing::fake_http::{Answer, FakeHttp, Reply};
 use serde_json::{json, Value};
 
-const STAGE_ITEM: &str =
-    include_str!("../../../infra/stacks/test/fixtures/stage-settings-item.json");
+/// The stack's `stage_settings` item (`mopm_web`'s fixture, which the stack's test holds its writer to).
+const STAGE_ITEM: &str = include_str!("../../web/tests/fixtures/stage_settings_item.json");
 const NEXT: &str = "/2018-06-01/runtime/invocation/next";
 const RESPONSE: &str = "/2018-06-01/runtime/invocation/req-run-1/response";
 

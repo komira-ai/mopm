@@ -34,6 +34,12 @@ pub fn tutorial_unavailable(retry_after: u64, why: &str) -> RegistryError {
     e
 }
 
+/// `route_not_found` (404): a path or a method the function does not serve. The v2 API answers both this way (its
+/// conventions: never a 400, nothing is there). `method` and `path` are for the log.
+pub fn route_not_found(method: &str, path: &str) -> RegistryError {
+    RegistryError::new(ErrorCode::RouteNotFound, format!("no such operation: {method} {path}"), Detail::new())
+}
+
 /// `internal_error` (500) for a port that failed: the fault goes to the log, the client gets the template.
 pub fn internal(fault: &PortError) -> RegistryError {
     RegistryError::new(ErrorCode::InternalError, format!("internal: {fault}"), Detail::new())
@@ -87,6 +93,14 @@ mod tests {
         assert_eq!(headers(&r), vec![("x-mopm-request-id", "req-1"), ("cache-control", "no-store"), ("content-type", "application/json")]);
         assert_eq!(r.body, r#"{"error":{"code":"session_required","message":"You are not signed in to the website.","hint":"Sign in with GitHub, then try again."}}"#);
         assert!(r.set_cookies.is_empty());
+    }
+
+    #[test]
+    fn route_not_found_is_404_with_the_v2_texts() {
+        let r = error_response(&route_not_found("PUT", "/api/v2/auth/web/session"), "req-1");
+        assert_eq!(r.status, 404);
+        assert_eq!(headers(&r), vec![("x-mopm-request-id", "req-1"), ("cache-control", "no-store"), ("content-type", "application/json")]);
+        assert_eq!(r.body, r#"{"error":{"code":"route_not_found","message":"There is no such operation.","hint":"Check the request against the API documentation; update mopm if it is old."}}"#);
     }
 
     #[test]
