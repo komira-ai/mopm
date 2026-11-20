@@ -20,6 +20,7 @@ filegroup(
         "service_infra_stacks": "//service/infra/stacks:coverage_floor",
         "site": "//site:coverage_floor",
         "tutorial_lessons": "//:tutorial_lessons_coverage_floor",
+        "tutorial_template": "//tutorial/template:coverage_floor",
     },
 )
 
