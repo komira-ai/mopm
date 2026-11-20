@@ -18,13 +18,13 @@ pub const SECRET_BYTES: usize = 25;
 /// How many characters of a secret a token row keeps as its `prefix` (`TOKEN_PREFIX.length + 6`).
 pub const DISPLAY_PREFIX_LEN: usize = TOKEN_PREFIX.len() + 6;
 /// The fewest and most base32 characters after the prefix that `TOKEN_PATTERN` accepts.
-pub const BODY_MIN: usize = 32;
-pub const BODY_MAX: usize = 64;
+const BODY_MIN: usize = 32;
+const BODY_MAX: usize = 64;
 
 /// The `name` of the row a web login creates.
 pub const WEB_SESSION_NAME: &str = "web login";
 /// How long a web session lasts, absolute, from its creation.
-pub const WEB_SESSION_LIFETIME: SignedDuration = SignedDuration::from_hours(7 * 24);
+pub(crate) const WEB_SESSION_LIFETIME: SignedDuration = SignedDuration::from_hours(7 * 24);
 
 const B32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 
@@ -118,7 +118,7 @@ pub struct WebSessionFields {
     pub created_at: String,
     /// Equal to `created_at`: a web session is never fresh, so it cannot create an API token on the TypeScript routes.
     pub fresh_until: String,
-    /// `now` plus [`WEB_SESSION_LIFETIME`].
+    /// `now` plus seven days (168 hours).
     pub expires_at: String,
 }
 

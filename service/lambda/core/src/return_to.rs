@@ -11,6 +11,9 @@
 //! * `/docs`, `/docs/`, `/docs/<slug>` and `/docs/<slug>/`, the pages the site's edge router serves;
 //! * `/tutorial` and `/tutorial/<lesson>`, the lesson `^[a-z0-9]+(-[a-z0-9]+)*$`.
 //!
+//! The site does not serve the tutorial routes yet (the edge router and `site/test/fixtures/routes.json` have none); they
+//! are the pages the tutorial will add, held here by this module's own tests until the site's vectors carry them.
+//!
 //! Anything else becomes [`RETURN_TO_FALLBACK`]. A `%` is in no route (a valid segment needs no encoding), so a
 //! value that is still encoded (`/%2F%2Fx`) falls back too and is never decoded a second time.
 
@@ -123,6 +126,10 @@ mod tests {
             "/docs/why",
             "/docs/getting-started/",
             "/packages/komira-ai/http_client",
+            "/packages/komira-ai/http2_client",
+            "/packages/9lives/a1",
+            "/docs/step-2/",
+            "/docs/2",
             "/packages/a/ab",
             "/packages/komira-ai/http_client/1.0.0",
             "/packages/komira-ai/http_client/10.20.300",

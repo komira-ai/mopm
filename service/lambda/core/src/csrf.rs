@@ -10,7 +10,7 @@ use subtle::ConstantTimeEq;
 use crate::token::TokenSecret;
 
 /// What the hash input starts with, so the value is no other SHA-256 of the token (the row's `hash` is one).
-pub const CSRF_DOMAIN: &[u8] = b"mopm-csrf\0";
+const CSRF_DOMAIN: &[u8] = b"mopm-csrf\0";
 
 /// The CSRF value of `session`: 43 characters of `A-Za-z0-9-_`.
 pub fn csrf_value(session: &TokenSecret) -> String {
