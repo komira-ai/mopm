@@ -1,16 +1,128 @@
-# Sign-in for mopm.dev and the interactive tutorial
+# Sign-in for mopm.dev and sandboxes for the interactive tutorial
 
-Status: proposal, revised after the CEO's rulings on its first version (see "Questions for the CEO"). It changes what
-users see (a sign-in, a tutorial that runs code) and the public interface (new `/api/v2` routes and error codes, a
-cookie). No code changes in this PR. **Unverified** marks what no code, doc or run has confirmed; every size, time and
-price is an estimate until the PR that names it measures it.
+Status: proposal, revised after the CEO's rulings (see "Questions for the CEO"). It changes what users see (a sign-in,
+a tutorial that runs code) and the public interface (new `/api/v2` routes and error codes, a cookie). No code changes
+in this PR. **Unverified** marks what no code, doc or run has confirmed; every time and size is an estimate until the
+task that names it measures it. E2B facts cite E2B's documentation ("Sources" at the end) or the published `e2b` npm
+package, version 2.64.0, the version current when this was written.
 
-The CEO asked for a login on mopm.dev, and for the interactive tutorial to be open only to people who are signed in.
-The tutorial runs code on a hosted sandbox service that we pay for; the login exists so that this compute is spent on
-the tutorial's users. This note designs the smallest sign-in that does it, the one endpoint that runs code for a
-signed-in user, and the bounds that stop runaway use without users noticing them. The sign-in is the GitHub web login
-of [mopm-dev.md](mopm-dev.md) section 4 and [appendix C](mopm-dev-appendix.md#c-web-login), cut down to what the
-tutorial needs, moved to `/api/v2`, and built as Rust Lambdas: the first functions of the registry's Rust port.
+The interactive tutorial runs code in a browser-facing sandbox on [E2B](https://e2b.dev). Our service does two things
+only: it signs the user in with GitHub, and it hands a signed-in user a sandbox of their own. The tutorial page then
+talks to that sandbox directly with E2B's JavaScript SDK. The team's E2B API key never leaves our service, because
+with it any signed-in user could create sandboxes with the network on.
+
+## For the tutorial's author: what to build against
+
+### The endpoint
+
+`POST /api/v2/tutorial/sandbox` on the site's own host (`https://mopm.dev`, `https://beta.mopm.dev`, ...; section 2.1).
+It creates one E2B sandbox for the signed-in user, with internet access disabled, and returns what the browser needs to
+reach it.
+
+Request:
+
+```http
+POST /api/v2/tutorial/sandbox
+Cookie: __Host-mopm_session=...        (sent by the browser; use credentials: 'same-origin')
+X-Mopm-CSRF: <csrf from GET /api/v2/auth/web/session>
+Origin, Sec-Fetch-Site: same-origin    (set by the browser)
+(no body)
+```
+
+The CSRF value comes from `GET /api/v2/auth/web/session`, which answers `200 {"login", "csrf", "expires_at"}` when
+signed in and `401 session_required` when not (section 2).
+
+Response, `201 Created`, `Cache-Control: no-store` (example values):
+
+```json
+{
+  "sandbox_id": "i8x3k2p9q1v7m4n6s5t0",
+  "access_token": "<opaque, issued by E2B for this sandbox only>",
+  "envd_version": "0.4.2",
+  "domain": "e2b.app",
+  "expires_at": "2026-11-20T10:30:00Z"
+}
+```
+
+| field | meaning |
+|---|---|
+| `sandbox_id` | E2B's id of the sandbox (`sandboxID` in E2B's create answer) |
+| `access_token` | E2B's per-sandbox access token (`envdAccessToken`): it opens this one sandbox and nothing else (section 4) |
+| `envd_version` | the version of E2B's in-sandbox agent; the SDK needs it to pick its protocol |
+| `domain` | the base domain of the sandbox's address; the SDK reaches `https://49983-<sandbox_id>.<domain>` |
+| `expires_at` | when E2B ends the sandbox (30 minutes after creation, section 4); after it, ask for a new one |
+
+Errors are the API's usual envelope, `{"error": {"code", "message", "hint"}}` with an `x-mopm-request-id` header:
+
+| status | `code` | when | what the page does |
+|---|---|---|---|
+| 401 | `session_required` | no session cookie, or it is expired or revoked | show "Sign in with GitHub to run this lesson"; keep the code in the editor |
+| 403 | `csrf_failed` | `X-Mopm-CSRF`, `Origin` or `Sec-Fetch-Site` is wrong | fetch the session again (another tab may have signed in again) and retry once; then "Reload the page." |
+| 400 | `invalid_request` | a request body, or an `Authorization` header | a bug in the page: "Something went wrong. Reload the page." |
+| 503 | `tutorial_unavailable` | E2B refused the sandbox or did not answer in 8 s; `Retry-After: 30` | "The sandbox service did not answer. Try again in a minute." |
+| any 5xx, not JSON | | CloudFront or API Gateway answered (for example a 504 page) | the same as `tutorial_unavailable` |
+
+There is no limit to refuse with: a signed-in user may ask for as many sandboxes as they like (section 4).
+
+After the grant, errors come from the E2B SDK in the browser: a `CommandExitError` is the program's own non-zero exit
+(show the exit code; it is not an error of the page); a `NotFoundError`, or any connection error once `expires_at` has
+passed, means the sandbox has ended: ask the endpoint for a new one and run again, once.
+
+### The frontend, in 20 lines
+
+```ts
+import { Sandbox, CommandExitError } from 'e2b'           // pinned exactly in site/package.json (section 7)
+
+export async function runLesson(code: string, show: (text: string) => void): Promise<number | 'signed-out'> {
+  const s = await fetch('/api/v2/auth/web/session', { credentials: 'same-origin' })
+  if (s.status === 401) return 'signed-out'
+  const { csrf } = await s.json()
+  const r = await fetch('/api/v2/tutorial/sandbox', {
+    method: 'POST', credentials: 'same-origin', headers: { 'X-Mopm-CSRF': csrf },
+  })
+  if (!r.ok) throw new Error((await r.json()).error.code)  // see the error table
+  const g = await r.json()
+  // Sandbox.connect() needs the team API key; the constructor takes only this sandbox's token (section 4).
+  const sbx = new Sandbox({ sandboxId: g.sandbox_id, sandboxDomain: g.domain,
+                            envdVersion: g.envd_version, envdAccessToken: g.access_token })
+  await sbx.files.write('/home/user/lessons/hello/src/main.mojo', code)
+  try {
+    await sbx.commands.run('mopm run', { cwd: '/home/user/lessons/hello', timeoutMs: 20_000, onStdout: show, onStderr: show })
+    return 0
+  } catch (e) { if (e instanceof CommandExitError) return e.exitCode; throw e }
+}
+```
+
+The snippet type-checks against `e2b` 2.64.0's published types. A real page keeps one sandbox per page and reuses it
+for every run until `expires_at`. It keeps the grant in memory only, never in `localStorage`, and it maps errors as the
+table says (tu-S2). Whether the bundled SDK runs under the site's CSP and talks to E2B from a browser origin is
+**unverified**. The constructor is exported and typed public, but E2B's SDK comments mark it `@internal` (section 4). tu-X1
+settles all three.
+
+### Running it locally against the stub
+
+tu-S1 adds a preview server that serves the built site on `127.0.0.1` and plays our side of the contract:
+
+```sh
+cd site && npm ci && npm run build
+npm run preview -- --scenario signed-out          # lesson text and the sign-in card, no editor
+npm run preview -- --scenario signed-in           # a fake session; the sandbox route answers tutorial_unavailable
+E2B_API_KEY=<a key from your own E2B account> \
+  npm run preview -- --scenario signed-in --e2b-template base   # creates real sandboxes, internet off
+```
+
+It prints its address (`http://127.0.0.1:<port>/tutorial`, the port picked by the system). In the `signed-in`
+scenario, `GET /api/v2/auth/web/session` answers a fixed login and CSRF value. `POST /api/v2/tutorial/sandbox` makes the
+same checks as the real route (the CSRF header, `Origin`, `Sec-Fetch-Site`, no body). With `E2B_API_KEY` set, it sends
+the same create request to E2B as the Rust function does (section 4). Your page code is therefore the same against the
+stub and against prod. Other scenarios: `csrf-failed`, `unavailable`, `session-expired` (the session route answers 200,
+then the sandbox route answers 401). The preview sends the site's CSP, so a CSP problem shows up locally.
+
+E2B's `base` template has no Mojo toolchain, so before tu-X2's template exists, wire the page with commands such as
+`echo` or `python3 -c`. The key is your own, read from the environment as E2B's tools read it, and the preview never
+writes it anywhere.
+
+Until tu-S1 lands, a fake `fetch` that answers the two examples above is enough to start on the page.
 
 ## Decisions at a glance
 
@@ -18,21 +130,22 @@ tutorial needs, moved to `/api/v2`, and built as Rust Lambdas: the first functio
 |---|---|
 | Identity provider | GitHub only, an OAuth web flow with S256 PKCE and `scope=read:user`, through each stage's existing OAuth app (section 1). The account is the one the CLI's device login already creates, keyed by GitHub numeric id, with the same two-factor rule. |
 | Session | `__Host-mopm_session`: `Secure; HttpOnly; Path=/; SameSite=Lax`, 7 days absolute, no sliding renewal. The value is an opaque session token whose SHA-256 is a row in the existing `tokens` table. Sign-out revokes that row and clears the cookie (section 2). |
-| Topology | The site's CloudFront distribution gains an `/api/*` behaviour whose origin is the stage's API Gateway, so the cookie is first-party and never reaches `api.<site>`; no credentialed CORS (section 2.1, task tu-I1). |
-| The gate | On running code only: `POST /api/v2/tutorial/runs` needs a valid session cookie and its CSRF header. Lesson text stays public, as it is in this repository; the pages show the editor and Run only when signed in (section 3). |
-| Where code runs | A hosted sandbox provider, a parameter of this design (`<provider>`, named by the tutorial's author), called with an API key that only the run function can read. The browser never sees the key and never talks to the provider (section 4). |
-| Language | Three new Rust Lambdas behind the existing API Gateway: `web-login` (start, callback), `web-session` (session, sign-out), `tutorial-run`. They share the `tokens`, `users` and `namespaces` tables with the TypeScript functions, which are not changed. Nothing here is written in TypeScript to be ported later (section 5). |
-| Bounds | No per-user daily cap. Two runs in flight per user; a per-run time and size limit; a global daily spend ceiling with alerts to the operator at 50 % and 90 % and a friendly refusal only once it is reached; per-user run counts kept, not enforced, so abuse is visible and a cap can be added later (section 6). |
-| Stored about a user | Nothing new on the account. New rows: a 10-minute login transaction, the 7-day session, the in-flight marker, a per-user-day usage row and the day's spend. Code and output are not stored by us; the provider sees the code of a run and no identity (section 7). |
-| Stub for the tutorial's author | The wire contract lands first (protos, contract examples), then a local preview server that serves the built site and fakes those routes, so the tutorial pages are built and tested against the real contract before any function exists (section 9, tu-P1, tu-S1). |
+| Topology | The site's CloudFront distribution gains an `/api/*` behaviour whose origin is the stage's API Gateway, so the cookie is first-party and never reaches `api.<site>`; no credentialed CORS (section 2.1, tu-I1). |
+| The gate | Only on getting a sandbox: `POST /api/v2/tutorial/sandbox` needs a valid session cookie and its CSRF header. Lesson text stays public; the pages show the editor and Run only when signed in (section 3). |
+| Where code runs | An E2B sandbox per page, created by our service with internet access disabled. The browser gets that sandbox's access token and talks to it directly with E2B's JavaScript SDK. The team API key stays in Secrets Manager, readable by one function only (section 4). |
+| Limits | None. A sandbox's 30-minute timeout is E2B's cleanup of an abandoned sandbox, not a limit: the page asks for a new one whenever it needs it (section 4). |
+| Language | Three new Rust Lambdas behind the existing API Gateway: `web-login` (start, callback), `web-session` (session, sign-out), `tutorial-sandbox`. They share the `tokens`, `users` and `namespaces` tables with the TypeScript functions, which are not changed (section 5). |
+| Stored about a user | Nothing new on the account. New rows: a 10-minute login transaction and the 7-day session. One log line per sandbox created. Code and output never pass through our service (section 6). |
+| Stub for the tutorial's author | The wire contract lands first, then a local preview server that serves the built site, fakes our routes and, with the author's own E2B key, creates real sandboxes the way the function does (tu-P1, tu-S1). |
 
 ## What exists today
 
-- The site is static: plain TypeScript, no framework, one CloudFront distribution with a private S3 bucket as its only
-  origin and one default behaviour (`service/infra/stacks/lib/site-stack.ts`). An edge router (a CloudFront Function
-  generated from `site/src/routes.ts`) maps `/`, `/search`, `/packages/...` and `/docs/...` to files. The site reads
-  `https://api.<site>/api/v2` with `credentials: 'omit'` (`site/src/api.ts`, `site/src/host.ts`). There is no cookie, no
-  browser storage and no sign-in in `site/`. Missing keys map to `/404.html` distribution-wide.
+- The site is static: plain TypeScript compiled by `tsc` to ES modules, no framework, no bundler, no runtime
+  dependencies (`site/README.md`, rule 1). One CloudFront distribution has a private S3 bucket as its only origin and
+  one default behaviour (`service/infra/stacks/lib/site-stack.ts`). An edge router (a CloudFront Function generated from
+  `site/src/routes.ts`) maps `/`, `/search`, `/packages/...` and `/docs/...` to files. The site reads
+  `https://api.<site>/api/v2` with `credentials: 'omit'` (`site/src/api.ts`, `site/src/host.ts`). There is no cookie,
+  no browser storage and no sign-in in `site/`. Missing keys map to `/404.html` distribution-wide.
 - The page CSP is `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src
   https://<api host>; ... require-trusted-types-for 'script'; trusted-types 'none'`. The API's CORS allows only the
   site's origin, only `GET`, `HEAD` and `OPTIONS`, and no credentials (`api-stack.ts`).
@@ -41,9 +154,9 @@ tutorial needs, moved to `/api/v2`, and built as Rust Lambdas: the first functio
   two-factor rule (`MOPM_REQUIRE_2FA`, on by default, fails closed), upserts the user, creates the user namespace and
   discards the GitHub token. The secret `mopm/<stage>/github-oauth` holds `client_id` and `client_secret`; the code
   reads only `client_id` (`service/api/src/http/oauth-secret.ts`). No callback URL is configured or used.
-- A request is authenticated only by `Authorization: Bearer mopm_...`; the token's SHA-256 is the key of the `tokens`
-  table, with a TTL on `expires_at` and an index by GitHub id. A device-login session lives 30 days, is fresh for 15
-  minutes and cannot publish or yank. Nothing revokes a session today; the tables' resource policy refuses `DeleteItem`
+- A request is authenticated only by `Authorization: Bearer mopm_...`. The token's SHA-256 is the key of the `tokens`
+  table, which has a TTL on `expires_at` and an index by GitHub id. A device-login session lives 30 days, is fresh for 15
+  minutes and cannot publish or yank. Nothing revokes a session today. The tables' resource policy refuses `DeleteItem`
   to the handler roles, so revoking means setting `revoked_at`.
 - The registry API is Node.js Lambdas (`service/api`). The Rust port has its foundation and no deployed function:
   `mopm_core` (pure rules, the error catalogue), `mopm_ports` (the `AuthStore` over users, tokens and device logins;
@@ -51,152 +164,223 @@ tutorial needs, moved to `/api/v2`, and built as Rust Lambdas: the first functio
   fake DynamoDB that enforces the roles' grants; `SecretsManagerReader`), `mopm_testing` (memory stores, the port
   contracts), and `tools/lambda` (`lambda_zip`, the custom-runtime package with its sha256 sums, and a canary handler on
   `lambda_runtime`). There is no outbound HTTP client and no namespace store in Rust yet.
-- Rate limits: per-account and per-token counters per UTC day for uploads, claims and groups (`rl#...` rows), and a
-  gateway throttle on the index routes. Alarms exist on the publish pipeline (`publish-stack.ts`) but none has an
-  action: nothing notifies anyone.
-- Nothing in the service can run code, and nothing calls a third-party service other than GitHub.
+- Nothing in the service runs code, and nothing calls a third-party service other than GitHub.
 
 ## 1. Identity: GitHub, through the existing OAuth app
 
 GitHub is the one provider because the account already is a GitHub account: namespaces are GitHub logins, users are
-keyed by GitHub numeric id, trusted publishing is a GitHub Actions identity. A second provider would be a second
+keyed by GitHub numeric id, and trusted publishing is a GitHub Actions identity. A second provider would be a second
 account model with nothing to own.
 
-The web flow is appendix C.1 with these paths:
+The web flow is [mopm-dev.md](mopm-dev.md) section 4's, [appendix C.1](mopm-dev-appendix.md#c-web-login), with these
+paths:
 
-- `GET /api/v2/auth/web/start?return_to=` refuses unless `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document` and
-  `Sec-Fetch-Site` `none` or `same-origin`; checks `return_to` (starts with `/` but not `//` or `/\`, no control
-  characters or backslashes, at most 256 characters, in the site's route grammar; otherwise `/tutorial`, where appendix C.1 says `/account`, a page this design does
-  not build); stores a
-  `web_logins` row `{id: sha256(txn), state_hash, code_verifier, return_to, expires_at: now + 600 s}`; sets
-  `__Host-mopm_login=<txn>` (`Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=600`: `Lax`, because the callback is a
-  top-level navigation from github.com, which a `Strict` cookie would miss); and redirects to GitHub with `scope=read:user`, a 256-bit `state`, an S256
-  challenge, the exact `redirect_uri` from the stage settings (section 5) and `prompt=select_account`.
-- `GET /api/v2/auth/web/callback?code&state` consumes the row once (a conditional update on `consumed_at`), compares the
-  state hash in constant time, exchanges the code with the client secret and the verifier, reads `GET /user`, applies
-  the two-factor rule, upserts the user and creates the user namespace exactly as the device login does, discards the
-  GitHub token, mints the session (section 2), revokes the session the browser held before, clears the login cookie
-  and answers 303 (appendix C.1 says 302 for start and 303 here; both stay) to the site origin from the stage settings
-  plus `return_to`, with `Referrer-Policy: no-referrer` and
-  `Cache-Control: no-store`.
-- Failures answer 303 to `/tutorial?error=<code>` from a fixed list (`access_denied`, `two_factor_required`,
-  `login_expired`, `unavailable`); the page explains each one and, for `two_factor_required`, links to GitHub's
-  instructions.
+- **`GET /api/v2/auth/web/start?return_to=`**
+  - Refuses unless `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, and `Sec-Fetch-Site` is `none` or
+    `same-origin`.
+  - Checks `return_to`: it starts with `/` but not `//` or `/\`, has no control characters or backslashes, is at most
+    256 characters and is in the site's route grammar. Otherwise it becomes `/tutorial`; appendix C.1 says `/account`,
+    a page this design does not build.
+  - Stores a `web_logins` row `{id: sha256(txn), state_hash, code_verifier, return_to, expires_at: now + 600 s}`.
+  - Sets `__Host-mopm_login=<txn>` (`Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=600`). It is `Lax` because the
+    callback is a top-level navigation from github.com, which a `Strict` cookie would miss.
+  - Redirects to GitHub with `scope=read:user`, a 256-bit `state`, an S256 challenge, the exact `redirect_uri` from the
+    stage settings (section 5) and `prompt=select_account`.
+- **`GET /api/v2/auth/web/callback?code&state`**
+  - Consumes the row once (a conditional update on `consumed_at`) and compares the state hash in constant time.
+  - Exchanges the code with the client secret and the verifier, reads `GET /user` and applies the two-factor rule.
+  - Upserts the user and creates the user namespace exactly as the device login does, then discards the GitHub token.
+  - Mints the session (section 2), revokes the session the browser held before and clears the login cookie.
+  - Answers 303 to the site origin from the stage settings plus `return_to`, with `Referrer-Policy: no-referrer` and
+    `Cache-Control: no-store`. Appendix C.1 says 302 for start and 303 here; both stay.
+- **Failures** answer 303 to `/tutorial?error=<code>`, the code from a fixed list: `access_denied`,
+  `two_factor_required`, `login_expired`, `unavailable`. The page explains each one and, for `two_factor_required`,
+  links to GitHub's instructions.
 
-Each stage's OAuth app keeps its device flow and gains the callback `https://<site>/api/v2/auth/web/callback`; GitHub
+Each stage's OAuth app keeps its device flow and gains the callback `https://<site>/api/v2/auth/web/callback`. GitHub
 accepts a `redirect_uri` equal to the app's callback URL or below it, and the registry always sends it exactly. Only
-`web-login` reads `client_secret`; whether each stage's secret holds a current one is **unverified** and is the operator
-step tu-O1.
+`web-login` reads `client_secret`. Whether each stage's secret holds a current one is **unverified**; checking it is the
+operator step tu-O1.
 
 ## 2. The session
 
 - **Cookie**: `__Host-mopm_session=<token>; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800`. `__Host-` makes it
   host-only, so it never reaches `api.<site>`, `conda.<site>` or another stage (beta and gamma are subdomains of the
-  prod site). Only that exact name is read; a request with two of them is refused.
-- **Value**: a session token in today's format (`mopm_` and 40 base32 characters), `kind: session`, name `web login`,
-  7 days absolute, and `fresh_until` equal to its creation time, so the TypeScript token routes never treat it as a
-  fresh session (it could not create an API token even if it left the cookie). It is a row in `tokens` like the CLI's
-  session; revocation is the existing `revoked_at`. No signing key is introduced.
-- **Where it is accepted**: `GET /api/v2/auth/web/session`, `POST /api/v2/auth/web/logout` and `POST
-  /api/v2/tutorial/runs`, and only on requests that carry the header the site distribution adds (section 2.1). The
-  TypeScript functions do not read cookies at all, so publish, yank, token and namespace routes cannot be reached with
-  one. An `Authorization` header on these three routes is refused (`invalid_request`), never combined with the cookie.
-- **CSRF**: every cookie-authenticated `POST` needs the exact site `Origin`, `Sec-Fetch-Site: same-origin`,
-  `Content-Type: application/json` when it has a body, and `X-Mopm-CSRF`, base64url(SHA-256("mopm-csrf\0" + session
-  token)). `GET /api/v2/auth/web/session` returns `{login, csrf, expires_at}`, or 401 `session_required`. Nothing new is
-  stored for it.
-- **Sign-out**: the tutorial page's "Sign out" sends `POST /api/v2/auth/web/logout`, which sets `revoked_at` on this
-  session's row, clears the cookie (`Max-Age=0`) and answers 204. The CLI's sessions and API tokens are untouched.
-  "Sign out everywhere", the session list and the account page stay in mopm-dev.md (PRs 4a, 5).
-- **Expiry in the page**: after 7 days, or after sign-out in another tab, a run answers `session_required` and the page
-  shows the sign-in card with the user's code kept in the editor (section 8).
+  prod site). Only that exact name is read, and a request with two of them is refused.
+- **Value**: a session token in today's format (`mopm_` and 40 base32 characters), `kind: session`, name `web login`.
+  It lasts 7 days absolute, and its `fresh_until` equals its creation time, so the TypeScript token routes never treat
+  it as a fresh session (it could not create an API token even if it left the cookie). It is a row in `tokens`, like the
+  CLI's session, and is revoked with the existing `revoked_at`. No signing key is introduced.
+- **Where it is accepted**: `GET /api/v2/auth/web/session`, `POST /api/v2/auth/web/logout` and
+  `POST /api/v2/tutorial/sandbox`, and only on requests that carry the header the site distribution adds (section 2.1).
+  The TypeScript functions do not read cookies at all, so publish, yank, token and namespace routes cannot be reached
+  with one. An `Authorization` header on these three routes is refused (`invalid_request`), never combined with the
+  cookie.
+- **CSRF**: every cookie-authenticated `POST` needs:
+  - the exact site `Origin`;
+  - `Sec-Fetch-Site: same-origin`;
+  - `Content-Type: application/json` when it has a body;
+  - `X-Mopm-CSRF` equal to base64url(SHA-256("mopm-csrf\0" + session token)).
+
+  `GET /api/v2/auth/web/session` returns `{login, csrf, expires_at}`, or 401 `session_required`. Nothing new is stored
+  for it.
+- **Sign-out**: the tutorial page's "Sign out" sends `POST /api/v2/auth/web/logout`. It sets `revoked_at` on this
+  session's row, clears the cookie (`Max-Age=0`) and answers 204. The CLI's sessions and API tokens are untouched. "Sign
+  out everywhere", the session list and the account page stay in mopm-dev.md (PRs 4a, 5). Signing out does not end a
+  sandbox the page already holds; it ends at its `expires_at` (section 4).
+- **Expiry in the page**: after 7 days, or after sign-out in another tab, the sandbox route answers `session_required`.
+  The page then shows the sign-in card and keeps the user's code in the editor.
 
 ### 2.1 The API on the site host
 
-Ruled by the CEO: yes. tu-I1 adds to the site distribution a behaviour for `/api/*` whose origin is the stage's API
-Gateway custom domain (`api.<site>`, HTTPS only), with all methods, the managed `CachingDisabled` cache policy, an
-origin request policy that forwards every viewer header except `Host`, every cookie and the query string, an origin
-read timeout of 30 s set explicitly, and a custom origin header `x-mopm-edge` whose value is a per-stage secret.
-CloudFront sets a configured origin custom header itself, replacing any header of that name the viewer sent. The new Rust
-functions refuse every request without the right value, on all five routes, start and callback included, so none of them
-is reachable straight at `api.<site>`. The header is defence in depth, not the boundary: its value is readable by
-anyone allowed `cloudfront:GetDistributionConfig` on the stage's account. What keeps the cookie off `api.<site>` is
-that `__Host-` makes it host-only, so the browser never sends it there. The behaviour gets its own response headers policy (`nosniff`, `no-referrer`, HSTS, `Content-Security-Policy:
-default-src 'none'; sandbox; frame-ancestors 'none'`). In the same PR the distribution-wide 403 and 404 error responses
-give way to the edge router answering the 404 page for unknown pages (else API errors would turn into HTML), the site's
-`apiBase()` becomes the relative `/api/v2`, and the page CSP's `connect-src` becomes `'self'`. `api.<site>` stays as it
-is for the CLI and CI.
+Ruled by the CEO: yes. tu-I1 adds to the site distribution a behaviour for `/api/*`:
+
+- **Origin**: the stage's API Gateway custom domain (`api.<site>`), HTTPS only.
+- **Requests**: all methods, the managed `CachingDisabled` cache policy, and an origin request policy that forwards
+  every viewer header except `Host`, every cookie and the query string.
+- **Timeout**: an origin read timeout of 30 s, set explicitly.
+- **Origin header**: a custom origin header `x-mopm-edge`, whose value is a per-stage secret. CloudFront sets a
+  configured origin custom header itself, replacing any header of that name the viewer sent.
+  - The new Rust functions refuse every request without the right value, on all five routes, start and callback
+    included, so none of them is reachable straight at `api.<site>`.
+  - The header is defence in depth, not the boundary: its value is readable by anyone allowed
+    `cloudfront:GetDistributionConfig` on the stage's account. What keeps the cookie off `api.<site>` is that
+    `__Host-` makes it host-only, so the browser never sends it there.
+- **Response headers**: the behaviour gets its own response headers policy (`nosniff`, `no-referrer`, HSTS,
+  `Content-Security-Policy: default-src 'none'; sandbox; frame-ancestors 'none'`).
+
+The same PR makes these changes too:
+
+- The distribution-wide 403 and 404 error responses give way to the edge router answering the 404 page for unknown
+  pages; otherwise API errors would turn into HTML.
+- The site's `apiBase()` becomes the relative `/api/v2`.
+- The page CSP's `connect-src` becomes `'self' https://*.<E2B domain>` (the second source for the sandboxes, section 4).
+
+`api.<site>` stays as it is for the CLI and CI.
 
 The origin header's value lives in Secrets Manager (`mopm/<stage>/edge-origin`, generated at creation) and reaches the
-distribution as a dynamic reference at deploy, so it is never committed (**unverified** that CloudFormation resolves a
-Secrets Manager reference in a CloudFront origin custom header; if not, tu-I1 sets it from a held step).
+distribution as a dynamic reference at deploy, so it is never committed. That CloudFormation resolves a Secrets Manager
+reference in a CloudFront origin custom header is **unverified**; if it does not, tu-I1 sets the value from a held step.
 
 ## 3. The gate
 
-The gate sits where letting a stranger through costs us something: running code.
+The gate sits where letting a stranger through costs us something: getting a sandbox.
 
-- **Server**: `POST /api/v2/tutorial/runs` refuses without a valid session cookie (`session_required`, 401) or with a
-  bad CSRF check (`csrf_failed`, 403). This is the only place that decides who may run code.
+- **Server**: `POST /api/v2/tutorial/sandbox` refuses without a valid session cookie (`session_required`, 401) or with a
+  bad CSRF check (`csrf_failed`, 403). This is the only place that decides who may get a sandbox, and therefore who may
+  run code.
 - **Pages**: `/tutorial` (the list of lessons) and `/tutorial/<lesson>` are public and show the lesson text to
-  everyone, as the CEO ruled (Q-T1). The page calls `GET /api/v2/auth/web/session`: signed in, it shows the editor, Run
-  and Test, the login and "Sign out"; signed out, it shows "Sign in with GitHub to run this lesson" linking to
-  `/api/v2/auth/web/start?return_to=/tutorial/<lesson>` where the editor would be.
-- **Scripts**: the run endpoint accepts no bearer token, so the CLI's session cannot drive it. A signed-in user can copy
-  their own cookie into a script; the in-flight limit and the spend ceiling bound that, and the per-user usage rows
-  show it (section 6).
+  everyone, as the CEO ruled (Q-T1). The page calls `GET /api/v2/auth/web/session`.
+  - Signed in, it shows the editor, Run and Test, the login and "Sign out".
+  - Signed out, it shows "Sign in with GitHub to run this lesson" where the editor would be, linking to
+    `/api/v2/auth/web/start?return_to=/tutorial/<lesson>`.
+- **Scripts**: the sandbox route accepts no bearer token, so the CLI's session cannot drive it. A signed-in user can
+  copy their own cookie into a script and ask for sandboxes. The rulings set no limit on that; section 4 says what it
+  gives them and what it costs.
 
-## 4. Where the tutorial's code runs: a hosted sandbox provider
+## 4. The sandbox on E2B
 
-The tutorial's author has been working with a hosted sandbox service; its name comes from them, so this design takes it
-as a parameter, `<provider>`. The registry calls it for the user; the browser never sees the provider.
+**Creating it**, inside `tutorial-sandbox`, after the gate. The function sends E2B's documented create call,
+`POST https://api.e2b.app/v2/sandboxes`, authenticated by `X-API-Key` (E2B, "Create sandbox (v2)"), with this body:
 
-**What the provider must offer** (tu-X1 checks the named one against this list before its adapter is written):
+```json
+{
+  "templateID": "<the stage's tutorial template>",
+  "timeout": 1800,
+  "allow_internet_access": false,
+  "autoPause": false,
+  "network": { "allowPublicTraffic": false },
+  "metadata": { "mopm_stage": "<stage>", "mopm_request": "<our request id>" }
+}
+```
 
-1. An HTTPS API authenticated by an API key.
-2. A sandbox (VM or container) started from a template or image we define, so mopm, the Mojo toolchain and each lesson's
-   synced project are already inside and a run downloads nothing (the Mojo 1.0.0 closure for `linux-64` is about 229 MiB
-   compressed, `src/core/toolchain/mojo-1.0.0-linux-64.json`, too slow to fetch per run).
-3. Writing files into a sandbox and running a command in it with a timeout, returning exit code, standard output and
-   standard error.
-4. A fresh sandbox per run, destroyed afterwards, or one the caller can destroy, with nothing shared between sandboxes.
-5. CPU and memory set by the caller, and a maximum lifetime enforced by the provider even if we never call back.
-6. Outbound network turned off for the sandbox. If the provider cannot do this, the CEO decides whether to accept it
-   (Q-T6); our bounds still hold, but the sandbox could reach the internet for its 20 seconds.
-7. A price per sandbox-second (or per CPU-second and GB-second) we can multiply out, and preferably a spend limit on the
-   provider's side as a second wall.
+- `allow_internet_access: false` turns the internet off, as the CEO ruled. E2B documents it as behaving "the same as
+  specifying denyOut to 0.0.0.0/0 in the network config" (E2B, "Internet access" and "Create sandbox (v2)"). The only
+  call that changes a running sandbox's network is the platform API's `PUT /sandboxes/{sandboxID}/network`, which needs
+  the team key (e2b 2.64.0, `updateNetwork`). The browser's token cannot reach it.
+- `network.allowPublicTraffic: false` means the sandbox's own URLs accept traffic only with its traffic access token
+  (E2B, "Create sandbox (v2)"), which we never hand out. Without it, a program the user starts could serve pages to
+  anyone at an `e2b.app` address. That E2B's in-sandbox agent stays reachable with the access token alone under this
+  setting is **unverified**: the SDK sends the traffic token on none of its agent calls, which suggests it does. tu-X1
+  checks it, and if the setting breaks the agent, the field is dropped and the note amended.
+- `timeout: 1800` and `autoPause: false`: E2B ends the sandbox 30 minutes after creation, and kills rather than pauses
+  it (E2B, "Sandbox lifecycle": the timeout is in seconds on the API; `autoPause` defaults to false). **This is
+  cleanup, not a limit.** Its only job is to end a sandbox whose tab was closed: the browser cannot extend or kill a
+  sandbox, because both calls need the team key. A user who is still working gets a new sandbox from the same route,
+  as often as they like. The editor holds their files and the page writes them again before each run, so a new sandbox
+  loses nothing but the previous process's state. 30 minutes sits inside E2B's longest run of 1 hour on the Hobby plan
+  and 24 hours on Pro (E2B, "Sandbox lifecycle"). The value is a stage setting.
+- `metadata` holds our stage and request id, and no GitHub id, login or address.
+- E2B answers `sandboxID`, `envdAccessToken`, `envdVersion` and `domain` (E2B, "Create sandbox (v2)"). The function
+  returns them as section "The endpoint" says. A null `domain` becomes the stage's E2B domain setting (`e2b.app`).
+  `expires_at` is the time the function sent the request plus the timeout, so it is never later than E2B's own end.
+- An answer without `envdAccessToken` is refused (`tutorial_unavailable`, logged). E2B says every sandbox is created
+  with secure access from SDK 2.0.0 on, and that "passing `secure: false` does not disable secure access" from 2.51.0
+  (E2B, "Secured access"). A missing token would mean a template whose agent predates secure access, and anyone who
+  knew its id could control that sandbox.
+- E2B refuses (its concurrency limit for our plan, an outage) or does not answer in 8 s: 503 `tutorial_unavailable`.
+  The function's timeout is 10 s.
 
-**A run**, inside `tutorial-run`, after the gate and the bounds of section 6:
+**The per-sandbox token keeps the team key off the browser.** E2B issues it at creation. Every call to the sandbox's
+agent carries it as `X-Access-Token`, and E2B's agent API accepts that token as its credential (E2B, "Secured access";
+the envd API reference). What it opens:
 
-1. Validate the request `{lesson, action, files}` against the lesson manifest compiled into the function: `lesson` is a
-   known lesson id, `action` is `run` or `test`, every path in `files` is one of the lesson's `editable` files, at most 8
-   files and 64 KiB in total, UTF-8 with no NUL. Else `invalid_request`, naming the file or the limit.
-2. Create a sandbox from the stage's template (2 vCPU, 4 GiB, network off, a provider-side lifetime of 60 s), write the
-   files into the lesson's project, and run `mopm run` or `mopm test` there with a 20 s timeout for build and run
-   together.
-3. Keep at most 64 KiB of standard output and 64 KiB of standard error; drop the rest and mark the result truncated.
-4. Destroy the sandbox, whatever happened, and answer `{verdict, exit_code, stdout, stderr, truncated, duration_ms}`,
-   `verdict` one of `ok`, `failed`, `timeout`, `oom` (when the provider reports it), `killed`.
+| with the sandbox's access token (the browser holds it) | needs the team API key (our function only) |
+|---|---|
+| this sandbox's files: read, write, list | creating any sandbox, with any network setting |
+| running commands and terminals in this sandbox, with their output | changing a sandbox's network (`PUT /sandboxes/{id}/network`) |
+| nothing in any other sandbox | extending, pausing, resuming or killing a sandbox; listing the team's sandboxes |
+| | connecting to a sandbox by id (`POST /sandboxes/{id}/connect`, E2B, "Connect to sandbox") |
+| | building and deleting templates |
 
-The run is synchronous: the function's timeout is 28 s, under API Gateway's 30 s, which leaves about 8 s for creating and
-destroying the sandbox (**unverified** for the named provider; tu-X1 measures it, and if it does not fit, the run
-becomes start-and-poll, which holds a result for minutes and comes back to the CEO because section 7 says no output is
-stored).
+The token dies with its sandbox. If it leaks, for example through a flaw in the page, the holder controls that one
+sandbox, with the internet off, until its `expires_at`. That the internet stays off for code running as root inside the
+sandbox is **unverified**. E2B applies the rule as a network setting of the sandbox, not inside it, and tu-X1 tries to
+reach the internet with root inside the guest.
 
-**The key**: `mopm/<stage>/tutorial-sandbox`, a Secrets Manager secret holding `{api_key, template}` for the provider,
-written by a held operator script like the OAuth secret's. Its resource policy has one explicit `Deny` of
-`secretsmanager:GetSecretValue` with the condition `ArnNotEquals aws:PrincipalArn` the `tutorial-run` role (not
-`NotPrincipal`, which misreads assumed-role sessions), so no other function, and no deploy or e2e role, can read it,
-whatever its own policy says. Writing the value (`PutSecretValue`, the held script) and CloudFormation's management of
-the secret are not denied. The function reads
-it at cold start and keeps it in memory; it never logs it and never returns it.
+**What E2B lacks, and the closest option.** E2B has the per-sandbox token the CEO's ruling asks for. What it does not
+have is a *documented* SDK call that starts from the token alone:
 
-**What the provider sees**: the lesson id, the user's files and the output; a run carries our request id and no GitHub
-id, login or address. The page says so beside Run ("Your code runs on <provider>'s sandbox and is not stored by us"),
-and the privacy page of tu-S3 names the provider.
+- The documented `Sandbox.create` and `Sandbox.connect` both call E2B's platform API with the team key (E2B, "Connect to
+  sandbox").
+- The `Sandbox` class constructor takes `{sandboxId, sandboxDomain, envdVersion, envdAccessToken}` and builds a client
+  that talks only to the sandbox's agent. It sends the token as `X-Access-Token` and needs no API key. In e2b 2.64.0
+  it is exported and typed public, but its comment marks it `@internal` and says to use `Sandbox.create` instead.
 
-The lesson projects are `tutorial/lessons/<id>/project/` in this repository; the template is built from them and the
-pinned mopm release (tu-X2). Building and registering a template with the provider is an operator step on each stage
-until tu-X2 shows whether the provider's API lets the deploy pipeline do it.
+So:
+
+1. The page uses the constructor, as the snippet does, with `e2b` pinned exactly. tu-S2's type check of that call
+   makes an upgrade that changes it fail the site build, not prod.
+2. If E2B removes or changes it, the page talks to the agent's documented API directly with the same token (the envd
+   API reference). The response of our endpoint does not change.
+3. tu-X1 asks E2B whether a token-only `connect` is supported or planned.
+
+**The key**: `mopm/<stage>/e2b`, a Secrets Manager secret holding `{api_key}`, written by a held operator script like
+the OAuth secret's.
+
+- Its resource policy has one explicit `Deny` of `secretsmanager:GetSecretValue`, with the condition
+  `ArnNotEquals aws:PrincipalArn` the `tutorial-sandbox` role. It uses that condition rather than `NotPrincipal`, which
+  misreads assumed-role sessions. So no other function, and no deploy or e2e role, can read the secret, whatever its
+  own policy says.
+- Writing the value (`PutSecretValue`, the held script) and CloudFormation's management of the secret are not denied.
+- The function reads the secret at cold start and keeps it in memory. It never logs it and never returns it.
+
+**What E2B sees**: everything the user types and runs, and the output. Because the browser now talks to E2B directly,
+E2B also sees the user's IP address and browser, as any site the browser connects to does. It sees no GitHub id or
+login from us. The page says so beside Run: "Your code runs on E2B's servers, which see your IP address. mopm.dev
+does not see or store your code." The "What mopm.dev stores" page of tu-S3 says the same.
+
+**The template**: lessons are `tutorial/lessons/<id>/project/` in this repository. The stage's template is built from
+them and the pinned mopm release, so mopm, the Mojo toolchain and every lesson's synced project are already inside, and
+a run downloads nothing. Nothing can be downloaded anyway with the internet off. The Mojo 1.0.0 closure for `linux-64`
+is about 229 MiB compressed (`src/core/toolchain/mojo-1.0.0-linux-64.json`). The template definition follows E2B's
+template format (E2B, "Template quickstart"). Building it needs the team key, so it is an operator step (tu-O1) that
+writes the resulting template id into the stage settings.
+
+**What the rulings leave open, stated for the record.** With no limits, a signed-in user with a script can create
+sandboxes until E2B's concurrency limit for our team refuses more. Until those sandboxes time out, the tutorial answers
+`tutorial_unavailable` to everyone, and we pay for every sandbox-second. One log line per created sandbox (section 6)
+shows who did it. E2B's own team limits and the 30-minute cleanup are the only bounds. This note adds none, as ruled.
 
 ## 5. The functions: the first Rust Lambdas
 
@@ -205,94 +389,47 @@ routed by the existing HTTP API next to the TypeScript integrations:
 
 | function | routes | can touch |
 |---|---|---|
-| `web-login` | `GET /api/v2/auth/web/start`, `GET /api/v2/auth/web/callback` | `client_secret` of `mopm/<stage>/github-oauth`; `web_logins`; `users` and `namespaces` (upsert, as the device login); `tokens` (put, revoke) |
+| `web-login` | `GET /api/v2/auth/web/start`, `GET /api/v2/auth/web/callback` | `client_secret` of `mopm/<stage>/github-oauth`; `web_logins`; `users` and `namespaces` (upsert, as the device login does); `tokens` (put, revoke); HTTPS to GitHub |
 | `web-session` | `GET /api/v2/auth/web/session`, `POST /api/v2/auth/web/logout` | `tokens` (get, touch, revoke); `users` (get) |
-| `tutorial-run` | `POST /api/v2/tutorial/runs` | `tokens` (get, touch); `users` (get); `tutorial_usage`; `mopm/<stage>/tutorial-sandbox`; HTTPS to the provider |
+| `tutorial-sandbox` | `POST /api/v2/tutorial/sandbox` | `tokens` (get, touch); `users` (get); `mopm/<stage>/e2b`; HTTPS to `api.e2b.app` |
 
-Each role grants exactly that, and the fake DynamoDB of `mopm_testing` enforces the grants in tests as it does for the
+Each role grants exactly that, and the fake DynamoDB of `mopm_testing` enforces the grants in tests, as it does for the
 auth grants today. The TypeScript functions keep every route they have and read and write the same `tokens`, `users`
-and `namespaces` rows; `mopm_aws`'s adapters already write the TypeScript adapters' rows, and their tests hold the shapes
-equal, so the two languages share the tables safely. When the rest of the port comes, these functions are already
-done; nothing here is rewritten.
+and `namespaces` rows. `mopm_aws`'s adapters already write the TypeScript adapters' rows, and their tests hold the
+shapes equal, so the two languages share the tables safely. When the rest of the port comes, these functions are
+already done, and nothing here is rewritten.
 
 What the Rust tree gains, each in the crate where its kind already lives:
 
 - `mopm_core`: token minting and hashing (`mopm_` + base32, SHA-256, the prefix), ported from `tokens.ts` and held to
-  its outputs; the CSRF derivation; the `return_to` grammar; the lesson manifest and request validation; the new error
-  codes in the catalogue.
+  its outputs; the CSRF derivation; the `return_to` grammar; the new error codes in the catalogue.
 - `mopm_ports`: `HttpClient` (one request, one response, bytes and headers); `NamespaceStore` (the user namespace at
-  login); `WebLoginStore`; `TutorialUsageStore` (section 6); `Sandbox` (create, write, run, destroy).
-- `mopm_aws`: the DynamoDB adapters of the new stores and of namespaces; an `HttpClient` on `hyper` and `rustls` with
-  the workspace's AWS-LC, so every outbound TLS connection uses the pinned stack.
-- `mopm_testing`: memory stores, a fake GitHub and a fake sandbox, both scripted servers on loopback like `fake_http`.
+  login); `WebLoginStore`.
+- `mopm_aws`: the DynamoDB adapters of `web_logins` and of namespaces; an `HttpClient` on `hyper` and `rustls` with the
+  workspace's AWS-LC, so every outbound TLS connection uses the pinned stack.
+- `mopm_testing`: memory stores, plus a fake GitHub and a fake E2B API, both scripted servers on loopback like
+  `fake_http`.
 - `service/lambda/web` (`mopm_web`): cookies, the session authenticator over `AuthStore`, the edge-header and CSRF
   checks, responses with `Set-Cookie` and redirects, the error envelope.
-- `service/lambda/sandbox_<provider>`: the adapter of the named provider, behind `Sandbox`.
-- `service/lambda/fn_web_login`, `fn_web_session`, `fn_tutorial_run`: the three binaries, each a `main.rs` that only
+- `service/lambda/e2b` (`mopm_e2b`): the create request of section 4 and its answer, over `HttpClient`. It is a
+  library, not a port: E2B is the one provider, and its tests run against the fake E2B API.
+- `service/lambda/fn_web_login`, `fn_web_session`, `fn_tutorial_sandbox`: the three binaries, each a `main.rs` that only
   wires its library to `lambda_runtime`.
 
-**Stage settings**: the redirect URI, the site origin, the two-factor rule, the provider's price and the spend ceiling
-are one item, `stage_settings`, in the stage's existing `config` table, written by the stack at deploy and read by each
-function at cold start. The only environment variable a function reads is Lambda's own `AWS_LAMBDA_FUNCTION_NAME`
-(`mopm-<stage>-<function>`), a platform-set marker that names the stage and so the tables (S2). The TypeScript
-functions keep their environment variables; moving them is not this note's work.
+**Stage settings** are one item, `stage_settings`, in the stage's existing `config` table, written by the stack at
+deploy and read by each function at cold start. It holds the redirect URI, the site origin, the two-factor rule, the
+E2B template id, the E2B domain and the sandbox timeout. The only environment variable a function reads is Lambda's
+own `AWS_LAMBDA_FUNCTION_NAME` (`mopm-<stage>-<function>`), a platform-set marker that names the stage and so the
+tables (S2). The TypeScript functions keep their environment variables; moving them is not this note's work.
 
 New third-party crates (`hyper`, `hyper-util`, `hyper-rustls`, `http-body-util`) come from crates.io under MIT or
 Apache-2.0 and land with `buildrules sync`'s outputs (R11).
 
-**Deploying them**: `promote.yml` gains one job before the beta deploy that builds the three zips on the farm with
-their named targets and hands them to every stage's deploy as one artifact; each deploy compares the function's
-`CodeSha256` with the zip's sums file, so beta, gamma and prod run the same bytes. This is the deploy pipeline, not a
-PR check (B9).
+**Deploying them**: `promote.yml` gains one job before the beta deploy. It builds the three zips on the farm with their
+named targets and hands them to every stage's deploy as one artifact. Each deploy compares the function's `CodeSha256`
+with the zip's sums file, so beta, gamma and prod run the same bytes. This is the deploy pipeline, not a PR check (B9).
 
-## 6. Bounds: no daily cap for users, a spend ceiling for us
-
-The CEO ruled out per-user daily caps. What stays is what stops runaway use and that a normal user never meets:
-
-| bound | value | refusal (status, code, message) |
-|---|---|---|
-| runs in flight per user | 2 | 409 `run_in_progress`: "You already have two runs going. When one finishes, run again." |
-| a run's size | 8 files, 64 KiB | 400 `invalid_request`: names the file or the limit |
-| a run's time | 20 s for build and run; the provider's sandbox lifetime 60 s | not a refusal: verdict `timeout`, "Your program ran for more than 20 seconds and was stopped." |
-| the day's spend, all users together | a stage setting (section 5), proposed 20 US dollars (Q-T5) | 503 `tutorial_busy`, `Retry-After` to 00:00 UTC: "The tutorial has used up today's sandbox time. Runs start again at 00:00 UTC. Your code is saved in this browser." |
-| the route, all users together | gateway throttle 50 a second, burst 100 | 429 from the gateway; the page says "Too many runs at once on mopm.dev. Try again in a few seconds." |
-| the provider fails | | 503 `tutorial_unavailable`: "The sandbox did not answer. Try again in a minute." |
-
-Every refusal has its own message in the page, and none of them loses the user's code.
-
-**How the bounds are kept**, in `tutorial_usage` (pk `key`, TTL `expires_at`, pay per request):
-
-- `inflight#<github_id>`: `{n, updated_at}`. A run starts if `n < 2`, adding one; or, if `updated_at` is more than
-  60 s old (no run lasts longer, so such a marker was left by a killed function), it sets `n` to 1 outright. Both are
-  conditions of the same write, compared in the condition rather than left to TTL, which deletes late. It subtracts one
-  when it ends, never below zero.
-- `spend#<UTC day>`: micro-dollars. A run starts only if the day's spend plus the run's maximum cost (60 s at the
-  sandbox's price) stays under the ceiling, and adds that maximum; when the run ends it subtracts the difference to
-  the actual cost (the sandbox's lifetime from create to destroy, times the price), on the row of the day the run
-  started, whose key it keeps from start to end. The ceiling therefore cannot be passed, even by many runs at once or
-  by a run that crosses 00:00 UTC.
-- `user#<github_id>#<UTC day>`: runs, sandbox milliseconds, refusals. Counted, never enforced; kept 35 days. Adding a
-  cap later is one more condition in the same transaction, if the numbers ever call for it.
-
-The start writes `inflight#` and `spend#` (and counts in `user#`) in one DynamoDB transaction, so a refusal writes
-nothing. The end is one update per item, conditioned so that it cannot drive `n` below zero. A provider failure before
-the sandbox started releases the run's whole reserved cost; after it started, the actual lifetime is charged, because
-the provider charges it.
-
-**Alerts**: each run writes one log line in CloudWatch's embedded metric format with the day's spend, and two alarms
-watch it, at 50 % and 90 % of the ceiling, plus one when a run is refused at the ceiling. They notify a new SNS topic,
-`mopm-<stage>-alerts`, whose email subscription the operator adds by hand (tu-O1), so no address is committed. The
-existing alarms can use the same topic later; this note does not change them.
-
-**Seeing abuse**: the per-run log line has the request id, GitHub id, lesson, action, verdict, sandbox milliseconds,
-cost and byte counts, never code or output. The runbook gains a saved Logs Insights query for the top users by runs and
-by cost over a day, next to a read of the `user#` rows.
-
-**What it costs at worst**: the ceiling. A run costs at most its 60 s sandbox lifetime at the provider's price, plus
-about 0.0001 US dollars of Lambda time (28 s at 128 MB, **unverified** that 128 MB is enough for the function). Per-run
-and per-day figures for the named provider go into tu-X1.
-
-## 7. What is stored
+## 6. What is stored
 
 | where | what | how long |
 |---|---|---|
@@ -300,204 +437,272 @@ and per-day figures for the named provider go into tu-X1.
 | `namespaces` (existing) | the user namespace, created at the first sign-in, as the CLI's login does | as today |
 | `tokens` (existing) | the session: SHA-256 of the token, prefix, `kind: session`, name `web login`, GitHub id, `created_at`, `fresh_until`, `expires_at`, `last_used_at`, `revoked_at` | TTL at 7 days |
 | `web_logins` (new) | the login transaction: SHA-256 of its id, SHA-256 of `state`, the PKCE verifier, `return_to`, `consumed_at` | TTL at 10 minutes |
-| `tutorial_usage` (new) | the in-flight marker; per user and UTC day: runs, sandbox milliseconds, refusals; per UTC day: spend | 1 day, 35 days, 35 days |
-| logs (existing retention, one month) | one line per run: request id, GitHub id, lesson, action, verdict, sandbox milliseconds, cost, bytes in and out | one month |
-| `<provider>` | the run's files and output, for the sandbox's life; whatever the provider's own logs keep | the provider's terms |
-| the browser | the cookie; edited files and the last lesson opened in `localStorage` under `mopm.tutorial.1`, sent only in a run | until cleared |
+| logs (existing retention, one month) | one line per sandbox created: request id, GitHub id, E2B sandbox id, outcome. Never the access token. | one month |
+| E2B | the user's files, commands and output, for the sandbox's life; the user's IP address on each call; whatever E2B's own logs keep | E2B's terms |
+| the browser | the cookie; edited files and the last lesson opened in `localStorage` under `mopm.tutorial.1`; the sandbox grant in memory only | until cleared; the grant until the page closes |
 
-We never store the user's code or output, the GitHub token, the email address, or the IP address (the API has no
-access log and the functions do not read the source address). The site distribution's standard logs stay off.
+Our service never sees the user's code or output, because the browser sends them to E2B. It never stores the GitHub
+token, the email address or the IP address: the API has no access log and the functions do not read the source
+address. The site distribution's standard logs stay off.
 
-## 8. The tutorial pages
+## 7. The tutorial pages
 
-- New shell page `tutorial.html`, PageKind `tutorial`, an area stylesheet `tutorial.css` within the 16 KiB area budget;
-  routes `/tutorial` and `/tutorial/<lesson>` (`^[a-z0-9]+(-[a-z0-9]+)*$`) in `site/src/routes.ts`, and from there in
-  the edge router.
-- Lesson text is prerendered from `tutorial/lessons/<id>/lesson.md` by the site's restricted Markdown renderer, so it
-  works without scripts and without a session.
-- The editor is a `<textarea>` per editable file: no editor library, since the site has no runtime dependencies. Output
-  is text nodes in a `<pre>`; control, bidi and invisible characters show as markers, as appendix C.2's copied-example
-  rule does.
-- A `TutorialGate` port (`site/src/tutorial/gate.ts`): `session()` (`{signed_in: true, login, csrf, expires_at}` or
-  `{signed_in: false}`), `run(request)`, `signInHref(returnTo)` (a `SafeHref`), `signOut()`. The real one calls the
-  routes of sections 2 and 4 with `credentials: 'same-origin'`; tests use a fake that replays the contract examples.
-- Beside Run: "Runs in a sandbox on <provider>, 20 seconds at most. Your code is not stored by us." Every refusal of
-  section 6 has its message; `session_required` keeps the code in the editor.
-- Lessons are `tutorial/lessons/<id>/`: `lesson.md`, `lesson.json` (title, summary, order, editable files, actions) and
-  `project/` (a mopm project with `mopm.toml` and `mopm.lock`). The site build reads the first two, `tutorial-run`
-  compiles `lesson.json`'s editable lists in, the template build takes `project/`. One schema,
-  `spec/tutorial-lesson.schema.json`, is the contract between them.
-- An answer that is not the API's JSON (CloudFront's 504 page after 30 s, the gateway's 429 body) is mapped by its
-  status: 504 and 5xx to "The sandbox did not answer. Try again in a minute.", 429 to the throttle message of section 6.
-- The header gains "Tutorial"; the login and "Sign out" show on the tutorial pages only, so other pages make no call
-  they do not need.
+- **Page and routes**: a new shell page `tutorial.html`, PageKind `tutorial`, and an area stylesheet `tutorial.css`
+  within the 16 KiB area budget. Routes `/tutorial` and `/tutorial/<lesson>` (`^[a-z0-9]+(-[a-z0-9]+)*$`) go into
+  `site/src/routes.ts`, and from there into the edge router.
+- **Lesson text** is prerendered from `tutorial/lessons/<id>/lesson.md` by the site's restricted Markdown renderer, so
+  it works without scripts and without a session.
+- **The E2B SDK** is the site's first runtime dependency. `site/README.md` rule 1 gains one written exception: `e2b`,
+  pinned exactly, on the tutorial pages only.
+  - A pinned `esbuild` dev dependency bundles `site/src/tutorial/main.ts` with it into one hashed asset, which only
+    `tutorial.html` loads.
+  - Every other page stays as it is: `tsc` output, no bundle, and `check-dist.ts` still checks the whole tree.
+  - The bundle's size is **unverified** (tu-S2 measures it and sets its budget), and so is whether it runs under
+    `require-trusted-types-for 'script'` and `script-src 'self'` (tu-X1).
+  - If it does not, the fallback of section 4, point 2, applies: a small client of the agent's API in `src/tutorial/`,
+    with no dependency.
+- **The editor** is a `<textarea>` per editable file, with no editor library. Output is text nodes in a `<pre>`, and
+  control, bidi and invisible characters show as markers, as appendix C.2's copied-example rule does.
+- **A `TutorialGate` port** (`site/src/tutorial/gate.ts`) has four members:
+  - `session()` returns `{signed_in: true, login, csrf, expires_at}` or `{signed_in: false}`;
+  - `sandbox()` returns the grant of "The endpoint" or an error code;
+  - `signInHref(returnTo)` returns a `SafeHref`;
+  - `signOut()`.
 
-## 9. Implementation tasks and order
+  The real one calls the routes with `credentials: 'same-origin'`; tests use a fake that replays the contract
+  examples. A `LessonRunner` over the SDK (`site/src/tutorial/runner.ts`) writes the files and runs `mopm run` or
+  `mopm test` in the lesson's directory. It holds one sandbox per page, asks for a new one when `expires_at` is less
+  than a minute away or the sandbox is gone, and tests replace it with a fake.
+- **Lessons** are `tutorial/lessons/<id>/`: `lesson.md`, `lesson.json` (title, summary, order, editable files, actions)
+  and `project/` (a mopm project with `mopm.toml` and `mopm.lock`). The site build reads the first two and the template
+  build takes `project/`. One schema, `spec/tutorial-lesson.schema.json`, is the contract between them.
+- **The header** gains "Tutorial". The login and "Sign out" show on the tutorial pages only, so other pages make no
+  call they do not need.
+
+## 8. Implementation tasks and order
 
 S is under 200 lines, M under 600, L more. Task ids are prefixed `tu-` so they read apart from rule ids. Each names the
-behaviour its tests assert. Every test is hermetic: fakes for GitHub, the stores, the provider and the clock; a loopback
+behaviour its tests assert. Every test is hermetic: fakes for GitHub, E2B, the stores and the clock, and a loopback
 listener on port 0 where an HTTP server is needed.
 
 Contract first, so the tutorial can be built against it:
 
-- tu-P1 (M) The wire contract: in `spec/api/mopm/registry/v2/*.proto`, the rpcs `StartWebLogin`, `CompleteWebLogin`,
-  `GetWebSession`, `WebLogout` and `RunTutorial`, and the error codes `session_required`, `csrf_failed`,
-  `run_in_progress`, `tutorial_busy`, `tutorial_unavailable`; `spec/api/openapi-v2.yaml` and the generated outputs of
-  `tools/api_gen.zig`; contract examples `tests/contract/api-v2/web-auth.json` and `tutorial.json` (signed in, signed
-  out, each refusal, each verdict, a truncated output); `spec/tutorial-lesson.schema.json`. Additive only. Tests: the
-  generator's check that checked-in outputs equal its output; the schema accepts the example lesson and refuses an
-  editable path outside `project/`, a missing action and an id out of grammar.
-- tu-S1 (M) The stub gate: `site/src/tutorial/gate.ts` with the real client and the replaying fake, and
-  `site/tools/preview.ts`, which serves `dist/` on 127.0.0.1 (port 0, printed) and answers `/api/v2/auth/web/*` and
-  `/api/v2/tutorial/runs` from the contract examples, the scenario chosen by a flag (`--signed-out`, `--busy`,
-  `--timeout`, ...); `site/src/host.ts` maps `127.0.0.1` and `localhost` to the relative API base. Nothing of it reaches
-  a deployed stage. Tests: the client decodes every contract example and maps every error code; the preview server
-  answers each scenario; an unknown host still gets no API.
-- tu-S2 (L) The tutorial pages and the first lessons (section 8), against tu-S1 only; not routed by the edge router, so
-  nothing shows on any stage. Tests through the fake gate: signed out shows the lesson and the sign-in link with the
-  right `return_to` and no editor; signed in shows the editor and the login; each verdict and each refusal renders its
-  message; `session_required` keeps the edited code; truncated output says so; control and bidi characters show as
-  markers; the draft survives a reload through `localStorage` and the page works when `localStorage` throws; every
-  lesson in `tutorial/` validates against the schema and its editable files exist.
+- **tu-P1 (M) The wire contract.**
+  - In `spec/api/mopm/registry/v2/*.proto`: the rpcs `StartWebLogin`, `CompleteWebLogin`, `GetWebSession`, `WebLogout`
+    and `CreateTutorialSandbox`, and the error codes `session_required`, `csrf_failed`, `tutorial_unavailable`.
+  - `spec/api/openapi-v2.yaml` and the generated outputs of `tools/api_gen.zig`.
+  - Contract examples `tests/contract/api-v2/web-auth.json` and `tutorial-sandbox.json`: signed in, signed out, the
+    grant, each error.
+  - `spec/tutorial-lesson.schema.json`. All of it additive only.
+  - Tests: the generator's check that checked-in outputs equal its output; the schema accepts the example lesson and
+    refuses an editable path outside `project/`, a missing action and an id out of grammar.
+- **tu-S1 (M) The stub**: `site/src/tutorial/gate.ts` with the real client and the replaying fake, and
+  `site/tools/preview.ts` with an npm script `preview`.
+  - The preview serves `dist/` on 127.0.0.1 (port 0, printed) with the site's headers and answers our routes per the
+    `--scenario` flag, as "Running it locally" says.
+  - With `E2B_API_KEY` in its environment, it sends section 4's create body to E2B through an injected `fetch`.
+  - `site/src/host.ts` maps `127.0.0.1` and `localhost` to the relative API base.
+  - Nothing of it reaches a deployed stage.
+  - Tests: the client decodes every contract example and maps every error code; the preview answers each scenario;
+    its sandbox route checks CSRF, `Origin`, `Sec-Fetch-Site` and the empty body as the real route does; the create
+    body it sends a fake E2B equals section 4's, with `allow_internet_access` false; without a key it never calls
+    E2B; an unknown host still gets no API.
+- **tu-S2 (L) The tutorial pages and the first lessons** (section 7), against tu-S1 only. They are not routed by the
+  edge router, so nothing shows on any stage. Also: the `esbuild` bundle and the README rule-1 exception.
+  - Tests through the fake gate and the fake runner:
+    - signed out shows the lesson and the sign-in link with the right `return_to`, and no editor;
+    - signed in shows the editor and the login;
+    - each error code renders its message, and `session_required` keeps the edited code;
+    - an ended sandbox is replaced once and the run repeated, and a grant near `expires_at` is replaced before a run;
+    - a non-zero exit shows its code;
+    - control and bidi characters show as markers;
+    - the draft survives a reload through `localStorage`, the page works when `localStorage` throws, and the grant
+      is never written there;
+    - the SDK call type-checks against the pinned `e2b`;
+    - every lesson in `tutorial/` validates against the schema, and its editable files exist.
 
 The Rust foundation:
 
-- tu-F1 (M) `mopm_core` token minting and hashing, CSRF derivation, `return_to` grammar, lesson validation, the new
-  error codes; `mopm_ports` `HttpClient`, `NamespaceStore`, `WebLoginStore`, `TutorialUsageStore`, `Sandbox`;
-  `mopm_testing` memory stores, fake GitHub, fake sandbox and the contract cases of each new port. Tests: tokens equal
-  `tokens.ts`'s for the same random bytes (format, hash, prefix) and the TypeScript authenticator accepts a row the Rust
-  wrote; every `return_to` case of appendix C.1, with section 1's `/tutorial` fallback; each validation refusal; the memory stores pass their port contracts,
-  including two concurrent starts against an `inflight#` at `n = 1` (one wins) and a spend reservation that would pass
-  the ceiling (refused, nothing written).
-- tu-F2 (M) `mopm_aws`: the DynamoDB adapters of the new stores and of namespaces, and the `hyper`/`rustls`
-  `HttpClient`, with the new crates and `buildrules sync`'s outputs. Tests: the same port contracts against the fake
-  DynamoDB, with the rows asserted as DynamoDB JSON and the namespace row equal to the TypeScript adapter's; nothing
-  calls `DeleteItem`; the client against `fake_http` over TLS with a test certificate, and a refused certificate.
-- tu-F3 (S) `promote.yml` builds the function zips once per commit and every deploy checks `CodeSha256` against the
-  sums. Tests: the workflow lint's fixtures for the new job (the chain and the called files as `//:workflows` checks
-  them), and a fixture whose deploy skips the check fails.
+- **tu-F1 (M)** `mopm_core`: token minting and hashing, the CSRF derivation, the `return_to` grammar and the new error
+  codes. `mopm_ports`: `HttpClient`, `NamespaceStore`, `WebLoginStore`. `mopm_testing`: memory stores, a fake GitHub, a
+  fake E2B API, and the contract cases of each new port.
+  - Tests: tokens equal `tokens.ts`'s for the same random bytes (format, hash, prefix), and the TypeScript
+    authenticator accepts a row the Rust wrote; every `return_to` case of appendix C.1, with section 1's `/tutorial`
+    fallback; the memory stores pass their port contracts.
+- **tu-F2 (M)** `mopm_aws`: the DynamoDB adapters of `web_logins` and of namespaces, and the `hyper`/`rustls`
+  `HttpClient`, with the new crates and `buildrules sync`'s outputs.
+  - Tests: the same port contracts against the fake DynamoDB, with the rows asserted as DynamoDB JSON and the
+    namespace row equal to the TypeScript adapter's; nothing calls `DeleteItem`; the client against `fake_http` over
+    TLS with a test certificate, and a refused certificate.
+- **tu-F3 (S)** `promote.yml` builds the function zips once per commit, and every deploy checks `CodeSha256` against
+  the sums.
+  - Tests: the workflow lint's fixtures for the new job (the chain and the called files, as `//:workflows` checks
+    them), and a fixture whose deploy skips the check fails.
 
 Sign-in:
 
-- tu-A1 (M) `mopm_web` and `fn_web_session`: cookies (one exact name, two refused), the edge-header check, the session
-  authenticator, CSRF, `GET /api/v2/auth/web/session`, `POST /api/v2/auth/web/logout`. Infra: the function, its routes
-  and grants. Tests against the memory and fake DynamoDB stores: a valid cookie answers the session; expired, revoked,
-  unknown and duplicated cookies and a missing edge header are 401; a bad `Origin`, `Sec-Fetch-Site`, content type or
-  CSRF value is 403; an `Authorization` header is refused; logout revokes only its own session and clears the cookie;
-  the role's grants are exactly the table of section 5.
-- tu-A2 (M) `fn_web_login`: start and callback, the `web_logins` table, `client_secret` read in this function only.
-  Tests against the fake GitHub: a full sign-in sets the cookie and redirects to `return_to`; the login cookie and the session cookie carry
-  exactly the attributes of sections 1 and 2 (`SameSite=Lax` on both); a request without the edge header, or with a
-  wrong one, is refused on start and callback; a replayed callback, a
-  wrong `state`, an expired row, a missing login cookie, a cross-site start (each `Sec-Fetch-*` case) and every bad
-  `return_to` are refused or fall back as section 1 says; two-factor off is `two_factor_required` and stores nothing;
-  `access_denied` and a GitHub outage map to their codes; the GitHub token is not stored; signing in revokes the
-  previous session; the session's `fresh_until` equals its creation; the user and namespace rows equal those the
-  TypeScript device login writes for the same GitHub user.
-- tu-I1 (M) The site distribution's `/api/*` behaviour as section 2.1 says, the `edge-origin` secret, the 404 handling,
-  the relative `apiBase()` and `connect-src 'self'`. Tests in the stack and site-router tests: the behaviour, its
-  policies, the origin header and the 30 s origin read timeout exist with those values; existing pages and their
-  headers are unchanged apart from `connect-src`; `/api/v2/...` is routed to the API origin and a JSON 404 stays
-  JSON; an unknown page still gets the 404 page; the page CSP has `connect-src 'self'`.
+- **tu-A1 (M)** `mopm_web` and `fn_web_session`: cookies (one exact name, two refused), the edge-header check, the
+  session authenticator, CSRF, `GET /api/v2/auth/web/session` and `POST /api/v2/auth/web/logout`. Infra: the function,
+  its routes and grants.
+  - Tests against the memory and fake DynamoDB stores:
+    - a valid cookie answers the session;
+    - expired, revoked, unknown and duplicated cookies, and a missing edge header, are 401;
+    - a bad `Origin`, `Sec-Fetch-Site`, content type or CSRF value is 403;
+    - an `Authorization` header is refused;
+    - logout revokes only its own session and clears the cookie;
+    - the role's grants are exactly the table of section 5.
+- **tu-A2 (M)** `fn_web_login`: start and callback, the `web_logins` table, and `client_secret` read in this function
+  only.
+  - Tests against the fake GitHub:
+    - a full sign-in sets the cookie and redirects to `return_to`;
+    - the login cookie and the session cookie carry exactly the attributes of sections 1 and 2 (`SameSite=Lax` on
+      both);
+    - a request without the edge header, or with a wrong one, is refused on start and callback;
+    - a replayed callback, a wrong `state`, an expired row, a missing login cookie, a cross-site start (each
+      `Sec-Fetch-*` case) and every bad `return_to` are refused or fall back as section 1 says;
+    - two-factor off is `two_factor_required` and stores nothing;
+    - `access_denied` and a GitHub outage map to their codes;
+    - the GitHub token is not stored;
+    - signing in revokes the previous session;
+    - the session's `fresh_until` equals its creation time;
+    - the user and namespace rows equal those the TypeScript device login writes for the same GitHub user.
+- **tu-I1 (M)** The site distribution's `/api/*` behaviour as section 2.1 says, the `edge-origin` secret, the 404
+  handling, the relative `apiBase()`, and `connect-src 'self' https://*.<E2B domain>`.
+  - Tests in the stack and site-router tests:
+    - the behaviour, its policies, the origin header and the 30 s origin read timeout exist with those values;
+    - existing pages and their headers are unchanged apart from `connect-src`;
+    - `/api/v2/...` is routed to the API origin, and a JSON 404 stays JSON;
+    - an unknown page still gets the 404 page;
+    - the page CSP's `connect-src` is exactly those two sources.
 
-The run:
+The sandbox:
 
-- tu-X1 (S, with the tutorial's author) The named provider against section 4's list, its prices and its create, run
-  and destroy times, written into this note's section 4 as a short amendment. No code.
-- tu-X2 (M) `sandbox_<provider>`: the `Sandbox` adapter, and the template built from `tutorial/lessons/*/project` and the
-  pinned mopm release. Tests against a scripted fake of the provider's API on loopback: create, write, run and destroy
-  send what the provider's API documents; the key is sent only in its header and appears in no log or error; destroy
-  runs after a failed run and after a timeout; a provider error maps to `tutorial_unavailable`; output over 64 KiB is
-  cut and marked.
-- tu-A3 (M) `fn_tutorial_run`: the run of section 4 and the bounds of section 6; the `tutorial_usage` table, the
-  `tutorial-sandbox` secret with its resource policy, the gateway throttle, the alarms and the SNS topic. Tests against
-  the memory and fake DynamoDB stores, the fake sandbox and a fixed clock: no session, bad CSRF and bad bodies are
-  refused before any write; a third run while two are in flight is `run_in_progress`, and a marker 60 s old does not
-  block, and resets to `n = 1`; a run whose reservation would pass the ceiling is `tutorial_busy` with `Retry-After` to 00:00 UTC and writes
-  nothing; the day boundary starts a new spend row; the actual cost replaces the reservation at the end; a provider
-  failure before create releases the whole reservation; the `user#` row counts runs, milliseconds and refusals and never
-  refuses; the log line has the fields of section 6 and no code or output (asserted by exact equality); the stack test
-  shows the secret's policy has the `Deny` of section 4 with this function's role as the only exception, that a policy
-  without that `Deny` fails the test, that neither other new function's role has any grant on the secret, and that the
-  alarms at 50 % and 90 % notify the topic; a run that starts before 00:00 UTC and ends after settles on the start
-  day's row; two stale runs leave a marker at `n = 2` that a run 60 s later resets to 1.
+- **tu-X1 (S, with the tutorial's author)** A check on beta with a beta E2B key, written into section 4 as a short
+  amendment; no code is merged. It settles:
+  - the bundled SDK and the constructor work from the site's origin under the site's CSP;
+  - the agent works with `allowPublicTraffic: false`;
+  - with `allow_internet_access: false`, a program run as root in the sandbox reaches no address on the internet;
+  - E2B's create time, and its concurrency limit for our plan;
+  - E2B's answer on a supported token-only `connect`.
+- **tu-X2 (M)** The E2B template definition, built from `tutorial/lessons/*/project` and the pinned mopm release, with
+  its build documented as an operator step.
+  - Tests: every lesson project in the template definition matches `tutorial/lessons`, and the mopm version in it is
+    the pinned one.
+- **tu-A3 (M)** `mopm_e2b` and `fn_tutorial_sandbox`: the route of section 4, the `e2b` secret with its resource
+  policy, the function's grants, and the held script that writes the secret.
+  - Tests against the memory and fake DynamoDB stores and the fake E2B API with a fixed clock:
+    - no session, a bad CSRF check, a body and an `Authorization` header are refused before any call to E2B;
+    - the create body equals section 4's exactly, `allow_internet_access` false included;
+    - the key is sent only in `X-API-Key` and appears in no log line or error, the log line asserted by exact
+      equality;
+    - the answer maps to the grant, with a null domain filled in and `expires_at` equal to the request time plus the
+      timeout;
+    - an answer without `envdAccessToken`, an E2B error and no answer in 8 s are each `tutorial_unavailable`;
+    - the stack test shows the secret's policy has section 4's `Deny`, with this function's role as the only
+      exception;
+    - a policy without that `Deny` fails the test;
+    - neither other new function's role has any grant on the secret.
 
 Operator:
 
-- tu-O1 (operator) On each stage: the OAuth app's callback URL; check with the held `oauth-secret` script's dry run that
-  the secret holds a current `client_secret`; write `mopm/<stage>/tutorial-sandbox` with the provider's key and template
-  (a held script beside `oauth-secret`, added in tu-A3); subscribe the operator's address to `mopm-<stage>-alerts`.
-  Before tu-A2 and tu-A3 deploy. Needs the owner's hands.
+- **tu-O1 (operator)** On each stage, before tu-A2 and tu-A3 deploy; needs the owner's hands:
+  - set the OAuth app's callback URL;
+  - check with the held `oauth-secret` script's dry run that the secret holds a current `client_secret`;
+  - write `mopm/<stage>/e2b` with the held script of tu-A3;
+  - build the E2B template of tu-X2 and set its id in the stage settings.
 
 Go-live:
 
-- tu-S3 (S) The edge router routes `/tutorial` and `/tutorial/<lesson>`; the header's "Tutorial" link; the docs page
-  "What mopm.dev stores", from section 7, naming the provider. Tests: the route fixtures (`site/test/fixtures/routes.json`)
-  and the site-router test; the layout test for the header. This is the step users see.
+- **tu-S3 (S)** The edge router routes `/tutorial` and `/tutorial/<lesson>`; the header gets its "Tutorial" link; the
+  docs page "What mopm.dev stores", from section 6, names E2B and what it sees. This is the step users see.
+  - Tests: the route fixtures (`site/test/fixtures/routes.json`) and the site-router test; the layout test for the
+    header.
 
-Order: tu-P1 first. tu-S1 after tu-P1; tu-S2 after tu-S1, and in parallel with everything below. tu-F1, tu-I1 and tu-X1
-start at once; tu-F2 after tu-F1; tu-F3 after tu-F2. tu-A1 after tu-F2 and tu-F3; tu-A2 after tu-A1, deployed after
-tu-O1. tu-X2 after tu-X1 and tu-F2. tu-A3 after tu-A1 and tu-X2, deployed after tu-O1. tu-S3 after tu-S2, with tu-A2,
-tu-A3 and tu-I1 deployed to prod. Deploys stay automatic from main. The new routes answer only requests that carry the
-distribution's header and no page links to them before tu-S3, so the sign-in and the tutorial appear only then. tu-I1
-is different: once deployed it changes what every visitor gets (every API read of the site goes through the site host,
-the CSP's `connect-src`, the 404 handling), so it is the one change before tu-S3 that users can notice if it is wrong.
-Its stack and site-router tests hold the existing pages, a missing page and the site's reads to what they are today;
-reverting it is one revert, since nothing else depends on it until tu-A1's routes are used.
+**Order**:
+
+- tu-P1 first. tu-S1 follows tu-P1, and tu-S2 follows tu-S1, in parallel with everything below.
+- tu-F1, tu-I1 and tu-X1 start at once. tu-F2 follows tu-F1, and tu-F3 follows tu-F2.
+- tu-A1 follows tu-F2 and tu-F3. tu-A2 follows tu-A1 and deploys after tu-O1.
+- tu-X2 follows tu-X1. tu-A3 follows tu-A1 and tu-F2, and deploys after tu-O1 and tu-X2.
+- tu-S3 follows tu-S2, once tu-A2, tu-A3 and tu-I1 are deployed to prod.
+- Deploys stay automatic from main.
+
+Until tu-S3, nobody sees the sign-in or the tutorial: the new routes answer only requests that carry the
+distribution's header, and no page links to them.
+
+tu-I1 is the exception. Once deployed, it changes what every visitor gets: every API read of the site goes through
+the site host, and the CSP's `connect-src` and the 404 handling change. It is the one change before tu-S3 that users
+can notice if it is wrong. Its stack and site-router tests hold the existing pages, a missing page and the site's reads
+to what they are today. Reverting it is one revert, since nothing else depends on it until tu-A1's routes are used.
 
 ## Decisions
 
 1. GitHub is the only identity provider: the account model is already GitHub's numeric id.
 2. The web login is mopm-dev.md's design; only the paths move to `/api/v2`, which the site now reads.
-3. The tutorial needs only start, callback, session and sign-out; the session list, sign-out everywhere and the account
+3. The tutorial needs only start, callback, session and sign-out. The session list, sign-out everywhere and the account
    page stay in mopm-dev.md, so the tutorial does not wait for them.
 4. The session is an opaque token in the existing `tokens` table, not a signed cookie: one row format for both
-   languages, revocation already works, no key to rotate.
-5. 7 days absolute and no sliding renewal, as mopm-dev.md says; the CLI's 30 days is left alone.
+   languages, revocation already works, and there is no key to rotate.
+5. The session lasts 7 days absolute with no sliding renewal, as mopm-dev.md says; the CLI's 30 days is left alone.
 6. The web session's `fresh_until` is its creation time, so a leaked cookie value cannot create an API token on the
    TypeScript routes.
 7. A new route, `GET /api/v2/auth/web/session`, answers who is signed in, instead of making the TypeScript `GET /me`
-   accept the cookie: the TypeScript side stays cookie-free and unchanged, and an API Gateway route has one
-   integration.
-8. Three Rust functions, split by what each may touch, so only `web-login` reads the OAuth secret and only
-   `tutorial-run` reads the provider's key.
-9. The run endpoint takes the cookie only, not bearer tokens, so code runs from the site.
-10. The provider is a parameter with a list of required capabilities; the adapter waits for its name, and everything
-    else is built and tested against the fake sandbox.
-11. Users run lesson projects with edited files, not arbitrary projects: the template holds every dependency, and
-    validation is a list of paths.
-12. The spend ceiling reserves each run's maximum cost before it starts and settles the actual after, so the ceiling
-    holds under concurrency.
-13. Two runs in flight, not one: a double click or Run then Test is not refused.
-14. Per-user counts are kept and not enforced, as the CEO ruled; a cap later is one condition on a row that already
-    exists.
-15. Alerts go to a new SNS topic with a subscription added by the operator, so no address is committed.
-16. A synchronous run: one request, one answer, nothing stored; start-and-poll only if the named provider is too slow.
-17. Draft code and progress stay in the browser's `localStorage`; nothing about tutorial progress is stored by us.
-18. The local preview server is the stub gate: the same site code against the same contract.
-19. Lessons live in `tutorial/` at the root, read by the site build, the run function and the template build, with
-    one schema.
-20. The function zips are built once per commit in the deploy pipeline and checked by sha256 at each stage, so the
+   accept the cookie. The TypeScript side stays cookie-free and unchanged, and an API Gateway route has one integration.
+8. There are three Rust functions, split by what each may touch, so only `web-login` reads the OAuth secret and only
+   `tutorial-sandbox` reads the E2B key.
+9. The browser talks to E2B directly. Our service creates the sandbox and hands over only that sandbox's token, so it
+   never carries code or output, and the team key, which could create sandboxes with the network on, stays server-side.
+10. The sandbox route takes the cookie only, not bearer tokens, so sandboxes are for the site.
+11. There are no usage limits, as ruled. The sandbox timeout is cleanup, and the page replaces an ended sandbox without
+    the user doing anything.
+12. One sandbox per page, created when the page first needs it, not one per run: a run is then one call from the
+    browser to E2B.
+13. The browser uses E2B's SDK through its token-taking constructor, pinned exactly, with the agent's documented API as
+    the fallback. Our endpoint's answer is the same for both.
+14. `allowPublicTraffic: false`, so a user's program cannot serve the internet from an `e2b.app` address.
+15. Draft code and progress stay in the browser's `localStorage`. Nothing about tutorial progress is stored by us.
+16. The local preview server is the stub: the same site code against the same contract, and with a developer's own E2B
+    key, the same create request.
+17. Lessons live in `tutorial/` at the root, read by the site build and the template build, with one schema.
+18. The function zips are built once per commit in the deploy pipeline and checked by sha256 at each stage, so the
     same bytes reach prod.
 
 ## Questions for the CEO
 
 Answered:
 
-- **Q-T1, the lesson text**: stays public; only running code is gated.
+- **Q-T1, the lesson text**: stays public; only getting a sandbox is gated.
 - **Q-T2, language**: Rust, as new Lambdas behind the same API Gateway sharing the tables with the TypeScript functions;
   the first piece of the port, with no TypeScript version.
 - **Q-T3, two-factor**: kept for web sign-in, as for the CLI.
-- **Q-T4, limits**: no per-user daily cap; one or two runs in flight; a global daily spend ceiling with an alert; per-user
-  metrics to add a cap later. This note uses two in flight.
-- **Where code runs**: a hosted sandbox provider with an API key held by the server; our own Lambda runner is dropped.
+- **Q-T4, limits**: none. No spend ceiling, no per-user in-flight cap, no per-day rows; only E2B's timeout as cleanup.
+- **Where code runs**: E2B; the browser connects to the sandbox directly with a per-sandbox token from our service.
+- **The sandbox's network**: off (`allow_internet_access: false`).
 - **The API on the site host**: yes; tu-I1 adds the `/api/*` behaviour to the API Gateway origin.
 
 Open:
 
-- **Q-T5, the daily spend ceiling**: proposed 20 US dollars a day on prod, 2 on beta and gamma. **Recommend: start
-  there**, and read the 50 % alerts for the first weeks.
-- **Q-T6, the sandbox's network**: if the named provider cannot turn outbound network off, accept it or choose another
-  provider. **Recommend: require it** (section 4, item 6); without it a run can reach the internet for 20 seconds from an
-  address the provider gives it.
-- **Q-T7, the provider's name**: from the tutorial's author; tu-X1 checks it against section 4 and amends this note.
+- **Q-T5, the sandbox timeout**: 30 minutes, after which the page quietly gets a new sandbox. **Recommend: start
+  there.** Shorter ends abandoned sandboxes sooner, and longer keeps a running program's state across a long pause.
+
+## Sources
+
+E2B's documentation, read for this revision:
+
+- "Secured access", <https://docs.e2b.dev/sandbox/secured-access>: the access token returned at creation, the
+  `X-Access-Token` header, secure access by default from SDK 2.0.0 and always from 2.51.0.
+- "Internet access", <https://docs.e2b.dev/sandbox/internet-access>: `allowInternetAccess` /
+  `allow_internet_access`, and `allowPublicTraffic` as a create-only option.
+- "Sandbox lifecycle", <https://docs.e2b.dev/sandbox/lifecycle>: the timeout, `setTimeout`, and the longest run per
+  plan.
+- "Connect to sandbox", <https://docs.e2b.dev/api-reference/sandboxes/connect-to-sandbox>: connecting by id needs
+  `X-API-Key`, and returns the access token.
+- "Create sandbox (v2)", <https://docs.e2b.dev/api-reference/sandboxes/create-sandbox-v2>: `POST /v2/sandboxes`, its
+  body (`templateID`, `timeout` in seconds, `allow_internet_access`, `autoPause`, `network.allowPublicTraffic`,
+  `metadata`) and its answer (`sandboxID`, `envdAccessToken`, `envdVersion`, `domain`, `trafficAccessToken`).
+- The envd API reference, <https://docs.e2b.dev/api-reference/envd/environment-variables>: the sandbox agent's
+  endpoints, authenticated by the sandbox access token in `X-Access-Token`.
+- "Template quickstart", <https://docs.e2b.dev/template/quickstart>: defining and building a template.
+
+The `e2b` npm package, version 2.64.0 (MIT): the `Sandbox` constructor and its `@internal` comment, `updateNetwork`,
+and the agent client sending `X-Access-Token`.
