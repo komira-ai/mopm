@@ -7,7 +7,8 @@
 //! (`x-mopm-errors` in spec/api/openapi.yaml), and a code's status is the same in every
 //! table. Here: one [`ErrorCode`], one [`RegistryError`], and the same three tables
 //! because the routes differ in which codes they can answer with (an unknown code is
-//! `internal_error`, and which codes are unknown depends on the table).
+//! `internal_error`, and which codes are unknown depends on the table). A fourth table,
+//! [`WEB_CATALOGUE`], holds the texts of the v2 API's website routes (spec/api/openapi-v2.yaml).
 
 use std::collections::BTreeMap;
 
@@ -76,6 +77,9 @@ error_codes! {
     InternalError => ("internal_error", 500),
     ReadOnlyMode => ("read_only_mode", 503),
     Unavailable => ("unavailable", 503),
+    SessionRequired => ("session_required", 401),
+    CsrfFailed => ("csrf_failed", 403),
+    TutorialUnavailable => ("tutorial_unavailable", 503),
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -220,6 +224,17 @@ pub const PUBLISH_CATALOGUE: &[(ErrorCode, Template)] = &[
     (ErrorCode::InternalError, Template { message: "Something went wrong on our side.", hint: "Try again; report the request id if it persists." }),
     (ErrorCode::ReadOnlyMode, Template { message: "The registry is read-only right now; new uploads are refused.", hint: "Installs still work. Try again later." }),
     (ErrorCode::Unavailable, Template { message: "The registry is temporarily unavailable.", hint: "Try again shortly." }),
+];
+
+/// The templates of the codes the website's routes (`/auth/web/*`, `/tutorial/sandbox`) answer with, as
+/// `x-mopm-errors` in spec/api/openapi-v2.yaml words them. `session_required`, `csrf_failed` and
+/// `tutorial_unavailable` exist only in the v2 API, so they are in no other table.
+pub const WEB_CATALOGUE: &[(ErrorCode, Template)] = &[
+    (ErrorCode::InvalidRequest, Template { message: "The request is not valid: {detail}.", hint: "Check the request against the API documentation; update mopm if it is old." }),
+    (ErrorCode::InternalError, Template { message: "Something went wrong on our side.", hint: "Try again; report the request id if it persists." }),
+    (ErrorCode::SessionRequired, Template { message: "You are not signed in to the website.", hint: "Sign in with GitHub, then try again." }),
+    (ErrorCode::CsrfFailed, Template { message: "The request did not come from a page of the website.", hint: "Reload the page and try again." }),
+    (ErrorCode::TutorialUnavailable, Template { message: "The sandbox service did not answer.", hint: "Wait {retry_after} seconds and try again; the Retry-After header says how long." }),
 ];
 
 fn lookup(table: &'static [(ErrorCode, Template)], code: ErrorCode) -> Option<Template> {

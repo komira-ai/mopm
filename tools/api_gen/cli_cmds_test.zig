@@ -730,3 +730,19 @@ test "a refusal leaves no output" {
     const got = try cli_cmds.write(a, try apiOf(a, &.{ healthRpc(), rpc("Other", .GET, "/api/v2/o", .empty, null, &.{}) }));
     try std.testing.expect(got == .bad);
 }
+
+test "a browser operation has no commands and no command table entry or golden" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var site = rpc("Site", .GET, "/api/v2/site", .empty, null, &.{});
+    site.browser = true;
+    const files = try written(arena_state.allocator(), &.{ healthRpc(), site });
+    try std.testing.expectEqual(@as(usize, 3), files.len);
+    for (files) |f| try std.testing.expect(std.mem.indexOf(u8, f.text, "Site") == null);
+}
+
+test "a browser operation with commands is refused" {
+    var site = rpc("Site", .GET, "/api/v2/site", .empty, null, &.{.{ .name = "site", .summary = "S." }});
+    site.browser = true;
+    try expectBad(&.{site}, "rpc Site: is a browser operation and has commands");
+}

@@ -192,7 +192,7 @@ pub const SchemaOpt = struct {
     when: ?model.Condition = null,
 };
 
-const OpResponse = struct { status: u16 = 0, description: []const u8 = "", @"error": bool = false };
+const OpResponse = struct { status: u16 = 0, description: []const u8 = "", @"error": bool = false, headers: []const []const u8 = &.{} };
 
 const CommandOpt = struct {
     name: []const u8 = "",
@@ -209,6 +209,7 @@ pub const OperationOpt = struct {
     security: []const []const u8 = &.{},
     responses: []const OpResponse = &.{},
     commands: []const CommandOpt = &.{},
+    browser: bool = false,
 };
 
 /// The `(api)` option as written.
@@ -404,7 +405,7 @@ pub const Builder = struct {
             if (out_t == .enumeration) return b.fail(sv.file, r.output.line, "rpc '{s}': output '{s}' is not a message", .{ r.name, r.output.name });
             try b.checkRpc(sv, api, r, in_t);
             var responses = std.ArrayList(model.Response).init(b.arena);
-            for (r.op.responses) |o| try responses.append(.{ .status = o.status, .description = o.description, .is_error = o.@"error" });
+            for (r.op.responses) |o| try responses.append(.{ .status = o.status, .description = o.description, .is_error = o.@"error", .headers = o.headers });
             var commands = std.ArrayList(model.Command).init(b.arena);
             for (r.op.commands) |c| try commands.append(.{ .name = c.name, .args = c.args, .set = c.set, .defaults = c.defaults, .summary = c.summary });
             try rpcs.append(.{
@@ -420,6 +421,7 @@ pub const Builder = struct {
                 .security = r.op.security,
                 .responses = responses.items,
                 .commands = commands.items,
+                .browser = r.op.browser,
             });
         }
 
