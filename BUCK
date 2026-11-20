@@ -1360,6 +1360,20 @@ filegroup(
     visibility = ["//site:"],
 )
 
+# The tutorial template's tests (tutorial/template/BUCK) read VERSION, the base of the mopm release the template
+# installs, and every lesson the template copies, staged as `tutorial/lessons`.
+export_file(
+    name = "tutorial_template.VERSION",
+    src = "VERSION",
+    visibility = ["//tutorial/template:"],
+)
+
+filegroup(
+    name = "tutorial_template_lessons",
+    srcs = {f[len("tutorial/lessons/"):]: f for f in glob(["tutorial/lessons/**"])},
+    visibility = ["//tutorial/template:"],
+)
+
 # The scaffold golden of `mopm new --lib`, staged as `tests/new/lib`.
 filegroup(
     name = "site_new_lib",
@@ -1398,6 +1412,7 @@ _LINT_PACKAGES = [
     "site",
     "tools/lambda",
     "tools/node",
+    "tutorial/template",
 ]
 
 _ROOT_FILES = glob(["**", ".github/**"]) + _LINT_DOTFILES

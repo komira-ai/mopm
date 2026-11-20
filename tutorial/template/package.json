@@ -1,0 +1,30 @@
+{
+  "name": "mopm-tutorial-template",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The tutorial's E2B sandbox template: its definition, generated from tutorial/lessons and the mopm release, and the held command an operator runs to build it (never from CI)",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "jest --ci",
+    "template": "ts-node --prefer-ts-exts build.ts"
+  },
+  "dependencies": {
+    "e2b": "2.64.0"
+  },
+  "devDependencies": {
+    "@types/jest": "29.5.14",
+    "@types/node": "20.19.43",
+    "jest": "29.7.0",
+    "ts-jest": "29.4.15",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3"
+  },
+  "buildrules": {
+    "actions": {
+      "ci": [
+        "typecheck",
+        "test"
+      ]
+    }
+  }
+}
