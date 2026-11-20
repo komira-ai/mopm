@@ -1,4 +1,4 @@
-# name version bytes; every sha256 was checked against the table by fetch_sizes.py
+# name version bytes; every sha256 was checked against the table by `buildrules sync`
 adler2 2.0.1 13366
 aho-corasick 1.1.5 184315
 allocator-api2 0.2.21 63622
