@@ -136,7 +136,12 @@ publish `published`. See "The sparse index writer" below.
   set in `service/config/<stage>.json`), `e2b_domain` (default `e2b.app`) and `sandbox_timeout_s` (default 1800). The Rust
   functions read it at cold start (docs/design/tutorial-sign-in.md, section 5). Change a value in `service/config/<stage>.json`
   and deploy; a hand `put-item` lasts only until a deploy changes a value. It is written only when the API stack is given the
-  Rust functions' zips, which no deploy does yet.
+  Rust functions' zips, which every deploy of `promote.yml` does (`rustZipDir`).
+- **Rust function zips.** `promote.yml`'s first job builds the zips of `web-login`, `web-session` and `tutorial-sandbox` once and
+  uploads them as the artifact `function-zips` (seven days). Each deploy checks the zips against their `sums` before `cdk deploy`
+  and, after it, each function's `CodeSha256` (read through the stage's CDK lookup role) against `sums`. A failure of either
+  check names the zip or the function; the stage then may run other bytes than the stage before it, so do not re-run the stage
+  alone: start `promote.yml` by hand on `main`, which builds the zips again and deploys from beta.
 - **E2B key (tutorial sandbox).** The secret `mopm/<stage>/e2b`, JSON `{"api_key": "<key>"}`, is created by the API stack (with
   the Rust functions' zips) with no value: nothing is generated, and the stack never writes one. Until the owner stores the key
   with the held step (`service/infra/access/BOOTSTRAP.md`, "E2B API key"; `npm --prefix service/infra/access run -s e2b-secret`),

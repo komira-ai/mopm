@@ -11,7 +11,7 @@ corresponding row as open.
 
 | Control | Where | Closes |
 |---|---|---|
-| Credential-minting jobs (`id-token: write`) exist only in `deploy.yml`, `e2e.yml` and `promote.yml`, which trigger only on `push` to `main`, `workflow_dispatch` and `workflow_call` | `hygiene` job | A pull request, or a workflow added later, obtaining an OIDC token |
+| Credential-minting jobs (`id-token: write`) exist only in `deploy.yml`, `e2e.yml` and `promote.yml`, which trigger only on `push` to `main`, `workflow_dispatch` and `workflow_call` (`function-zips.yml`, called by `promote.yml` alone, holds `id-token: write` for the build farm's login only: no environment, no secret, no AWS role) | `hygiene` job | A pull request, or a workflow added later, obtaining an OIDC token |
 | A `guard` job fails anything but `refs/heads/main` and any event but `push` / `workflow_dispatch`; the credential job needs it and repeats the ref test | `deploy.yml`, `e2e.yml`; `workflows` job checks the shape | A manual run from a feature branch deploying unreviewed code |
 | No `_target` variant of the pull-request trigger, no `workflow_run`, no `issue_comment` anywhere; no `secrets: inherit` | `hygiene`, `workflows` jobs | The classic "privileged trigger runs attacker code" injection |
 | Top-level permissions are read-only in every workflow; `write` appears only as `id-token` in the three files above | `workflows` job | A compromised step escalating the repository token |

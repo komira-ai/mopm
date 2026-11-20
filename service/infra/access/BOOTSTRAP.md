@@ -229,9 +229,9 @@ beta first, then gamma, then prod, each checked before the next.
 
 ## Verification
 
-Run `deploy.yml` on `main` for `beta`: `aws sts get-caller-identity` must show the deploy role. The same
-workflow from another branch must fail at the environment's branch policy, and if that were
-loosened, at `AssumeRoleWithWebIdentity`.
+Run `promote.yml` by hand on `main` (`deploy.yml` has no manual run; promote deploys beta first): the beta deploy's
+`aws sts get-caller-identity` must show the deploy role. The same workflow from another branch must fail at the
+environment's branch policy, and if that were loosened, at `AssumeRoleWithWebIdentity`.
 
 ## Known residual risk
 

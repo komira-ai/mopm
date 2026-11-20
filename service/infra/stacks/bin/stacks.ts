@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Usage: cdk synth|deploy -c stage=beta|gamma|prod [-c version=<release>] [-c commit=<git sha>] [-c hostedZoneId=<dummy, synth only>]
+// Usage: cdk synth|deploy -c stage=beta|gamma|prod [-c version=<release>] [-c commit=<git sha>] [-c rustZipDir=<dir of the Rust functions' zips>] [-c hostedZoneId=<dummy, synth only>]
 // The account comes from the CDK environment (CDK_DEFAULT_ACCOUNT) at deploy time; it is never in a file.
 import { App } from 'aws-cdk-lib';
 import { createStageStacks } from '../lib/app';
@@ -18,4 +18,15 @@ if (wantedRegion && wantedRegion !== REGION) {
 const zoneId = app.node.tryGetContext('hostedZoneId');
 const version = String(app.node.tryGetContext('version') ?? 'dev');
 const commit = String(app.node.tryGetContext('commit') ?? 'dev');
-createStageStacks(app, stageConfig(stage, zoneId ? String(zoneId) : undefined), { account, region: REGION }, version, commit);
+// Absent: no Rust function is created (and a deploy removes the ones a stage has).
+const rustZipDir = app.node.tryGetContext('rustZipDir');
+createStageStacks(
+  app,
+  stageConfig(stage, zoneId ? String(zoneId) : undefined),
+  { account, region: REGION },
+  version,
+  commit,
+  undefined,
+  undefined,
+  rustZipDir ? String(rustZipDir) : undefined,
+);

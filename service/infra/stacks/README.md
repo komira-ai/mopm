@@ -44,8 +44,14 @@ Account ids come from the CDK environment at deploy time and are never committed
   `tokens`, GetItem on `users` (the grants of `service/lambda/fn_tutorial_sandbox/tests/fixtures/grants.json`, which its tests
   run under) and GetSecretValue on the edge-origin and E2B secrets. The E2B secret `mopm/<stage>/e2b` is created with it
   (`CfnSecret`: no value, nothing generated), with a resource policy of one Deny of GetSecretValue to every principal but that
-  function's role. No deploy passes `rustZipDir` yet, so a deploy
-  changes nothing in the API stack. The data stack has the `web_logins` table the sign-in uses.
+  function's role. `rustZipDir` is the CDK context `-c rustZipDir=<dir>` (`bin/stacks.ts`); without it no function is created, and a deploy
+  removes the ones the stage has. The deploy workflow passes the directory of the one build per commit
+  (`//service/infra/stacks:function_zips`: the three zips and `sums`, one `sha256sum` line per zip). `bin/function-zips.ts`
+  (logic in `lib/function-zips.ts`, run from this directory with `npx ts-node --prefer-ts-exts`) checks it:
+  `check-zips --zip-dir <dir>` before the deploy (`sums` lists exactly the three zips and each hashes to its line), and
+  `check-deployed --stage <stage> --zip-dir <dir> --account <id> --region <region>` after it (each `mopm-<stage>-<function>` has
+  the `CodeSha256` of its zip, read with `aws lambda get-function-configuration` through the account's CDK lookup role, the one
+  bootstrap role that reads and that the deploy role may assume; exit 1 names each difference). The data stack has the `web_logins` table the sign-in uses.
 - **Quarantine.** The channel bucket is served through CloudFront with an origin access control; an explicit deny
   keeps `quarantine/*` unreachable through the distribution.
 - **Auth routes.** The same Lambda also serves login (`/auth/device`, `/auth/device/poll`), API tokens (`/me/tokens`) and

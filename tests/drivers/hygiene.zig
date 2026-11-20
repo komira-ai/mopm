@@ -238,6 +238,10 @@ const farm_file = "farm.yml";
 /// runs on a hosted Linux x86_64 runner: the Macs are reached through the farm, never as a runner.
 const farm_macos_file = "farm-macos.yml";
 const farm_macos_call = "./.github/workflows/" ++ farm_macos_file;
+/// function-zips.yml builds the Rust Lambda zips once per promotion, on the farm, and holds the id-token grant for farm-connect. Only
+/// promote.yml calls it: its trigger is exactly workflow_call, never a pull request, with no environment and no secret, and every job
+/// runs on a hosted Linux x86_64 runner (the farm does the building). function_zips_lint.zig holds the rest of its shape.
+const function_zips_file = "function-zips.yml";
 /// release.yml publishes a release with build-provenance attestations, so its publish job holds an
 /// id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
 /// when the triggers are a push to main and a manual run, with no secret but the release bot's key and the
@@ -424,6 +428,22 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
             const runs_on = c.str(c.get(j.node, "runs-on")) orelse "";
             if (!isLinuxX64Runner(runs_on)) {
                 try c.problem(a, out, prefix ++ "{s}: job {s} runs on {s}; it must run on a hosted Linux x86_64 runner (ubuntu-*, not -arm) and reach the Macs through the farm", .{ f, j.name, if (runs_on.len == 0) "no runner it names" else runs_on });
+            }
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, base, function_zips_file)) {
+        if (!(on.len == 1 and std.mem.eql(u8, on[0], "workflow_call"))) {
+            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly workflow_call (promote.yml calls it; never a pull request)", .{f});
+        }
+        if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
+            try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
+        }
+        for (jobs) |j| {
+            const runs_on = c.str(c.get(j.node, "runs-on")) orelse "";
+            if (!isLinuxX64Runner(runs_on)) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} runs on {s}; it must run on a hosted Linux x86_64 runner (ubuntu-*, not -arm) and build through the farm", .{ f, j.name, if (runs_on.len == 0) "no runner it names" else runs_on });
             }
         }
         return;

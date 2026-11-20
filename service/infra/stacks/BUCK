@@ -11,6 +11,7 @@
 
 load("@buildrules//rules/node:modules.bzl", "cdk_synth", "jest_test", "npm_modules", "tsc_check")
 load("@buildrules//rules/coverage:jest_cover.bzl", "jest_coverage_floor")
+load("//tools/lambda:lambda.bzl", "lambda_bundle")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"
@@ -96,6 +97,18 @@ jest_coverage_floor()
     node = _NODE,
     srcs = _SRCS,
 ) for stage in ["beta", "gamma", "prod"]]
+
+# The three Rust functions' zips and their sums in one directory. The promote workflow's function-zips job builds it once per
+# commit, and deploy.yml passes the downloaded directory to the app as the context `rustZipDir`.
+lambda_bundle(
+    name = "function_zips",
+    zips = {
+        "tutorial-sandbox": "//service/lambda/fn_tutorial_sandbox:zip",
+        "web-login": "//service/lambda/fn_web_login:zip",
+        "web-session": "//service/lambda/fn_web_session:zip",
+    },
+    visibility = ["PUBLIC"],
+)
 
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
 # package boundary hides these from the root package's glob). A copy of the tree, staged

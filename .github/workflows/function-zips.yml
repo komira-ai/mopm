@@ -1,0 +1,89 @@
+# Builds the Rust Lambda zips (web-login, web-session, tutorial-sandbox) once for a promotion, on the build farm, and uploads them as one
+# artifact named function-zips: the three zips and `sums` (a sha256 line per zip). promote.yml calls this before its first deploy; every
+# stage's deploy downloads that artifact and checks each deployed function's CodeSha256 against the sums, so beta, gamma and prod run
+# the same bytes.
+#
+# The farm is connected as in farm.yml (the same pinned farm-connect, the same repository variables). Unlike farm.yml this file is only
+# ever called by promote.yml, so with no farm configured the build FAILS: a deploy must never go out with zips nothing built. It holds no
+# secret and no environment; its id-token grant is for farm-connect alone. The hygiene and workflow lints (//:hygiene, //:workflows)
+# hold it to that.
+name: function-zips
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Main only: a manual promotion from another branch never logs in to the farm nor builds that branch's zips (deploy.yml's guard
+    # refuses the rest of such a run).
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # for farm-connect only: the token the farm's network trusts
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The condition reads the variable without putting its value in a step's environment, which GitHub prints in the log.
+      - name: the farm is not configured
+        if: ${{ vars.FARM_ADDRESS == '' }}
+        run: |
+          echo "::error title=function-zips::the repository variable FARM_ADDRESS is not set, so nothing built the function zips. Set it, or nothing deploys."; exit 1
+      # The same komira commit as in farm.yml and commit_hash in .buckconfig; bump them together.
+      - name: connect to the farm
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        uses: komira-ai/komira/.github/actions/farm-connect@aefee53266277c55b40ccbf35782a296ceecf687
+        with:
+          ts-client-id: ${{ vars.TS_CLIENT_ID }}
+          ts-audience: ${{ vars.TS_AUDIENCE }}
+          farm-address: ${{ vars.FARM_ADDRESS }}
+          farm-instance: ${{ vars.FARM_INSTANCE }}
+          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
+          tls: ${{ vars.FARM_TLS || 'false' }}
+      # farm-connect writes the worker property sets under [komira_re]; buildrules reads them from [buildrules_re] of this checkout's
+      # .buckconfig.local. Copy the keys across without printing them (the values are the farm's).
+      - name: hand the worker properties to buildrules
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        run: |
+          set -eu
+          src="$HOME/.buckconfig.d/farm.buckconfig"
+          {
+            echo "[buildrules_re]"
+            awk '/^\[/ { keep = ($0 == "[komira_re]"); next } keep' "$src"
+          } >> .buckconfig.local
+      # With no farm configured buck2 builds on the runner: refuse that.
+      - name: the buckconfig names the farm
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        run: |
+          for key in linux_x86_64_properties; do
+            ./buck2 audit config "buildrules_re.$key" --style json | grep -q '": *"[^"]' ||
+              { echo "the buckconfig sets no [buildrules_re] $key: this job would build on the runner"; exit 1; }
+          done
+      # The target's one output is a directory: web-login.zip, web-session.zip, tutorial-sandbox.zip and sums.
+      - name: buck2 build the function zips
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        run: |
+          set -o pipefail
+          ./buck2 build //service/infra/stacks:function_zips --out "$RUNNER_TEMP/function-zips" 2>&1 | tee "$RUNNER_TEMP/build.log"
+      # The summary line counts the actions run on this machine: all must have run on the farm or come from its cache.
+      - name: no action ran on the runner
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        run: |
+          grep -Eq 'Commands: [0-9]+ \(.*local: 0\)' "$RUNNER_TEMP/build.log" ||
+            { echo "::error::the build's summary line does not say local: 0"; exit 1; }
+      # Seven days: a promotion runs from one push and its stages follow within hours; a re-run of a stage reads the same artifact.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: function-zips
+          path: ${{ runner.temp }}/function-zips
+          retention-days: 7
+          if-no-files-found: error
+      - name: Stop buck2
+        if: ${{ always() && vars.FARM_ADDRESS != '' }}
+        run: ./buck2 kill || true

@@ -27,6 +27,20 @@ zig_test(
 )
 
 zig_exe(
+    name = "zip_bundle",
+    src = "zip_bundle.zig",
+    unit_tests = [":zip_bundle_test"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+zig_test(
+    name = "zip_bundle_test",
+    src = "zip_bundle.zig",
+    **_TOOLS
+)
+
+zig_exe(
     name = "zip_check",
     src = "zip_check.zig",
     unit_tests = [":zip_check_test"],
