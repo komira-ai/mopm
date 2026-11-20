@@ -44,6 +44,15 @@ rustls = { version = "=0.23.20", default-features = false, features = ["aws-lc-r
 aws-lc-rs = { version = "=1.11.1", default-features = false, features = ["aws-lc-sys"] }
 aws-lc-sys = { version = "=0.23.1", default-features = false }
 
+# Outbound HTTPS (mopm_aws::http, the GitHub and E2B calls): hyper's client over rustls on the AWS-LC above, HTTP/1.1, the
+# system's roots. All five were in Cargo.lock already, through the SDK's own HTTPS client; these features are a subset of what
+# the SDK builds them with. tokio-rustls is the TLS side of mopm_aws's tests only.
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "tls12", "native-tokio"] }
+http-body-util = { version = "0.1", default-features = false }
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
+
 # Data, errors, logs, time.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -686,7 +686,7 @@ fn scan(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
     let take = cfg.page_size;
     let slice = &rows[from.min(rows.len())..(from + take).min(rows.len())];
     let mut out = json!({"Items": slice, "Count": slice.len(), "ScannedCount": slice.len()});
-    if from + take < rows.len() {
+    if take > 0 && from + take < rows.len() {
         let last = &full[from + take - 1];
         let lek: Item = key_attrs.iter().filter_map(|a| last.get(a).map(|v| (a.clone(), v.clone()))).collect();
         out["LastEvaluatedKey"] = Value::Object(lek);
@@ -740,3 +740,11 @@ fn transact(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, Fail
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "fake_dynamo_tests.rs"]
+mod more_tests;
+
+#[cfg(test)]
+#[path = "fake_dynamo_ops_tests.rs"]
+mod ops_tests;

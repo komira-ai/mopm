@@ -61,6 +61,13 @@ export const tableName = (s: Stage, table: string) => `mopm-${s}-${table}`;
 /** The secret holding a stage's GitHub OAuth app ({"client_id","client_secret"}); created by service/infra/access/lib/oauth-secret.ts. */
 export const oauthSecretName = (s: Stage) => `mopm/${s}/github-oauth`;
 
+/**
+ * The secret holding a stage's edge-origin value: the site distribution sends it to the API as the `x-mopm-edge` origin
+ * header on `/api/*`, so a function can tell a request that came through the site host. Generated when the site stack
+ * creates it (lib/site-stack.ts); never written by hand.
+ */
+export const edgeOriginSecretName = (s: Stage) => `mopm/${s}/edge-origin`;
+
 /** FIFO queues of the publish pipeline (the API stack builds the validate queue's URL from the name, so the names live here). */
 export const validateQueueName = (s: Stage) => `mopm-${s}-validate.fifo`;
 export const validateDlqName = (s: Stage) => `mopm-${s}-validate-dlq.fifo`;
