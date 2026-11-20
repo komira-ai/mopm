@@ -13,9 +13,12 @@ members = [
     "service/lambda/aws",
     "service/lambda/core",
     "service/lambda/e2b",
+    "service/lambda/fn_web_login",
+    "service/lambda/fn_web_session",
     "service/lambda/ports",
     "service/lambda/testing",
     "service/lambda/validate",
+    "service/lambda/web",
     "tools/lambda",
 ]
 
@@ -79,9 +82,11 @@ crc32fast = "1"
 unicode-normalization = "0.1"
 
 # The workspace's own crates.
+mopm_aws = { path = "service/lambda/aws" }
 mopm_core = { path = "service/lambda/core" }
 mopm_ports = { path = "service/lambda/ports" }
 mopm_testing = { path = "service/lambda/testing" }
+mopm_web = { path = "service/lambda/web" }
 
 [profile.dev]
 # An incremental profile cannot be built hermetically (buildrules refuses it).

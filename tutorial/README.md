@@ -1,8 +1,9 @@
 # The interactive tutorial's lessons
 
 Each lesson of the tutorial at `/tutorial/<id>` is one directory here. The site build renders its text and its
-editor from `lesson.md` and `lesson.json`; the sandbox template build copies its `project/` to
-`/home/user/lessons/<id>/` in the sandbox, where the page writes the editable files and runs the lesson's actions.
+editor from `lesson.md` and `lesson.json`; the sandbox template build (`tutorial/template`, README.md there) copies
+its `project/` to `/home/user/lessons/<id>/` in the sandbox and runs `mopm sync --locked` there, and the page writes the
+editable files there and runs the lesson's actions.
 
 ```text
 tutorial/lessons/<id>/

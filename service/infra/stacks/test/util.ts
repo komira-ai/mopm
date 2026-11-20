@@ -4,7 +4,7 @@ import { Template } from 'aws-cdk-lib/assertions';
 import { StageStacks, createStageStacks } from '../lib/app';
 import * as fs from 'fs';
 import { DEFAULT_HANDLER_DIR } from '../lib/api-stack';
-import { Stage, stageConfig } from '../lib/config';
+import { Stage, TutorialConfig, stageConfig } from '../lib/config';
 
 // Dummy values: tests never see a real account or hosted zone. Built at runtime so no 12-digit literal appears
 // in the repository (the hygiene job refuses those).
@@ -17,17 +17,32 @@ export const HANDLER_STUB_DIR = path.join(__dirname, 'fixtures/api-handler');
 /** A stand-in for the site build (site/dist): the pages and an assets/ directory, so tests synthesize without a build. */
 export const SITE_STUB_DIR = path.join(__dirname, 'fixtures/site');
 
-export function build(stage: Stage): StageStacks {
+/** A stand-in for the Rust functions' zips (lambda_zip's output): three tiny zips (`fixture-a`, `fixture-b`, `web-login`), each holding a text `bootstrap`. */
+export const RUST_ZIP_STUB_DIR = path.join(__dirname, 'fixtures/rust-zips');
+
+/** `rustZipDir` turns the Rust functions on (ApiStack); `tutorial` replaces the stage file's `tutorial` block. */
+export function build(stage: Stage, opts: { rustZipDir?: string; tutorial?: TutorialConfig } = {}): StageStacks {
   const app = new App();
   return createStageStacks(
     app,
-    stageConfig(stage, DUMMY_ZONE_ID),
+    'tutorial' in opts ? stageConfig(stage, DUMMY_ZONE_ID, opts.tutorial) : stageConfig(stage, DUMMY_ZONE_ID),
     { account: DUMMY_ACCOUNT, region: 'us-east-1' },
     '1.2.3',
     'c0ffee',
     HANDLER_STUB_DIR,
     SITE_STUB_DIR,
+    opts.rustZipDir,
   );
+}
+
+/** A CloudFormation string (Fn::Join of literals, the partition and attributes) flattened: the partition is `aws`, `Fn::GetAtt` is `<id.Attr>`. */
+export function cfnFlat(v: any): string {
+  if (typeof v === 'string') return v;
+  if (v?.Ref === 'AWS::Partition') return 'aws';
+  if (v?.Ref !== undefined) return `<${v.Ref}>`;
+  if (v?.['Fn::GetAtt']) return `<${(v['Fn::GetAtt'] as string[]).join('.')}>`;
+  if (v?.['Fn::Join']) return (v['Fn::Join'][1] as any[]).map(cfnFlat).join(v['Fn::Join'][0]);
+  throw new Error(`cfnFlat: unexpected value ${JSON.stringify(v)}`);
 }
 
 export const tpl = (stage: Stage) => {

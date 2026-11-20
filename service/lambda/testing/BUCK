@@ -10,9 +10,18 @@ export_file(
     mode = "reference",
 )
 
+# The web session function's grants (tests/fixtures/web_session_grants.json), read the same way. The API stack's test
+# (service/infra/stacks/test/web-session.test.ts) holds the function's role to the same file.
+export_file(
+    name = "web_session_grants.json",
+    src = "tests/fixtures/web_session_grants.json",
+    mode = "reference",
+    visibility = ["//service/infra/stacks:"],
+)
+
 cargo_package(
     path = ".",
-    extra_srcs = [":web_login_grants.json"],
+    extra_srcs = [":web_login_grants.json", ":web_session_grants.json"],
 )
 
 # This package's files, for //:hygiene (a package boundary hides them from the root package's glob).

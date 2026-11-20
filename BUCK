@@ -1075,6 +1075,21 @@ export_file(
     visibility = ["//service/lambda/core:"],
 )
 
+# The website's contract examples, for mopm_web's error envelope test.
+export_file(
+    name = "lambda.contract.v2.web-auth.json",
+    src = "tests/contract/api-v2/web-auth.json",
+    mode = "reference",
+    visibility = ["//service/lambda/web:"],
+)
+
+export_file(
+    name = "lambda.contract.v2.tutorial-sandbox.json",
+    src = "tests/contract/api-v2/tutorial-sandbox.json",
+    mode = "reference",
+    visibility = ["//service/lambda/web:"],
+)
+
 # The unit table `buildrules sync` writes, for the canary's graph_test (tools/lambda/canary/graph_test.rs): TLS on AWS-LC, no ring.
 export_file(
     name = "lambda.unit_table",
@@ -1360,6 +1375,20 @@ filegroup(
     visibility = ["//site:"],
 )
 
+# The tutorial template's tests (tutorial/template/BUCK) read VERSION, the base of the mopm release the template
+# installs, and every lesson the template copies, staged as `tutorial/lessons`.
+export_file(
+    name = "tutorial_template.VERSION",
+    src = "VERSION",
+    visibility = ["//tutorial/template:"],
+)
+
+filegroup(
+    name = "tutorial_template_lessons",
+    srcs = {f[len("tutorial/lessons/"):]: f for f in glob(["tutorial/lessons/**"])},
+    visibility = ["//tutorial/template:"],
+)
+
 # The scaffold golden of `mopm new --lib`, staged as `tests/new/lib`.
 filegroup(
     name = "site_new_lib",
@@ -1393,12 +1422,16 @@ _LINT_PACKAGES = [
     "service/lambda/aws",
     "service/lambda/core",
     "service/lambda/e2b",
+    "service/lambda/fn_web_login",
+    "service/lambda/fn_web_session",
     "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",
+    "service/lambda/web",
     "site",
     "tools/lambda",
     "tools/node",
+    "tutorial/template",
 ]
 
 _ROOT_FILES = glob(["**", ".github/**"]) + _LINT_DOTFILES

@@ -41,6 +41,9 @@ export const TABLES: TableDef[] = [
   { id: 'tokens', pk: 'token_hash', ttl: 'expires_at', gsi: { name: 'by_github_id', pk: 'github_id', sk: 'id' } },
   // A started device login (CLI sign-in), keyed by the hash of the code the CLI holds. Lives ten minutes; TTL cleans up.
   { id: 'device_logins', pk: 'id', ttl: 'expires_at' },
+  // A started web sign-in (docs/design/tutorial-sign-in.md, section 6), keyed by the hash of the id in the browser's login
+  // cookie (service/lambda/ports/src/web_login.rs). Lives ten minutes; TTL cleans up, and the function checks expiry itself.
+  { id: 'web_logins', pk: 'id', ttl: 'expires_at' },
   { id: 'trusted_publishers', pk: 'name', sk: 'publisher' },
   // Owner namespaces (docs/design/namespaces.md): keyed by the namespace string, bound to a GitHub numeric id. A login makes
   // the user's own (service/api/src/auth/namespaces.ts); the index lists an account's namespaces for whoami.
@@ -51,7 +54,8 @@ export const TABLES: TableDef[] = [
   { id: 'audit', pk: 'name', sk: 'ts_seq', appendOnly: true },
   { id: 'reserved_names', pk: 'name' },
   // Publish pipeline. `publishes` holds publish records, the per-version commit lock and the rate counters (told apart by
-  // key prefix; the TTL attribute cleans up the counters). `config` holds runtime switches, e.g. {key: 'read_only', value: true}.
+  // key prefix; the TTL attribute cleans up the counters). `config` holds runtime switches, e.g. {key: 'read_only', value: true},
+  // and the `stage_settings` item the API stack writes for the Rust functions (lib/stage-settings.ts).
   //
   // The index `by_sweep` is sparse and holds the headers of groups that are not over (`sweep_pk` is 'active' while a group is
   // open, validating or committed and not visible, and the header has none once it is over), ordered by `sweep_at`: the

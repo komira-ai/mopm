@@ -94,3 +94,15 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+  - package-ecosystem: npm
+    directory: /tutorial/template
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      dev-tooling:
+        patterns: ["typescript", "ts-jest", "ts-node", "jest", "@types/*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
