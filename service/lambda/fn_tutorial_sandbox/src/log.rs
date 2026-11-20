@@ -2,16 +2,27 @@
 //! no tracing subscriber is installed. A line never holds the E2B key, the sandbox's access token, the session token,
 //! the CSRF value or a cookie: it names the outcome, a reason class and the ids that are ours.
 
-use std::sync::Arc;
+use std::io::Write;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde_json::Value;
 
 /// Where a line goes: stdout in the function, a recorder in a test.
 pub type Sink = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// Writes a line to stdout.
+/// Writes each line to `out`, followed by a newline, and flushes it, so a line is out before the answer is posted. A
+/// write that fails is dropped: the answer does not depend on the log.
+pub fn writer_sink(out: Box<dyn Write + Send>) -> Sink {
+    let out = Mutex::new(out);
+    Arc::new(move |line| {
+        let mut out = out.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ = writeln!(out, "{line}").and_then(|()| out.flush());
+    })
+}
+
+/// Writes each line to stdout ([`writer_sink`]).
 pub fn stdout_sink() -> Sink {
-    Arc::new(|line| println!("{line}"))
+    writer_sink(Box::new(std::io::stdout()))
 }
 
 fn text(s: &str) -> String {

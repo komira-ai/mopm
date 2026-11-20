@@ -4,7 +4,7 @@ use mopm_ports::env::Clock;
 
 use crate::args::{ArgsError, Options};
 use crate::clock::SystemClock;
-use crate::log::{self, stdout_sink};
+use crate::log::{self, writer_sink};
 use crate::start::{Endpoints, Env, StartError};
 use crate::test_support::*;
 
@@ -115,9 +115,58 @@ fn the_system_clock_is_after_the_start_of_this_work() {
     assert!(SystemClock.now() > floor);
 }
 
+/// A writer whose bytes a test reads back.
+#[derive(Clone, Default)]
+struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("the buffer").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 #[test]
-fn the_stdout_sink_takes_a_line() {
-    (stdout_sink())(&log::unavailable("req-sink", "secret_missing"));
+fn the_writer_sink_writes_each_line_exactly_with_a_newline() {
+    let out = Captured::default();
+    let sink = writer_sink(Box::new(out.clone()));
+    sink(&log::unavailable("req-sink", "secret_missing"));
+    sink(&log::refused("req-sink-2", "csrf_failed"));
+    assert_eq!(
+        String::from_utf8(out.0.lock().expect("the buffer").clone()).expect("utf-8"),
+        concat!(
+            r#"{"event":"tutorial_sandbox","outcome":"unavailable","reason":"secret_missing","request_id":"req-sink"}"#,
+            "\n",
+            r#"{"event":"tutorial_sandbox","outcome":"refused","reason":"csrf_failed","request_id":"req-sink-2"}"#,
+            "\n"
+        )
+    );
+}
+
+/// A writer that refuses every write, and counts the tries.
+#[derive(Clone, Default)]
+struct Refusing(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl std::io::Write for Refusing {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(std::io::Error::other("closed"))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_line_the_writer_refuses_is_tried_once_and_dropped_without_failing_the_request() {
+    let out = Refusing::default();
+    let sink = writer_sink(Box::new(out.clone()));
+    sink(&log::internal("req-sink"));
+    sink(&log::internal("req-sink-2"));
+    assert_eq!(out.0.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 
 #[test]
