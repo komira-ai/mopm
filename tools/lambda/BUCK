@@ -26,7 +26,7 @@ zig_test(
     **_TOOLS
 )
 
-zig_exe(
+zig_exe(  # buck-only: no build.zig counterpart (the Lambda tools are Buck2 targets only)
     name = "zip_bundle",
     src = "zip_bundle.zig",
     unit_tests = [":zip_bundle_test"],
@@ -34,9 +34,16 @@ zig_exe(
     **_TOOLS
 )
 
-zig_test(
+zig_test(  # buck-only: no build.zig counterpart (the Lambda tools are Buck2 targets only)
     name = "zip_bundle_test",
     src = "zip_bundle.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: no build.zig counterpart; it runs the built :zip_bundle
+    name = "zip_bundle_cli_test",
+    src = "zip_bundle_cli_test.zig",
+    env_tools = {"ZIP_BUNDLE": ":zip_bundle"},
     **_TOOLS
 )
 

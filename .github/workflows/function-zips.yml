@@ -3,7 +3,8 @@
 # stage's deploy downloads that artifact and checks each deployed function's CodeSha256 against the sums, so beta, gamma and prod run
 # the same bytes.
 #
-# The farm is connected as in farm.yml (the same pinned farm-connect, the same repository variables). Unlike farm.yml this file is only
+# The farm is connected as in farm.yml (the same pinned farm-connect, the same repository variables); the worker properties it writes
+# under [komira_re] reach buildrules through the [buildrules_re] mapping in .buckconfig. Unlike farm.yml this file is only
 # ever called by promote.yml, so with no farm configured the build FAILS: a deploy must never go out with zips nothing built. It holds no
 # secret and no environment; its id-token grant is for farm-connect alone. The hygiene and workflow lints (//:hygiene, //:workflows)
 # hold it to that.
@@ -46,37 +47,12 @@ jobs:
           farm-instance: ${{ vars.FARM_INSTANCE }}
           farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
           tls: ${{ vars.FARM_TLS || 'false' }}
-      # farm-connect writes the worker property sets under [komira_re]; buildrules reads them from [buildrules_re] of this checkout's
-      # .buckconfig.local. Copy the keys across without printing them (the values are the farm's).
-      - name: hand the worker properties to buildrules
-        if: ${{ vars.FARM_ADDRESS != '' }}
-        run: |
-          set -eu
-          src="$HOME/.buckconfig.d/farm.buckconfig"
-          {
-            echo "[buildrules_re]"
-            awk '/^\[/ { keep = ($0 == "[komira_re]"); next } keep' "$src"
-          } >> .buckconfig.local
-      # With no farm configured buck2 builds on the runner: refuse that.
-      - name: the buckconfig names the farm
-        if: ${{ vars.FARM_ADDRESS != '' }}
-        run: |
-          for key in linux_x86_64_properties; do
-            ./buck2 audit config "buildrules_re.$key" --style json | grep -q '": *"[^"]' ||
-              { echo "the buckconfig sets no [buildrules_re] $key: this job would build on the runner"; exit 1; }
-          done
-      # The target's one output is a directory: web-login.zip, web-session.zip, tutorial-sandbox.zip and sums.
+      # The target's one output is a directory: web-login.zip, web-session.zip, tutorial-sandbox.zip and sums. --remote-only makes buck2
+      # reject any action that cannot run on the farm, so nothing runs on the runner; with no worker property set (no farm) the platform
+      # does not load and the build fails.
       - name: buck2 build the function zips
         if: ${{ vars.FARM_ADDRESS != '' }}
-        run: |
-          set -o pipefail
-          ./buck2 build //service/infra/stacks:function_zips --out "$RUNNER_TEMP/function-zips" 2>&1 | tee "$RUNNER_TEMP/build.log"
-      # The summary line counts the actions run on this machine: all must have run on the farm or come from its cache.
-      - name: no action ran on the runner
-        if: ${{ vars.FARM_ADDRESS != '' }}
-        run: |
-          grep -Eq 'Commands: [0-9]+ \(.*local: 0\)' "$RUNNER_TEMP/build.log" ||
-            { echo "::error::the build's summary line does not say local: 0"; exit 1; }
+        run: ./buck2 build --remote-only //service/infra/stacks:function_zips --out "$RUNNER_TEMP/function-zips"
       # Seven days: a promotion runs from one push and its stages follow within hours; a re-run of a stage reads the same artifact.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

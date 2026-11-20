@@ -3,8 +3,8 @@
 //!
 //! promote.yml: a `function-zips` job with no needs that calls function-zips.yml, passes nothing (no secret, no input) and holds exactly
 //! id-token write and contents read; every deploy call is given that artifact's name.
-//! function-zips.yml: a call-only workflow with one job that fails without a farm, builds the one target on the farm, checks that no
-//! action ran on the runner, and uploads the directory as the artifact `function-zips` with a retention of 1 to 7 days.
+//! function-zips.yml: a call-only workflow with one job that fails without a farm, builds the one target on the farm with --remote-only (no
+//! action runs on the runner), every step one line (B4), and uploads the directory as the artifact `function-zips` with a retention of 1 to 7 days.
 //! deploy.yml: a call-only workflow whose credential job downloads that artifact, checks it against its sums before the deploy, gives
 //! the directory to CDK as rustZipDir, and compares each deployed function's CodeSha256 with the sums after it, with nothing able to
 //! skip or fail quietly; no step of it builds a zip.
@@ -20,7 +20,7 @@ const prefix = "workflow-lint: ";
 /// The artifact's name, and the job of promote.yml that builds it.
 pub const artifact = "function-zips";
 const zips_dir = "${{ runner.temp }}/function-zips";
-const build_cmd = "./buck2 build //service/infra/stacks:function_zips --out \"$RUNNER_TEMP/function-zips\"";
+const build_cmd = "./buck2 build --remote-only //service/infra/stacks:function_zips --out \"$RUNNER_TEMP/function-zips\"";
 const check_zips_cmd = "npx ts-node --prefer-ts-exts bin/function-zips.ts check-zips --zip-dir \"$ZIP_DIR\"";
 const check_deployed_cmd = "npx ts-node --prefer-ts-exts bin/function-zips.ts check-deployed --stage \"$STAGE\" --zip-dir \"$ZIP_DIR\" --account \"$AWS_ACCOUNT_ID\" --region \"$AWS_DEFAULT_REGION\"";
 const rust_context = "--context \"rustZipDir=${ZIP_DIR}\"";
@@ -105,21 +105,19 @@ fn buildProblems(a: Allocator, text: []const u8, out: *Out) !void {
     if (!c.isStr(c.get(job, "if"), "github.ref == 'refs/heads/main'")) try c.problem(a, out, prefix ++ f ++ ": the job must say `if: github.ref == 'refs/heads/main'` (no farm login, no build, off main)", .{});
 
     var build: ?usize = null;
-    var local0 = false;
     var upload: ?usize = null;
     var refuses = false;
     for (stepsOf(job), 0..) |st, i| {
         if (c.get(st, "continue-on-error") != null) try c.problem(a, out, prefix ++ f ++ ": step {d} must not set continue-on-error", .{i});
         const run = runOf(st);
         if (has(run, build_cmd) and build == null) build = i;
-        if (has(run, "local: 0")) local0 = true;
+        if (std.mem.indexOfScalar(u8, std.mem.trim(u8, run, " \r\n\t"), '\n') != null) try c.problem(a, out, prefix ++ f ++ ": step {d} runs more than one line; every step is one command (B4)", .{i});
         if (usesOf(st, "actions/upload-artifact") and upload == null) upload = i;
         // The step for an unset FARM_ADDRESS: with no farm nothing built the zips, so it fails.
         if (has(c.str(c.get(st, "if")) orelse "", "FARM_ADDRESS == ''") and has(run, "exit 1")) refuses = true;
     }
     if (!refuses) try c.problem(a, out, prefix ++ f ++ ": no step fails (exit 1) when FARM_ADDRESS is not set: a deploy must never go out unbuilt", .{});
     if (build == null) try c.problem(a, out, prefix ++ f ++ ": no step runs `" ++ build_cmd ++ "`", .{});
-    if (!local0) try c.problem(a, out, prefix ++ f ++ ": no step checks that the build's summary line says `local: 0`", .{});
     const up = upload orelse return c.problem(a, out, prefix ++ f ++ ": no step uploads the artifact with actions/upload-artifact", .{});
     if (build) |b| if (up < b) try c.problem(a, out, prefix ++ f ++ ": the upload (step {d}) comes before the build (step {d})", .{ up, b });
     const with = c.get(stepsOf(job)[up], "with");

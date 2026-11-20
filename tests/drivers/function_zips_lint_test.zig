@@ -93,12 +93,20 @@ test "function-zips.yml: the job runs on main alone" {
     try expect("function-zips.yml", "    if: github.ref == 'refs/heads/main'\n", "    if: always()\n", &.{want});
 }
 
-test "function-zips.yml: with no farm it fails, builds the one target, and checks that nothing ran on the runner" {
+test "function-zips.yml: with no farm it fails, builds the one target remote-only, and every step is one line" {
+    const want_build = "function-zips.yml: no step runs `./buck2 build --remote-only //service/infra/stacks:function_zips --out \"$RUNNER_TEMP/function-zips\"`";
     try expect("function-zips.yml", "Set it, or nothing deploys.\"; exit 1\n", "Set it, or nothing deploys.\"\n", &.{"function-zips.yml: no step fails (exit 1) when FARM_ADDRESS is not set: a deploy must never go out unbuilt"});
-    try expect("function-zips.yml", build_target, "//service/infra/stacks:site --out", &.{"function-zips.yml: no step runs `./buck2 build //service/infra/stacks:function_zips --out \"$RUNNER_TEMP/function-zips\"`"});
-    try expect("function-zips.yml", "--out \"$RUNNER_TEMP/function-zips\" 2>&1", "--out \"$RUNNER_TEMP/zips\" 2>&1", &.{"function-zips.yml: no step runs `./buck2 build //service/infra/stacks:function_zips --out \"$RUNNER_TEMP/function-zips\"`"});
-    try expect("function-zips.yml", "          grep -Eq 'Commands: [0-9]+ \\(.*local: 0\\)' \"$RUNNER_TEMP/build.log\" ||\n            { echo \"::error::the build's summary line does not say local: 0\"; exit 1; }\n", "          true\n", &.{"function-zips.yml: no step checks that the build's summary line says `local: 0`"});
-    try expect("function-zips.yml", "      - name: Stop buck2\n", "      - name: Stop buck2\n        continue-on-error: true\n", &.{"function-zips.yml: step 8 must not set continue-on-error"});
+    try expect("function-zips.yml", build_target, "//service/infra/stacks:site --out", &.{want_build});
+    try expect("function-zips.yml", "--out \"$RUNNER_TEMP/function-zips\"\n", "--out \"$RUNNER_TEMP/zips\"\n", &.{want_build});
+    try expect("function-zips.yml", "build --remote-only //", "build //", &.{want_build});
+    try expect("function-zips.yml", "      - name: Stop buck2\n", "      - name: Stop buck2\n        continue-on-error: true\n", &.{"function-zips.yml: step 5 must not set continue-on-error"});
+}
+
+test "function-zips.yml: no step runs more than one line" {
+    const want3 = "function-zips.yml: step 3 runs more than one line; every step is one command (B4)";
+    try expect("function-zips.yml", "        run: ./buck2 build --remote-only", "        run: |\n          ./buck2 kill\n          ./buck2 build --remote-only", &.{want3});
+    try expect("function-zips.yml", "        run: ./buck2 build --remote-only //service/infra/stacks:function_zips --out \"$RUNNER_TEMP/function-zips\"\n", "        run: |\n          ./buck2 build --remote-only //service/infra/stacks:function_zips --out \"$RUNNER_TEMP/function-zips\"\n          ./buck2 kill\n", &.{want3});
+    try expect("function-zips.yml", "Set it, or nothing deploys.\"; exit 1\n", "Set it, or nothing deploys.\"\n          exit 1\n", &.{"function-zips.yml: step 1 runs more than one line; every step is one command (B4)"});
 }
 
 test "function-zips.yml: the artifact is uploaded after the build, under the name every deploy downloads, for one to seven days" {
@@ -109,7 +117,7 @@ test "function-zips.yml: the artifact is uploaded after the build, under the nam
     try expect("function-zips.yml", "          name: function-zips\n", "          name: zips\n", &.{"function-zips.yml: the upload must set name: function-zips"});
     try expect("function-zips.yml", "          path: ${{ runner.temp }}/function-zips\n", "          path: ${{ runner.temp }}\n", &.{"function-zips.yml: the upload must set path: ${{ runner.temp }}/function-zips"});
     try expect("function-zips.yml", "if-no-files-found: error\n", "if-no-files-found: warn\n", &.{"function-zips.yml: the upload must set if-no-files-found: error"});
-    try expect("function-zips.yml", "      - name: the farm is not configured\n", upload_step ++ "      - name: the farm is not configured\n", &.{"function-zips.yml: the upload (step 1) comes before the build (step 6)"});
+    try expect("function-zips.yml", "      - name: the farm is not configured\n", upload_step ++ "      - name: the farm is not configured\n", &.{"function-zips.yml: the upload (step 1) comes before the build (step 4)"});
 }
 
 // ---- deploy.yml --------------------------------------------------------------------------
