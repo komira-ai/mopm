@@ -487,14 +487,26 @@ A group that is stuck at step 2 is rolled forward (the sweeper, or a redrive) or
 ## Deleting the global names (held)
 
 Once packages live in namespaces (docs/design/namespaces.md, section 12.4), the flat names are deleted by a held tool,
-`service/api/src/ops/delete-global-names/`, built by `npm run build` in `service/api` to `dist/ops/delete-global-names/bin.js`. It
-runs with the stage's takedown role (on beta and gamma, the takedown or the cleanup role): the only roles the tables and the channel
-bucket let delete. Every setting is a flag; the AWS credentials are the SDK's standard variables.
+`service/api/src/ops/delete-global-names/`, built by `npm run build` in `service/api` to `dist/ops/delete-global-names/bin.js`. Every
+setting is a flag; the AWS credentials are the SDK's standard variables.
 
 ```text
 node dist/ops/delete-global-names/bin.js --stage=<beta|gamma|prod> --bucket=<channel bucket> --distribution=<channel CloudFront id> \
   --config-url=https://<api host>/index/config.json [--region=<region>] [--apply=<digest>]
 ```
+
+Without npm, Buck2 builds the same three things the command needs: the bundle (`//service/api:dist`), the `node_modules` it
+leaves the AWS SDK's DynamoDB packages to (`//service/api:node_modules`) and the pinned node (`//tools/node:node`). Build them with
+`--materializations=all --show-full-output` (a farm cache hit is otherwise not downloaded). Node looks for `node_modules` next to the
+script, so stage the two together in a directory of the workspace scratch directory: copy `<dist>/ops/delete-global-names/bin.js`
+into it, link `<node_modules>` into it as `node_modules`, and run `<node>/bin/node <that directory>/bin.js ...` from there.
+
+The dry run only reads (the tables, the bucket's listing and `config.json`), so any session that can read them runs it. With an SSO
+profile, `aws configure export-credentials --profile <profile> --format env` gives the SDK's variables. `--apply` deletes, and only
+the stage's takedown role (on beta and gamma, the takedown or the cleanup role) may: the tables and the channel bucket deny every
+delete to any other principal. No stack creates those roles (the policies name them only); a stage has one only once its owner
+created it. An `--apply` run as any other role stops at its first delete (exit status 1); what came before it stays (the first
+name's audit record, and when that name has no version 1 index file, its rewritten root repodata and the CDN invalidation of it).
 
 - **Without `--apply` it is a dry run and changes nothing.** It lists the work from the stage: every package whose name has no
   namespace, with its versions, owners and trusted publishers, its `.conda` files at the bucket's root (`<subdir>/mojo-<name>-*.conda`)
