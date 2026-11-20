@@ -24,7 +24,10 @@ test.each([
   'conda.mopm.dev',
   'mopm.dev.example',
   'dev.mopm.dev',
-  'localhost',
+  'localhost.',
+  '127.0.0.2',
+  '[::1]',
+  '0.0.0.0',
   '',
   'constructor', // inherited Object keys must not count
   '__proto__',
@@ -37,4 +40,10 @@ test.each([
 test.each(['mopm.dev', 'beta.mopm.dev', 'gamma.mopm.dev'])('%s: the API base is version 2, the one with full names', (host) => {
   expect(apiBase(host)).toMatch(/\/api\/v2$/);
   expect(apiBase(host)).not.toContain('/api/v1');
+});
+
+// The local preview (tools/preview.ts) serves the built site on 127.0.0.1 and answers the API on that same origin.
+test.each(['127.0.0.1', 'localhost'])('%s, the local preview, has the API on its own origin and no conda channel', (host) => {
+  expect(apiBase(host)).toBe('/api/v2');
+  expect(condaBase(host)).toBeNull();
 });
