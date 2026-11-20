@@ -583,12 +583,14 @@ describe('the daily limits a stage may tune', () => {
   };
 
   test('the claim counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
-    const env = handlerEnv({ claimRatePerAccountPerDay: 12, claimRatePerTokenPerDay: 3 });
+    const env = handlerEnv({ claimRatePerAccountPerDay: 12, claimRatePerTokenPerDay: 3, claimRatePerCiNamespacePerDay: 77 });
     expect(env.MOPM_CLAIM_RATE_PER_ACCOUNT_DAY).toBe('12');
     expect(env.MOPM_CLAIM_RATE_PER_TOKEN_DAY).toBe('3');
+    expect(env.MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY).toBe('77');
     const none = handlerEnv();
     expect(none.MOPM_CLAIM_RATE_PER_ACCOUNT_DAY).toBeUndefined();
     expect(none.MOPM_CLAIM_RATE_PER_TOKEN_DAY).toBeUndefined();
+    expect(none.MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY).toBeUndefined();
   });
 
   test('the group counters reach the handler as the environment variables the service reads, and are absent when not set', () => {

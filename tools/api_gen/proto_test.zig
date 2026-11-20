@@ -526,3 +526,24 @@ test "refused: rpc declarations" {
     try bad(pre ++ "  rpc R(Req) returns (Req) { option (operation) = {}; option (operation) = {}; }\n}\n", "t.proto:7: option '(operation)' is set twice");
     try bad(head ++ "service S { option (api) = {base_path: \"/a\"};\n rpc R(google.protobuf.Empty) returns (google.protobuf.Empty) { option (google.api.http) = { get: \"/a/{x}\" }; }\n}\n", "t.proto:4: rpc 'R': path parameter 'x' is not a field of 'google.protobuf.Empty'");
 }
+
+test "browser, response headers, a cookie and response_only are read from the options" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const text = head ++ "message Req { string id = 1; }\nservice S {\n" ++
+        "  option (api) = { base_path: \"/api/v2\"\n" ++
+        "    security_schemes { name: \"web\" cookie: \"sid\" description: \"c\" }\n" ++
+        "    headers: [{name: \"Where\" wire: \"Location\" type: \"string\" response_only: true}] };\n" ++
+        "  rpc R(Req) returns (google.protobuf.Empty) {\n    option (google.api.http) = { get: \"/api/v2/x/{id}\" };\n" ++
+        "    option (operation) = { browser: true responses: [{status: 302 description: \"go\" headers: [\"Where\"]}] };\n  }\n" ++
+        "  rpc Q(Req) returns (google.protobuf.Empty) {\n    option (google.api.http) = { get: \"/api/v2/y/{id}\" };\n" ++
+        "    option (operation) = { responses: [{status: 204 description: \"ok\"}] };\n  }\n}\n";
+    const api = try parseOk(arena.allocator(), &.{.{ .path = "t.proto", .text = text }});
+    try testing.expectEqualStrings("sid", api.security_schemes[0].cookie);
+    try testing.expectEqualStrings("", api.security_schemes[0].bearer_format);
+    try testing.expect(api.headers[0].response_only and !api.headers[0].on_success);
+    try testing.expect(api.rpcs[0].browser and !api.rpcs[1].browser);
+    try testing.expectEqual(@as(usize, 1), api.rpcs[0].responses[0].headers.len);
+    try testing.expectEqualStrings("Where", api.rpcs[0].responses[0].headers[0]);
+    try testing.expectEqual(@as(usize, 0), api.rpcs[1].responses[0].headers.len);
+}

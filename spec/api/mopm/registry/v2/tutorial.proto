@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package mopm.registry.v2;
+
+import "mopm/registry/v2/types.proto";
+import "mopm/registry/v2/options.proto";
+
+// A sandbox of the interactive tutorial on E2B, created with internet access off. The browser reaches it with E2B's
+// JavaScript SDK at `https://<port>-<sandbox_id>.<domain>`, sending `access_token`; it never needs our E2B API key.
+message TutorialSandbox {
+  // E2B's id of the sandbox.
+  string sandbox_id = 1 [(field) = {required: true, min_length: 1}];
+  // E2B's access token of this sandbox: it opens this one sandbox and nothing else, until the sandbox ends. Never store it.
+  string access_token = 2 [(field) = {required: true, min_length: 1}];
+  // The version of E2B's agent in the sandbox; the SDK chooses its protocol by it.
+  string envd_version = 3 [(field) = {required: true, min_length: 1}];
+  // The base domain of the sandbox's address, such as `e2b.app`.
+  string domain = 4 [(field) = {required: true, min_length: 1}];
+  // When E2B ends the sandbox, 30 minutes after it was created. After it, ask for a new one.
+  Timestamp expires_at = 5 [(field) = {required: true}];
+}

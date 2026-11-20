@@ -12,6 +12,7 @@ import "mopm/registry/v2/tokens.proto";
 import "mopm/registry/v2/namespaces.proto";
 import "mopm/registry/v2/packages.proto";
 import "mopm/registry/v2/publish.proto";
+import "mopm/registry/v2/tutorial.proto";
 
 // This file is the contract between the `mopm` command line tool and the
 // hosted registry at mopm.dev for `/api/v2`. It is served beside
@@ -54,8 +55,8 @@ import "mopm/registry/v2/publish.proto";
 // - A path that is not an operation of this API, or a method the path does
 //   not take, is answered `route_not_found` (404). It is never a 400: the
 //   request was well formed, there is just nothing there.
-// - Writes need `Authorization: Bearer <token>`. Reads and installs never
-//   need a token.
+// - Writes need `Authorization: Bearer <token>`, except the website's
+//   operations (below). Reads and installs never need a token.
 // - A package is named by its full name `<namespace>/<name>`; in a path it is
 //   the two segments `{namespace}` and `{name}`. The namespace is a GitHub
 //   login in lower case (at most 39 characters), the name is a normalised
@@ -99,6 +100,16 @@ import "mopm/registry/v2/publish.proto";
 // prefix lets secret scanners recognise them. There are four ways a bearer
 // token is accepted, named below as security schemes. A request with no token
 // where one is required gets `token_missing`.
+//
+// ## The website's operations
+//
+// Five operations are the website's, not the command line's: `startWebLogin` and `completeWebLogin` (a sign-in with
+// GitHub in the browser), `getWebSession`, `webLogout` and `createTutorialSandbox`. They are served on the site's own
+// host (`https://<site>/api/v2/...`, which forwards `/api/*` to the API), not straight at `api.<site>`. Their credential is
+// the cookie `__Host-mopm_session` (the `webSession` scheme), never a bearer token: an `Authorization` header on them is
+// `invalid_request`, and no other operation reads the cookie. A `POST` with the cookie also needs `X-Mopm-CSRF` (the
+// `csrf` of `getWebSession`), the site's exact `Origin` and `Sec-Fetch-Site: same-origin`, or it is `csrf_failed`. No
+// command of the command line calls them.
 service Registry {
   option (api) = {
     title: "mopm registry API"
@@ -126,6 +137,7 @@ service Registry {
     tags: "namespaces"
     tags: "me"
     tags: "meta"
+    tags: "tutorial"
     security_schemes {
       name: "userToken"
       bearer_format: "mopm token"
@@ -157,6 +169,14 @@ service Registry {
         "`abortGroup`); `publishToken` is accepted there too. No other operation takes it: a commit needs `publishToken`\n"
         "and a yank needs `yankToken` or `publishToken`."
     }
+    security_schemes {
+      name: "webSession"
+      cookie: "__Host-mopm_session"
+      description: "The website's session, the cookie `completeWebLogin` sets (`Secure; HttpOnly; Path=/; SameSite=Lax`, seven days).\n"
+        "Accepted only by `getWebSession`, `webLogout` and `createTutorialSandbox`, on the site's host. A `POST` also sends\n"
+        "`X-Mopm-CSRF: <csrf of getWebSession>`, with the site's `Origin` and `Sec-Fetch-Site: same-origin`; otherwise\n"
+        "`csrf_failed`. A missing, expired or revoked session is `session_required`."
+    }
     headers {
       name: "RequestId"
       wire: "x-mopm-request-id"
@@ -169,10 +189,29 @@ service Registry {
     headers {
       name: "RetryAfter"
       wire: "retry-after"
-      description: "Seconds to wait before retrying. Present on `rate_limited` and `read_only_mode`."
+      description: "Seconds to wait before retrying. Present on `rate_limited`, `read_only_mode` and `tutorial_unavailable`."
       type: "integer"
       minimum: 0
       on_success: false
+    }
+    headers {
+      name: "Location"
+      wire: "location"
+      description: "Where a redirect of the website's sign-in sends the browser."
+      required: true
+      type: "string"
+      min_length: 1
+      response_only: true
+    }
+    headers {
+      name: "SetCookie"
+      wire: "set-cookie"
+      description: "The website's sign-in and sign-out set or clear their cookies (`__Host-mopm_login`, `__Host-mopm_session`) here; an\n"
+        "answer that sets one and clears the other carries the header twice."
+      required: true
+      type: "string"
+      min_length: 1
+      response_only: true
     }
     error_response: "Any error. The `code` is stable (see `x-mopm-errors`); the HTTP status\n"
       "is the one the catalogue lists for that code."
@@ -776,6 +815,93 @@ service Registry {
       responses { status: 409 description: "`invalid_transition`: the version's state does not allow this change." error: true }
       commands { name: "yank" args: "namespace/name" args: "version" set: "yanked=true" summary: "Yank a version: new resolutions no longer pick it." }
       commands { name: "unyank" args: "namespace/name" args: "version" set: "yanked=false" summary: "Restore a yanked version." }
+    };
+  }
+
+  // The website's sign-in with GitHub starts here: a link of the site, followed by the browser. Only a top-level
+  // navigation is taken (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, `Sec-Fetch-Site` `none` or
+  // `same-origin`); any other request is `invalid_request`. The answer sets the login cookie `__Host-mopm_login` (ten
+  // minutes) and sends the browser to GitHub's authorization page, asking for `read:user`.
+  rpc StartWebLogin(StartWebLoginParams) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      get: "/api/v2/auth/web/start"
+    };
+    option (operation) = {
+      tags: ["auth"]
+      summary: "Start the website's sign-in with GitHub."
+      responses { status: 302 description: "To GitHub's authorization page, with the login cookie set." headers: ["Location", "SetCookie"] }
+      browser: true
+    };
+  }
+
+  // GitHub sends the browser back here. The login that `startWebLogin` started is used once: the account and its user
+  // namespace are made as `pollDeviceLogin` makes them, with the same two-factor rule, the session cookie
+  // `__Host-mopm_session` is set (seven days) and the browser is sent to the page `return_to` named. A sign-in that fails
+  // (GitHub refused, two-factor authentication is off, the login expired or was used, GitHub did not answer) is also
+  // a redirect, to `/tutorial?error=<code>` with the code `access_denied`, `two_factor_required`, `login_expired` or
+  // `unavailable`, and sets no session. Every answer clears the login cookie.
+  rpc CompleteWebLogin(CompleteWebLoginParams) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      get: "/api/v2/auth/web/callback"
+    };
+    option (operation) = {
+      tags: ["auth"]
+      summary: "Finish the website's sign-in with GitHub."
+      responses { status: 303 description: "To the page the sign-in named, signed in, or to `/tutorial?error=<code>`." headers: ["Location", "SetCookie"] }
+      browser: true
+    };
+  }
+
+  // Who is signed in to the website, and the CSRF value of the session. Signed out (no session cookie, or an expired or
+  // revoked session) is `session_required`.
+  rpc GetWebSession(google.protobuf.Empty) returns (WebSession) {
+    option (google.api.http) = {
+      get: "/api/v2/auth/web/session"
+    };
+    option (operation) = {
+      tags: ["auth"]
+      summary: "The user signed in to the website."
+      security: ["webSession"]
+      responses { status: 200 description: "The signed-in user." }
+      responses { status: 401 description: "`session_required`: signed out." error: true }
+      browser: true
+    };
+  }
+
+  // Signs the website out: the session is revoked and its cookie cleared. The command line's sessions and API tokens are
+  // not touched, and a tutorial sandbox the page holds runs until its `expires_at`.
+  rpc WebLogout(google.protobuf.Empty) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      post: "/api/v2/auth/web/logout"
+    };
+    option (operation) = {
+      tags: ["auth"]
+      summary: "Sign out of the website."
+      security: ["webSession"]
+      responses { status: 204 description: "Signed out, with the session cookie cleared." headers: ["SetCookie"] }
+      responses { status: 401 description: "`session_required`: signed out already." error: true }
+      responses { status: 403 description: "`csrf_failed`: `X-Mopm-CSRF`, `Origin` or `Sec-Fetch-Site` is wrong." error: true }
+      browser: true
+    };
+  }
+
+  // Creates an E2B sandbox for the signed-in user, with internet access off, and answers what the browser needs to reach
+  // it with E2B's SDK. The request has no body; one is `invalid_request`. There is no limit on how many a user asks for:
+  // a sandbox ends at its `expires_at`, and the page asks for a new one. E2B refusing or not answering is
+  // `tutorial_unavailable`, with `Retry-After`. The answer is sent with `Cache-Control: no-store`.
+  rpc CreateTutorialSandbox(google.protobuf.Empty) returns (TutorialSandbox) {
+    option (google.api.http) = {
+      post: "/api/v2/tutorial/sandbox"
+    };
+    option (operation) = {
+      tags: ["tutorial"]
+      summary: "Create a sandbox of the interactive tutorial."
+      security: ["webSession"]
+      responses { status: 201 description: "The sandbox. `access_token` opens this sandbox only." }
+      responses { status: 401 description: "`session_required`: signed out." error: true }
+      responses { status: 403 description: "`csrf_failed`: `X-Mopm-CSRF`, `Origin` or `Sec-Fetch-Site` is wrong." error: true }
+      responses { status: 503 description: "`tutorial_unavailable`: E2B refused the sandbox or did not answer." error: true headers: ["RetryAfter"] }
+      browser: true
     };
   }
 }

@@ -46,15 +46,17 @@ Each file is `{"cases": [...]}`. A case:
   the operation does not accept, an error code or message off the catalogue.
 - `malformed_request: true` is for error answers to input that cannot satisfy
   the request schema (`invalid_name`, `invalid_version`, `payload_too_large`):
-  the request values are not schema-checked, the response still is.
+  the request values are not schema-checked, the response still is. It also
+  lifts two checks that would refuse the input by its nature: a body on an operation that takes none, and an `auth`
+  scheme the operation does not accept (a bearer token on a cookie route). An unknown scheme name is still a problem.
 
 What `//:contract` enforces on every case: path and query parameters are
 declared and match their schemas; the request body matches; the response
 status is declared by the operation (or is an error); required response
 headers are present; the response body matches; an error uses a code from the
 catalogue with that code's status, and its message and hint follow the
-catalogue template; `rate_limited` carries `Retry-After`. It also requires a passing success case
-for every operation, a case for every error code and for every rejection code.
+catalogue template; `rate_limited` and `tutorial_unavailable` carry `Retry-After`. It also requires a passing case with a declared
+non-error status (a success or a redirect) for every operation, a case for every error code and for every rejection code.
 
 ## API cases of v2: `api-v2/*.json`
 
@@ -63,11 +65,12 @@ The same case format and the same checks, against `spec/api/openapi-v2.yaml`
 `/packages/{namespace}/{name}`, and there are namespaces, no owners and no
 claim) and its own error catalogue. `//:contract` checks `openapi-v2.yaml` the
 way it checks `openapi.yaml`, and the files here the way it checks `api/`: a
-passing success case for every operation of the v2 spec, a case for every error
-code of its `x-mopm-errors` and for every rejection code. The files are grouped
+passing case with a declared non-error status for every operation of the v2 spec, a case for every error
+code of its `x-mopm-errors` in any of the files and for every rejection code. The files are grouped
 by area: `meta`, `auth` (device login, CI exchange), `me`, `tokens`,
 `namespaces`, `packages` (reads and `createPackage`), `publish` (uploads,
-commit, status, yank), `groups` and `errors` (the catalogue, one case per
+commit, status, yank), `groups`, `web-auth` (the website's sign-in, session and sign-out: redirects carry `location` and `set-cookie`, cookie
+auth is `auth: "webSession"`), `tutorial-sandbox` (the sandbox grant of the tutorial) and `errors` (the catalogue, one case per
 code). Counter-examples (`expect: invalid`) carry one defect each, among them
 a flat name where a full name is required, a `name_reserved` hint of v1's flat
 creation under v2's template, a `MeV2` without `namespaces`, a `NamespaceInfo` without `login`, a role that
