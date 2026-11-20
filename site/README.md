@@ -25,7 +25,8 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/enhance.ts` | what the page script adds once a page is on screen: the copy buttons and the home page's recently updated list, against a small DOM port |
 | `src/main.ts` | the page script: connects `app.ts`, `mount.ts` and `enhance.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
-| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/` |
+| `src/tutorial/gate.ts` | the tutorial's gate: the session, a sandbox and sign-out over the site's own `/api/v2` routes (`credentials: 'same-origin'`, the CSRF header), the sign-in link, and `replayGate`, a fake that replays recorded answers; no page imports it yet |
+| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
 
 ## Rules
 
@@ -85,6 +86,38 @@ names, the verification commands or the version series change there, the page ha
 version series (`0.0.x`), never a patch number, because a release is cut on every merge. Route vectors are in `test/fixtures/routes.json`; the
 site stack's edge router is tested against the same file. The Markdown attack corpus is `test/fixtures/attacks.md`.
 
+## Preview
+
+`npm run preview` serves the built site on `127.0.0.1` and plays our side of the tutorial's sign-in and sandbox
+routes, so the tutorial pages can be written before those routes are deployed (`docs/design/tutorial-sign-in.md`,
+"Running it locally against the stub"). It is a local tool: nothing of it is in `dist/`.
+
+```sh
+npm ci --ignore-scripts --no-audit --no-fund && npm run build
+npm run preview -- --scenario signed-out        # the session route answers 401 session_required
+npm run preview -- --scenario signed-in         # a fixed login and CSRF value; with no key, a sandbox is tutorial_unavailable
+E2B_API_KEY=<a key from your own E2B account> \
+  npm run preview -- --scenario signed-in --e2b-template base   # creates real sandboxes, internet access off
+npm run preview -- --scenario csrf-failed       # the sandbox and sign-out routes answer 403 csrf_failed
+npm run preview -- --scenario unavailable       # the sandbox route answers 503 tutorial_unavailable, Retry-After: 30
+npm run preview -- --scenario session-expired   # the session route answers 200, then the sandbox route 401
+```
+
+It prints its address, `http://127.0.0.1:<port>/tutorial` (the system picks the port), and serves `dist/` there with
+the site's security headers (`tools/headers.ts`, the builder the site stack uses), whose `connect-src` is the page's
+own origin and `https://*.e2b.app`. It answers `GET /api/v2/auth/web/session`, `POST /api/v2/auth/web/logout` and
+`POST /api/v2/tutorial/sandbox` with the contract's statuses and bodies; any other `/api/` path is 404
+`route_not_found`. The sandbox and sign-out routes make the real route's checks: no `Authorization` header, a session,
+`X-Mopm-CSRF` equal to the session's value, `Origin` equal to the page's origin, `Sec-Fetch-Site: same-origin`, and no
+body. A sign-out ends the fake session until the preview is started again. `/tutorial` and `/tutorial/<lesson>` serve
+`tutorial.html` once the build has one, and the 404 page until then.
+
+`E2B_API_KEY` is the one setting read from the environment, because it is secret material; the preview sends it to E2B
+and never prints or writes it. Get a key from your own E2B account. With it, the signed-in scenario sends E2B the
+create call of the design's section 4 (`templateID` from `--e2b-template`, `base` when it is not given, `timeout`
+1800, internet access off) and answers what the browser needs to reach that sandbox. E2B's `base` template has no Mojo
+toolchain, so run commands such as `echo` or `python3 -c` until the tutorial's own template exists.
+
 ## How it is served
 
 `service/infra/stacks/lib/site-stack.ts` deploys `dist/` (built by `npm run build` here in deploy.yml, or `//site:dist`
@@ -99,17 +132,25 @@ or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.m
   resource is deleted, so if the first deploy (the one that replaces the placeholder page) rolls back, the bucket keeps
   the new pages under the old distribution settings (no CSP, router or 404 page): fix forward by deploying again; a
   rollback does not restore the placeholder.
-- **Edge router.** A CloudFront Function on viewer-request, generated from the grammar in `src/routes.ts`: `/` is
+- **Edge router.** A CloudFront Function on viewer-request and viewer-response, generated from the grammar in
+  `src/routes.ts` and the list of files in `dist/`: `/` is
   `index.html`; `/search`, `/packages/<namespace>/<name>` and `/packages/<namespace>/<name>/<version>` (a valid
   namespace, a valid, normalised name and a valid version) are `app.html`; `/docs`, `/docs/` and `/docs/<slug>[/]` are
   the docs page's `index.html`; a name under a valid namespace that normalises to a different valid name gets a 301 to
   the normalised path, query kept (a namespace is never normalised). A one-segment `/packages/<x>` and a flat
   `/packages/<name>/<version>`, the addresses of the names before namespaces, get a 302 to a search: for the name in
   every namespace, or for a namespace's packages when `<x>` is a namespace and no name (`src/routes.ts`
-  `flatSearchPath`). Everything else goes to the bucket as it is.
-- **Not found.** A missing key (403 or 404 from the bucket) gets `404.html` with status 404; nothing is answered with
-  the home page. These are distribution-wide error responses, an interim choice until the API is served from this
-  distribution (`docs/design/mopm-dev.md`, §4.1).
+  `flatSearchPath`). A file of the build goes to the bucket as it is, and so does an asset under an id that is not this
+  build's (an earlier build's, which the bucket keeps).
+- **Not found.** Anything else (an unknown page, a docs slug with no page, a file the build does not have, including
+  one under this build's `assets/<id>/`) is rewritten to `404.html`, and the same function turns that response's 200
+  into 404 on viewer-response; nothing is answered with the home page. There are no distribution-wide error
+  responses, so the API's JSON errors under `/api/*` reach the browser as JSON. A request for a key that exists in no
+  build under an earlier build's id gets the bucket's own 403.
+- **API.** `/api/*` goes to the stage's API (`api.<site host>`) over HTTPS, uncached, with every viewer header but
+  `Host`, the cookies and the query string, a 30 s origin read timeout, and an `x-mopm-edge` origin header whose value
+  is the generated secret `mopm/<stage>/edge-origin`. Its responses get their own headers: `nosniff`, `no-referrer`,
+  HSTS and `Content-Security-Policy: default-src 'none'; sandbox; frame-ancestors 'none'`. No page calls it yet.
 - **Headers.** The CSP `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src
   https://api.<site host>; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none';
   require-trusted-types-for 'script'; trusted-types 'none'`, plus HSTS, `X-Content-Type-Options`,

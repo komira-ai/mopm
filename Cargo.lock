@@ -1713,6 +1713,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mopm_e2b"
+version = "0.0.0"
+dependencies = [
+ "jiff",
+ "mopm_ports",
+ "mopm_testing",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "mopm_ports"
 version = "0.0.0"
 dependencies = [
@@ -1752,6 +1765,24 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "unicode-normalization",
+]
+
+[[package]]
+name = "mopm_web"
+version = "0.0.0"
+dependencies = [
+ "aws_lambda_events",
+ "base64 0.23.1",
+ "form_urlencoded",
+ "jiff",
+ "mopm_core",
+ "mopm_ports",
+ "mopm_testing",
+ "serde",
+ "serde_json",
+ "subtle",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

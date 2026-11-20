@@ -1,7 +1,6 @@
-// Checks a built dist/ before anything deploys it. The site stack does not serve this build yet; each rule is one the
-// stack will rely on when it is switched to (its edge router, its error responses and a Content-Security-Policy that
-// allows 'self' only are requirements for that change, not things it has today):
-//  - the pages the edge router and the error responses are to name exist (index, app, 404, docs);
+// Checks a built dist/ before anything deploys it. Each rule is one the site stack relies on (its edge router and a
+// Content-Security-Policy that allows 'self' only):
+//  - the pages the edge router names exist (index, app, 404, docs);
 //  - every /assets/<id>/ reference in a page, and every relative import in a module, names a file that exists
 //    (a dangling one is a broken page after deploy, since assets are immutable and pages are not);
 //  - every '<' in a page starts a tag the scanner reads as the browser does (no comment, no '<' inside a tag, no

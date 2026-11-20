@@ -22,12 +22,13 @@ export function createStageStacks(
   commit = 'dev',
   handlerDir?: string,
   siteDir?: string,
+  rustZipDir?: string,
 ): StageStacks {
   const p = `mopm-${config.stage}`;
   const channel = new ChannelStack(app, `${p}-channel`, { env, config });
   const data = new DataStack(app, `${p}-data`, { env, config });
   const publish = new PublishStack(app, `${p}-publish`, { env, config, channel, handlerDir });
-  const api = new ApiStack(app, `${p}-api`, { env, config, version, commit, handlerDir });
+  const api = new ApiStack(app, `${p}-api`, { env, config, version, commit, handlerDir, rustZipDir });
   const site = new SiteStack(app, `${p}-site`, { env, config, siteDir });
   // Tables and queues exist before the Lambdas that use them are deployed (they are named, not referenced, so CDK
   // would otherwise deploy the stacks in parallel).

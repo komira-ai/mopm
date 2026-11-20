@@ -3,7 +3,7 @@
 
 SCHEMA = 1
 NODE = "24.21.0"
-PACKAGE_JSON_SHA256 = "5015d7c573fa98b60de52d0f45bdac367de6f1c353977dd18a4eebab461a95ff"
+PACKAGE_JSON_SHA256 = "b3e1ea6291c29ea3da989146d6ede477e57168a0c1c96960be90b1be3616fa45"
 PACKAGE_LOCK_SHA256 = "fd90785d9e707ba62d5a8fe400493c03ac68e683946c60f71e199eaaca6f3ab9"
 
 PACKAGE = {
@@ -11,6 +11,7 @@ PACKAGE = {
     "version": "0.0.0",
     "scripts": {
         "build": "node -e \"require('fs').rmSync('build',{recursive:true,force:true})\" && tsc -p tsconfig.browser.json && tsc -p tsconfig.tools.json && node build/tools/tools/build.js",
+        "preview": "node build/tools/tools/preview.js",
         "test": "jest --ci",
         "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.browser.json",
     },

@@ -18,8 +18,10 @@ Account ids come from the CDK environment at deploy time and are never committed
 - **Site.** The site stack serves the site build (`site/dist`; deploy.yml builds it before `cdk deploy`, and synth
   refuses to run without it). Hashed assets are uploaded first and never pruned, then the pages, pruned and invalidated
   (`/*`), so a rollback is a deploy of the earlier commit: its pages find their assets still in the bucket (which is
-  also versioned). A CloudFront Function routes app and docs paths and redirects non-normalised package names; a
-  missing key gets the 404 page with status 404. What it serves and why: `site/README.md`, "How it is served".
+  also versioned). A CloudFront Function, generated from the site's route grammar and the build's file list, routes app
+  and docs paths, redirects non-normalised package names and answers anything that is no file of the build with the
+  404 page and status 404. `/api/*` on the site host goes to the stage's API with an `x-mopm-edge` origin header from
+  the generated secret `mopm/<stage>/edge-origin`. What it serves and why: `site/README.md`, "How it is served".
 - **Health endpoint.** `/api/v1/health` reports `stage`, `version` and `commit` (`-c commit=<git sha>`), so the e2e
   workflow can prove the deployed commit equals the one it was asked to test.
 - **conda-forge name mirror.** A scheduled function (`publish/native-mirror-lambda`, every 6 hours) reads conda-forge's shard index
@@ -30,6 +32,12 @@ Account ids come from the CDK environment at deploy time and are never committed
   it; CloudFront cannot serve it. If the job fails the old object stays and the alarm `mopm-<stage>-native-mirror-failed` fires.
   The first deploy has no object, so publishes warn "could not be read" until the first run (invoke the function once, or wait up
   to 6 hours).
+- **Rust functions.** `RustFunction` (`lib/rust-function.ts`) is one Rust Lambda: `provided.al2023` on x86_64, named
+  `mopm-<stage>-<function>`, code from `<rustZipDir>/<function>.zip`, no environment variable, and a role of its own with only
+  the grants it is given, GetItem of the config table's `stage_settings` item, and writing to its own log group. No
+  function is declared yet. Given `rustZipDir`, the API stack writes the `stage_settings` item (`lib/stage-settings.ts`), and
+  that is where the functions will be created; no deploy passes it yet, so a deploy changes nothing in the API stack. The
+  data stack has the `web_logins` table the sign-in uses.
 - **Quarantine.** The channel bucket is served through CloudFront with an origin access control; an explicit deny
   keeps `quarantine/*` unreachable through the distribution.
 - **Auth routes.** The same Lambda also serves login (`/auth/device`, `/auth/device/poll`), API tokens (`/me/tokens`) and

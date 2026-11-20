@@ -131,6 +131,12 @@ publish `published`. See "The sparse index writer" below.
   Within about five seconds begin and commit answer 503 `read_only_mode` and `/api/v1/health` reports `read_only: true`; reads,
   installs, publish status and publishes already accepted continue. Set `value` to `false` (or delete the item with
   the cleanup/takedown role) to lift it. If the table cannot be read, begin and commit answer 503 `unavailable` (they fail closed).
+- **Stage settings item.** The item `stage_settings` of the stage's config table is written by the API stack at deploy, not by
+  hand: `redirect_uri` and `site_origin` (the site host), `require_2fa`, `e2b_template_id` (only when `tutorial.e2bTemplateId` is
+  set in `service/config/<stage>.json`), `e2b_domain` (default `e2b.app`) and `sandbox_timeout_s` (default 1800). The Rust
+  functions read it at cold start (docs/design/tutorial-sign-in.md, section 5). Change a value in `service/config/<stage>.json`
+  and deploy; a hand `put-item` lasts only until a deploy changes a value. It is written only when the API stack is given the
+  Rust functions' zips, which no deploy does yet.
 - **Groups switch.** `POST /groups`, `GET /groups/{id}` and `DELETE /groups/{id}` are deployed with the API, and a create is
   answered 404 `route_not_found` unless the item `groups_enabled` of the stage's config table admits the caller. The item is
   `{"key": "groups_enabled", "mode": "allow", "actors": ["u:<github id>"]}` for a list of accounts, or `{"key": "groups_enabled", "mode":

@@ -1,0 +1,371 @@
+{
+  "$comment": "The site distribution's settings for pages before the API behaviour was added, as the stack synthesized them at komira-ai/mopm#357's merge (test/util.ts build, the stub site): the response headers policy, the default behaviour, the bucket origin and the rest of the distribution config. test/site.test.ts holds the stack to these values byte for byte, apart from the changes it names.",
+  "stages": {
+    "beta": {
+      "distributionId": "Distribution830FAC52",
+      "headersPolicyId": "HeadersECA0794E",
+      "routerId": "Router16807C72",
+      "headersPolicy": {
+        "CustomHeadersConfig": {
+          "Items": [
+            {
+              "Header": "Cross-Origin-Opener-Policy",
+              "Override": true,
+              "Value": "same-origin"
+            },
+            {
+              "Header": "Cross-Origin-Resource-Policy",
+              "Override": true,
+              "Value": "same-origin"
+            },
+            {
+              "Header": "Permissions-Policy",
+              "Override": true,
+              "Value": "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+            }
+          ]
+        },
+        "Name": "mopm-beta-site-headers",
+        "SecurityHeadersConfig": {
+          "ContentSecurityPolicy": {
+            "ContentSecurityPolicy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://api.beta.mopm.dev; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'",
+            "Override": true
+          },
+          "ContentTypeOptions": {
+            "Override": true
+          },
+          "FrameOptions": {
+            "FrameOption": "DENY",
+            "Override": true
+          },
+          "ReferrerPolicy": {
+            "Override": true,
+            "ReferrerPolicy": "no-referrer"
+          },
+          "StrictTransportSecurity": {
+            "AccessControlMaxAgeSec": 63072000,
+            "IncludeSubdomains": true,
+            "Override": true
+          }
+        }
+      },
+      "bucketOrigin": {
+        "DomainName": {
+          "Fn::GetAtt": [
+            "Bucket83908E77",
+            "RegionalDomainName"
+          ]
+        },
+        "Id": "mopmbetasiteDistributionOrigin1F9A80B93",
+        "OriginAccessControlId": {
+          "Fn::GetAtt": [
+            "DistributionOrigin1S3OriginAccessControlEB606076",
+            "Id"
+          ]
+        },
+        "S3OriginConfig": {
+          "OriginAccessIdentity": ""
+        }
+      },
+      "distributionConfig": {
+        "Aliases": [
+          "beta.mopm.dev"
+        ],
+        "Comment": "mopm beta site",
+        "CustomErrorResponses": [
+          {
+            "ErrorCachingMinTTL": 10,
+            "ErrorCode": 403,
+            "ResponseCode": 404,
+            "ResponsePagePath": "/404.html"
+          },
+          {
+            "ErrorCachingMinTTL": 10,
+            "ErrorCode": 404,
+            "ResponseCode": 404,
+            "ResponsePagePath": "/404.html"
+          }
+        ],
+        "DefaultCacheBehavior": {
+          "AllowedMethods": [
+            "GET",
+            "HEAD"
+          ],
+          "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+          "Compress": true,
+          "FunctionAssociations": [
+            {
+              "EventType": "viewer-request",
+              "FunctionARN": {
+                "Fn::GetAtt": [
+                  "Router16807C72",
+                  "FunctionARN"
+                ]
+              }
+            }
+          ],
+          "ResponseHeadersPolicyId": {
+            "Ref": "HeadersECA0794E"
+          },
+          "TargetOriginId": "mopmbetasiteDistributionOrigin1F9A80B93",
+          "ViewerProtocolPolicy": "redirect-to-https"
+        },
+        "DefaultRootObject": "index.html",
+        "Enabled": true,
+        "HttpVersion": "http2and3",
+        "IPV6Enabled": true,
+        "ViewerCertificate": {
+          "AcmCertificateArn": {
+            "Ref": "Cert5C9FAEC1"
+          },
+          "MinimumProtocolVersion": "TLSv1.2_2021",
+          "SslSupportMethod": "sni-only"
+        }
+      }
+    },
+    "gamma": {
+      "distributionId": "Distribution830FAC52",
+      "headersPolicyId": "HeadersECA0794E",
+      "routerId": "Router16807C72",
+      "headersPolicy": {
+        "CustomHeadersConfig": {
+          "Items": [
+            {
+              "Header": "Cross-Origin-Opener-Policy",
+              "Override": true,
+              "Value": "same-origin"
+            },
+            {
+              "Header": "Cross-Origin-Resource-Policy",
+              "Override": true,
+              "Value": "same-origin"
+            },
+            {
+              "Header": "Permissions-Policy",
+              "Override": true,
+              "Value": "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+            }
+          ]
+        },
+        "Name": "mopm-gamma-site-headers",
+        "SecurityHeadersConfig": {
+          "ContentSecurityPolicy": {
+            "ContentSecurityPolicy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://api.gamma.mopm.dev; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'",
+            "Override": true
+          },
+          "ContentTypeOptions": {
+            "Override": true
+          },
+          "FrameOptions": {
+            "FrameOption": "DENY",
+            "Override": true
+          },
+          "ReferrerPolicy": {
+            "Override": true,
+            "ReferrerPolicy": "no-referrer"
+          },
+          "StrictTransportSecurity": {
+            "AccessControlMaxAgeSec": 63072000,
+            "IncludeSubdomains": true,
+            "Override": true
+          }
+        }
+      },
+      "bucketOrigin": {
+        "DomainName": {
+          "Fn::GetAtt": [
+            "Bucket83908E77",
+            "RegionalDomainName"
+          ]
+        },
+        "Id": "mopmgammasiteDistributionOrigin13AE9FDF2",
+        "OriginAccessControlId": {
+          "Fn::GetAtt": [
+            "DistributionOrigin1S3OriginAccessControlEB606076",
+            "Id"
+          ]
+        },
+        "S3OriginConfig": {
+          "OriginAccessIdentity": ""
+        }
+      },
+      "distributionConfig": {
+        "Aliases": [
+          "gamma.mopm.dev"
+        ],
+        "Comment": "mopm gamma site",
+        "CustomErrorResponses": [
+          {
+            "ErrorCachingMinTTL": 10,
+            "ErrorCode": 403,
+            "ResponseCode": 404,
+            "ResponsePagePath": "/404.html"
+          },
+          {
+            "ErrorCachingMinTTL": 10,
+            "ErrorCode": 404,
+            "ResponseCode": 404,
+            "ResponsePagePath": "/404.html"
+          }
+        ],
+        "DefaultCacheBehavior": {
+          "AllowedMethods": [
+            "GET",
+            "HEAD"
+          ],
+          "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+          "Compress": true,
+          "FunctionAssociations": [
+            {
+              "EventType": "viewer-request",
+              "FunctionARN": {
+                "Fn::GetAtt": [
+                  "Router16807C72",
+                  "FunctionARN"
+                ]
+              }
+            }
+          ],
+          "ResponseHeadersPolicyId": {
+            "Ref": "HeadersECA0794E"
+          },
+          "TargetOriginId": "mopmgammasiteDistributionOrigin13AE9FDF2",
+          "ViewerProtocolPolicy": "redirect-to-https"
+        },
+        "DefaultRootObject": "index.html",
+        "Enabled": true,
+        "HttpVersion": "http2and3",
+        "IPV6Enabled": true,
+        "ViewerCertificate": {
+          "AcmCertificateArn": {
+            "Ref": "Cert5C9FAEC1"
+          },
+          "MinimumProtocolVersion": "TLSv1.2_2021",
+          "SslSupportMethod": "sni-only"
+        }
+      }
+    },
+    "prod": {
+      "distributionId": "Distribution830FAC52",
+      "headersPolicyId": "HeadersECA0794E",
+      "routerId": "Router16807C72",
+      "headersPolicy": {
+        "CustomHeadersConfig": {
+          "Items": [
+            {
+              "Header": "Cross-Origin-Opener-Policy",
+              "Override": true,
+              "Value": "same-origin"
+            },
+            {
+              "Header": "Cross-Origin-Resource-Policy",
+              "Override": true,
+              "Value": "same-origin"
+            },
+            {
+              "Header": "Permissions-Policy",
+              "Override": true,
+              "Value": "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+            }
+          ]
+        },
+        "Name": "mopm-prod-site-headers",
+        "SecurityHeadersConfig": {
+          "ContentSecurityPolicy": {
+            "ContentSecurityPolicy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://api.mopm.dev; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'",
+            "Override": true
+          },
+          "ContentTypeOptions": {
+            "Override": true
+          },
+          "FrameOptions": {
+            "FrameOption": "DENY",
+            "Override": true
+          },
+          "ReferrerPolicy": {
+            "Override": true,
+            "ReferrerPolicy": "no-referrer"
+          },
+          "StrictTransportSecurity": {
+            "AccessControlMaxAgeSec": 63072000,
+            "IncludeSubdomains": true,
+            "Override": true
+          }
+        }
+      },
+      "bucketOrigin": {
+        "DomainName": {
+          "Fn::GetAtt": [
+            "Bucket83908E77",
+            "RegionalDomainName"
+          ]
+        },
+        "Id": "mopmprodsiteDistributionOrigin1D56B99DC",
+        "OriginAccessControlId": {
+          "Fn::GetAtt": [
+            "DistributionOrigin1S3OriginAccessControlEB606076",
+            "Id"
+          ]
+        },
+        "S3OriginConfig": {
+          "OriginAccessIdentity": ""
+        }
+      },
+      "distributionConfig": {
+        "Aliases": [
+          "mopm.dev"
+        ],
+        "Comment": "mopm prod site",
+        "CustomErrorResponses": [
+          {
+            "ErrorCachingMinTTL": 10,
+            "ErrorCode": 403,
+            "ResponseCode": 404,
+            "ResponsePagePath": "/404.html"
+          },
+          {
+            "ErrorCachingMinTTL": 10,
+            "ErrorCode": 404,
+            "ResponseCode": 404,
+            "ResponsePagePath": "/404.html"
+          }
+        ],
+        "DefaultCacheBehavior": {
+          "AllowedMethods": [
+            "GET",
+            "HEAD"
+          ],
+          "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+          "Compress": true,
+          "FunctionAssociations": [
+            {
+              "EventType": "viewer-request",
+              "FunctionARN": {
+                "Fn::GetAtt": [
+                  "Router16807C72",
+                  "FunctionARN"
+                ]
+              }
+            }
+          ],
+          "ResponseHeadersPolicyId": {
+            "Ref": "HeadersECA0794E"
+          },
+          "TargetOriginId": "mopmprodsiteDistributionOrigin1D56B99DC",
+          "ViewerProtocolPolicy": "redirect-to-https"
+        },
+        "DefaultRootObject": "index.html",
+        "Enabled": true,
+        "HttpVersion": "http2and3",
+        "IPV6Enabled": true,
+        "ViewerCertificate": {
+          "AcmCertificateArn": {
+            "Ref": "Cert5C9FAEC1"
+          },
+          "MinimumProtocolVersion": "TLSv1.2_2021",
+          "SslSupportMethod": "sni-only"
+        }
+      }
+    }
+  }
+}
