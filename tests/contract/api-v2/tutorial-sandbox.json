@@ -1,0 +1,232 @@
+{
+  "cases": [
+    {
+      "name": "a signed-in user gets a sandbox and what the browser needs to reach it",
+      "operationId": "createTutorialSandbox",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "sandbox_id": "i8x3k2p9q1v7m4n6s5t0",
+          "access_token": "e2b-example-access-token",
+          "envd_version": "0.4.2",
+          "domain": "e2b.app",
+          "expires_at": "2026-11-19T12:30:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "a sandbox request from a signed-out browser is refused as session_required",
+      "operationId": "createTutorialSandbox",
+      "request": {},
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "session_required",
+            "message": "You are not signed in to the website.",
+            "hint": "Sign in with GitHub, then try again."
+          }
+        }
+      }
+    },
+    {
+      "name": "a sandbox request with a wrong CSRF value is refused as csrf_failed",
+      "operationId": "createTutorialSandbox",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "csrf_failed",
+            "message": "The request did not come from a page of the website.",
+            "hint": "Reload the page and try again."
+          }
+        }
+      }
+    },
+    {
+      "name": "a sandbox request with a body is refused as invalid_request",
+      "operationId": "createTutorialSandbox",
+      "request": {
+        "auth": "webSession",
+        "body": {
+          "template": "base"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "The request is not valid: the request takes no body.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "a sandbox request with an Authorization header is refused as invalid_request",
+      "operationId": "createTutorialSandbox",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "The request is not valid: the website's routes take no Authorization header.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "a sandbox request while E2B does not answer is refused as tutorial_unavailable with Retry-After",
+      "operationId": "createTutorialSandbox",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "retry-after": "30"
+        },
+        "body": {
+          "error": {
+            "code": "tutorial_unavailable",
+            "message": "The sandbox service did not answer.",
+            "hint": "Wait 30 seconds and try again; the Retry-After header says how long."
+          }
+        }
+      }
+    },
+    {
+      "name": "a grant without access_token is refused",
+      "operationId": "createTutorialSandbox",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "sandbox_id": "i8x3k2p9q1v7m4n6s5t0",
+          "envd_version": "0.4.2",
+          "domain": "e2b.app",
+          "expires_at": "2026-11-19T12:30:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a grant without expires_at is refused",
+      "operationId": "createTutorialSandbox",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "sandbox_id": "i8x3k2p9q1v7m4n6s5t0",
+          "access_token": "e2b-example-access-token",
+          "envd_version": "0.4.2",
+          "domain": "e2b.app"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "tutorial_unavailable without Retry-After is refused",
+      "operationId": "createTutorialSandbox",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "tutorial_unavailable",
+            "message": "The sandbox service did not answer.",
+            "hint": "Wait 30 seconds and try again; the Retry-After header says how long."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a sandbox request with a body is refused unless it is marked malformed",
+      "operationId": "createTutorialSandbox",
+      "request": {
+        "auth": "webSession",
+        "body": {
+          "template": "base"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "The request is not valid: the request takes no body.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a 201 grant to a request with no session is refused",
+      "operationId": "createTutorialSandbox",
+      "request": {},
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "sandbox_id": "i8x3k2p9q1v7m4n6s5t0",
+          "access_token": "e2b-example-access-token",
+          "envd_version": "0.4.2",
+          "domain": "e2b.app",
+          "expires_at": "2026-11-19T12:30:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

@@ -545,7 +545,7 @@ pub fn caseProblems(a: Allocator, spec: Value, ops: Ops, catalogue: Value, case:
     const rb: ?Value = if (get(op, "requestBody")) |r| try deref(spec, r) else null;
     if (get(request, "body")) |body| {
         if (rb == null) {
-            try out.append("request has a body but the operation takes none");
+            if (check_request) try out.append("request has a body but the operation takes none");
         } else if (check_request) {
             const schema = get(get(get(rb.?, "content") orelse .null, "application/json") orelse .null, "schema") orelse .null;
             try addSchemaProblems(a, &out, spec, schema, body, "request body: ", .{});
@@ -571,7 +571,7 @@ pub fn caseProblems(a: Allocator, spec: Value, ops: Ops, catalogue: Value, case:
     if (auth) |s| {
         if (get(schemes, s) == null) {
             try problem(a, &out, "unknown security scheme {s}", .{s});
-        } else if (!allowed.contains(s)) {
+        } else if (check_request and !allowed.contains(s)) {
             try problem(a, &out, "operation does not accept scheme {s}", .{s});
         }
     }
@@ -651,6 +651,9 @@ pub fn caseProblems(a: Allocator, spec: Value, ops: Ops, catalogue: Value, case:
             }
             if (std.mem.eql(u8, code.?, "rate_limited") and !given_headers.contains("retry-after")) {
                 try out.append("rate_limited must carry Retry-After");
+            }
+            if (std.mem.eql(u8, code.?, "tutorial_unavailable") and !given_headers.contains("retry-after")) {
+                try out.append("tutorial_unavailable must carry Retry-After");
             }
         }
     }

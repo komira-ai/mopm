@@ -1,0 +1,251 @@
+{
+  "cases": [
+    {
+      "name": "start a sign-in with GitHub from the tutorial page, which sets the login cookie and sends the browser to GitHub",
+      "operationId": "startWebLogin",
+      "request": {
+        "query": {
+          "return_to": "/tutorial/hello"
+        }
+      },
+      "response": {
+        "status": 302,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "location": "https://github.com/login/oauth/authorize?client_id=example-client-id&state=example-state&scope=read%3Auser",
+          "set-cookie": "__Host-mopm_login=example-login-cookie; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=600"
+        }
+      }
+    },
+    {
+      "name": "start a sign-in with no return_to, which is answered the same way",
+      "operationId": "startWebLogin",
+      "request": {},
+      "response": {
+        "status": 302,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "location": "https://github.com/login/oauth/authorize?client_id=example-client-id&state=example-state&scope=read%3Auser",
+          "set-cookie": "__Host-mopm_login=example-login-cookie; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=600"
+        }
+      }
+    },
+    {
+      "name": "finish a sign-in, which sets the session cookie and sends the browser to the page it named",
+      "operationId": "completeWebLogin",
+      "request": {
+        "query": {
+          "code": "example-github-code",
+          "state": "example-state"
+        }
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "location": "https://mopm.dev/tutorial/hello",
+          "set-cookie": "__Host-mopm_session=mopm_EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAM; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800"
+        }
+      }
+    },
+    {
+      "name": "finish a sign-in that GitHub did not authorize, which sends the browser to the tutorial with the error and sets no session",
+      "operationId": "completeWebLogin",
+      "request": {
+        "query": {
+          "error": "access_denied",
+          "state": "example-state"
+        }
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "location": "https://mopm.dev/tutorial?error=access_denied",
+          "set-cookie": "__Host-mopm_login=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"
+        }
+      }
+    },
+    {
+      "name": "the signed-in user, with the CSRF value of the session",
+      "operationId": "getWebSession",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "login": "alice",
+          "csrf": "mopm-csrf-example-value-0123456789abcdefghi",
+          "expires_at": "2026-11-26T12:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "the session of a signed-out browser is refused as session_required",
+      "operationId": "getWebSession",
+      "request": {},
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "session_required",
+            "message": "You are not signed in to the website.",
+            "hint": "Sign in with GitHub, then try again."
+          }
+        }
+      }
+    },
+    {
+      "name": "the session with an Authorization header is refused as invalid_request",
+      "operationId": "getWebSession",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "The request is not valid: the website's routes take no Authorization header.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "sign out answers 204 and clears the session cookie",
+      "operationId": "webLogout",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 204,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "set-cookie": "__Host-mopm_session=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"
+        }
+      }
+    },
+    {
+      "name": "sign out with a wrong CSRF value is refused as csrf_failed",
+      "operationId": "webLogout",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "csrf_failed",
+            "message": "The request did not come from a page of the website.",
+            "hint": "Reload the page and try again."
+          }
+        }
+      }
+    },
+    {
+      "name": "sign out of a signed-out browser is refused as session_required",
+      "operationId": "webLogout",
+      "request": {},
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "session_required",
+            "message": "You are not signed in to the website.",
+            "hint": "Sign in with GitHub, then try again."
+          }
+        }
+      }
+    },
+    {
+      "name": "a session answer without csrf is refused",
+      "operationId": "getWebSession",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "login": "alice",
+          "expires_at": "2026-11-26T12:00:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a session answer whose csrf is not 43 characters is refused",
+      "operationId": "getWebSession",
+      "request": {
+        "auth": "webSession"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "login": "alice",
+          "csrf": "too-short",
+          "expires_at": "2026-11-26T12:00:00.000Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a redirect without a Location header is refused",
+      "operationId": "completeWebLogin",
+      "request": {
+        "query": {
+          "code": "example-github-code",
+          "state": "example-state"
+        }
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "set-cookie": "__Host-mopm_session=mopm_EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAM; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a 302 that carries a body is refused",
+      "operationId": "startWebLogin",
+      "request": {},
+      "response": {
+        "status": 302,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "location": "https://github.com/login/oauth/authorize?client_id=example-client-id&state=example-state&scope=read%3Auser",
+          "set-cookie": "__Host-mopm_login=example-login-cookie; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=600"
+        },
+        "body": {
+          "location": "https://github.com/login/oauth/authorize"
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

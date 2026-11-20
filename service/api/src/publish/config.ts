@@ -20,6 +20,11 @@ export interface PublishConfig {
   claimRatePerAccountPerDay: number;
   /** Successful claims per token per UTC day. */
   claimRatePerTokenPerDay: number;
+  /**
+   * Packages a CI token creates per namespace per UTC day, and per CI token: the limit of the namespace's counter and of the token's
+   * counter when the caller is a CI token. Sessions and API tokens keep the two limits above.
+   */
+  claimRatePerCiNamespacePerDay: number;
   /** Members in one group. */
   groupMaxMembers: number;
   /** Declared bytes of all the files of one group. */
@@ -62,6 +67,8 @@ export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {
   // A claim reserves a name for 30 days: conservative, unlike the publish limits.
   claimRatePerAccountPerDay: 50,
   claimRatePerTokenPerDay: 50,
+  // A CI token creates a namespace's first set of packages in one run (the komira release is over 70), so it gets room for a set.
+  claimRatePerCiNamespacePerDay: 500,
   groupMaxMembers: 500,
   groupMaxBytes: 20_000_000_000,
   groupOpenPerActor: 5,
@@ -94,6 +101,7 @@ export function publishConfigFromEnv(env: Record<string, string | undefined> = p
     ratePerTokenPerDay: intFrom(env, 'MOPM_RATE_PER_TOKEN_DAY', d.ratePerTokenPerDay, 1),
     claimRatePerAccountPerDay: intFrom(env, 'MOPM_CLAIM_RATE_PER_ACCOUNT_DAY', d.claimRatePerAccountPerDay, 1),
     claimRatePerTokenPerDay: intFrom(env, 'MOPM_CLAIM_RATE_PER_TOKEN_DAY', d.claimRatePerTokenPerDay, 1),
+    claimRatePerCiNamespacePerDay: intFrom(env, 'MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY', d.claimRatePerCiNamespacePerDay, 1),
     groupMaxMembers: intFrom(env, 'MOPM_GROUP_MAX_MEMBERS', d.groupMaxMembers, 1),
     groupMaxBytes: intFrom(env, 'MOPM_GROUP_MAX_BYTES', d.groupMaxBytes, 1),
     groupOpenPerActor: intFrom(env, 'MOPM_GROUP_OPEN_PER_ACTOR', d.groupOpenPerActor, 1),
