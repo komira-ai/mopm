@@ -56,7 +56,7 @@ jobs:
       # here as deploy.yml sets it, and the metadata is off so neither the runner's region nor its account reaches the synth.
       - name: Synth every stage with a dummy account and zone id
         env:
-          AWS_DEFAULT_REGION: us-east-1
+          AWS_REGION: us-east-1
           AWS_EC2_METADATA_DISABLED: 'true'
         run: |
           export CDK_DEFAULT_ACCOUNT="$(printf '1%.0s' $(seq 12))"
@@ -132,7 +132,7 @@ jobs:
       # The region and the metadata as in the stacks job's synth.
       - name: Synth the zone of every stage and the delegation, with dummy values
         env:
-          AWS_DEFAULT_REGION: us-east-1
+          AWS_REGION: us-east-1
           AWS_EC2_METADATA_DISABLED: 'true'
         run: |
           acct="$(printf '1%.0s' $(seq 12))"

@@ -125,7 +125,7 @@ jobs:
           STAGE: ${{ inputs.stage }}
           CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
           CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -euo pipefail
           if [ -z "$CDK_DEFAULT_ACCOUNT" ]; then echo "AWS_ACCOUNT_ID is not set on the $STAGE environment" >&2; exit 1; fi
