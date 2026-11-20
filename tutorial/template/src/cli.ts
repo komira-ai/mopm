@@ -4,7 +4,7 @@
 import { join } from 'path';
 import { Template } from 'e2b';
 import type { BuildInfo, BuildOptions, LogEntry, TemplateBuilder } from 'e2b';
-import { describe, templateDefinition } from './definition';
+import { describe, releaseAsset, releaseUrl, templateDefinition } from './definition';
 import { listLessons, readBase, releaseOf } from './inputs';
 
 /** The stages, as service/infra/stacks/lib/config.ts names them. */
@@ -13,7 +13,7 @@ export const STAGES = ['beta', 'gamma', 'prod'] as const;
 /** A template name E2B accepts and a person can read: lower-case letters, digits, `-` and `_`, starting with a letter or digit. */
 const NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
-/** Where the newest mopm release is looked up: GitHub's "latest release" (drafts and pre-releases excluded), as install.sh does. */
+/** Where the newest mopm release is looked up: GitHub's "latest release" (drafts and pre-releases excluded). */
 export const LATEST_RELEASE_URL = 'https://api.github.com/repos/komira-ai/mopm/releases/latest';
 
 /** What `main` touches outside itself. Tests pass fakes; `realDeps` passes the real ones. */
@@ -23,8 +23,11 @@ export interface Deps {
   env: Record<string, string | undefined>;
   out: (line: string) => void;
   err: (line: string) => void;
-  /** Called only with --build and no --mopm-version. */
-  fetch: (url: string, init: { headers: Record<string, string> }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+  /** Called only with --build: the latest release (when no --mopm-version) and the release's SHA256SUMS. */
+  fetch: (
+    url: string,
+    init: { headers: Record<string, string> },
+  ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> }>;
   /** E2B's `Template.build`, called only with --build. */
   build: (t: TemplateBuilder, name: string, options: Omit<BuildOptions, 'alias'>) => Promise<BuildInfo>;
 }
@@ -73,6 +76,25 @@ export async function latestRelease(fetch: Deps['fetch']): Promise<string> {
   return tag;
 }
 
+/**
+ * The sha256 of the release's linux-x86_64 file, from the release's own SHA256SUMS (`<64 hex>  <file>` lines, as
+ * install.sh reads them): exactly one well-formed entry for the file, or the build stops.
+ */
+export async function releaseSha256(fetch: Deps['fetch'], version: string): Promise<string> {
+  const url = releaseUrl(version, 'SHA256SUMS');
+  const res = await fetch(url, { headers: {} });
+  if (!res.ok) throw new Error(`could not read ${url}: it answered ${res.status}`);
+  const asset = releaseAsset(version);
+  const entries = (await res.text())
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .filter((f) => f.length === 2 && f[1] === asset);
+  if (entries.length !== 1 || !/^[0-9a-f]{64}$/.test(entries[0][0])) {
+    throw new Error(`${url} does not list ${asset} exactly once with a sha256`);
+  }
+  return entries[0][0];
+}
+
 /** Replaces every occurrence of the key in `text`, so no line this command prints can carry it. */
 function redactor(key: string | undefined): (text: string) => string {
   return (text) => (key ? text.split(key).join('<redacted>') : text);
@@ -98,23 +120,26 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
     if (args.build && !key) throw new Error('--build needs the team key in E2B_API_KEY');
     const base = readBase(deps.repoRoot);
     const lessons = listLessons(deps.repoRoot);
-    let mopm: string;
+    let version: string;
     let mopmNote: string;
     if (args.mopmVersion !== undefined) {
-      mopm = releaseOf(base, args.mopmVersion);
+      version = releaseOf(base, args.mopmVersion);
       mopmNote = `--mopm-version, a release of ${base} (VERSION)`;
     } else if (args.build) {
-      mopm = releaseOf(base, await latestRelease(deps.fetch));
+      version = releaseOf(base, await latestRelease(deps.fetch));
       mopmNote = `the latest release, which is of ${base} (VERSION)`;
     } else {
-      mopm = `${base}.<latest>`;
+      version = `${base}.<latest>`;
       mopmNote = `the latest release, looked up when --build runs; it must be a release of ${base} (VERSION)`;
     }
-    const template = templateDefinition({ repoRoot: deps.repoRoot, lessons, mopmVersion: mopm });
+    const sha256 = args.build ? await releaseSha256(deps.fetch, version) : '<sha256 from SHA256SUMS>';
+    const shaNote = args.build ? `from ${releaseUrl(version, 'SHA256SUMS')}` : 'read from the release when --build runs';
+    const template = templateDefinition({ repoRoot: deps.repoRoot, lessons, mopm: { version, sha256 } });
     deps.out(args.build ? 'building the template on E2B' : 'dry run: nothing is built and nothing is sent (add --build to build)');
     deps.out(`stage: ${args.stage}`);
     deps.out(`name: ${args.name}`);
-    deps.out(`mopm: ${mopm} (${mopmNote})`);
+    deps.out(`mopm: ${version} (${mopmNote})`);
+    deps.out(`sha256 of ${releaseAsset(version)}: ${sha256} (${shaNote})`);
     deps.out(`lessons: ${lessons.join(', ')}`);
     deps.out('steps:');
     for (const line of await describe(template)) deps.out(`  ${line}`);

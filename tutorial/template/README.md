@@ -6,8 +6,9 @@ operator runs to build it. The design is `docs/design/tutorial-sign-in.md`, sect
 
 The template holds:
 
-- mopm, the release named below, installed at `/usr/local/bin/mopm` by the installer of this commit
-  (`site/static/install.sh`, which checks the release's sha256 against its `SHA256SUMS`);
+- mopm, the release named below: its `linux-x86_64` file downloaded from the GitHub release, checked against the
+  sha256 the release's `SHA256SUMS` lists for it (read when the build runs, and written into the step), and its
+  binary installed at `/usr/local/bin/mopm`;
 - every lesson under `tutorial/lessons/<id>/`: its `project/` copied to `/home/user/lessons/<id>/`, and
   `mopm sync --locked` run there, so the lesson's pinned Mojo toolchain and locked packages are already installed;
 - `user` (E2B's default sandbox user) and `/home/user` as the sandbox's user and working directory.
@@ -15,7 +16,8 @@ The template holds:
 The definition is `src/definition.ts`, written with the `Template()` builder of the `e2b` package (pinned exactly in
 `package.json`; E2B, "Template quickstart"). It reads `tutorial/lessons/*/` when it runs, so adding a lesson needs no
 edit here. A lesson is refused, not skipped, when its id is not lower-case words joined by hyphens or its `project/`
-has no `mopm.toml` or `mopm.lock`.
+has no `mopm.toml` or `mopm.lock`. A lesson's `.mopm/` (what `mopm sync` writes on your machine) is never uploaded:
+the template syncs its own.
 
 **Which mopm.** The release is of the base in the repository's `VERSION` (`MAJOR.MINOR`; RELEASING.md, "How the
 version is computed"): by default the latest release, looked up on GitHub when the build runs, and refused if it is
@@ -34,7 +36,7 @@ cd tutorial/template
 npm ci --ignore-scripts --no-audit --no-fund
 
 # 1. The dry run (the default): prints the stage, name, mopm release, lessons and every step. It makes no network
-#    call and needs no key.
+#    call and needs no key, so the release's sha256 is shown as a placeholder.
 npm run template -- --stage beta --name mopm-tutorial-beta
 
 # 2. The build. The key is read from E2B_API_KEY, E2B's own variable, and only with --build. It is passed to E2B
@@ -44,7 +46,9 @@ npm run template -- --stage beta --name mopm-tutorial-beta --build
 unset E2B_API_KEY
 ```
 
-The build prints `template id: <id>` and `build id: <id>`. Set the template id as the stage's tutorial template in
+With `--build` it first reads the latest release (unless `--mopm-version` names one) and the release's
+`SHA256SUMS` from GitHub, and stops if the file is not listed exactly once with a sha256. The build prints
+`template id: <id>` and `build id: <id>`. Set the template id as the stage's tutorial template in
 the stage's settings; the sandbox route creates sandboxes from it.
 
 Flags:
@@ -63,4 +67,6 @@ Exit codes: 0 done, 1 failed (nothing built, or E2B's error printed), 2 usage.
 `//tutorial/template:test` and `:typecheck` (`npm test`, `npm run typecheck`), with the coverage floor
 `:coverage_floor` (`coverage_floor.txt`). The tests build the definition from small repositories made under
 `build/test-scratch` and from this repository's own `VERSION` and `tutorial/lessons`, and run the command with a fake
-`fetch` and a fake E2B build: no network, no key.
+`fetch` and a fake E2B build: no network, no key. One test runs E2B's own file selection (`test/upload-hashes.ts`,
+in a child Node process, because it needs a dynamic import Jest cannot run) to check that a lesson's `.mopm/` is
+not uploaded.

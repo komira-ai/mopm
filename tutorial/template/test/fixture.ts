@@ -1,5 +1,5 @@
 // Test helper: a small stand-in for the repository, in a fresh directory under this package's build/test-scratch
-// (gitignored): VERSION, the installer and tutorial/lessons/<id>/project with mopm.toml and mopm.lock.
+// (gitignored): VERSION and tutorial/lessons/<id>/project with mopm.toml, mopm.lock and a source file.
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 
@@ -28,7 +28,6 @@ export function fixtureRepo(version: string, lessons: string[]): Repo {
     write(`tutorial/lessons/${id}/project/src/main.mojo`, 'def main():\n    print("hi")\n');
   };
   write('VERSION', `${version}\n`);
-  write('site/static/install.sh', '#!/bin/sh\n');
   mkdirSync(join(root, 'tutorial', 'lessons'), { recursive: true });
   lessons.forEach(addLesson);
   return { root, write, addLesson };
