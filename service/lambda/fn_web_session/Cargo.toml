@@ -1,0 +1,58 @@
+[package]
+name = "fn_web_session"
+description = "The web-session Lambda: GET /api/v2/auth/web/session and POST /api/v2/auth/web/logout (see README.md)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+autobins = false
+autotests = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+# The Lambda's executable: `bootstrap` in the deployment package.
+name = "fn_web_session"
+path = "src/main.rs"
+
+[[test]]
+# The runtime entry against a fake Lambda runtime API, a fake DynamoDB and a fake Secrets Manager, all on loopback.
+name = "runtime_test"
+path = "tests/runtime_test.rs"
+
+[[test]]
+# A stage without its settings item fails the cold start, without a poll of the runtime API.
+name = "runtime_cold_start_test"
+path = "tests/runtime_cold_start_test.rs"
+
+[[test]]
+# The executable forwards to the library: a malformed function name exits with a failure.
+name = "main_test"
+path = "tests/main_test.rs"
+
+[[test]]
+# A malformed function name ends the entry without a poll of the runtime API.
+name = "runtime_setup_test"
+path = "tests/runtime_setup_test.rs"
+
+[dependencies]
+mopm_aws.workspace = true
+mopm_core.workspace = true
+mopm_ports.workspace = true
+mopm_web.workspace = true
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-secretsmanager.workspace = true
+aws_lambda_events.workspace = true
+jiff.workspace = true
+lambda_runtime.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+mopm_testing.workspace = true
+base64.workspace = true
