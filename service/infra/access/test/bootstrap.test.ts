@@ -152,6 +152,8 @@ describe('dry run and flags', () => {
 
   test.each([
     ['bad stage', ['--stage', 'dev', '--account', ACCT, '--region', 'r', '--profile', 'p']],
+    ['no stage', ['--account', ACCT, '--region', 'r', '--profile', 'p']],
+    ['no account', ['--stage', 'beta', '--region', 'r', '--profile', 'p']],
     ['short account', ['--stage', 'beta', '--account', '123', '--region', 'r', '--profile', 'p']],
     ['account with a letter', ['--stage', 'beta', '--account', `${acct('1').slice(1)}x`, '--region', 'r', '--profile', 'p']],
     ['no region', ['--stage', 'beta', '--account', ACCT, '--profile', 'p']],
@@ -229,6 +231,41 @@ describe('apply', () => {
     expect(host.err_).toContain('cannot tell which account');
     expect(host.calls.filter((c) => c.how === 'inherit')).toEqual([]);
   });
+});
+
+describe('a failing IAM read stops before anything changes', () => {
+  /** The world of `w`, except that the calls matching `failing` answer status 254 with `message`. */
+  function failing(w: World, match: (line: string) => boolean, message: string) {
+    const base = world(w);
+    return new FakeHost((argv) => (match(argv.join(' ')) ? { status: 254, output: `${message}\n` } : base(argv)));
+  }
+  test('the version count cannot be listed', () => {
+    const host = failing({ current: OLD, versions: 2 }, (l) => l.includes('length(Versions)'), 'AccessDenied');
+    expect(bootstrap(args('--apply', '--update-policy', '--policy-only'), host, { templatePath: TEMPLATE })).toBe(1);
+    expect(host.errLines).toEqual([`cannot list the versions of ${ARN}: AccessDenied`]);
+    expect(mutations(host)).toEqual([]);
+  });
+  test('the oldest version cannot be found when 5 versions exist', () => {
+    const host = failing({ current: OLD, versions: 5 }, (l) => l.includes('sort_by('), 'AccessDenied');
+    expect(bootstrap(args('--apply', '--update-policy', '--policy-only'), host, { templatePath: TEMPLATE })).toBe(1);
+    expect(host.errLines).toEqual([`cannot find the oldest version of ${ARN}: AccessDenied`]);
+    expect(mutations(host)).toEqual([]);
+  });
+  test('the current default version cannot be read', () => {
+    const host = failing({ current: OLD, versions: 2 }, (l) => l.includes('get-policy-version'), 'AccessDenied');
+    expect(bootstrap(args('--apply', '--update-policy', '--policy-only'), host, { templatePath: TEMPLATE })).toBe(1);
+    expect(host.errLines).toEqual([`cannot read version v5 of ${ARN}: AccessDenied`]);
+    expect(mutations(host)).toEqual([]);
+  });
+});
+
+test('dry run with --update-policy and no policy yet: the rendered document and a create-policy are printed, nothing runs', () => {
+  const { host, rc } = run({ current: 'missing', versions: 0 }, '--update-policy', '--policy-only');
+  expect(rc).toBe(0);
+  expect(host.outLines).toContain('# rendered policy document for mopm-gamma-cfn-exec:');
+  expect(host.outLines.some((l) => l.startsWith('DRY-RUN: aws iam create-policy --profile p --policy-name mopm-gamma-cfn-exec'))).toBe(true);
+  expect(host.calls.filter((c) => c.how === 'inherit')).toEqual([]);
+  expect(mutations(host)).toEqual([]);
 });
 
 describe('policy rendering', () => {
