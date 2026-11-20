@@ -28,7 +28,9 @@ impl MemoryAuthStore {
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
-        self.inner.lock().expect("the store's lock is never held across a panic")
+        self.inner
+            .lock()
+            .expect("the store's lock is never held across a panic")
     }
 
     /// Every stored token row, to assert what is and is not persisted.
@@ -44,10 +46,25 @@ impl Inner {
 }
 
 impl AuthStore for MemoryAuthStore {
-    async fn upsert_user(&self, github_id: u64, handle: &str, now: &str, two_factor: Option<bool>) -> PortResult<UserRecord> {
+    async fn upsert_user(
+        &self,
+        github_id: u64,
+        handle: &str,
+        now: &str,
+        two_factor: Option<bool>,
+    ) -> PortResult<UserRecord> {
         let mut g = self.lock();
-        let created_at = g.users.get(&github_id).map_or_else(|| now.to_string(), |u| u.created_at.clone());
-        let rec = UserRecord { github_id, handle: handle.to_string(), created_at, last_login_at: now.to_string(), two_factor };
+        let created_at = g
+            .users
+            .get(&github_id)
+            .map_or_else(|| now.to_string(), |u| u.created_at.clone());
+        let rec = UserRecord {
+            github_id,
+            handle: handle.to_string(),
+            created_at,
+            last_login_at: now.to_string(),
+            two_factor,
+        };
         g.users.insert(github_id, rec.clone());
         Ok(rec)
     }
@@ -62,15 +79,31 @@ impl AuthStore for MemoryAuthStore {
     }
 
     async fn get_token_by_hash(&self, hash: &str) -> PortResult<Option<TokenRecord>> {
-        Ok(self.lock().tokens.values().find(|t| t.hash == hash).cloned())
+        Ok(self
+            .lock()
+            .tokens
+            .values()
+            .find(|t| t.hash == hash)
+            .cloned())
     }
 
     async fn get_user_token(&self, github_id: u64, id: &str) -> PortResult<Option<TokenRecord>> {
-        Ok(self.lock().tokens.get(id).filter(|t| t.github_id == Some(github_id)).cloned())
+        Ok(self
+            .lock()
+            .tokens
+            .get(id)
+            .filter(|t| t.github_id == Some(github_id))
+            .cloned())
     }
 
     async fn list_tokens(&self, github_id: u64) -> PortResult<Vec<TokenRecord>> {
-        Ok(self.lock().tokens.values().filter(|t| t.github_id == Some(github_id)).cloned().collect())
+        Ok(self
+            .lock()
+            .tokens
+            .values()
+            .filter(|t| t.github_id == Some(github_id))
+            .cloned()
+            .collect())
     }
 
     async fn revoke_token(&self, hash: &str, at: &str) -> PortResult<()> {
@@ -112,7 +145,11 @@ impl AuthStore for MemoryAuthStore {
     }
 
     async fn add_trusted_publisher(&self, tp: &TrustedPublisher) -> PortResult<()> {
-        self.lock().trusted.entry(tp.name.clone()).or_default().push(tp.clone());
+        self.lock()
+            .trusted
+            .entry(tp.name.clone())
+            .or_default()
+            .push(tp.clone());
         Ok(())
     }
 
@@ -141,11 +178,21 @@ mod tests {
     async fn removing_a_trusted_publisher_of_a_package_with_none_changes_nothing() {
         let s = MemoryAuthStore::new();
         s.remove_trusted_publisher("nobody", "x").await.unwrap();
-        assert!(s.list_trusted_publishers("nobody").await.unwrap().is_empty());
+        assert!(s
+            .list_trusted_publishers("nobody")
+            .await
+            .unwrap()
+            .is_empty());
         s.add_trusted_publisher(&tp("p", "a")).await.unwrap();
         s.add_trusted_publisher(&tp("p", "b")).await.unwrap();
         s.remove_trusted_publisher("p", "a").await.unwrap();
-        let left: Vec<String> = s.list_trusted_publishers("p").await.unwrap().into_iter().map(|t| t.id).collect();
+        let left: Vec<String> = s
+            .list_trusted_publishers("p")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
         assert_eq!(left, ["b"]);
     }
 

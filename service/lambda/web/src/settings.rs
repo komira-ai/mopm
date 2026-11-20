@@ -87,19 +87,30 @@ pub struct FunctionName {
 }
 
 fn is_word(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
 /// The function name `value` (the variable's value; `None` when it is not set) read as
 /// `mopm-<stage>-<function>`: the stage is one word, the function one or more joined by single hyphens.
 pub fn parse_function_name(value: Option<&OsStr>) -> Result<FunctionName, SetupError> {
-    let raw = value.ok_or(SetupError::FunctionNameMissing)?.to_str().ok_or(SetupError::FunctionNameNotUnicode)?;
+    let raw = value
+        .ok_or(SetupError::FunctionNameMissing)?
+        .to_str()
+        .ok_or(SetupError::FunctionNameNotUnicode)?;
     let malformed = || SetupError::FunctionNameMalformed(raw.to_string());
-    let (stage, function) = raw.strip_prefix("mopm-").and_then(|rest| rest.split_once('-')).ok_or_else(malformed)?;
+    let (stage, function) = raw
+        .strip_prefix("mopm-")
+        .and_then(|rest| rest.split_once('-'))
+        .ok_or_else(malformed)?;
     if !is_word(stage) || !function.split('-').all(is_word) {
         return Err(malformed());
     }
-    Ok(FunctionName { stage: Stage(stage.to_string()), function: function.to_string() })
+    Ok(FunctionName {
+        stage: Stage(stage.to_string()),
+        function: function.to_string(),
+    })
 }
 
 /// [`parse_function_name`] of this process's `AWS_LAMBDA_FUNCTION_NAME`.
@@ -129,18 +140,28 @@ pub struct StageSettings {
 }
 
 fn is_origin(s: &str) -> bool {
-    s.strip_prefix("https://").is_some_and(|host| !host.is_empty() && host.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-'))
+    s.strip_prefix("https://").is_some_and(|host| {
+        !host.is_empty()
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+    })
 }
 
 impl StageSettings {
     /// The settings in `item`, checked.
     pub fn from_item(item: serde_json::Value) -> Result<StageSettings, SetupError> {
-        let s: StageSettings = serde_json::from_value(item).map_err(|e| SetupError::StageSettingsInvalid(e.to_string()))?;
+        let s: StageSettings = serde_json::from_value(item)
+            .map_err(|e| SetupError::StageSettingsInvalid(e.to_string()))?;
         let invalid = |why: &str| Err(SetupError::StageSettingsInvalid(why.to_string()));
         if !is_origin(&s.site_origin) {
             return invalid("site_origin is not https:// and a lower-case host");
         }
-        if !s.redirect_uri.strip_prefix(&s.site_origin).is_some_and(|path| path.starts_with('/')) {
+        if !s
+            .redirect_uri
+            .strip_prefix(&s.site_origin)
+            .is_some_and(|path| path.starts_with('/'))
+        {
             return invalid("redirect_uri is not a path under site_origin");
         }
         if s.e2b_template_id.as_deref().is_some_and(str::is_empty) || s.e2b_domain.is_empty() {
@@ -158,8 +179,15 @@ impl StageSettings {
     }
 
     /// What [`StageSettings::load`] makes of the table's answer (not generic, so one instantiation covers it).
-    fn from_lookup(found: PortResult<Option<serde_json::Value>>) -> Result<StageSettings, SetupError> {
-        let item = found.map_err(|source| SetupError::Port { what: format!("the {STAGE_SETTINGS_KEY} item"), source })?.ok_or(SetupError::StageSettingsMissing)?;
+    fn from_lookup(
+        found: PortResult<Option<serde_json::Value>>,
+    ) -> Result<StageSettings, SetupError> {
+        let item = found
+            .map_err(|source| SetupError::Port {
+                what: format!("the {STAGE_SETTINGS_KEY} item"),
+                source,
+            })?
+            .ok_or(SetupError::StageSettingsMissing)?;
         StageSettings::from_item(item)
     }
 }
@@ -180,13 +208,27 @@ mod tests {
         assert_eq!(f.stage.as_str(), "beta");
         assert_eq!(f.function, "web-session");
         let f = parse_function_name(os("mopm-prod-tutorial-sandbox")).unwrap();
-        assert_eq!(f, FunctionName { stage: Stage("prod".to_string()), function: "tutorial-sandbox".to_string() });
-        assert_eq!(parse_function_name(os("mopm-gamma2-x")).unwrap().stage.as_str(), "gamma2");
+        assert_eq!(
+            f,
+            FunctionName {
+                stage: Stage("prod".to_string()),
+                function: "tutorial-sandbox".to_string()
+            }
+        );
+        assert_eq!(
+            parse_function_name(os("mopm-gamma2-x"))
+                .unwrap()
+                .stage
+                .as_str(),
+            "gamma2"
+        );
     }
 
     #[test]
     fn a_stage_names_its_secrets_and_tables() {
-        let stage = parse_function_name(os("mopm-beta-web-login")).unwrap().stage;
+        let stage = parse_function_name(os("mopm-beta-web-login"))
+            .unwrap()
+            .stage;
         assert_eq!(stage.secret_id("edge-origin"), "mopm/beta/edge-origin");
         assert_eq!(stage.table("config"), "mopm-beta-config");
     }
@@ -209,13 +251,20 @@ mod tests {
             " mopm-beta-web-login",
         ] {
             let err = parse_function_name(os(bad)).unwrap_err();
-            assert_eq!(err.to_string(), format!("AWS_LAMBDA_FUNCTION_NAME is {bad:?}, not mopm-<stage>-<function>"), "{bad:?}");
+            assert_eq!(
+                err.to_string(),
+                format!("AWS_LAMBDA_FUNCTION_NAME is {bad:?}, not mopm-<stage>-<function>"),
+                "{bad:?}"
+            );
         }
     }
 
     #[test]
     fn an_unset_function_name_is_refused() {
-        assert_eq!(parse_function_name(None).unwrap_err().to_string(), "AWS_LAMBDA_FUNCTION_NAME is not set");
+        assert_eq!(
+            parse_function_name(None).unwrap_err().to_string(),
+            "AWS_LAMBDA_FUNCTION_NAME is not set"
+        );
     }
 
     #[cfg(unix)]
@@ -223,14 +272,18 @@ mod tests {
     fn a_function_name_that_is_not_utf8_is_refused() {
         use std::os::unix::ffi::OsStrExt;
         let err = parse_function_name(Some(OsStr::from_bytes(b"mopm-beta-\xff"))).unwrap_err();
-        assert_eq!(err.to_string(), "AWS_LAMBDA_FUNCTION_NAME is not valid UTF-8");
+        assert_eq!(
+            err.to_string(),
+            "AWS_LAMBDA_FUNCTION_NAME is not valid UTF-8"
+        );
     }
 
     /// The environment read is the parse of the variable's value: whatever this process has (no test sets it).
     #[test]
     fn the_environment_read_parses_the_lambda_variable() {
         let ours = function_name_from_env().map_err(|e| e.to_string());
-        let direct = parse_function_name(std::env::var_os("AWS_LAMBDA_FUNCTION_NAME").as_deref()).map_err(|e| e.to_string());
+        let direct = parse_function_name(std::env::var_os("AWS_LAMBDA_FUNCTION_NAME").as_deref())
+            .map_err(|e| e.to_string());
         assert_eq!(ours, direct);
     }
 
@@ -247,7 +300,9 @@ mod tests {
     }
 
     fn table(item: Option<serde_json::Value>) -> BTreeMap<String, serde_json::Value> {
-        item.into_iter().map(|i| (STAGE_SETTINGS_KEY.to_string(), i)).collect()
+        item.into_iter()
+            .map(|i| (STAGE_SETTINGS_KEY.to_string(), i))
+            .collect()
     }
 
     #[tokio::test]
@@ -270,12 +325,24 @@ mod tests {
     async fn fields_a_newer_stack_adds_are_ignored() {
         let mut i = item();
         i["a_later_setting"] = json!({"nested": [1, 2]});
-        assert_eq!(StageSettings::load(&table(Some(i))).await.unwrap().e2b_domain, "e2b.app");
+        assert_eq!(
+            StageSettings::load(&table(Some(i)))
+                .await
+                .unwrap()
+                .e2b_domain,
+            "e2b.app"
+        );
     }
 
     #[tokio::test]
     async fn a_missing_item_fails_the_start() {
-        assert_eq!(StageSettings::load(&table(None)).await.unwrap_err().to_string(), "the config table has no stage_settings item");
+        assert_eq!(
+            StageSettings::load(&table(None))
+                .await
+                .unwrap_err()
+                .to_string(),
+            "the config table has no stage_settings item"
+        );
     }
 
     struct Broken;
@@ -289,7 +356,10 @@ mod tests {
     #[tokio::test]
     async fn a_table_that_fails_fails_the_start_naming_the_item() {
         let err = StageSettings::load(&Broken).await.unwrap_err();
-        assert_eq!(err.to_string(), "reading the stage_settings item: infrastructure fault: throttled");
+        assert_eq!(
+            err.to_string(),
+            "reading the stage_settings item: infrastructure fault: throttled"
+        );
         assert!(std::error::Error::source(&err).is_some());
     }
 
@@ -299,22 +369,39 @@ mod tests {
 
     #[test]
     fn each_missing_or_mistyped_field_is_refused() {
-        for field in ["redirect_uri", "site_origin", "require_2fa", "e2b_domain", "sandbox_timeout_s"] {
+        for field in [
+            "redirect_uri",
+            "site_origin",
+            "require_2fa",
+            "e2b_domain",
+            "sandbox_timeout_s",
+        ] {
             let mut i = item();
             i.as_object_mut().unwrap().remove(field);
-            assert_eq!(refused(i), format!("the stage_settings item is not valid: missing field `{field}`"));
+            assert_eq!(
+                refused(i),
+                format!("the stage_settings item is not valid: missing field `{field}`")
+            );
         }
         let mut i = item();
         i["require_2fa"] = json!("true");
         assert!(refused(i).starts_with("the stage_settings item is not valid: invalid type: string \"true\", expected a boolean"));
         let mut i = item();
         i["sandbox_timeout_s"] = json!(-1);
-        assert!(refused(i).starts_with("the stage_settings item is not valid: invalid value: integer `-1`"));
+        assert!(refused(i)
+            .starts_with("the stage_settings item is not valid: invalid value: integer `-1`"));
     }
 
     #[test]
     fn a_site_origin_that_is_not_https_and_a_bare_lower_case_host_is_refused() {
-        for bad in ["http://beta.mopm.dev", "https://", "https://beta.mopm.dev/", "https://Beta.mopm.dev", "https://beta.mopm.dev:443", "beta.mopm.dev"] {
+        for bad in [
+            "http://beta.mopm.dev",
+            "https://",
+            "https://beta.mopm.dev/",
+            "https://Beta.mopm.dev",
+            "https://beta.mopm.dev:443",
+            "beta.mopm.dev",
+        ] {
             let mut i = item();
             i["site_origin"] = json!(bad);
             i["redirect_uri"] = json!(format!("{bad}/api/v2/auth/web/callback"));
@@ -324,7 +411,12 @@ mod tests {
 
     #[test]
     fn a_redirect_uri_outside_the_site_origin_is_refused() {
-        for bad in ["https://api.beta.mopm.dev/api/v2/auth/web/callback", "https://beta.mopm.dev.evil/cb", "https://beta.mopm.dev", "https://beta.mopm.devx/cb"] {
+        for bad in [
+            "https://api.beta.mopm.dev/api/v2/auth/web/callback",
+            "https://beta.mopm.dev.evil/cb",
+            "https://beta.mopm.dev",
+            "https://beta.mopm.devx/cb",
+        ] {
             let mut i = item();
             i["redirect_uri"] = json!(bad);
             assert_eq!(refused(i), "the stage_settings item is not valid: redirect_uri is not a path under site_origin", "{bad}");
@@ -340,17 +432,29 @@ mod tests {
         }
         let mut i = item();
         i["sandbox_timeout_s"] = json!(0);
-        assert_eq!(refused(i), "the stage_settings item is not valid: sandbox_timeout_seconds must be more than zero");
+        assert_eq!(
+            refused(i),
+            "the stage_settings item is not valid: sandbox_timeout_seconds must be more than zero"
+        );
         let mut i = item();
         i["sandbox_timeout_s"] = json!(1);
-        assert_eq!(StageSettings::from_item(i).unwrap().sandbox_timeout_seconds, 1);
+        assert_eq!(
+            StageSettings::from_item(i).unwrap().sandbox_timeout_seconds,
+            1
+        );
     }
 
     #[tokio::test]
     async fn an_item_without_a_template_id_loads_with_none() {
         let mut i = item();
         i.as_object_mut().unwrap().remove("e2b_template_id");
-        assert_eq!(StageSettings::load(&table(Some(i))).await.unwrap().e2b_template_id, None);
+        assert_eq!(
+            StageSettings::load(&table(Some(i)))
+                .await
+                .unwrap()
+                .e2b_template_id,
+            None
+        );
     }
 
     /// The item names of an earlier draft of this module are not the stack's: an item that has only those is
@@ -361,12 +465,18 @@ mod tests {
         let m = i.as_object_mut().unwrap();
         let v = m.remove("require_2fa").unwrap();
         m.insert("require_two_factor".into(), v);
-        assert_eq!(refused(i), "the stage_settings item is not valid: missing field `require_2fa`");
+        assert_eq!(
+            refused(i),
+            "the stage_settings item is not valid: missing field `require_2fa`"
+        );
         let mut i = item();
         let m = i.as_object_mut().unwrap();
         let v = m.remove("sandbox_timeout_s").unwrap();
         m.insert("sandbox_timeout_seconds".into(), v);
-        assert_eq!(refused(i), "the stage_settings item is not valid: missing field `sandbox_timeout_s`");
+        assert_eq!(
+            refused(i),
+            "the stage_settings item is not valid: missing field `sandbox_timeout_s`"
+        );
     }
 
     #[test]
@@ -374,6 +484,9 @@ mod tests {
         let mut i = item();
         i["site_origin"] = json!("https://pr-12.beta.mopm.dev");
         i["redirect_uri"] = json!("https://pr-12.beta.mopm.dev/api/v2/auth/web/callback");
-        assert_eq!(StageSettings::from_item(i).unwrap().site_origin, "https://pr-12.beta.mopm.dev");
+        assert_eq!(
+            StageSettings::from_item(i).unwrap().site_origin,
+            "https://pr-12.beta.mopm.dev"
+        );
     }
 }

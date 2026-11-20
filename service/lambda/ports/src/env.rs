@@ -28,9 +28,18 @@ mod tests {
     #[test]
     fn matches_to_iso_string() {
         // new Date(1760356800000).toISOString() === '2025-10-13T12:00:00.000Z'
-        assert_eq!(iso_millis(at(1_760_356_800_000)), "2025-10-13T12:00:00.000Z");
-        assert_eq!(iso_millis(at(1_760_356_800_007)), "2025-10-13T12:00:00.007Z");
-        assert_eq!(iso_millis(at(1_760_356_800_120)), "2025-10-13T12:00:00.120Z");
+        assert_eq!(
+            iso_millis(at(1_760_356_800_000)),
+            "2025-10-13T12:00:00.000Z"
+        );
+        assert_eq!(
+            iso_millis(at(1_760_356_800_007)),
+            "2025-10-13T12:00:00.007Z"
+        );
+        assert_eq!(
+            iso_millis(at(1_760_356_800_120)),
+            "2025-10-13T12:00:00.120Z"
+        );
         assert_eq!(iso_millis(at(0)), "1970-01-01T00:00:00.000Z");
     }
 

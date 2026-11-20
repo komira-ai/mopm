@@ -38,13 +38,23 @@ async fn start() -> Result<Result<(), lambda_runtime::Error>, SetupError> {
     let dynamo = aws_sdk_dynamodb::Client::new(&sdk);
     let secrets = SecretsManagerReader::new(aws_sdk_secretsmanager::Client::new(&sdk));
     let config = DynamoConfigTable::new(dynamo.clone(), name.stage.table("config"));
-    let store = DynamoAuthStore::new(dynamo, AuthTables::for_stage(name.stage.as_str()), Arc::new(SystemClock));
+    let store = DynamoAuthStore::new(
+        dynamo,
+        AuthTables::for_stage(name.stage.as_str()),
+        Arc::new(SystemClock),
+    );
     let handler = Arc::new(cold_start(&name, &config, &secrets, store, SystemClock).await?);
-    tracing::info!(function = name.function.as_str(), stage = name.stage.as_str(), "started");
-    let service = service_fn(|event: LambdaEvent<aws_lambda_events::apigw::ApiGatewayV2httpRequest>| {
-        let handler = handler.clone();
-        async move { Ok::<_, std::convert::Infallible>(handler.handle_event(event.payload).await) }
-    });
+    tracing::info!(
+        function = name.function.as_str(),
+        stage = name.stage.as_str(),
+        "started"
+    );
+    let service = service_fn(
+        |event: LambdaEvent<aws_lambda_events::apigw::ApiGatewayV2httpRequest>| {
+            let handler = handler.clone();
+            async move { Ok::<_, std::convert::Infallible>(handler.handle_event(event.payload).await) }
+        },
+    );
     Ok(run(service).await)
 }
 
@@ -61,7 +71,11 @@ pub async fn serve() -> RunError {
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() -> ExitCode {
     // A second initialisation (a test process that ran this twice) keeps the first subscriber.
-    let _ = tracing_subscriber::fmt().json().with_max_level(tracing::Level::INFO).without_time().try_init();
+    let _ = tracing_subscriber::fmt()
+        .json()
+        .with_max_level(tracing::Level::INFO)
+        .without_time()
+        .try_init();
     let error = serve().await;
     tracing::error!(%error, "the function stopped");
     ExitCode::FAILURE

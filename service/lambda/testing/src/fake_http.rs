@@ -470,7 +470,11 @@ mod start_tests {
     #[tokio::test]
     async fn a_request_with_a_query_records_path_and_query_separately() {
         let fake = FakeHttp::start(vec![]);
-        let reply = exchange(&fake, b"GET /bucket/key?list-type=2&prefix=a%2Fb HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        let reply = exchange(
+            &fake,
+            b"GET /bucket/key?list-type=2&prefix=a%2Fb HTTP/1.1\r\nHost: x\r\n\r\n",
+        )
+        .await;
         assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"));
         let seen = fake.requests();
         assert_eq!(seen.len(), 1);
@@ -497,7 +501,10 @@ mod start_tests {
         let seen = fake.requests();
         assert_eq!(seen[0].header("host"), Some("h"));
         assert_eq!(seen[0].header("missing"), None);
-        assert_eq!(seen[0].signed_headers(), vec!["host".to_string(), "x-amz-date".to_string()]);
+        assert_eq!(
+            seen[0].signed_headers(),
+            vec!["host".to_string(), "x-amz-date".to_string()]
+        );
         assert_eq!(seen[0].body, b"hi");
     }
 
@@ -512,7 +519,9 @@ mod start_tests {
     async fn a_client_that_closes_mid_header_is_not_recorded_and_the_next_request_is_served() {
         let fake = FakeHttp::start(vec![Reply::new(204)]);
         let mut s = connect(&fake).await;
-        s.write_all(b"GET /half HTTP/1.1\r\nHost: x\r\n").await.unwrap();
+        s.write_all(b"GET /half HTTP/1.1\r\nHost: x\r\n")
+            .await
+            .unwrap();
         s.shutdown().await.unwrap();
         assert!(read_to_end(&mut s).await.is_empty());
         assert!(fake.requests().is_empty());
@@ -526,7 +535,9 @@ mod start_tests {
     async fn a_client_that_closes_mid_body_is_not_recorded() {
         let fake = FakeHttp::start(vec![]);
         let mut s = connect(&fake).await;
-        s.write_all(b"PUT /k HTTP/1.1\r\nContent-Length: 10\r\n\r\nabc").await.unwrap();
+        s.write_all(b"PUT /k HTTP/1.1\r\nContent-Length: 10\r\n\r\nabc")
+            .await
+            .unwrap();
         s.shutdown().await.unwrap();
         assert!(read_to_end(&mut s).await.is_empty());
         assert!(fake.requests().is_empty());
@@ -536,7 +547,11 @@ mod start_tests {
     async fn a_body_larger_than_one_read_is_recorded_whole() {
         let fake = FakeHttp::start(vec![]);
         let body: Vec<u8> = (0..20_000u32).map(|i| (i % 251) as u8).collect();
-        let mut raw = format!("PUT /big HTTP/1.1\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+        let mut raw = format!(
+            "PUT /big HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
         raw.extend_from_slice(&body);
         let mut s = connect(&fake).await;
         s.write_all(&raw).await.unwrap();
@@ -547,23 +562,33 @@ mod start_tests {
 
     #[tokio::test]
     async fn an_error_status_is_answered_with_its_headers_and_body() {
-        let fake = FakeHttp::start(vec![Reply::new(404).header("x-amz-request-id", "r1").body("nope")]);
+        let fake = FakeHttp::start(vec![Reply::new(404)
+            .header("x-amz-request-id", "r1")
+            .body("nope")]);
         let reply = exchange(&fake, b"GET /k HTTP/1.1\r\n\r\n").await;
         assert_eq!(reply, "HTTP/1.1 404 Error\r\nx-amz-request-id: r1\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnope");
     }
 
     #[tokio::test]
     async fn a_reply_that_sets_content_length_is_not_given_a_second_one() {
-        let fake = FakeHttp::start(vec![Reply::new(200).header("Content-Length", "4").body("data")]);
+        let fake = FakeHttp::start(vec![Reply::new(200)
+            .header("Content-Length", "4")
+            .body("data")]);
         let reply = exchange(&fake, b"GET /k HTTP/1.1\r\n\r\n").await;
-        assert_eq!(reply, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndata");
+        assert_eq!(
+            reply,
+            "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndata"
+        );
     }
 
     #[tokio::test]
     async fn a_head_reply_carries_the_length_but_no_body() {
         let fake = FakeHttp::start(vec![Reply::new(200).body("data")]);
         let reply = exchange(&fake, b"HEAD /k HTTP/1.1\r\n\r\n").await;
-        assert_eq!(reply, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n");
+        assert_eq!(
+            reply,
+            "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n"
+        );
     }
 
     #[tokio::test]

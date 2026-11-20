@@ -51,14 +51,25 @@ fn event(method: &str, path: &str, request_id: &str, headers: Value) -> String {
 
 /// The three events, in the order the fake runtime API sends them, with the id each is invoked under.
 fn events() -> Vec<(&'static str, String)> {
-    let session = |id| event("GET", "/api/v2/auth/web/session", id, json!({"host": "api.beta.mopm.dev", "x-mopm-edge": EDGE}));
+    let session = |id| {
+        event(
+            "GET",
+            "/api/v2/auth/web/session",
+            id,
+            json!({"host": "api.beta.mopm.dev", "x-mopm-edge": EDGE}),
+        )
+    };
     let logout = event(
         "POST",
         "/api/v2/auth/web/logout",
         "gw-2",
         json!({"host": "api.beta.mopm.dev", "x-mopm-edge": EDGE, "origin": "https://beta.mopm.dev", "sec-fetch-site": "same-origin", "x-mopm-csrf": CSRF}),
     );
-    vec![("inv-1", session("gw-1")), ("inv-2", logout), ("inv-3", session("gw-3"))]
+    vec![
+        ("inv-1", session("gw-1")),
+        ("inv-2", logout),
+        ("inv-3", session("gw-3")),
+    ]
 }
 
 /// What the function must post for each event, byte for byte.
@@ -85,17 +96,30 @@ async fn read_request(stream: &mut TcpStream) -> (String, Vec<u8>) {
         buf.extend_from_slice(&chunk[..n]);
     };
     let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
-    let len: usize = head.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap())).unwrap_or(0);
+    let len: usize = head
+        .lines()
+        .find_map(|l| {
+            l.to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse().unwrap())
+        })
+        .unwrap_or(0);
     while buf.len() < head_end + len {
         let n = stream.read(&mut chunk).await.unwrap();
         assert!(n > 0, "the runtime closed the connection inside a body");
         buf.extend_from_slice(&chunk[..n]);
     }
-    (head.lines().next().unwrap().to_string(), buf[head_end..head_end + len].to_vec())
+    (
+        head.lines().next().unwrap().to_string(),
+        buf[head_end..head_end + len].to_vec(),
+    )
 }
 
 async fn reply(stream: &mut TcpStream, status: &str, headers: &[(&str, String)], body: &str) {
-    let mut out = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n", body.len());
+    let mut out = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
     for (k, v) in headers {
         out.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -123,7 +147,10 @@ async fn runtime_api(listener: TcpListener, posted: mpsc::Sender<(String, Vec<u8
                         ("Content-Type", "application/json".to_string()),
                         ("Lambda-Runtime-Aws-Request-Id", id.to_string()),
                         ("Lambda-Runtime-Deadline-Ms", "4102444800000".to_string()),
-                        ("Lambda-Runtime-Invoked-Function-Arn", "arn:aws:lambda:us-east-1:fake:function:mopm-t-web-session".to_string()),
+                        (
+                            "Lambda-Runtime-Invoked-Function-Arn",
+                            "arn:aws:lambda:us-east-1:fake:function:mopm-t-web-session".to_string(),
+                        ),
                     ];
                     reply(&mut stream, "200 OK", &headers, payload).await;
                 }
@@ -151,10 +178,16 @@ struct Fakes {
 fn start_fakes() -> Fakes {
     let (ready_tx, ready_rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         rt.block_on(async {
             let dynamo = FakeDynamo::start(FakeConfig::web_session("t"));
-            dynamo.seed("mopm-t-config", serde_json::from_str(STAGE_SETTINGS_ITEM).unwrap());
+            dynamo.seed(
+                "mopm-t-config",
+                serde_json::from_str(STAGE_SETTINGS_ITEM).unwrap(),
+            );
             for item in serde_json::from_str::<Vec<Value>>(USERS).unwrap() {
                 dynamo.seed("mopm-t-users", item);
             }
@@ -167,7 +200,14 @@ fn start_fakes() -> Fakes {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let runtime_addr = listener.local_addr().unwrap();
             let (posted_tx, posted) = mpsc::channel();
-            ready_tx.send(Fakes { dynamo, secrets, runtime_addr, posted }).unwrap();
+            ready_tx
+                .send(Fakes {
+                    dynamo,
+                    secrets,
+                    runtime_addr,
+                    posted,
+                })
+                .unwrap();
             runtime_api(listener, posted_tx).await;
             // The fakes outlive the entry: the test reads them after it returns.
             std::future::pending::<()>().await;
@@ -179,12 +219,16 @@ fn start_fakes() -> Fakes {
 #[test]
 fn the_entry_serves_a_session_a_logout_and_a_session_again_and_fails_when_the_runtime_api_does() {
     let fakes = start_fakes();
-    let scratch = std::env::temp_dir().join(format!("fn_web_session_runtime_{}", std::process::id()));
+    let scratch =
+        std::env::temp_dir().join(format!("fn_web_session_runtime_{}", std::process::id()));
     let vars = [
         ("AWS_LAMBDA_FUNCTION_NAME", "mopm-t-web-session".to_string()),
         ("AWS_LAMBDA_FUNCTION_VERSION", "$LATEST".to_string()),
         ("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "128".to_string()),
-        ("AWS_LAMBDA_LOG_GROUP_NAME", "/aws/lambda/mopm-t-web-session".to_string()),
+        (
+            "AWS_LAMBDA_LOG_GROUP_NAME",
+            "/aws/lambda/mopm-t-web-session".to_string(),
+        ),
         ("AWS_LAMBDA_LOG_STREAM_NAME", "stream".to_string()),
         ("AWS_LAMBDA_RUNTIME_API", fakes.runtime_addr.to_string()),
         ("AWS_REGION", "us-east-1".to_string()),
@@ -192,8 +236,14 @@ fn the_entry_serves_a_session_a_logout_and_a_session_again_and_fails_when_the_ru
         ("AWS_SECRET_ACCESS_KEY", "fakesecret".to_string()),
         ("AWS_ENDPOINT_URL_DYNAMODB", fakes.dynamo.endpoint()),
         ("AWS_ENDPOINT_URL_SECRETS_MANAGER", fakes.secrets.endpoint()),
-        ("AWS_CONFIG_FILE", scratch.join("config").display().to_string()),
-        ("AWS_SHARED_CREDENTIALS_FILE", scratch.join("credentials").display().to_string()),
+        (
+            "AWS_CONFIG_FILE",
+            scratch.join("config").display().to_string(),
+        ),
+        (
+            "AWS_SHARED_CREDENTIALS_FILE",
+            scratch.join("credentials").display().to_string(),
+        ),
         ("AWS_EC2_METADATA_DISABLED", "true".to_string()),
     ];
     for (k, v) in &vars {
@@ -202,23 +252,50 @@ fn the_entry_serves_a_session_a_logout_and_a_session_again_and_fails_when_the_ru
 
     let exit = fn_web_session::runtime::main();
 
-    assert!(exit == ExitCode::FAILURE, "the entry exits non-zero when the runtime API ends");
+    assert!(
+        exit == ExitCode::FAILURE,
+        "the entry exits non-zero when the runtime API ends"
+    );
     let posted: Vec<(String, Vec<u8>)> = fakes.posted.try_iter().collect();
     let expected = expected();
     assert_eq!(posted.len(), expected.len(), "{posted:?}");
     for (i, (line, body)) in posted.iter().enumerate() {
-        assert_eq!(line, &format!("POST /2018-06-01/runtime/invocation/inv-{}/response HTTP/1.1", i + 1));
-        assert_eq!(String::from_utf8(body.clone()).unwrap(), expected[i], "answer {}", i + 1);
+        assert_eq!(
+            line,
+            &format!(
+                "POST /2018-06-01/runtime/invocation/inv-{}/response HTTP/1.1",
+                i + 1
+            )
+        );
+        assert_eq!(
+            String::from_utf8(body.clone()).unwrap(),
+            expected[i],
+            "answer {}",
+            i + 1
+        );
     }
 
     // The logout revoked the session's row and no other; every call was one the role's grants allow.
     let tokens = fakes.dynamo.dump("mopm-t-tokens");
-    let revoked: Vec<&str> = tokens.iter().filter(|t| t.get("revoked_at").is_some()).map(|t| t["id"]["S"].as_str().unwrap()).collect();
+    let revoked: Vec<&str> = tokens
+        .iter()
+        .filter(|t| t.get("revoked_at").is_some())
+        .map(|t| t["id"]["S"].as_str().unwrap())
+        .collect();
     assert_eq!(revoked, vec!["tok-1"]);
     let grants: Value = serde_json::from_str(WEB_SESSION_GRANTS).unwrap();
     for r in fakes.dynamo.requests() {
-        let table = r.body["TableName"].as_str().unwrap().strip_prefix("mopm-t-").unwrap().to_string();
-        let allowed = grants[&table]["actions"].as_array().unwrap().iter().any(|a| a == &Value::String(format!("dynamodb:{}", r.operation)));
+        let table = r.body["TableName"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("mopm-t-")
+            .unwrap()
+            .to_string();
+        let allowed = grants[&table]["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a == &Value::String(format!("dynamodb:{}", r.operation)));
         assert!(allowed, "{} on {table}", r.operation);
         assert!(r.signed);
     }

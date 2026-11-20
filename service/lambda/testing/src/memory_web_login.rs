@@ -20,7 +20,9 @@ impl MemoryWebLoginStore {
     }
 
     fn lock(&self) -> MutexGuard<'_, BTreeMap<String, WebLoginRecord>> {
-        self.rows.lock().expect("the store's lock is never held across a panic")
+        self.rows
+            .lock()
+            .expect("the store's lock is never held across a panic")
     }
 }
 
@@ -32,7 +34,10 @@ impl WebLoginStore for MemoryWebLoginStore {
 
     async fn consume(&self, id: &str, now: Timestamp) -> PortResult<Option<WebLoginRecord>> {
         let mut rows = self.lock();
-        let Some(row) = rows.get_mut(id).filter(|r| r.consumed_at.is_none() && !r.is_expired(now)) else {
+        let Some(row) = rows
+            .get_mut(id)
+            .filter(|r| r.consumed_at.is_none() && !r.is_expired(now))
+        else {
             return Ok(None);
         };
         row.consumed_at = Some(iso_millis(now));

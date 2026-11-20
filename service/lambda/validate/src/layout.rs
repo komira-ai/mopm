@@ -21,31 +21,51 @@ pub enum Role {
     Dir,
 }
 
-const INFO_FILES: [&str; 5] = ["info/index.json", "info/paths.json", "info/about.json", "info/files", "info/hash_input.json"];
+const INFO_FILES: [&str; 5] = [
+    "info/index.json",
+    "info/paths.json",
+    "info/about.json",
+    "info/files",
+    "info/hash_input.json",
+];
 const ALLOWED_DIRS: [&str; 4] = ["lib", "lib/mojo", "info", "info/licenses"];
 
 /// `^lib\/lib[^/]+\.(?:so(?:\.\d+)*|dylib|a)$`: native library file names under `lib/`: `lib<stem>.so[.N...]`,
 /// `lib<stem>.dylib`, `lib<stem>.a` (a static archive).
 pub fn is_native_file(p: &str) -> bool {
-    let Some(rest) = p.strip_prefix("lib/lib") else { return false };
+    let Some(rest) = p.strip_prefix("lib/lib") else {
+        return false;
+    };
     if rest.is_empty() || rest.contains('/') {
         return false;
     }
     // The stem is one or more characters, then a dot and a known suffix: try each dot.
-    rest.char_indices().filter(|(_, c)| *c == '.').any(|(i, _)| i > 0 && suffix_ok(&rest[i + 1..]))
+    rest.char_indices()
+        .filter(|(_, c)| *c == '.')
+        .any(|(i, _)| i > 0 && suffix_ok(&rest[i + 1..]))
 }
 
 fn suffix_ok(s: &str) -> bool {
     if s == "dylib" || s == "a" {
         return true;
     }
-    let Some(more) = s.strip_prefix("so") else { return false };
-    more.split('.').skip(1).all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())) && (more.is_empty() || more.starts_with('.'))
+    let Some(more) = s.strip_prefix("so") else {
+        return false;
+    };
+    more.split('.')
+        .skip(1)
+        .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        && (more.is_empty() || more.starts_with('.'))
 }
 
 /// `^[a-z0-9_]+\.mojo$`: the file name of a program's source below `lib/mojo/<name>.bins/`.
 fn is_bin_source(file: &str) -> bool {
-    file.strip_suffix(".mojo").is_some_and(|stem| !stem.is_empty() && stem.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'))
+    file.strip_suffix(".mojo").is_some_and(|stem| {
+        !stem.is_empty()
+            && stem
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    })
 }
 
 /// `(?:^|[-_.])(?:pre-link|post-link|pre-unlink)\.(?:sh|bat)$`, case-insensitive, on the base name.
@@ -64,7 +84,11 @@ fn is_link_script(base: &str) -> bool {
 }
 
 fn fold(path: &str) -> String {
-    path.nfkc().collect::<String>().to_lowercase().nfkc().collect()
+    path.nfkc()
+        .collect::<String>()
+        .to_lowercase()
+        .nfkc()
+        .collect()
 }
 
 /// Refuse two entries whose names are the same file on some filesystem: byte-identical duplicates, and paths that
@@ -79,7 +103,11 @@ pub fn check_collisions(entries: &[TarEntry]) -> Checked<()> {
                 seen.insert(key, &e.path);
             }
             Some(prior) if *prior == e.path => {
-                return fail_at(RuleCode::DuplicatePath, format!("'{}' appears more than once", e.path), e.path.clone());
+                return fail_at(
+                    RuleCode::DuplicatePath,
+                    format!("'{}' appears more than once", e.path),
+                    e.path.clone(),
+                );
             }
             Some(prior) => {
                 return fail_at(
@@ -98,11 +126,21 @@ pub fn classify(e: &TarEntry, name: &str) -> Checked<Role> {
     let p = e.path.as_str();
     let base = p.rsplit('/').next().unwrap_or(p);
     if p == "info/link.json" || p.starts_with("etc/conda/") || is_link_script(base) {
-        return fail_at(RuleCode::LinkScript, format!("'{p}' is a link or activation script; packages may not run code at install time"), p);
+        return fail_at(
+            RuleCode::LinkScript,
+            format!(
+                "'{p}' is a link or activation script; packages may not run code at install time"
+            ),
+            p,
+        );
     }
     let top = p.split('/').next().unwrap_or(p);
     if matches!(top, "bin" | "sbin" | "Scripts") {
-        return fail_at(RuleCode::BinDir, format!("'{p}' is under {top}/; packages may not ship executables"), p);
+        return fail_at(
+            RuleCode::BinDir,
+            format!("'{p}' is under {top}/; packages may not ship executables"),
+            p,
+        );
     }
     if e.kind == Kind::Dir {
         if p == format!("lib/mojo/{name}.bins") {
@@ -111,7 +149,11 @@ pub fn classify(e: &TarEntry, name: &str) -> Checked<Role> {
         if ALLOWED_DIRS.contains(&p) || p.starts_with("info/licenses/") {
             return Ok(Role::Dir);
         }
-        return fail_at(RuleCode::LayoutNotAllowed, format!("directory '{p}' is outside the allowed layout"), p);
+        return fail_at(
+            RuleCode::LayoutNotAllowed,
+            format!("directory '{p}' is outside the allowed layout"),
+            p,
+        );
     }
     if p == format!("lib/mojo/{name}.mojoc") {
         return Ok(Role::Mojoc);
@@ -119,7 +161,9 @@ pub fn classify(e: &TarEntry, name: &str) -> Checked<Role> {
     if p == format!("lib/mojo/{name}.mopm.json") {
         return Ok(Role::Mopm);
     }
-    if p.strip_prefix(&format!("lib/mojo/{name}.bins/")).is_some_and(is_bin_source) {
+    if p.strip_prefix(&format!("lib/mojo/{name}.bins/"))
+        .is_some_and(is_bin_source)
+    {
         return Ok(Role::Source);
     }
     if is_native_file(p) {
@@ -143,29 +187,73 @@ mod tests {
     use super::*;
 
     fn file(p: &str) -> TarEntry {
-        TarEntry { path: p.into(), kind: Kind::File, data: vec![] }
+        TarEntry {
+            path: p.into(),
+            kind: Kind::File,
+            data: vec![],
+        }
     }
 
     fn dir(p: &str) -> TarEntry {
-        TarEntry { path: p.into(), kind: Kind::Dir, data: vec![] }
+        TarEntry {
+            path: p.into(),
+            kind: Kind::Dir,
+            data: vec![],
+        }
     }
 
     #[test]
     fn native_file_names() {
-        for yes in ["lib/libfoo.so", "lib/libfoo.so.1", "lib/libfoo.so.1.2.3", "lib/libfoo.dylib", "lib/libfoo.a", "lib/libfoo.bar.so", "lib/lib.x.a", "lib/libf.so.9"] {
+        for yes in [
+            "lib/libfoo.so",
+            "lib/libfoo.so.1",
+            "lib/libfoo.so.1.2.3",
+            "lib/libfoo.dylib",
+            "lib/libfoo.a",
+            "lib/libfoo.bar.so",
+            "lib/lib.x.a",
+            "lib/libf.so.9",
+        ] {
             assert!(is_native_file(yes), "{yes}");
         }
-        for no in ["lib/foo.so", "lib/libfoo", "lib/libfoo.so.", "lib/libfoo.so.x", "lib/libfoo.sox", "lib/sub/libfoo.so", "lib/lib.so", "lib/libfoo.so.1.", "lib/libfoo.dll", "lib/libfoo.a.b", "libfoo.so", "lib/lib"] {
+        for no in [
+            "lib/foo.so",
+            "lib/libfoo",
+            "lib/libfoo.so.",
+            "lib/libfoo.so.x",
+            "lib/libfoo.sox",
+            "lib/sub/libfoo.so",
+            "lib/lib.so",
+            "lib/libfoo.so.1.",
+            "lib/libfoo.dll",
+            "lib/libfoo.a.b",
+            "libfoo.so",
+            "lib/lib",
+        ] {
             assert!(!is_native_file(no), "{no}");
         }
     }
 
     #[test]
     fn link_scripts_in_any_directory_in_any_case() {
-        for yes in ["post-link.sh", "pre-link.bat", "pre-unlink.sh", "POST-LINK.SH", "x-post-link.sh", "x_pre-link.bat", "x.pre-unlink.bat"] {
+        for yes in [
+            "post-link.sh",
+            "pre-link.bat",
+            "pre-unlink.sh",
+            "POST-LINK.SH",
+            "x-post-link.sh",
+            "x_pre-link.bat",
+            "x.pre-unlink.bat",
+        ] {
             assert!(is_link_script(yes), "{yes}");
         }
-        for no in ["xpost-link.sh", "post-link.sh.txt", "post-link", "link.sh", "post-link.py"] {
+        for no in [
+            "xpost-link.sh",
+            "post-link.sh.txt",
+            "post-link",
+            "link.sh",
+            "post-link.py",
+        ] {
             assert!(!is_link_script(no), "{no}");
         }
     }
@@ -175,14 +263,34 @@ mod tests {
         let ok = [file("a"), file("b")];
         check_collisions(&ok).unwrap();
         let dup = check_collisions(&[file("a"), file("a")]).unwrap_err();
-        assert_eq!((dup.rule, dup.message.as_str()), (RuleCode::DuplicatePath, "'a' appears more than once"));
+        assert_eq!(
+            (dup.rule, dup.message.as_str()),
+            (RuleCode::DuplicatePath, "'a' appears more than once")
+        );
         let case = check_collisions(&[file("lib/A"), file("lib/a")]).unwrap_err();
-        assert_eq!((case.rule, case.message.as_str()), (RuleCode::UnicodeCollision, "'lib/A' and 'lib/a' are the same name after Unicode normalisation or case folding"));
+        assert_eq!(
+            (case.rule, case.message.as_str()),
+            (
+                RuleCode::UnicodeCollision,
+                "'lib/A' and 'lib/a' are the same name after Unicode normalisation or case folding"
+            )
+        );
         // NFC and NFD of e-acute, a ligature, a full-width letter.
-        for (x, y) in [("\u{e9}", "e\u{301}"), ("\u{fb01}", "fi"), ("\u{ff21}", "a")] {
-            assert_eq!(check_collisions(&[file(x), file(y)]).unwrap_err().rule, RuleCode::UnicodeCollision, "{x} {y}");
+        for (x, y) in [
+            ("\u{e9}", "e\u{301}"),
+            ("\u{fb01}", "fi"),
+            ("\u{ff21}", "a"),
+        ] {
+            assert_eq!(
+                check_collisions(&[file(x), file(y)]).unwrap_err().rule,
+                RuleCode::UnicodeCollision,
+                "{x} {y}"
+            );
         }
-        assert_eq!(check_collisions(&[file("a"), dir("a")]).unwrap_err().rule, RuleCode::DuplicatePath);
+        assert_eq!(
+            check_collisions(&[file("a"), dir("a")]).unwrap_err().rule,
+            RuleCode::DuplicatePath
+        );
     }
 
     #[test]
@@ -212,21 +320,42 @@ mod tests {
         let n = "demo";
         let rule = |e: TarEntry| classify(&e, n).unwrap_err().rule;
         assert_eq!(rule(file("info/link.json")), RuleCode::LinkScript);
-        assert_eq!(rule(file("etc/conda/activate.d/x.sh")), RuleCode::LinkScript);
+        assert_eq!(
+            rule(file("etc/conda/activate.d/x.sh")),
+            RuleCode::LinkScript
+        );
         assert_eq!(rule(file("lib/post-link.sh")), RuleCode::LinkScript);
         assert_eq!(rule(file("bin/tool")), RuleCode::BinDir);
         assert_eq!(rule(file("sbin/tool")), RuleCode::BinDir);
         assert_eq!(rule(file("Scripts/x")), RuleCode::BinDir);
-        assert_eq!(rule(file("bin/post-link.sh")), RuleCode::LinkScript, "the link-script rule is first");
+        assert_eq!(
+            rule(file("bin/post-link.sh")),
+            RuleCode::LinkScript,
+            "the link-script rule is first"
+        );
         assert_eq!(rule(file("share/x")), RuleCode::LayoutNotAllowed);
         assert_eq!(rule(dir("share")), RuleCode::LayoutNotAllowed);
-        assert_eq!(rule(file("lib/mojo/other.mojoc")), RuleCode::LayoutNotAllowed);
+        assert_eq!(
+            rule(file("lib/mojo/other.mojoc")),
+            RuleCode::LayoutNotAllowed
+        );
         assert_eq!(rule(file("lib/sub/libfoo.so")), RuleCode::LayoutNotAllowed);
-        for no in ["lib/mojo/demo.bins/Bench.mojo", "lib/mojo/demo.bins/a-b.mojo", "lib/mojo/demo.bins/.mojo", "lib/mojo/demo.bins/a.py", "lib/mojo/demo.bins/sub/a.mojo", "lib/mojo/other.bins/a.mojo", "lib/mojo/demo.bins"] {
+        for no in [
+            "lib/mojo/demo.bins/Bench.mojo",
+            "lib/mojo/demo.bins/a-b.mojo",
+            "lib/mojo/demo.bins/.mojo",
+            "lib/mojo/demo.bins/a.py",
+            "lib/mojo/demo.bins/sub/a.mojo",
+            "lib/mojo/other.bins/a.mojo",
+            "lib/mojo/demo.bins",
+        ] {
             assert_eq!(rule(file(no)), RuleCode::LayoutNotAllowed, "{no}");
         }
         assert_eq!(rule(dir("lib/mojo/other.bins")), RuleCode::LayoutNotAllowed);
-        assert_eq!(rule(dir("lib/mojo/demo.bins/sub")), RuleCode::LayoutNotAllowed);
+        assert_eq!(
+            rule(dir("lib/mojo/demo.bins/sub")),
+            RuleCode::LayoutNotAllowed
+        );
         let e = classify(&file("share/x"), n).unwrap_err();
         assert_eq!(e.message, "'share/x' is not an allowed path (allowed: lib/mojo/demo.mojoc, lib/mojo/demo.mopm.json, declared native libraries, info/ metadata, licence files)");
         assert_eq!(e.path.as_deref(), Some("share/x"));

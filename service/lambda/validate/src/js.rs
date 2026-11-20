@@ -6,7 +6,14 @@
 pub fn is_space(c: char) -> bool {
     matches!(
         c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
     )
 }
 
@@ -62,9 +69,19 @@ pub fn posix_normalize(path: &str) -> String {
     }
     let joined = out.join("/");
     if joined.is_empty() {
-        return if absolute { "/".to_string() } else if trailing { "./".to_string() } else { ".".to_string() };
+        return if absolute {
+            "/".to_string()
+        } else if trailing {
+            "./".to_string()
+        } else {
+            ".".to_string()
+        };
     }
-    let joined = if trailing { format!("{joined}/") } else { joined };
+    let joined = if trailing {
+        format!("{joined}/")
+    } else {
+        joined
+    };
     if absolute {
         format!("/{joined}")
     } else {
@@ -105,7 +122,11 @@ mod tests {
         assert_eq!(decode_utf8(b"abc").as_deref(), Some("abc"));
         assert_eq!(decode_utf8(b"\xef\xbb\xbfabc").as_deref(), Some("abc"));
         assert_eq!(decode_utf8(b"ab\xffc"), None);
-        assert_eq!(decode_utf8(b"\xef\xbb\xbf\xef\xbb\xbfx").as_deref(), Some("\u{feff}x"), "only the first mark");
+        assert_eq!(
+            decode_utf8(b"\xef\xbb\xbf\xef\xbb\xbfx").as_deref(),
+            Some("\u{feff}x"),
+            "only the first mark"
+        );
     }
 
     #[test]
@@ -138,7 +159,9 @@ mod tests {
 
     #[test]
     fn is_space_is_the_ecmascript_set() {
-        for c in ['\t', '\n', '\u{b}', '\u{c}', '\r', ' ', '\u{a0}', '\u{feff}', '\u{2028}', '\u{3000}'] {
+        for c in [
+            '\t', '\n', '\u{b}', '\u{c}', '\r', ' ', '\u{a0}', '\u{feff}', '\u{2028}', '\u{3000}',
+        ] {
             assert!(is_space(c), "{c:?}");
         }
         assert!(!is_space('\u{85}'), "NEL is not JavaScript white space");

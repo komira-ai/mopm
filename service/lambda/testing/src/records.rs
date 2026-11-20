@@ -30,7 +30,9 @@ pub fn rec(name: &str, version: &str) -> VersionRecord {
             filename: format!("mojo-{name}-{version}-{build}.conda"),
             sha256: hex('a'),
             size: 1000,
-            url: Some(format!("https://conda.example.invalid/linux-64/mojo-{name}-{version}-{build}.conda")),
+            url: Some(format!(
+                "https://conda.example.invalid/linux-64/mojo-{name}-{version}-{build}.conda"
+            )),
         }],
         manifest_sha256: hex('f'),
         provenance: None,
@@ -53,7 +55,12 @@ pub fn with_state(mut r: VersionRecord, state: VersionState) -> VersionRecord {
 
 /// `r` as a member of group `group` that is not shown: `pending`, stamped at `attempt` when it was staged.
 pub fn group_row(r: VersionRecord, group: &str, attempt: Option<u64>) -> VersionRecord {
-    VersionRecord { state: VersionState::Pending, group_id: Some(group.to_string()), staged_attempt: attempt, ..r }
+    VersionRecord {
+        state: VersionState::Pending,
+        group_id: Some(group.to_string()),
+        staged_attempt: attempt,
+        ..r
+    }
 }
 
 static AUDIT_SEQ: AtomicU64 = AtomicU64::new(0);

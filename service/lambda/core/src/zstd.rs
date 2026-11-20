@@ -54,13 +54,23 @@ mod tests {
     #[test]
     fn the_empty_input_is_one_empty_last_block() {
         // magic, descriptor 00, window 38, block header: last=1, raw, size 0 -> 01 00 00
-        assert_eq!(zstd_frame(b""), [0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x38, 0x01, 0x00, 0x00]);
+        assert_eq!(
+            zstd_frame(b""),
+            [0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x38, 0x01, 0x00, 0x00]
+        );
     }
 
     #[test]
     fn a_short_input_is_one_last_raw_block() {
         // size 5: header = 1 | (5 << 3) = 41 = 0x29
-        assert_eq!(zstd_frame(b"hello"), [&[0x28u8, 0xb5, 0x2f, 0xfd, 0x00, 0x38, 0x29, 0x00, 0x00][..], &b"hello"[..]].concat());
+        assert_eq!(
+            zstd_frame(b"hello"),
+            [
+                &[0x28u8, 0xb5, 0x2f, 0xfd, 0x00, 0x38, 0x29, 0x00, 0x00][..],
+                &b"hello"[..]
+            ]
+            .concat()
+        );
     }
 
     #[test]

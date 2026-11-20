@@ -80,9 +80,17 @@ impl Faulty {
 }
 
 impl AuthStore for Faulty {
-    async fn upsert_user(&self, github_id: u64, handle: &str, now: &str, two_factor: Option<bool>) -> PortResult<UserRecord> {
+    async fn upsert_user(
+        &self,
+        github_id: u64,
+        handle: &str,
+        now: &str,
+        two_factor: Option<bool>,
+    ) -> PortResult<UserRecord> {
         self.check("upsert_user")?;
-        self.store.upsert_user(github_id, handle, now, two_factor).await
+        self.store
+            .upsert_user(github_id, handle, now, two_factor)
+            .await
     }
     async fn get_user(&self, github_id: u64) -> PortResult<Option<UserRecord>> {
         self.check("get_user")?;
@@ -151,28 +159,53 @@ pub struct Rig {
 impl Rig {
     /// The stored row with id `id`.
     pub fn row(&self, id: &str) -> TokenRecord {
-        self.store.dump_tokens().into_iter().find(|t| t.id == id).unwrap()
+        self.store
+            .dump_tokens()
+            .into_iter()
+            .find(|t| t.id == id)
+            .unwrap()
     }
 }
 
 /// A handler whose store holds alice and `rows`, at `now_ms`, with the call `fail` failing.
 pub async fn rig(rows: Vec<TokenRecord>, now_ms: i64, fail: Option<&'static str>) -> Rig {
     let store = Arc::new(MemoryAuthStore::new());
-    store.upsert_user(GITHUB_ID, "alice", &iso_millis(at(CREATED_MS)), Some(true)).await.unwrap();
+    store
+        .upsert_user(GITHUB_ID, "alice", &iso_millis(at(CREATED_MS)), Some(true))
+        .await
+        .unwrap();
     for row in &rows {
         store.put_token(row).await.unwrap();
     }
     let secrets = MemorySecrets::new();
     secrets.set("mopm/beta/edge-origin", EDGE);
-    let stage = parse_function_name(Some(std::ffi::OsStr::new("mopm-beta-web-session"))).unwrap().stage;
+    let stage = parse_function_name(Some(std::ffi::OsStr::new("mopm-beta-web-session")))
+        .unwrap()
+        .stage;
     let edge = EdgeCheck::load(&secrets, &stage).await.unwrap();
-    let auth = SessionAuth::new(edge, CsrfCheck::new(SITE), Faulty { store: store.clone(), fail }, FixedClock::at_millis(now_ms));
-    Rig { handler: WebSessionHandler::new(auth), store }
+    let auth = SessionAuth::new(
+        edge,
+        CsrfCheck::new(SITE),
+        Faulty {
+            store: store.clone(),
+            fail,
+        },
+        FixedClock::at_millis(now_ms),
+    );
+    Rig {
+        handler: WebSessionHandler::new(auth),
+        store,
+    }
 }
 
 /// One live session of alice's (`tok-1`, `secret(1)`).
 pub async fn live() -> Rig {
-    rig(vec![session_row(&secret(1), "tok-1", GITHUB_ID)], NOW_MS, None).await
+    rig(
+        vec![session_row(&secret(1), "tok-1", GITHUB_ID)],
+        NOW_MS,
+        None,
+    )
+    .await
 }
 
 pub fn cookie(s: &TokenSecret) -> String {
@@ -181,7 +214,9 @@ pub fn cookie(s: &TokenSecret) -> String {
 
 /// A `GET` of the session route through the site, with the cookie header `cookies`.
 pub fn get(cookies: &str) -> WebRequest {
-    WebRequest::new(Method::Get, SESSION_PATH, "req-1").with_header("x-mopm-edge", EDGE).with_cookies(cookies)
+    WebRequest::new(Method::Get, SESSION_PATH, "req-1")
+        .with_header("x-mopm-edge", EDGE)
+        .with_cookies(cookies)
 }
 
 /// A `POST` of the logout route from the site with `s`'s cookie and CSRF value.
@@ -196,8 +231,15 @@ pub fn post(s: &TokenSecret) -> WebRequest {
 
 /// The request with every field named `name` removed.
 pub fn without(req: WebRequest, name: &str) -> WebRequest {
-    let mut out = WebRequest { headers: Default::default(), ..req.clone() };
-    for (n, v) in req.headers.iter().filter(|(n, _)| !n.eq_ignore_ascii_case(name)) {
+    let mut out = WebRequest {
+        headers: Default::default(),
+        ..req.clone()
+    };
+    for (n, v) in req
+        .headers
+        .iter()
+        .filter(|(n, _)| !n.eq_ignore_ascii_case(name))
+    {
         out.headers.push(n, v);
     }
     out
@@ -209,7 +251,13 @@ pub fn dynamo_client(endpoint: &str) -> aws_sdk_dynamodb::Client {
         .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
         .region(aws_sdk_dynamodb::config::Region::new("us-east-1"))
         .endpoint_url(endpoint)
-        .credentials_provider(aws_sdk_dynamodb::config::Credentials::new("AKIDFAKE", "fakesecret", None, None, "static"))
+        .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+            "AKIDFAKE",
+            "fakesecret",
+            None,
+            None,
+            "static",
+        ))
         .build();
     aws_sdk_dynamodb::Client::from_conf(config)
 }
@@ -220,7 +268,13 @@ pub fn secrets_client(endpoint: &str) -> aws_sdk_secretsmanager::Client {
         .behavior_version(aws_sdk_secretsmanager::config::BehaviorVersion::latest())
         .region(aws_sdk_secretsmanager::config::Region::new("us-east-1"))
         .endpoint_url(endpoint)
-        .credentials_provider(aws_sdk_secretsmanager::config::Credentials::new("AKIDFAKE", "fakesecret", None, None, "static"))
+        .credentials_provider(aws_sdk_secretsmanager::config::Credentials::new(
+            "AKIDFAKE",
+            "fakesecret",
+            None,
+            None,
+            "static",
+        ))
         .build();
     aws_sdk_secretsmanager::Client::from_conf(config)
 }
@@ -284,7 +338,10 @@ mod tests {
 
     #[tokio::test]
     async fn every_call_passes_to_the_store_when_none_fails() {
-        let s = Faulty { store: Arc::new(MemoryAuthStore::new()), fail: None };
+        let s = Faulty {
+            store: Arc::new(MemoryAuthStore::new()),
+            fail: None,
+        };
         assert_eq!(call_all(&s).await, vec![false; 15]);
         assert_eq!(s.store.dump_tokens().len(), 1);
     }
@@ -292,7 +349,10 @@ mod tests {
     #[tokio::test]
     async fn the_named_call_and_only_it_fails() {
         for (i, name) in ALL.iter().enumerate() {
-            let s = Faulty { store: Arc::new(MemoryAuthStore::new()), fail: Some(name) };
+            let s = Faulty {
+                store: Arc::new(MemoryAuthStore::new()),
+                fail: Some(name),
+            };
             let expected: Vec<bool> = (0..15).map(|j| j == i).collect();
             assert_eq!(call_all(&s).await, expected, "{name}");
         }
@@ -300,7 +360,15 @@ mod tests {
 
     #[test]
     fn a_request_without_a_header_has_none_of_that_name() {
-        assert!(without(post(&secret(1)), "origin").headers.get("origin").is_none());
-        assert_eq!(without(post(&secret(1)), "origin").headers.get("x-mopm-edge"), Some(EDGE));
+        assert!(without(post(&secret(1)), "origin")
+            .headers
+            .get("origin")
+            .is_none());
+        assert_eq!(
+            without(post(&secret(1)), "origin")
+                .headers
+                .get("x-mopm-edge"),
+            Some(EDGE)
+        );
     }
 }

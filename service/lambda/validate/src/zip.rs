@@ -28,7 +28,10 @@ fn bad<T>(m: impl std::fmt::Display) -> Checked<T> {
 
 /// An out-of-range read of the archive (`RangeError` in the TypeScript): the archive is structurally damaged.
 fn damaged<T>() -> Checked<T> {
-    fail(RuleCode::ArchiveCorrupt, "the archive is structurally damaged")
+    fail(
+        RuleCode::ArchiveCorrupt,
+        "the archive is structurally damaged",
+    )
 }
 
 fn u16_at(b: &[u8], at: usize) -> Checked<u16> {
@@ -64,7 +67,9 @@ pub fn read_zip(buf: &[u8], limits: &Limits, max_entry_bytes: u64) -> Checked<Ve
         let lowest = (buf.len() - 22).saturating_sub(0xffff);
         let mut i = buf.len() - 22;
         loop {
-            if u32_at(buf, i)? == EOCD_SIG && i + 22 + usize::from(u16_at(buf, i + 20)?) == buf.len() {
+            if u32_at(buf, i)? == EOCD_SIG
+                && i + 22 + usize::from(u16_at(buf, i + 20)?) == buf.len()
+            {
                 eocd = Some(i);
                 break;
             }
@@ -74,7 +79,9 @@ pub fn read_zip(buf: &[u8], limits: &Limits, max_entry_bytes: u64) -> Checked<Ve
             i -= 1;
         }
     }
-    let Some(eocd) = eocd else { return bad("no end of central directory") };
+    let Some(eocd) = eocd else {
+        return bad("no end of central directory");
+    };
     let disk = u16_at(buf, eocd + 4)?;
     let cd_disk = u16_at(buf, eocd + 6)?;
     let n_here = u16_at(buf, eocd + 8)?;
@@ -118,7 +125,9 @@ pub fn read_zip(buf: &[u8], limits: &Limits, max_entry_bytes: u64) -> Checked<Ve
             return bad("central directory entry overruns");
         }
         let name_bytes = &buf[p + 46..p + 46 + name_len];
-        let Some(name) = crate::js::decode_utf8(name_bytes) else { return bad("entry name is not UTF-8") };
+        let Some(name) = crate::js::decode_utf8(name_bytes) else {
+            return bad("entry name is not UTF-8");
+        };
         p += 46 + name_len + extra_len + comment_len;
         if flags & 0x1 != 0 || flags & 0x40 != 0 {
             return bad(format!("entry '{name}' is encrypted"));
@@ -139,14 +148,30 @@ pub fn read_zip(buf: &[u8], limits: &Limits, max_entry_bytes: u64) -> Checked<Ve
             return bad(format!("duplicate entry '{name}'"));
         }
         if u64::from(usize_) > max_entry_bytes {
-            return fail_at(RuleCode::FileTooLarge, format!("zip entry '{name}' is {usize_} bytes"), name);
+            return fail_at(
+                RuleCode::FileTooLarge,
+                format!("zip entry '{name}' is {usize_} bytes"),
+                name,
+            );
         }
         total += u64::from(usize_);
         if total > limits.max_unpacked_bytes {
-            return fail(RuleCode::UnpackedTooLarge, "zip entries together are too large");
+            return fail(
+                RuleCode::UnpackedTooLarge,
+                "zip entries together are too large",
+            );
         }
-        if u64::from(usize_) > limits.ratio_floor_bytes && u64::from(usize_) > limits.max_ratio.saturating_mul(u64::from(csize).max(1)) {
-            return fail_at(RuleCode::CompressionRatio, format!("zip entry '{name}' expands more than {} times", limits.max_ratio), name);
+        if u64::from(usize_) > limits.ratio_floor_bytes
+            && u64::from(usize_) > limits.max_ratio.saturating_mul(u64::from(csize).max(1))
+        {
+            return fail_at(
+                RuleCode::CompressionRatio,
+                format!(
+                    "zip entry '{name}' expands more than {} times",
+                    limits.max_ratio
+                ),
+                name,
+            );
         }
 
         let lho = lho as usize;
@@ -161,7 +186,9 @@ pub fn read_zip(buf: &[u8], limits: &Limits, max_entry_bytes: u64) -> Checked<Ve
             return bad(format!("entry '{name}' overruns the file"));
         }
         if buf.get(lho + 30..lho + 30 + l_name_len) != Some(name_bytes) {
-            return bad(format!("entry '{name}' local header names a different file"));
+            return bad(format!(
+                "entry '{name}' local header names a different file"
+            ));
         }
         spans.push((lho, data_end));
 
@@ -171,7 +198,11 @@ pub fn read_zip(buf: &[u8], limits: &Limits, max_entry_bytes: u64) -> Checked<Ve
         } else {
             match inflate(raw, (usize_ as usize).max(1)) {
                 Some(d) => d,
-                None => return bad(format!("entry '{name}' does not inflate to its declared size")),
+                None => {
+                    return bad(format!(
+                        "entry '{name}' does not inflate to its declared size"
+                    ))
+                }
             }
         };
         if data.len() != usize_ as usize {
@@ -207,7 +238,15 @@ mod tests {
     }
 
     fn stored(name: &str, data: &[u8]) -> Z {
-        Z { name: name.into(), data: data.to_vec(), method: 0, flags: 0, crc: None, usize_: None, csize_: None }
+        Z {
+            name: name.into(),
+            data: data.to_vec(),
+            method: 0,
+            flags: 0,
+            crc: None,
+            usize_: None,
+            csize_: None,
+        }
     }
 
     fn build(entries: &[Z], comment: &[u8]) -> Vec<u8> {
@@ -269,7 +308,10 @@ mod tests {
     fn reads_stored_entries_in_order() {
         let z = build(&[stored("a.txt", b"hello"), stored("b/c", b"")], b"");
         let got = read(&z).unwrap();
-        assert_eq!(got.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["a.txt", "b/c"]);
+        assert_eq!(
+            got.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            ["a.txt", "b/c"]
+        );
         assert_eq!(got[0].data, b"hello");
         assert!(got[1].data.is_empty());
     }
@@ -287,12 +329,18 @@ mod tests {
         smaller.method = 8;
         smaller.crc = Some(crc32(b"hello"));
         smaller.usize_ = Some(3);
-        assert_eq!(message(&build(&[smaller], b"")), "zip: entry 'a' does not inflate to its declared size");
+        assert_eq!(
+            message(&build(&[smaller], b"")),
+            "zip: entry 'a' does not inflate to its declared size"
+        );
         let mut larger = stored("a", &deflated);
         larger.method = 8;
         larger.crc = Some(crc32(b"hello"));
         larger.usize_ = Some(9);
-        assert_eq!(message(&build(&[larger], b"")), "zip: entry 'a' is not its declared size");
+        assert_eq!(
+            message(&build(&[larger], b"")),
+            "zip: entry 'a' is not its declared size"
+        );
     }
 
     #[test]
@@ -301,10 +349,15 @@ mod tests {
         // The LAST signature whose comment reaches the end wins, as in the TypeScript: a comment that is itself a
         // well-formed empty end record is taken for the end record (and an archive of no entries is what it reads).
         let fake = [&EOCD_SIG.to_le_bytes()[..], &[0u8; 18]].concat();
-        assert!(read(&build(&[stored("a", b"x")], &fake)).unwrap().is_empty());
+        assert!(read(&build(&[stored("a", b"x")], &fake))
+            .unwrap()
+            .is_empty());
         // A signature whose comment length does not reach the end is not an end record.
         let near = [&EOCD_SIG.to_le_bytes()[..], &[0u8; 16], &[5u8, 0]].concat();
-        assert_eq!(read(&build(&[stored("a", b"x")], &near)).unwrap()[0].name, "a");
+        assert_eq!(
+            read(&build(&[stored("a", b"x")], &near)).unwrap()[0].name,
+            "a"
+        );
         let mut z = build(&[stored("a", b"x")], b"");
         z.push(0);
         assert_eq!(message(&z), "zip: no end of central directory");
@@ -319,27 +372,49 @@ mod tests {
         assert_eq!(message(&build(&[enc], b"")), "zip: entry 'a' is encrypted");
         let mut strong = stored("a", b"x");
         strong.flags = 0x40;
-        assert_eq!(message(&build(&[strong], b"")), "zip: entry 'a' is encrypted");
+        assert_eq!(
+            message(&build(&[strong], b"")),
+            "zip: entry 'a' is encrypted"
+        );
         let mut m12 = stored("a", b"x");
         m12.method = 12;
-        assert_eq!(message(&build(&[m12], b"")), "zip: entry 'a' uses compression method 12");
+        assert_eq!(
+            message(&build(&[m12], b"")),
+            "zip: entry 'a' uses compression method 12"
+        );
         let mut sizes = stored("a", b"xy");
         sizes.csize_ = Some(1);
-        assert_eq!(message(&build(&[sizes], b"")), "zip: stored entry 'a' has unequal sizes");
-        assert_eq!(message(&build(&[stored("a", b"x"), stored("a", b"y")], b"")), "zip: duplicate entry 'a'");
+        assert_eq!(
+            message(&build(&[sizes], b"")),
+            "zip: stored entry 'a' has unequal sizes"
+        );
+        assert_eq!(
+            message(&build(&[stored("a", b"x"), stored("a", b"y")], b"")),
+            "zip: duplicate entry 'a'"
+        );
         let many: Vec<Z> = (0..17).map(|i| stored(&format!("f{i}"), b"x")).collect();
         assert_eq!(message(&build(&many, b"")), "zip: too many entries (17)");
-        assert_eq!(read(&build(&many[..16], b"")).unwrap().len(), 16, "sixteen is read");
+        assert_eq!(
+            read(&build(&many[..16], b"")).unwrap().len(),
+            16,
+            "sixteen is read"
+        );
     }
 
     #[test]
     fn checks_the_crc_and_the_names() {
         let mut e = stored("a", b"x");
         e.crc = Some(0);
-        assert_eq!(message(&build(&[e], b"")), "zip: entry 'a' fails its CRC-32");
+        assert_eq!(
+            message(&build(&[e], b"")),
+            "zip: entry 'a' fails its CRC-32"
+        );
         let mut z = build(&[stored("a", b"x")], b"");
         z[30] = b'b'; // the local header's name
-        assert_eq!(message(&z), "zip: entry 'a' local header names a different file");
+        assert_eq!(
+            message(&z),
+            "zip: entry 'a' local header names a different file"
+        );
         let mut z = build(&[stored("a", b"x")], b"");
         z[0] = b'X';
         assert_eq!(message(&z), "zip: entry 'a' has a bad local header");
@@ -347,12 +422,28 @@ mod tests {
 
     #[test]
     fn the_entry_and_ratio_limits_apply_from_the_directory_alone() {
-        let l = Limits { max_unpacked_bytes: 10, ..Limits::DEFAULT };
+        let l = Limits {
+            max_unpacked_bytes: 10,
+            ..Limits::DEFAULT
+        };
         let mut e = stored("a", &[0u8; 11]);
         e.method = 0;
         let e = read_zip(&build(&[e], b""), &l, 1 << 30).err().unwrap();
         assert_eq!(e.rule, RuleCode::UnpackedTooLarge);
-        let big = read_zip(&build(&[stored("a", &[0u8; 11])], b""), &Limits::DEFAULT, 10).err().unwrap();
-        assert_eq!((big.rule, big.message.as_str(), big.path.as_deref()), (RuleCode::FileTooLarge, "zip entry 'a' is 11 bytes", Some("a")));
+        let big = read_zip(
+            &build(&[stored("a", &[0u8; 11])], b""),
+            &Limits::DEFAULT,
+            10,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            (big.rule, big.message.as_str(), big.path.as_deref()),
+            (
+                RuleCode::FileTooLarge,
+                "zip entry 'a' is 11 bytes",
+                Some("a")
+            )
+        );
     }
 }

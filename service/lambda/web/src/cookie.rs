@@ -86,8 +86,15 @@ pub struct DuplicateCookie {
 
 /// The value of the cookie named exactly `name` (case counts): `None` when there is none, an error when there
 /// are two or more.
-pub fn single<'r>(req: &'r WebRequest, name: &'static str) -> Result<Option<&'r str>, DuplicateCookie> {
-    let mut values = req.cookies.iter().filter(|c| c.name == name).map(|c| c.value.as_str());
+pub fn single<'r>(
+    req: &'r WebRequest,
+    name: &'static str,
+) -> Result<Option<&'r str>, DuplicateCookie> {
+    let mut values = req
+        .cookies
+        .iter()
+        .filter(|c| c.name == name)
+        .map(|c| c.value.as_str());
     let first = values.next();
     match values.next() {
         Some(_) => Err(DuplicateCookie { name }),
@@ -111,33 +118,59 @@ mod tests {
 
     #[test]
     fn the_login_cookie_has_exactly_the_designs_attributes() {
-        assert_eq!(login_cookie("txn-AZaz09_~").unwrap().as_str(), "__Host-mopm_login=txn-AZaz09_~; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=600");
+        assert_eq!(
+            login_cookie("txn-AZaz09_~").unwrap().as_str(),
+            "__Host-mopm_login=txn-AZaz09_~; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=600"
+        );
     }
 
     #[test]
     fn the_clearing_forms_are_empty_with_max_age_zero() {
-        assert_eq!(clear_session_cookie().as_str(), "__Host-mopm_session=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0");
-        assert_eq!(clear_login_cookie().as_str(), "__Host-mopm_login=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0");
+        assert_eq!(
+            clear_session_cookie().as_str(),
+            "__Host-mopm_session=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"
+        );
+        assert_eq!(
+            clear_login_cookie().as_str(),
+            "__Host-mopm_login=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"
+        );
     }
 
     #[test]
     fn no_cookie_names_a_domain() {
-        for c in [session_cookie(&secret()), login_cookie("t").unwrap(), clear_session_cookie(), clear_login_cookie()] {
-            assert!(!c.as_str().to_ascii_lowercase().contains("domain"), "{}", c.as_str());
+        for c in [
+            session_cookie(&secret()),
+            login_cookie("t").unwrap(),
+            clear_session_cookie(),
+            clear_login_cookie(),
+        ] {
+            assert!(
+                !c.as_str().to_ascii_lowercase().contains("domain"),
+                "{}",
+                c.as_str()
+            );
         }
     }
 
     #[test]
     fn a_login_value_that_could_end_the_cookie_is_refused() {
-        for bad in ["", "a b", "a;b", "a,b", "a\"b", "a\\b", "a\tb", "a\u{7f}b", "a\nb", "é"] {
+        for bad in [
+            "", "a b", "a;b", "a,b", "a\"b", "a\\b", "a\tb", "a\u{7f}b", "a\nb", "é",
+        ] {
             assert_eq!(login_cookie(bad), Err(InvalidCookieValue), "{bad:?}");
         }
-        assert_eq!(InvalidCookieValue.to_string(), "the login cookie's value is empty or has a character a cookie value cannot hold");
+        assert_eq!(
+            InvalidCookieValue.to_string(),
+            "the login cookie's value is empty or has a character a cookie value cannot hold"
+        );
     }
 
     #[test]
     fn every_cookie_octet_is_a_login_value() {
-        let all: String = (0x21u8..=0x7e).filter(|b| !matches!(b, b'"' | b',' | b';' | b'\\')).map(char::from).collect();
+        let all: String = (0x21u8..=0x7e)
+            .filter(|b| !matches!(b, b'"' | b',' | b';' | b'\\'))
+            .map(char::from)
+            .collect();
         assert_eq!(all.len(), 90);
         assert!(login_cookie(&all).is_ok());
     }
@@ -145,7 +178,10 @@ mod tests {
     #[test]
     fn debug_shows_the_name_and_attributes_but_never_the_value() {
         assert_eq!(format!("{:?}", session_cookie(&secret())), "SetCookie(__Host-mopm_session=...; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800)");
-        assert_eq!(format!("{:?}", clear_login_cookie()), "SetCookie(__Host-mopm_login=...; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0)");
+        assert_eq!(
+            format!("{:?}", clear_login_cookie()),
+            "SetCookie(__Host-mopm_login=...; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0)"
+        );
     }
 
     fn with_cookies(header: &str) -> WebRequest {
@@ -154,7 +190,9 @@ mod tests {
 
     #[test]
     fn exactly_the_named_cookie_is_read() {
-        let r = with_cookies("__host-mopm_session=lower; __Host-mopm_session=v; __Host-mopm_sessionx=w; other=1");
+        let r = with_cookies(
+            "__host-mopm_session=lower; __Host-mopm_session=v; __Host-mopm_sessionx=w; other=1",
+        );
         assert_eq!(single(&r, SESSION_COOKIE), Ok(Some("v")));
         assert_eq!(single(&r, LOGIN_COOKIE), Ok(None));
     }
@@ -163,7 +201,15 @@ mod tests {
     fn two_cookies_of_the_name_are_refused_even_with_one_value() {
         let r = with_cookies("__Host-mopm_session=v; __Host-mopm_session=v");
         let err = single(&r, SESSION_COOKIE).unwrap_err();
-        assert_eq!(err, DuplicateCookie { name: SESSION_COOKIE });
-        assert_eq!(err.to_string(), "the request carries more than one cookie named __Host-mopm_session");
+        assert_eq!(
+            err,
+            DuplicateCookie {
+                name: SESSION_COOKIE
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "the request carries more than one cookie named __Host-mopm_session"
+        );
     }
 }

@@ -23,5 +23,10 @@ pub async fn cold_start<S: AuthStore, C: Clock>(
 ) -> Result<WebSessionHandler<S, C>, SetupError> {
     let settings = StageSettings::load(config).await?;
     let edge = EdgeCheck::load(secrets, &name.stage).await?;
-    Ok(WebSessionHandler::new(SessionAuth::new(edge, CsrfCheck::new(&settings.site_origin), store, clock)))
+    Ok(WebSessionHandler::new(SessionAuth::new(
+        edge,
+        CsrfCheck::new(&settings.site_origin),
+        store,
+        clock,
+    )))
 }

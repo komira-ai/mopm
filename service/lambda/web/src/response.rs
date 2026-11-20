@@ -43,7 +43,10 @@ impl WebResponse {
     pub fn empty(status: u16, request_id: &str) -> WebResponse {
         WebResponse {
             status,
-            headers: vec![(REQUEST_ID.to_string(), request_id.to_string()), (CACHE_CONTROL.to_string(), NO_STORE.to_string())],
+            headers: vec![
+                (REQUEST_ID.to_string(), request_id.to_string()),
+                (CACHE_CONTROL.to_string(), NO_STORE.to_string()),
+            ],
             set_cookies: Vec::new(),
             body: String::new(),
         }
@@ -51,7 +54,9 @@ impl WebResponse {
 
     /// `status` with `body` as JSON (`content-type: application/json`). Object keys come out in sorted order.
     pub fn json(status: u16, body: &serde_json::Value, request_id: &str) -> WebResponse {
-        WebResponse::empty(status, request_id).with_header(CONTENT_TYPE, JSON).with_body(body.to_string())
+        WebResponse::empty(status, request_id)
+            .with_header(CONTENT_TYPE, JSON)
+            .with_body(body.to_string())
     }
 
     /// A redirect to `location`, with no body.
@@ -81,7 +86,10 @@ impl WebResponse {
 
     /// The value of the field `name`, looked up without case.
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -91,51 +99,95 @@ mod tests {
     use crate::cookie;
 
     fn headers(r: &WebResponse) -> Vec<(&str, &str)> {
-        r.headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect()
+        r.headers
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect()
     }
 
     #[test]
     fn an_empty_answer_carries_the_request_id_and_no_store_only() {
         let r = WebResponse::empty(204, "req-1");
         assert_eq!(r.status, 204);
-        assert_eq!(headers(&r), vec![("x-mopm-request-id", "req-1"), ("cache-control", "no-store")]);
+        assert_eq!(
+            headers(&r),
+            vec![
+                ("x-mopm-request-id", "req-1"),
+                ("cache-control", "no-store")
+            ]
+        );
         assert!(r.set_cookies.is_empty());
         assert_eq!(r.body, "");
     }
 
     #[test]
     fn a_json_answer_has_its_content_type_and_the_compact_body() {
-        let r = WebResponse::json(200, &serde_json::json!({"login": "alice", "csrf": "c"}), "req-2");
+        let r = WebResponse::json(
+            200,
+            &serde_json::json!({"login": "alice", "csrf": "c"}),
+            "req-2",
+        );
         assert_eq!(r.status, 200);
-        assert_eq!(headers(&r), vec![("x-mopm-request-id", "req-2"), ("cache-control", "no-store"), ("content-type", "application/json")]);
+        assert_eq!(
+            headers(&r),
+            vec![
+                ("x-mopm-request-id", "req-2"),
+                ("cache-control", "no-store"),
+                ("content-type", "application/json")
+            ]
+        );
         assert_eq!(r.body, r#"{"csrf":"c","login":"alice"}"#);
     }
 
     #[test]
     fn redirects_are_302_and_303_with_a_location_and_no_body() {
-        let found = WebResponse::redirect(Redirect::Found, "https://github.com/login/oauth/authorize?x=1", "r");
+        let found = WebResponse::redirect(
+            Redirect::Found,
+            "https://github.com/login/oauth/authorize?x=1",
+            "r",
+        );
         assert_eq!(found.status, 302);
-        assert_eq!(found.header("Location"), Some("https://github.com/login/oauth/authorize?x=1"));
+        assert_eq!(
+            found.header("Location"),
+            Some("https://github.com/login/oauth/authorize?x=1")
+        );
         assert_eq!(found.body, "");
         let see_other = WebResponse::redirect(Redirect::SeeOther, "https://mopm.dev/tutorial", "r");
         assert_eq!(see_other.status, 303);
-        assert_eq!(see_other.header("location"), Some("https://mopm.dev/tutorial"));
+        assert_eq!(
+            see_other.header("location"),
+            Some("https://mopm.dev/tutorial")
+        );
     }
 
     #[test]
     fn a_header_set_twice_keeps_the_last_value_once() {
-        let r = WebResponse::empty(200, "r").with_header("Referrer-Policy", "origin").with_header("referrer-policy", "no-referrer");
-        assert_eq!(headers(&r), vec![("x-mopm-request-id", "r"), ("cache-control", "no-store"), ("referrer-policy", "no-referrer")]);
+        let r = WebResponse::empty(200, "r")
+            .with_header("Referrer-Policy", "origin")
+            .with_header("referrer-policy", "no-referrer");
+        assert_eq!(
+            headers(&r),
+            vec![
+                ("x-mopm-request-id", "r"),
+                ("cache-control", "no-store"),
+                ("referrer-policy", "no-referrer")
+            ]
+        );
         assert_eq!(r.header("absent"), None);
     }
 
     #[test]
     fn cookies_are_kept_in_the_order_added() {
-        let r = WebResponse::empty(303, "r").with_cookie(cookie::clear_login_cookie()).with_cookie(cookie::clear_session_cookie());
+        let r = WebResponse::empty(303, "r")
+            .with_cookie(cookie::clear_login_cookie())
+            .with_cookie(cookie::clear_session_cookie());
         let values: Vec<&str> = r.set_cookies.iter().map(|c| c.as_str()).collect();
         assert_eq!(
             values,
-            vec!["__Host-mopm_login=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0", "__Host-mopm_session=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"]
+            vec![
+                "__Host-mopm_login=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0",
+                "__Host-mopm_session=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"
+            ]
         );
     }
 }
