@@ -175,15 +175,21 @@ everything else (the read API, token management, CI exchange) is unaffected, so 
    It creates the secret, or stores a new version when it exists (rotation: generate a new client secret in GitHub, run
    it again). The API picks the new value up within five minutes, with no redeploy. A client-secret rotation does not
    end existing sessions.
-   The device flow reads only the client id, so a working `mopm login` does not show that the stored client secret is
-   current. To check it without reading the value, compare the secret's last change with the app's client secrets:
+3a. Check that a stage's secret holds a current client secret, without reading its value. The device flow reads only
+   the client id, so a working `mopm login` does not show it. Compare the secret's last change with the app's client
+   secrets (`--region` as in step 3):
    ```sh
-   aws secretsmanager describe-secret --profile <your profile> --region us-east-1 --secret-id mopm/beta/github-oauth --query '{created: CreatedDate, changed: LastChangedDate}'
+   aws secretsmanager describe-secret --profile <your profile> --region us-east-1 --secret-id mopm/<stage>/github-oauth --query '{changed: LastChangedDate, deleted: DeletedDate}'
    ```
-   `ResourceNotFoundException` means the secret is absent: do steps 2 and 3. Otherwise the app's page lists its client
-   secrets, each with the date it was generated. If one was generated after `changed`, the stored value is older than
-   it (or the newest was never stored): generate a new client secret and run step 3 again. `describe-secret` returns
-   no secret value; never use `get-secret-value` for this check.
+   `describe-secret` returns no secret value; never use `get-secret-value` for this check.
+   - `ResourceNotFoundException`, or a `deleted` date (the secret is scheduled for deletion and the API cannot read
+     it): the secret is absent. Do steps 2 and 3.
+   - The app's page lists no client secret: the stored one was deleted on GitHub. Do steps 2 and 3.
+   - The app's page lists a client secret generated after `changed`, or on the same day: the stored value may be older
+     than it. Generate a new client secret and run step 3 again.
+   - Otherwise nothing newer than the stored value exists. This cannot show that the stored value is not a client
+     secret deleted on GitHub while an older one remains, and `changed` also moves when the secret's description or
+     tags change. When in doubt, generate a new client secret and run step 3 again: it ends no session.
 4. Check on beta first: `curl -sS -X POST https://api.beta.mopm.dev/api/v1/auth/device -H 'content-type: application/json'
    -d '{"client":"check"}'` must answer with a `user_code` and a GitHub `verification_uri` (a `503` means the secret is
    missing or unreadable; the API logs only the reason). The API requires the account to have two-factor authentication on (`MOPM_REQUIRE_2FA`, default on, set by `require2fa` on the
