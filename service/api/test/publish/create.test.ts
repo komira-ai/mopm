@@ -328,7 +328,7 @@ describe('createPackage: the daily limit', () => {
   });
 
   test("a CI token is counted per namespace, not per account: two tokens of one namespace share the limit and another namespace's tokens do not", async () => {
-    const r = await rig({ config: { claimRatePerAccountPerDay: 1 } });
+    const r = await rig({ config: { claimRatePerCiNamespacePerDay: 1 } });
     await r.creates.create(await r.ci('komira-ai', ['komira-ai/one']), 'komira-ai', 'one');
     expect((await refused(r.creates.create(await r.ci('komira-ai', ['komira-ai/two']), 'komira-ai', 'two'))).code).toBe('rate_limited');
     expect([...r.publishes.counters.keys()].some((k) => k.startsWith('rl#cu#ns:komira-ai#'))).toBe(true);
@@ -346,6 +346,13 @@ describe('createPackage: the daily limit', () => {
     await r.creates.create(c, 'komira-ai', 'one');
     await r.creates.create(c, 'komira-ai', 'two');
     expect((await refused(r.creates.create(c, 'komira-ai', 'three'))).code).toBe('rate_limited');
+  });
+
+  test('the CI namespace limit binds a CI token only: an account limit of 1 does not refuse a CI create', async () => {
+    const r = await rig({ config: { claimRatePerAccountPerDay: 1, claimRatePerTokenPerDay: 1 } });
+    const c = await r.ci('komira-ai', ['komira-ai/one', 'komira-ai/two']);
+    expect(await r.creates.create(c, 'komira-ai', 'one')).toEqual({ created: true });
+    expect(await r.creates.create(c, 'komira-ai', 'two')).toEqual({ created: true });
   });
 
   test('an override that cannot be read keeps the config limits', async () => {
@@ -409,5 +416,65 @@ describe('createPackage: the write', () => {
     const r = await rig();
     await r.registry.createPackage({ name: 'json', state: 'claimed', created_at: '2026-10-01T00:00:00.000Z' });
     expect(await r.creates.create(await r.session(ALICE), 'alice', 'json')).toEqual({ created: true });
+  });
+});
+
+describe('createPackage: the default daily limits of a CI namespace and of an account', () => {
+  const names = (n: number) => Array.from({ length: n }, (_, i) => `pkg${String(i).padStart(3, '0')}`);
+  const counters = (r: Rig) => Object.fromEntries([...r.publishes.counters].map(([k, v]) => [k.replace(/#tok_[0-9a-z]+#/, '#<token>#'), v]));
+  const put = (r: Rig, t: string, namespace: string, name: string) => r.call('PUT', `/api/v2/packages/${namespace}/${name}`, t);
+
+  test('a stage token of a namespace creates 60 distinct packages in one UTC day, each 201', async () => {
+    const r = await rig();
+    const set = names(60);
+    const t = await r.ci('komira-ai', set.map((n) => `komira-ai/${n}`), { scopes: ['stage'] });
+    const statuses: number[] = [];
+    for (const n of set) statuses.push((await put(r, t, 'komira-ai', n)).statusCode);
+    expect(statuses).toEqual(set.map(() => 201));
+    expect(counters(r)).toEqual({ 'rl#ct#<token>#2026-10-14': 60, 'rl#cu#ns:komira-ai#2026-10-14': 60 });
+  });
+
+  test("the same token's 501st create is 429 rate_limited with Retry-After to midnight, writes nothing, and leaves the counters at 500", async () => {
+    const r = await rig();
+    const set = names(501);
+    const t = await r.ci('komira-ai', set.map((n) => `komira-ai/${n}`), { scopes: ['stage'] });
+    for (const n of set.slice(0, 500)) expect((await put(r, t, 'komira-ai', n)).statusCode).toBe(201);
+    const res = await put(r, t, 'komira-ai', 'pkg500');
+    expect([res.statusCode, JSON.parse(res.body).error.code, res.headers['retry-after']]).toEqual([429, 'rate_limited', '43200']);
+    expect(await refused(r.creates.create(t, 'komira-ai', 'pkg500'))).toEqual({ status: 429, code: 'rate_limited', message: 'Too many requests.', retryAfter: 43_200 });
+    await nothingWritten(r, 'komira-ai/pkg500');
+    expect(counters(r)).toEqual({ 'rl#ct#<token>#2026-10-14': 500, 'rl#cu#ns:komira-ai#2026-10-14': 500 });
+  });
+
+  test('a session still gets 429 at its 51st create of the day, with nothing written and the counters at 50', async () => {
+    const r = await rig();
+    const t = await r.session(ALICE);
+    for (const n of names(50)) expect(await r.creates.create(t, 'alice', n)).toEqual({ created: true });
+    expect(await refused(r.creates.create(t, 'alice', 'pkg050'))).toEqual({ status: 429, code: 'rate_limited', message: 'Too many requests.', retryAfter: 43_200 });
+    await nothingWritten(r, 'alice/pkg050');
+    expect(counters(r)).toEqual({ 'rl#ct#<token>#2026-10-14': 50, 'rl#cu#1001#2026-10-14': 50 });
+  });
+
+  test('an API token still gets 429 at its 51st create of the day', async () => {
+    const r = await rig();
+    const set = names(51);
+    const t = await r.api(ALICE, set.map((n) => `alice/${n}`));
+    for (const n of set.slice(0, 50)) expect(await r.creates.create(t, 'alice', n)).toEqual({ created: true });
+    expect((await refused(r.creates.create(t, 'alice', 'pkg050'))).code).toBe('rate_limited');
+    await nothingWritten(r, 'alice/pkg050');
+  });
+
+  test('a claim_limits entry for the CI actor replaces the CI namespace default, below it and above it', async () => {
+    const r = await rig({ config: { claimRatePerCiNamespacePerDay: 2 } });
+    r.flags.claimLimits.set('ci:ns:komira-ai', 3);
+    r.flags.claimLimits.set('ci:ns:alice', 1);
+    const k = await r.ci('komira-ai', ['komira-ai/one', 'komira-ai/two', 'komira-ai/three', 'komira-ai/four']);
+    for (const n of ['one', 'two', 'three']) expect(await r.creates.create(k, 'komira-ai', n)).toEqual({ created: true });
+    expect((await refused(r.creates.create(k, 'komira-ai', 'four'))).code).toBe('rate_limited');
+    const a = await r.ci('alice', ['alice/one', 'alice/two']);
+    expect(await r.creates.create(a, 'alice', 'one')).toEqual({ created: true });
+    expect((await refused(r.creates.create(a, 'alice', 'two'))).code).toBe('rate_limited');
+    await nothingWritten(r, 'komira-ai/four');
+    await nothingWritten(r, 'alice/two');
   });
 });

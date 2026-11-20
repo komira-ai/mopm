@@ -14,7 +14,7 @@ export interface CreateDeps {
   access: Pick<NamespaceAccess, 'require' | 'requireCi'>;
   /** The rate counters (the table the publish limits use). */
   publishes: Pick<PublishStore, 'hit'>;
-  config: Pick<PublishConfig, 'claimRatePerAccountPerDay' | 'claimRatePerTokenPerDay'>;
+  config: Pick<PublishConfig, 'claimRatePerAccountPerDay' | 'claimRatePerTokenPerDay' | 'claimRatePerCiNamespacePerDay'>;
   /** The read-only switch and the per-actor override of the daily limit (the `claim_limits` item). */
   flags: Pick<Flags, 'readOnly' | 'claimLimitFor'>;
   now?: () => Date;
@@ -108,11 +108,12 @@ export class CreateService {
   /**
    * One hit on the counter of the token and then on that of the account (a CI token: of its namespace), for the UTC day
    * of `at`; over either limit nothing stays charged and the create is `rate_limited` with Retry-After to midnight.
+   * A CI token's two counters have the CI namespace limit, so a namespace's first publish creates its set in one day.
    * Returns the way to give the charge back.
    */
   private async charge(p: Principal, namespace: string, at: Date): Promise<() => Promise<void>> {
     const who = p.kind === 'oidc' ? { key: `ns:${namespace}`, actor: `ci:ns:${namespace}` } : { key: String(p.github_id), actor: `u:${p.github_id}` };
-    const cfg = await this.limitsFor(who.actor);
+    const cfg = await this.limitsFor(who.actor, p.kind === 'oidc');
     const day = at.toISOString().slice(0, 10);
     const midnight = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
     const retryAfter = Math.max(1, Math.ceil((midnight - at.getTime()) / 1000));
@@ -135,9 +136,14 @@ export class CreateService {
     return giveBack;
   }
 
-  /** The limits of this actor: the config's, or the one its `claim_limits` entry sets. A config that cannot be read keeps the config's. */
-  private async limitsFor(actor: string): Promise<{ claimRatePerAccountPerDay: number; claimRatePerTokenPerDay: number }> {
+  /**
+   * The limits of this actor: the one its `claim_limits` entry sets, else the config's (for a CI token, the CI namespace limit
+   * for both counters). An override that cannot be read keeps the config's.
+   */
+  private async limitsFor(actor: string, ci: boolean): Promise<{ claimRatePerAccountPerDay: number; claimRatePerTokenPerDay: number }> {
     const n = await this.d.flags.claimLimitFor(actor).catch(() => undefined);
-    return n === undefined ? this.d.config : { claimRatePerAccountPerDay: n, claimRatePerTokenPerDay: n };
+    if (n !== undefined) return { claimRatePerAccountPerDay: n, claimRatePerTokenPerDay: n };
+    const c = this.d.config;
+    return ci ? { claimRatePerAccountPerDay: c.claimRatePerCiNamespacePerDay, claimRatePerTokenPerDay: c.claimRatePerCiNamespacePerDay } : c;
   }
 }

@@ -303,7 +303,11 @@ right to write the namespace: the account a user namespace is bound to, an owner
 the `namespace_members` table; no GitHub call), or a CI token minted for that namespace's publisher. It writes the package row (`state: claimed`, no expiry, no owner row: the namespace is the
 owner) and an audit entry `create`, answers 201, or 200 when the package exists. An import name that is a keyword, a builtin, a
 reserved name or a top-level module of the Mojo standard library is `name_reserved`. The daily limit below applies to it, counted per
-account (or per namespace for a CI token).
+account (or per namespace for a CI token). A CI token's creates have their own limit: 500 a day on the namespace's counter
+`rl#cu#ns:<namespace>#<day>` and 500 on the token's (`MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY`, set from the `claimRatePerCiNamespacePerDay` of
+the API stack's `limits`), so a namespace's first publish creates its whole set in one UTC day; a session or an API token keeps the 50 and
+50 below. A `claim_limits` entry `ci:ns:<namespace>` replaces both of a CI token's limits, as `u:<github id>` does an account's. Over
+either, the create is `429 rate_limited` with `Retry-After` to midnight UTC, writes nothing and gives its charge back.
 
 `POST /api/v1/packages/{name}/claim` no longer creates anything: it answers `name_reserved` with the hint "package names are in
 namespaces now; update mopm", whatever the token. What follows described it, and still describes the rows claims made: it wrote the package
