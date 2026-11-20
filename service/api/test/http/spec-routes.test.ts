@@ -115,9 +115,13 @@ describe('the router serves every operation of the spec', () => {
   });
 });
 
-// The v2 half: every operation of spec/api/openapi-v2.yaml is reached under /api/v2 and nothing in it is listed as not served.
+// The v2 half: every operation of spec/api/openapi-v2.yaml is reached under /api/v2, except the website's operations, which
+// this router answers route_not_found (the website's functions serve them).
 describe('the router serves every operation of the /api/v2 spec', () => {
-  const ops = specOperations(SPEC_V2);
+  // The website's sign-in and tutorial sandbox are served by the website's own functions, not by this router.
+  const WEBSITE_OPS = ['GET /auth/web/start', 'GET /auth/web/callback', 'GET /auth/web/session', 'POST /auth/web/logout', 'POST /tutorial/sandbox'];
+  const allOps = specOperations(SPEC_V2);
+  const ops = allOps.filter((o) => !WEBSITE_OPS.includes(o));
 
   test('the spec is read (an empty list proves nothing), and it names the v2 operations and none of the owner model', () => {
     expect(ops.length).toBeGreaterThanOrEqual(20);
@@ -130,6 +134,11 @@ describe('the router serves every operation of the /api/v2 spec', () => {
 
   test.each(ops)('%s reaches a handler', async (op) => {
     expect(await answer(op, '/api/v2')).not.toMatchObject({ code: 'route_not_found' });
+  });
+
+  test.each(WEBSITE_OPS)('%s is in the spec and answers route_not_found here (the website serves it)', async (op) => {
+    expect(allOps).toContain(op);
+    expect(await answer(op, '/api/v2')).toEqual({ status: 404, code: 'route_not_found' });
   });
 
   test('the check can fail: v1 paths with a flat name, and the removed owner and claim operations, are route_not_found', async () => {
