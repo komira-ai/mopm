@@ -497,7 +497,7 @@ profile, `aws configure export-credentials --profile <profile> --format env` giv
 the stage's takedown role (on beta and gamma, the takedown or the cleanup role) may: the tables and the channel bucket deny every
 delete to any other principal. No stack creates those roles (the policies name them only); a stage has one only once its owner
 created it. An `--apply` run as any other role stops at its first delete (exit status 1); what came before it stays (the first
-name's audit record, and when that name has no version 1 index file, its rewritten root repodata).
+name's audit record, and when that name has no version 1 index file, its rewritten root repodata and the CDN invalidation of it).
 
 - **Without `--apply` it is a dry run and changes nothing.** It lists the work from the stage: every package whose name has no
   namespace, with its versions, owners and trusted publishers, its `.conda` files at the bucket's root (`<subdir>/mojo-<name>-*.conda`)
