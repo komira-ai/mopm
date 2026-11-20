@@ -1,5 +1,5 @@
-//! mopm_aws: the ports on the AWS SDK for Rust: the DynamoDB adapters of the three stores (`dynamo`) and the
-//! S3, SQS, CloudFront and Secrets Manager ones (`services`).
+//! mopm_aws: the ports on the AWS SDK for Rust: the DynamoDB adapters of the three stores and of the web sign-in's
+//! namespaces and login transactions (`dynamo`), and the S3, SQS, CloudFront and Secrets Manager ones (`services`).
 
 pub mod dynamo;
 pub mod services;
@@ -8,5 +8,7 @@ pub mod services;
 mod dynamo_tests;
 #[cfg(test)]
 mod dynamo_specifics;
+#[cfg(test)]
+mod dynamo_web_login_tests;
 #[cfg(test)]
 mod services_tests;
