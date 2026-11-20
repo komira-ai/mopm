@@ -4,7 +4,10 @@
 pub mod auth;
 pub mod env;
 pub mod error;
+pub mod http;
+pub mod namespaces;
 pub mod publish;
 pub mod secrets;
 pub mod store;
 pub mod types;
+pub mod web_login;
