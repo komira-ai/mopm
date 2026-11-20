@@ -1061,6 +1061,14 @@ export_file(
     visibility = ["//service/lambda/core:"],
 )
 
+# The website's contract examples, for mopm_web's error envelope test.
+[export_file(
+    name = "lambda.contract.v2." + f,
+    src = "tests/contract/api-v2/" + f,
+    mode = "reference",
+    visibility = ["//service/lambda/web:"],
+) for f in ["web-auth.json", "tutorial-sandbox.json"]]
+
 # The corpus directory itself (mode reference: the source directory, not a copy), for mopm_validate.
 export_file(
     name = "validator_corpus_dir",
@@ -1373,6 +1381,7 @@ _LINT_PACKAGES = [
     "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",
+    "service/lambda/web",
     "site",
     "tools/lambda",
     "tools/node",
