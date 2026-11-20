@@ -8,22 +8,22 @@ use tokio::net::TcpStream;
 use super::*;
 use crate::fake_http::client::{exchange, request, Answered};
 
-const PACKAGES: &str = "mopm-t-packages";
-const VERSIONS: &str = "mopm-t-versions";
-const VALIDATION: &str = "com.amazon.coral.validate#ValidationException";
-const DENIED: &str = "com.amazon.coral.service#AccessDeniedException";
+pub(super) const PACKAGES: &str = "mopm-t-packages";
+pub(super) const VERSIONS: &str = "mopm-t-versions";
+pub(super) const VALIDATION: &str = "com.amazon.coral.validate#ValidationException";
+pub(super) const DENIED: &str = "com.amazon.coral.service#AccessDeniedException";
 
-fn fake() -> FakeDynamo {
+pub(super) fn fake() -> FakeDynamo {
     FakeDynamo::start(FakeConfig::registry("t"))
 }
 
-fn fake_with_grants(grants: &str) -> FakeDynamo {
+pub(super) fn fake_with_grants(grants: &str) -> FakeDynamo {
     FakeDynamo::start(
         FakeConfig::registry("t").with_grants("mopm-t-", Grants::parse(grants).expect("grants")),
     )
 }
 
-async fn call(fake: &FakeDynamo, op: &str, body: &Value) -> Answered {
+pub(super) async fn call(fake: &FakeDynamo, op: &str, body: &Value) -> Answered {
     let target = format!("DynamoDB_20120810.{op}");
     let raw = request(
         "POST",
@@ -38,7 +38,7 @@ async fn call(fake: &FakeDynamo, op: &str, body: &Value) -> Answered {
 }
 
 /// The answer must be a 400 with exactly this type and message.
-fn assert_refused(got: &Answered, type_: &str, message: &str) {
+pub(super) fn assert_refused(got: &Answered, type_: &str, message: &str) {
     assert_eq!(got.status, 400);
     let body = got.json();
     assert_eq!(body["__type"], type_);
@@ -48,11 +48,11 @@ fn assert_refused(got: &Answered, type_: &str, message: &str) {
     );
 }
 
-fn pkg(name: &str) -> Value {
+pub(super) fn pkg(name: &str) -> Value {
     json!({"name": {"S": name}})
 }
 
-async fn put(fake: &FakeDynamo, table: &str, item: Value) {
+pub(super) async fn put(fake: &FakeDynamo, table: &str, item: Value) {
     let got = call(fake, "PutItem", &json!({"TableName": table, "Item": item})).await;
     assert_eq!(got.status, 200);
 }
@@ -194,7 +194,7 @@ async fn an_unknown_operation_is_a_validation_error_naming_it() {
 
 // ---- expressions ----
 
-fn put_cond(cond: &str, names: Value, values: Value) -> Value {
+pub(super) fn put_cond(cond: &str, names: Value, values: Value) -> Value {
     json!({"TableName": PACKAGES, "Item": pkg("a"), "ConditionExpression": cond,
            "ExpressionAttributeNames": names, "ExpressionAttributeValues": values})
 }
@@ -316,7 +316,7 @@ async fn an_index_the_grant_does_not_list_is_denied_while_a_listed_one_is_served
 
 // ---- query ----
 
-fn query_with(kc: &str, names: Value, values: Value) -> Value {
+pub(super) fn query_with(kc: &str, names: Value, values: Value) -> Value {
     json!({"TableName": VERSIONS, "KeyConditionExpression": kc,
            "ExpressionAttributeNames": names, "ExpressionAttributeValues": values})
 }
@@ -437,7 +437,7 @@ async fn a_scan_with_a_page_size_of_zero_returns_no_items_and_no_resume_key() {
 
 // ---- transactions ----
 
-fn transact_body(items: Vec<Value>, token: Option<&str>) -> Value {
+pub(super) fn transact_body(items: Vec<Value>, token: Option<&str>) -> Value {
     let mut b = json!({"TransactItems": items});
     if let Some(t) = token {
         b["ClientRequestToken"] = json!(t);
@@ -445,7 +445,7 @@ fn transact_body(items: Vec<Value>, token: Option<&str>) -> Value {
     b
 }
 
-fn tput(name: &str) -> Value {
+pub(super) fn tput(name: &str) -> Value {
     json!({"Put": {"TableName": PACKAGES, "Item": pkg(name)}})
 }
 

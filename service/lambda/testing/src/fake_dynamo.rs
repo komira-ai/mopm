@@ -737,3 +737,7 @@ fn transact(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, Fail
 #[cfg(test)]
 #[path = "fake_dynamo_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "fake_dynamo_ops_tests.rs"]
+mod ops_tests;
