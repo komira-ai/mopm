@@ -1,0 +1,23 @@
+[package]
+name = "mopm_web"
+description = "What the website's functions share: cookies, the edge-header, session and CSRF checks, the error envelope, the API Gateway adapter (see README.md)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mopm_core.workspace = true
+mopm_ports.workspace = true
+aws_lambda_events.workspace = true
+base64.workspace = true
+form_urlencoded.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+mopm_testing.workspace = true
+tokio.workspace = true
