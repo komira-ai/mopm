@@ -379,7 +379,9 @@ starts with a digit, so `/versions` and `/{version}` stay apart.
 
 - Creating a package: `PUT` is the only way. It checks the caller's right to write the namespace first (a session, an
   API token whose `packages` names it, or a trusted publisher's token minted for it), then answers 201, or 200 when it
-  exists. No 30-day expiry, no similarity check; the per-account limit of 50 a day stays. `mopm publish` sends it when
+  exists. No 30-day expiry, no similarity check; the per-account limit of 50 a day stays for a session or an API token,
+  and a CI token's creates are counted per namespace against 500 a day, so a namespace's first publish creates its whole
+  set in one run (the komira release is over 70 packages). `mopm publish` sends it when
   the package does not exist, so publishing a new package is one command.
 - New error codes: `invalid_namespace` (400), `namespace_not_found` (404), `namespace_reserved` (403),
   `namespace_taken` (409), `not_org_admin` (403), `github_account_mismatch` (403), `not_namespace_member` (403),
