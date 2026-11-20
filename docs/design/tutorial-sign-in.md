@@ -2,8 +2,8 @@
 
 Status: proposal, revised after the CEO's rulings (see "Questions for the CEO"). It changes what users see (a sign-in,
 a tutorial that runs code) and the public interface (new `/api/v2` routes and error codes, a cookie). No code changes
-in this PR. **Unverified** marks what no code, doc or run has confirmed; every time and size is an estimate until the
-task that names it measures it. E2B facts cite E2B's documentation ("Sources" at the end) or the published `e2b` npm
+in this PR. **Unverified** marks what no code, doc or run has confirmed; every time and size is an estimate unless
+section 4.1 marks it measured, or until the task that names it measures it. E2B facts cite E2B's documentation ("Sources" at the end) or the published `e2b` npm
 package, version 2.64.0, the version current when this was written.
 
 The interactive tutorial runs code in a browser-facing sandbox on [E2B](https://e2b.dev). Our service does two things
@@ -106,10 +106,11 @@ export async function runLesson(csrf: string, code: string, show: (t: string) =>
 The snippet was type-checked (`tsc` 5.9.3, `strict`) against `e2b` 2.64.0's published types; a misspelled
 constructor field fails that check. It is the minimum. The real page (tu-S2) keeps the grant in memory only, never in
 `localStorage`. It maps every error code to the table's message, and on `csrf_failed` it fetches the session again and
-retries once. For E2B's `base` template, replace `mopm run` with a command the template has, such as `echo`. The bundled
-SDK loads and builds this client under the site's CSP, and E2B's edge answers it cross-origin (measured, section 4.1);
-that it drives a live sandbox from the site's origin is still **unverified** (section 4.1). The constructor is exported
-and typed public, but E2B's SDK comments mark it `@internal` (section 4).
+retries once. For E2B's `base` template, replace `mopm run` with a command the template has, such as `echo`. A client
+built the same way (the constructor, `commands.run`, `files.write`), bundled with esbuild and served from a loopback
+origin under the site's CSP, ran `echo` and wrote and read a file in a live beta sandbox from a browser, and E2B's
+agent allows any origin (measured, section 4.1). The constructor is exported and typed
+public, but E2B's SDK comments mark it `@internal` and E2B has not confirmed it as supported (section 4).
 
 ### Running it locally against the stub
 
@@ -316,9 +317,8 @@ The gate sits where letting a stranger through costs us something: getting a san
   the team key (e2b 2.64.0, `updateNetwork`). The browser's token cannot reach it.
 - `network.allowPublicTraffic: false` means the sandbox's own URLs accept traffic only with its traffic access token
   (E2B, "Create sandbox (v2)"), which we never hand out. Without it, a program the user starts could serve pages to
-  anyone at an `e2b.app` address. That E2B's in-sandbox agent stays reachable with the access token alone under this
-  setting is **unverified**: the SDK sends the traffic token on none of its agent calls, which suggests it does. tu-X1
-  checks it, and if the setting breaks the agent, the field is dropped and the note amended.
+  anyone at an `e2b.app` address. Under this setting E2B's in-sandbox agent stays reachable with the access token
+  alone, while a user port without the traffic token gets 403 (measured, section 4.1), so the field stays.
 - `timeout: 1800` and `autoPause: false`: E2B ends the sandbox 30 minutes after creation, and kills rather than pauses
   it (E2B, "Create sandbox (v2)": `timeout` is in seconds, default 300; `autoPause` defaults to false). **This is
   cleanup, not a limit.** Its only job is to end a sandbox whose tab was closed: the browser cannot extend or kill a
@@ -335,7 +335,8 @@ The gate sits where letting a stranger through costs us something: getting a san
   (E2B, "Secured access"). A missing token would mean a template whose agent predates secure access, and anyone who
   knew its id could control that sandbox.
 - E2B refuses (its concurrency limit for our plan, an outage) or does not answer in 8 s: 503 `tutorial_unavailable`.
-  The function's timeout is 10 s.
+  The function's timeout is 10 s. The beta team's limit is 10 sandboxes at once (E2B's 429 names it), and a create
+  took 150 to 684 ms, median 226 ms, over 25 creates (measured, section 4.1), far inside the 8 s.
 
 **The per-sandbox token keeps the team key off the browser.** E2B issues it at creation. Every call to the sandbox's
 agent carries it as `X-Access-Token`, and E2B's agent API accepts that token as its credential (E2B, "Secured access";
@@ -350,9 +351,11 @@ the envd API reference). What it opens:
 | | building and deleting templates |
 
 The token dies with its sandbox. If it leaks, for example through a flaw in the page, the holder controls that one
-sandbox, with the internet off, until its `expires_at`. That the internet stays off for code running as root inside the
-sandbox is **unverified**. E2B applies the rule as a network setting of the sandbox, not inside it, and tu-X1 tries to
-reach the internet with root inside the guest.
+sandbox, with the internet off, until its `expires_at`. The internet stays off for code running as root inside the
+sandbox, also after root flushes the firewall and rewrites the route and resolver. No application data came back from
+any address tried (`1.1.1.1`, `8.8.8.8`, `example.com`), and a canary server outside logged no request (measured,
+section 4.1). A TCP connect from inside appears to succeed to any address, because E2B's side of the sandbox completes
+every handshake, so the page and the template must not take a connect as a sign of network access.
 
 **What E2B lacks, and the closest option.** E2B has the per-sandbox token the CEO's ruling asks for. What it does not
 have is a *documented* SDK call that starts from the token alone:
@@ -369,7 +372,8 @@ So:
    makes an upgrade that changes it fail the site build, not prod.
 2. If E2B removes or changes it, the page talks to the agent's documented API directly with the same token (the envd
    API reference). The response of our endpoint does not change.
-3. tu-X1 asks E2B whether a token-only `connect` is supported or planned.
+3. E2B has not confirmed that the constructor, or a token-only `connect`, is supported (section 4.1); the beta run
+   shows it working with `e2b` 2.64.0. The fallback of point 2 stays the plan if an upgrade breaks it.
 
 **The key**: `mopm/<stage>/e2b`, a Secrets Manager secret holding `{api_key}`, written by a held operator script (tu-O2) like
 the OAuth secret's.
@@ -394,27 +398,38 @@ template format (E2B, "Template quickstart"). Building it needs the team key, so
 writes the resulting template id into the stage settings.
 
 **No limits.** As ruled, this note adds none. E2B's own plan limits, such as its concurrency limit for our team,
-still apply, and E2B refusing a sandbox is `tutorial_unavailable`.
+still apply, and E2B refusing a sandbox is `tutorial_unavailable`. The beta team's plan allows 10 sandboxes at once
+(section 4.1), so on that plan the eleventh concurrent tutorial user gets `tutorial_unavailable`; the plan prod uses is a
+follow-up (section 4.1).
 
 ### 4.1 What the check found (tu-X1)
 
-Each row says what was run, with which versions, and whether the result was measured or is inferred. Rows marked
-**pending** need sandboxes created with the beta E2B team's key; the run that settles them uses `e2b` 2.64.0 and the
-section's create body with `timeout` 300, and kills every sandbox after use.
+The checks ran against the beta E2B team with its key. They used E2B's `base` template, `e2b` 2.64.0 (the latest on
+npm when checked) and envd 0.10.2 as E2B reported it. The client was Node 20.19.4 and headless Google Chrome
+158.0.8127.36. Every sandbox had section 4's create body with `timeout` 300 instead of 1800 and was killed after use.
+The team's list of running sandboxes was empty afterwards. Each row says whether its result was measured or is inferred,
+and how.
 
-| Claim | Result | Evidence |
+| Claim | Result | How |
 |---|---|---|
-| The SDK bundles for the browser with esbuild | **Measured: not as is.** `esbuild` 0.24.0, `--bundle --format=esm --platform=browser`, stops with 6 errors: `e2b` 2.64.0's `dist/index.mjs` imports `node:fs`, `node:stream`, `node:crypto`, `node:os`, `node:path` and `node:url` at the top. Those are used only by its template builder. Aliasing the six to an empty module builds with no warning. | `npx esbuild entry.js --bundle --format=esm --platform=browser` (exit 1); the same with `--alias:node:<m>=./stub.js` for each (exit 0). |
-| Bundle size | **Measured:** 306,542 bytes minified, 93,316 bytes after `gzip -9`, for an entry that calls the constructor, `files.write` and `commands.run` (`node:*` external). tu-S2 still sets the budget. | `--minify`, then `gzip -9 -c out.min.js \| wc -c`. |
-| The bundle runs under `script-src 'self'` and `require-trusted-types-for 'script'` | **Measured, up to the sandbox:** no `eval`, `new Function`, string timer, HTML sink or script-URL sink in the bundle. In headless Chrome 158.0.8127.36, a page served with `default-src 'none'; script-src 'self'; require-trusted-types-for 'script'; connect-src 'self' https://*.e2b.app` loaded the bundle, built the client from `{sandboxId, sandboxDomain, envdVersion, envdAccessToken}` and called the agent with no CSP violation. The control page, the same with `connect-src 'self'`, recorded 4 `connect-src` violations, so the page does see violations. | `grep` of the bundle; the check page's `securitypolicyviolation` listener, both runs. |
-| The browser client talks only to the sandbox | **Measured:** in a browser the client's agent URL is `https://49983-<sandboxID>.<domain>`, inside `connect-src https://*.e2b.app` when the domain is `e2b.app`. It builds no platform-API client, so it sends no API key. (Under Node the same SDK uses `https://sandbox.e2b.app` instead.) **Inferred from the code:** `files.write` and `commands.run` send `X-Access-Token`, `E2b-Sandbox-Id`, `E2b-Sandbox-Port` and Connect headers, none CORS-safelisted, so each call needs a preflight. | The page's report (`envdApiUrl`); the SDK's `getSandboxUrl`. |
-| Cross-origin calls reach E2B from a page | **Measured for an unknown sandbox:** from the page above, E2B's edge answered a sandbox id that does not exist with a readable "sandbox was not found" (the SDK's `SandboxNotRunningError`), not a network failure, so its CORS answer let the SDK's headers through. **Pending:** the same against a live sandbox's agent, and from the site's own origin through the preview's real-sandbox mode (with the tutorial's author). | The page's report. |
-| The constructor's status | **Measured:** in `e2b` 2.64.0, the latest on npm when checked, its comment is `Use Sandbox.create to create a new Sandbox instead` with `@hidden @hide @internal @access protected`. E2B's docs show no token-only connect. | `dist/index.d.ts`; `https://registry.npmjs.org/e2b/latest`; E2B, "Connect to sandbox". |
-| The agent works with the access token alone under `allowPublicTraffic: false` | **Pending.** E2B's docs say requests to the sandbox's URLs without `e2b-traffic-access-token` get 403 under this setting and are silent on the agent's port, 49983 (E2B, "Restrict public access"). The run creates a sandbox with section 4's body and runs a command and a file write through a client given only the access token, with the key removed from its environment; a control with the setting `true` shows a user port answering where the first refuses. | |
-| No internet for root inside the sandbox | **Pending.** E2B's docs do not say where the rule is enforced or mention root (E2B, "Internet access"). The run, as root, flushes `iptables` and `nft`, re-adds the default route, rewrites `/etc/resolv.conf`, then tries TCP to `1.1.1.1:443` and `8.8.8.8:53`, HTTPS to `https://1.1.1.1/` and `https://example.com/`, and a DNS lookup. A control sandbox with the internet on runs the same probes, which must succeed. | |
-| Create time | **Pending:** min, median and max over 25 sequential creates, timed at the client from sending `POST /v2/sandboxes` to its answer. | |
-| Concurrency limit of our plan | **Documented, not measured:** Hobby 10 sandboxes at once and 1 create per second; Pro 100, up to 1,100 with add-ons, and 5 per second (E2B, "Billing"). Which plan the beta team is on, and the limit it meets, are **pending**: the run holds sandboxes one per 1.1 s until E2B refuses one, with a cap of 40. | |
-| A supported token-only `connect` | **Pending:** the question goes to E2B support from the account holder; the reply, or that none came, is recorded here. | |
+| The SDK bundles for the browser with esbuild | **Measured: not as is.** `esbuild` 0.24.0 with `--bundle --format=esm --platform=browser` stops with 6 errors. `e2b` 2.64.0's `dist/index.mjs` imports `node:fs`, `node:stream`, `node:crypto`, `node:os`, `node:path` and `node:url` at the top, and only its template builder uses them. Aliasing the six to an empty module builds with no warning. tu-S2 does that (section 7). | `esbuild entry.js --bundle --format=esm --platform=browser` exits 1. The same with `--alias:node:<module>=./stub.js` for each of the six exits 0. |
+| Bundle size | **Measured:** 306,542 bytes minified and 93,316 bytes after `gzip -9`, for an entry that calls the constructor, `files.write` and `commands.run`. tu-S2 still sets the budget. | `--minify`, then `gzip -9 -c \| wc -c`. |
+| The bundled constructor works from a page under the site's CSP | **Measured: yes.** The page was served from a loopback origin, the same kind of origin the preview server uses, with `default-src 'none'; script-src 'self'; require-trusted-types-for 'script'; connect-src 'self' https://*.e2b.app`. It got section 4's grant from a local route that held the key. It built the client from `{sandboxId, sandboxDomain, envdVersion, envdAccessToken}`, ran `echo` (exit 0, output read back), and wrote and read back a file in a live sandbox, with no CSP violation. A control page with `connect-src 'self'` recorded 4 `connect-src` violations, which shows the page does see violations. The bundle contains no `eval`, `new Function`, string timer, HTML sink or script-URL sink. | The page's `securitypolicyviolation` listener and its report, from both pages; `grep` of the bundle. |
+| It works from the site's own origin | **Measured, by the agent's CORS answer:** E2B's agent answered a preflight from `Origin: https://mopm.dev` with 204 and `Access-Control-Allow-Origin: *`. It allowed exactly the headers the SDK sends (`authorization`, `connect-protocol-version`, `connect-timeout-ms`, `content-type`, `e2b-sandbox-id`, `e2b-sandbox-port`, `keepalive-ping-interval`, `x-access-token`). So the origin does not change the row above. The tutorial page itself does not exist yet (tu-S2), so its own run in the browser is that task's. | `OPTIONS` to the agent's `process.Process/Start` and `files` routes, and `GET /health`, each with that `Origin`. |
+| The browser client talks only to the sandbox | **Measured:** in a browser the client's agent URL is `https://49983-<sandboxID>.e2b.app`, inside `connect-src`. It builds no platform-API client and sends no API key. Under Node the same SDK uses `https://sandbox.e2b.app` instead. | The page's report (`envdApiUrl`); the SDK's `getSandboxUrl`. |
+| The agent works with the access token alone under `allowPublicTraffic: false` | **Measured: yes.** The sandbox was created with section 4's body. A Node client was given only the access token, with `E2B_API_KEY` removed from its environment. It ran `echo` (exit 0) and wrote and read back a file. In the same sandbox, a user port (8000) without the traffic token answered 403. In a control sandbox with the setting `true`, the same port answered 200. The field stays. | That run's report. |
+| No internet for root inside the sandbox | **Measured: none.** Root inspected and flushed `iptables` (it held no rules) and `nft`, re-added the default route, and pointed `/etc/resolv.conf` at `1.1.1.1`. The checks ran both before and after these changes. None of these reached anything: an HTTP request to `1.1.1.1:80`, HTTPS to `https://1.1.1.1/`, a DNS query to `8.8.8.8` over UDP, a DNS lookup of `example.com`, and a request to a canary web server we ran in a second sandbox that had the internet on. They got 0 bytes, an aborted TLS handshake, a timeout, a timeout, and no request in the canary's log. In an internet-on control sandbox the same requests got an HTTP 301, an HTTPS answer (301), a 61-byte DNS answer, an answer for `example.com` and a request logged by the canary. A request from outside the sandboxes also reached the canary. **Note:** a TCP connect from inside appears to succeed to any address and port. That includes `192.0.2.1`, a documentation address nothing answers, and a closed port of `1.1.1.1`, with the internet on or off. E2B's side of the sandbox completes every handshake, so a connect is not evidence of egress. The first pass counted such connects as reaching the internet, and the follow-up above shows they do not. **Inferred:** the rule is enforced outside the guest, since nothing root changes inside it lets traffic out. | Two runs, the second with the canary and the controls. |
+| Create time | **Measured:** min 150 ms, median 226 ms, max 684 ms over 25 sequential creates. Each was timed at the client, a workstation reaching E2B over the public internet (not the Lambda's network), from sending `POST /v2/sandboxes` to receiving its 201. Each sandbox was killed before the next create, and creates were 1.1 s apart. | That run's report; all 25 times are in the run's output. |
+| Concurrency limit of our plan | **Measured: 10.** Creating sandboxes one every 1.1 s, the eleventh was refused with 429: "you have reached the maximum number of concurrent E2B sandboxes (10)". That matches E2B's Hobby plan (10 at once, 1 create per second; Pro is 100 at once, up to 1,100 with add-ons, 5 per second, E2B, "Billing"), so the beta team is on Hobby (inferred from the number). | That run's report. |
+| The constructor's status, and a supported token-only `connect` | **Measured:** in `e2b` 2.64.0 the constructor's comment is "Use Sandbox.create to create a new Sandbox instead", with `@hidden @hide @internal @access protected`. E2B's docs show no token-only connect. E2B has not been asked and has not confirmed either as supported; the CSP row shows the constructor working with 2.64.0. | `dist/index.d.ts`; `https://registry.npmjs.org/e2b/latest`; E2B, "Connect to sandbox". |
+
+Follow-ups, none of which changes code here:
+
+- The prod E2B team's plan. On the beta team's plan, an eleventh tutorial user at the same moment gets
+  `tutorial_unavailable`. Pro gives 100 at once. Choosing it is a product and spend decision for the CEO, and the
+  rulings add no limits of our own.
+- tu-S2 aliases the six `node:*` imports when it bundles the SDK (section 7).
+- tu-S2's page and the template (tu-X2) never treat a successful TCP connect inside the sandbox as network access.
 
 ## 5. The functions: the first Rust Lambdas
 
@@ -496,7 +511,7 @@ address. The site distribution's standard logs stay off.
   - The bundle is about 300 KB minified, 93 KB gzipped, for the constructor, `files.write` and `commands.run`
     (measured, section 4.1); tu-S2 sets its budget. It runs under `require-trusted-types-for 'script'` and
     `script-src 'self'` with no violation (measured in Chrome, section 4.1).
-  - If it does not, the fallback of section 4, point 2, applies: a small client of the agent's API in `src/tutorial/`,
+  - If an `e2b` upgrade breaks it, the fallback of section 4, point 2, applies: a small client of the agent's API in `src/tutorial/`,
     with no dependency.
 - **The editor** is a `<textarea>` per editable file, with no editor library. Output is text nodes in a `<pre>`, and
   control, bidi and invisible characters show as markers, as appendix C.2's copied-example rule does.
@@ -616,13 +631,13 @@ Sign-in:
 
 The sandbox:
 
-- **tu-X1 (S, with the tutorial's author)** A check on beta with a beta E2B key, written into section 4 as a short
-  amendment; no code is merged. It settles:
-  - the bundled SDK and the constructor work from the site's origin under the site's CSP;
+- **tu-X1 (S, with the tutorial's author)** Done: a check on beta with a beta E2B key, recorded in section 4.1; no code
+  is merged. It settled:
+  - the bundled SDK and the constructor work under the site's CSP, and E2B's agent allows any origin;
   - the agent works with `allowPublicTraffic: false`;
-  - with `allow_internet_access: false`, a program run as root in the sandbox reaches no address on the internet;
-  - E2B's create time, and its concurrency limit for our plan;
-  - E2B's answer on a supported token-only `connect`.
+  - with `allow_internet_access: false`, a program run as root in the sandbox gets nothing back from the internet;
+  - E2B's create time, and the beta team's concurrency limit (10);
+  - whether E2B supports a token-only `connect`: not asked, and still open.
 - **tu-X2 (M)** The E2B template definition, built from `tutorial/lessons/*/project` and the pinned mopm release, with
   its build documented as an operator step.
   - Tests: every lesson project in the template definition matches `tutorial/lessons`, and the mopm version in it is
