@@ -1,0 +1,9 @@
+[package]
+name = "tutorial/hello"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[targets]
+bins = [{ name = "hello", path = "src/main.mojo" }]

@@ -16,6 +16,7 @@ contract. Nothing here describes the registry's internals.
 | `index.md`, `index-record.schema.json`, `index-config.schema.json`, `takedowns.schema.json` | the static sparse index the CLI reads |
 | `index-record-1.schema.json`, `takedowns-1.schema.json` | version 1 of the index, which a registry still serves for released CLIs (`index.md`, "Version 1") |
 | `lock.md`, `lock.schema.json` | `mopm.lock`, the resolved closure (version 2: one build per Mojo version) |
+| `tutorial-lesson.schema.json` | `lesson.json` of a lesson of the interactive tutorial (`tutorial/README.md`): title, summary, order, the editable files of its project and the mopm command of each action |
 | `unit-graph.md` | `mopm plan --unit-graph`, the unit ids with their Mojo version, and `mopm unit build` and `mopm unit test` |
 | `staged-set.md` | the staged set `mopm publish --staged` publishes through one group, its `plan.json`, `state.json` and `report.json`, and `mopm yank --group` |
 | `proposed/namespaces.md` | proposed, not implemented (but for the API, now live in `api/openapi-v2.yaml`): owner namespaces (`komira-ai/json`) and what they change in each file above (`docs/design/namespaces.md`) |
