@@ -228,13 +228,15 @@ pub const PUBLISH_CATALOGUE: &[(ErrorCode, Template)] = &[
 
 /// The templates of the codes the website's routes (`/auth/web/*`, `/tutorial/sandbox`) answer with, as
 /// `x-mopm-errors` in spec/api/openapi-v2.yaml words them. `session_required`, `csrf_failed` and
-/// `tutorial_unavailable` exist only in the v2 API, so they are in no other table.
+/// `tutorial_unavailable` exist only in the v2 API, so they are in no other table. `route_not_found` is what a
+/// website function answers a path or method it does not serve (the v2 conventions: never a 400).
 pub const WEB_CATALOGUE: &[(ErrorCode, Template)] = &[
     (ErrorCode::InvalidRequest, Template { message: "The request is not valid: {detail}.", hint: "Check the request against the API documentation; update mopm if it is old." }),
     (ErrorCode::InternalError, Template { message: "Something went wrong on our side.", hint: "Try again; report the request id if it persists." }),
     (ErrorCode::SessionRequired, Template { message: "You are not signed in to the website.", hint: "Sign in with GitHub, then try again." }),
     (ErrorCode::CsrfFailed, Template { message: "The request did not come from a page of the website.", hint: "Reload the page and try again." }),
     (ErrorCode::TutorialUnavailable, Template { message: "The sandbox service did not answer.", hint: "Wait {retry_after} seconds and try again; the Retry-After header says how long." }),
+    (ErrorCode::RouteNotFound, Template { message: "There is no such operation.", hint: "Check the request against the API documentation; update mopm if it is old." }),
 ];
 
 fn lookup(table: &'static [(ErrorCode, Template)], code: ErrorCode) -> Option<Template> {

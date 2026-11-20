@@ -12,8 +12,8 @@ import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
 import { StageConfig, channelBucketName, edgeOriginSecretName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
+import { RustFunction, RustRoute, RustTableGrant } from './rust-function';
 import { StageSettingsWriter } from './stage-settings';
-import { RustFunction } from './rust-function';
 
 export interface ApiStackProps extends StackProps {
   config: StageConfig;
@@ -24,8 +24,8 @@ export interface ApiStackProps extends StackProps {
   /** Directory holding the built handler (`http/lambda.js`). Defaults to service/api/dist; tests pass a stub. */
   handlerDir?: string;
   /**
-   * Directory of the Rust functions' zips (lambda_zip's output, `<function>.zip` each). Absent (every deploy today): no Rust
-   * function and no `stage_settings` item is deployed. Tests pass a stub.
+   * Directory of the Rust functions' zips (lambda_zip's output, `<function>.zip` each). Present: the `stage_settings` item and the
+   * web-session function (`web-session.zip`) are deployed. Absent (every deploy today): neither is. Tests pass a stub.
    */
   rustZipDir?: string;
   /** New uploads are refused and /health says so. (The runtime switch is the `read_only` item of the config table.) */
@@ -130,6 +130,18 @@ export const WRITE_GRANTS: Array<{ sid: string; actions: string[]; tables: strin
 
 /** The environment variable the handler reads its configured CI publishers from. The code refuses to load it on any stage but beta and prod (prod: rows that act for an account, `acts_for`, or publish in a namespace, `namespace`). */
 export const CI_PUBLISHERS_ENV = 'CI_PUBLISHERS';
+/** The web-session function's routes (docs/design/tutorial-sign-in.md, section 2). */
+export const WEB_SESSION_ROUTES: RustRoute[] = [
+  { method: apigw.HttpMethod.GET, path: '/api/v2/auth/web/session' },
+  { method: apigw.HttpMethod.POST, path: '/api/v2/auth/web/logout' },
+];
+
+/** The web-session function's table grants (section 5); the config table's `stage_settings` read is RustFunction's own. */
+export const WEB_SESSION_TABLES: RustTableGrant[] = [
+  { table: 'tokens', actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'] },
+  { table: 'users', actions: ['dynamodb:GetItem'] },
+];
+
 /**
  * The CI identity the BETA stage trusts by configuration (config as code): the komira repository's release workflow, on
  * main, from a push only (never a manual run), as the workflow itself and not as a reusable workflow called by another
@@ -492,10 +504,11 @@ export class ApiStack extends Stack {
   }
 
   /**
-   * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, section 5): the `stage_settings` item they read
-   * at cold start, and the functions themselves. A function is a RustFunction (lib/rust-function.ts) created here from `zipDir`.
-   * Today that is `web-login`, the GitHub sign-in of the website (GET /api/v2/auth/web/start and /callback). It is the only
-   * function that reads the OAuth app secret besides the TypeScript handler's device login.
+   * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, sections 2 and 5): the `stage_settings` item they
+   * read at cold start, and the functions themselves, each a RustFunction (lib/rust-function.ts) created here from `zipDir`:
+   * - `web-login`, the GitHub sign-in of the website (GET /api/v2/auth/web/start and /callback). It is the only function that
+   *   reads the OAuth app secret besides the TypeScript handler's device login.
+   * - `web-session` (`<zipDir>/web-session.zip`) on GET /api/v2/auth/web/session and POST /api/v2/auth/web/logout.
    */
   private addRustFunctions(c: StageConfig, zipDir: string, require2fa: boolean): void {
     if (!fs.existsSync(zipDir)) {
@@ -519,6 +532,15 @@ export class ApiStack extends Stack {
         { table: 'tokens', actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'] },
       ],
       secrets: [oauthSecretName(c.stage), edgeOriginSecretName(c.stage)],
+    });
+    new RustFunction(this, 'WebSession', {
+      config: c,
+      name: 'web-session',
+      zipDir,
+      api: this.api,
+      routes: WEB_SESSION_ROUTES,
+      tables: WEB_SESSION_TABLES,
+      secrets: [edgeOriginSecretName(c.stage)],
     });
   }
 }

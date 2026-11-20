@@ -2,6 +2,7 @@
 //! here does I/O. `mopm_testing` has the in-memory implementations, `mopm_aws` the ones on the AWS SDK.
 
 pub mod auth;
+pub mod config;
 pub mod env;
 pub mod error;
 pub mod http;

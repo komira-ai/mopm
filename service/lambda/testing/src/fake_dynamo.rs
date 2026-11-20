@@ -82,6 +82,11 @@ pub fn registry_tables(stage: &str) -> Vec<TableDef> {
 /// [`Grants::parse`].
 pub const WEB_LOGIN_GRANTS: &str = include_str!("../tests/fixtures/web_login_grants.json");
 
+/// The web session function's grants (`docs/design/tutorial-sign-in.md`, section 5): `tokens` (the read by hash, and
+/// the conditional updates that touch and revoke a row), `users` (the read of the account) and `config` (the read of
+/// the `stage_settings` item); every other table is denied. In the format of [`Grants::parse`].
+pub const WEB_SESSION_GRANTS: &str = include_str!("../tests/fixtures/web_session_grants.json");
+
 /// What a role may call, per table (`service/api/test/fixtures/lambda-auth-grants.json`):
 /// `{ "<table>": { "actions": ["dynamodb:GetItem", ...], "indexes": ["by_github_id"] } }`. A table the grants do
 /// not list is denied entirely.
@@ -118,6 +123,13 @@ impl FakeConfig {
     /// `namespaces` ([`WEB_LOGIN_GRANTS`]); every other table is denied.
     pub fn web_login(stage: &str) -> FakeConfig {
         let grants = Grants::parse(WEB_LOGIN_GRANTS).expect("the web sign-in grants are JSON");
+        FakeConfig::registry(stage).with_grants(&format!("mopm-{stage}-"), grants)
+    }
+
+    /// All tables of the data stack for `stage`, restricted to the web session function's grants
+    /// ([`WEB_SESSION_GRANTS`]); every other table is denied.
+    pub fn web_session(stage: &str) -> FakeConfig {
+        let grants = Grants::parse(WEB_SESSION_GRANTS).expect("the web session grants are JSON");
         FakeConfig::registry(stage).with_grants(&format!("mopm-{stage}-"), grants)
     }
 
