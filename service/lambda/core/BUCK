@@ -14,6 +14,7 @@ cargo_package(
     path = ".",
     extra_srcs = [
         "//:lambda.spec.openapi.yaml",
+        "//:lambda.spec.openapi-v2.yaml",
         "//:lambda.contract.errors.json",
         "//service/api:repodata.linux-64.json",
         "//service/api:repodata.noarch.json",

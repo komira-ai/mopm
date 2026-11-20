@@ -64,6 +64,11 @@ pub const Writer = struct {
     is_input: []bool = &.{},
     params: std.ArrayList(ParamDef) = undefined,
 
+    fn header(self: *Writer, name: []const u8) ?model.Header {
+        for (self.api.headers) |h| if (std.mem.eql(u8, h.name, name)) return h;
+        return null;
+    }
+
     fn fail(self: *Writer, comptime fmt: []const u8, args: anytype) Err {
         const text = try std.fmt.allocPrint(self.arena, fmt, args);
         self.msg = if (self.where.len > 0) try std.fmt.allocPrint(self.arena, "{s}: {s}", .{ self.where, text }) else text;
@@ -316,6 +321,10 @@ pub const Writer = struct {
             try add(&re, "description", str(r.description));
             var headers = Entries.init(self.arena);
             for (api.headers) |h| if (h.on_success) try add(&headers, h.wire, try self.refNode("headers", h.name));
+            for (r.headers) |n| {
+                const h = self.header(n) orelse return self.fail("the response {d} names the header '{s}', which is not declared", .{ r.status, n });
+                if (!h.on_success) try add(&headers, h.wire, try self.refNode("headers", h.name));
+            }
             if (headers.items.len > 0) try add(&re, "headers", mapNode(headers));
             const schema_name: ?[]const u8 = if (r.is_error) try self.errorSchemaName() else switch (rpc.output) {
                 .empty => null,
@@ -380,9 +389,16 @@ pub const Writer = struct {
         var schemes = Entries.init(self.arena);
         for (api.security_schemes) |s| {
             var e = Entries.init(self.arena);
-            try add(&e, "type", str("http"));
-            try add(&e, "scheme", str("bearer"));
-            try add(&e, "bearerFormat", str(s.bearer_format));
+            if (s.cookie.len > 0) {
+                if (s.bearer_format.len > 0) return self.fail("the security scheme '{s}' has both a cookie and a bearer_format", .{s.name});
+                try add(&e, "type", str("apiKey"));
+                try add(&e, "in", str("cookie"));
+                try add(&e, "name", str(s.cookie));
+            } else {
+                try add(&e, "type", str("http"));
+                try add(&e, "scheme", str("bearer"));
+                try add(&e, "bearerFormat", str(s.bearer_format));
+            }
             if (s.description.len > 0) try add(&e, "description", str(s.description));
             try add(&schemes, s.name, mapNode(e));
         }
@@ -390,6 +406,7 @@ pub const Writer = struct {
 
         var headers = Entries.init(self.arena);
         for (api.headers) |h| {
+            if (h.on_success and h.response_only) return self.fail("the header '{s}' is both on_success and response_only", .{h.name});
             var e = Entries.init(self.arena);
             if (h.description.len > 0) try add(&e, "description", str(h.description));
             if (h.required) try add(&e, "required", boolean(true));
@@ -407,7 +424,7 @@ pub const Writer = struct {
             var e = Entries.init(self.arena);
             try add(&e, "description", str(api.error_response));
             var hs = Entries.init(self.arena);
-            for (api.headers) |h| try add(&hs, h.wire, try self.refNode("headers", h.name));
+            for (api.headers) |h| if (!h.response_only) try add(&hs, h.wire, try self.refNode("headers", h.name));
             if (hs.items.len > 0) try add(&e, "headers", mapNode(hs));
             var s = Entries.init(self.arena);
             try add(&s, "schema", try self.refNode("schemas", try self.errorSchemaName()));

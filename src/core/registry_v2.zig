@@ -4,7 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const http = @import("http.zig");
 
-pub const sources_sha256 = "628dd8531edfcb040ec8975a8dc2fa8e324b2fdafee8d3636512724bef92ce6f";
+pub const sources_sha256 = "bd9822c8173fd0647686abe7509eab62306f439d0d00d177a036eb028f8f21a3";
 
 pub const base_path = "/api/v2";
 
@@ -212,6 +212,9 @@ pub const ErrorCode = enum {
     last_owner,
     member_not_found,
     user_not_found,
+    session_required,
+    csrf_failed,
+    tutorial_unavailable,
     /// A value this client does not know.
     unknown,
 
@@ -280,6 +283,9 @@ pub const ErrorCode = enum {
             .last_owner => .{ .status = 409, .message = "'{user}' is the last owner of '{namespace}'.", .hint = "Make another member an owner first." },
             .member_not_found => .{ .status = 404, .message = "'{user}' is not a member of '{namespace}'.", .hint = "List the members with 'mopm org list {namespace}'." },
             .user_not_found => .{ .status = 404, .message = "There is no mopm user '{user}'.", .hint = "A user gets their name at their first 'mopm login'." },
+            .session_required => .{ .status = 401, .message = "You are not signed in to the website.", .hint = "Sign in with GitHub, then try again." },
+            .csrf_failed => .{ .status = 403, .message = "The request did not come from a page of the website.", .hint = "Reload the page and try again." },
+            .tutorial_unavailable => .{ .status = 503, .message = "The sandbox service did not answer.", .hint = "Wait {retry_after} seconds and try again; the Retry-After header says how long." },
             else => null,
         };
     }
@@ -739,6 +745,36 @@ test "ErrorCode.entry is the catalogue, and decodeError reads each code back" {
         try std.testing.expectEqualStrings(got.message, read.message);
         try std.testing.expectEqualStrings(got.hint, read.hint);
     }
+    {
+        const got = ErrorCode.entry(.session_required).?;
+        try std.testing.expectEqual(@as(u16, 401), got.status);
+        try std.testing.expectEqualStrings("You are not signed in to the website.", got.message);
+        try std.testing.expectEqualStrings("Sign in with GitHub, then try again.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"session_required\",\"message\":\"You are not signed in to the website.\",\"hint\":\"Sign in with GitHub, then try again.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.session_required, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.csrf_failed).?;
+        try std.testing.expectEqual(@as(u16, 403), got.status);
+        try std.testing.expectEqualStrings("The request did not come from a page of the website.", got.message);
+        try std.testing.expectEqualStrings("Reload the page and try again.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"csrf_failed\",\"message\":\"The request did not come from a page of the website.\",\"hint\":\"Reload the page and try again.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.csrf_failed, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
+    {
+        const got = ErrorCode.entry(.tutorial_unavailable).?;
+        try std.testing.expectEqual(@as(u16, 503), got.status);
+        try std.testing.expectEqualStrings("The sandbox service did not answer.", got.message);
+        try std.testing.expectEqualStrings("Wait {retry_after} seconds and try again; the Retry-After header says how long.", got.hint);
+        const read = decodeError(a, "{\"error\":{\"code\":\"tutorial_unavailable\",\"message\":\"The sandbox service did not answer.\",\"hint\":\"Wait {retry_after} seconds and try again; the Retry-After header says how long.\"}}").?.@"error";
+        try std.testing.expectEqual(ErrorCode.tutorial_unavailable, read.code);
+        try std.testing.expectEqualStrings(got.message, read.message);
+        try std.testing.expectEqualStrings(got.hint, read.hint);
+    }
     try std.testing.expect(ErrorCode.entry(.unknown) == null);
     try std.testing.expectEqual(ErrorCode.unknown, decodeError(a, "{\"error\":{\"code\":\"not_a_code\",\"message\":\"m\",\"hint\":\"\"}}").?.@"error".code);
     try std.testing.expect(decodeError(a, "not json") == null);
@@ -1039,6 +1075,33 @@ pub const OidcExchangeResponseTokenKind = enum {
     pub fn jsonStringify(self: OidcExchangeResponseTokenKind, jw: anytype) !void {
         try jw.write(@tagName(self));
     }
+};
+
+pub const StartWebLoginParams = struct {
+    /// The page of the site to come back to after the sign-in, a path such as `/tutorial/hello`. A value that is not a page of
+    /// the site (it does not start with one `/`, has a backslash or a control character, is longer than 256 characters, or is
+    /// outside the site's routes) becomes `/tutorial`; it is never refused.
+    return_to: ?[]const u8 = null,
+};
+
+pub const CompleteWebLoginParams = struct {
+    /// GitHub's authorization code; absent when the person did not authorize.
+    code: ?[]const u8 = null,
+    /// The `state` that `startWebLogin` sent GitHub.
+    state: ?[]const u8 = null,
+    /// GitHub's error when the person did not authorize, such as `access_denied`.
+    @"error": ?[]const u8 = null,
+};
+
+/// The user signed in to the website.
+pub const WebSession = struct {
+    /// The user's GitHub login, as GitHub spells it.
+    login: []const u8,
+    /// The value every cookie-authenticated `POST` sends as `X-Mopm-CSRF`: base64url, without padding, of the SHA-256 of
+    /// `mopm-csrf`, a zero byte and the session token. It is the same for the whole session and nothing stores it.
+    csrf: []const u8,
+    /// When the session ends: seven days after the sign-in. It is never extended.
+    expires_at: Timestamp,
 };
 
 /// `publish` creates, uploads, reads, aborts and commits groups and publishes single versions; it may also yank.
@@ -1902,6 +1965,21 @@ pub const YankRequest = struct {
     yanked: bool,
     /// Required when `yanked` is true. Shown to people who locked the version.
     reason: ?[]const u8 = null,
+};
+
+/// A sandbox of the interactive tutorial on E2B, created with internet access off. The browser reaches it with E2B's
+/// JavaScript SDK at `https://<port>-<sandbox_id>.<domain>`, sending `access_token`; it never needs our E2B API key.
+pub const TutorialSandbox = struct {
+    /// E2B's id of the sandbox.
+    sandbox_id: []const u8,
+    /// E2B's access token of this sandbox: it opens this one sandbox and nothing else, until the sandbox ends. Never store it.
+    access_token: []const u8,
+    /// The version of E2B's agent in the sandbox; the SDK chooses its protocol by it.
+    envd_version: []const u8,
+    /// The base domain of the sandbox's address, such as `e2b.app`.
+    domain: []const u8,
+    /// When E2B ends the sandbox, 30 minutes after it was created. After it, ask for a new one.
+    expires_at: Timestamp,
 };
 
 pub const StartDeviceLoginParams = struct {

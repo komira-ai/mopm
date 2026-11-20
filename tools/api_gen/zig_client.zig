@@ -1,7 +1,8 @@
 //! The Zig client writer of tools/api_gen.zig: `write` turns the model of the registry API (model.zig) into the text of
 //! `src/core/registry_v2.zig`, the types, the per-operation request builders and the decoding the command line uses. The
 //! command line keeps its own transport (`http.once` / `http.request`); it asks an operation for `target` (the path with
-//! its query), `body` (the JSON text, or null) and `decode` (the answer's JSON).
+//! its query), `body` (the JSON text, or null) and `decode` (the answer's JSON). A browser operation (model.Rpc.browser) is
+//! left out: the website calls it, the command line never does.
 //!
 //! The generated file imports `std` and the command line's `http.zig` (the types of `send`, `sendOnce` and `call`).
 //! Names are those of the TypeScript writer: a nested message or enum is its path without dots (`MeV2.Entry` is `MeV2Entry`), and every declaration is at the top of the file. A name that is not a plain
@@ -86,11 +87,19 @@ const Gen = struct {
             .message => |i| try g.writeMessageTree(i),
             .enumeration => |i| try g.writeEnum(i),
         };
-        for (g.api.rpcs) |rpc| try g.writeOperation(rpc);
+        var n_ops: usize = 0;
+        for (g.api.rpcs) |rpc| if (!rpc.browser) {
+            try g.writeOperation(rpc);
+            n_ops += 1;
+        };
         try g.print("pub const operations = [_]type{{", .{});
-        const pad: []const u8 = if (g.api.rpcs.len > 1) " " else "";
+        const pad: []const u8 = if (n_ops > 1) " " else "";
         try g.print("{s}", .{pad});
-        for (g.api.rpcs, 0..) |rpc, i| try g.print("{s}{s}", .{ if (i == 0) "" else ", ", rpc.name });
+        var first = true;
+        for (g.api.rpcs) |rpc| if (!rpc.browser) {
+            try g.print("{s}{s}", .{ if (first) "" else ", ", rpc.name });
+            first = false;
+        };
         try g.print("{s}}};\n\n", .{pad});
         try g.out.appendSlice(tail);
     }
@@ -105,7 +114,7 @@ const Gen = struct {
             try g.claim(&seen, try flat(g.arena, m.path), "message");
         }
         for (g.api.enums) |e| try g.claim(&seen, try flat(g.arena, e.path), "enum");
-        for (g.api.rpcs) |rpc| try g.claim(&seen, rpc.name, "rpc");
+        for (g.api.rpcs) |rpc| if (!rpc.browser) try g.claim(&seen, rpc.name, "rpc");
         if (!has_error) return g.fail("no top-level message 'Error': decodeError reads it", .{});
     }
 
@@ -856,6 +865,24 @@ test "a union of const strings only names no parameters it does not use" {
     const text = try generated(arena_state.allocator(), api);
     try std.testing.expect(std.mem.indexOf(u8, text, "pub fn jsonParseFromValue(_: Allocator, value: std.json.Value, _: std.json.ParseOptions)") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "                return error.UnexpectedToken;\n") != null);
+}
+
+test "a browser operation is left out of the client: no struct, not in the operation list, and its name is not checked" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const site: model.Rpc = .{ .name = "Site", .doc = "", .input = .empty, .output = .empty, .method = .GET, .path = "/api/v2/site", .body = null, .tags = &.{}, .summary = "", .security = &.{}, .responses = &.{}, .browser = true };
+    var api = tiny_api;
+    api.rpcs = &.{ tiny_api.rpcs[0], site };
+    const text = try generated(arena_state.allocator(), api);
+    try std.testing.expect(std.mem.indexOf(u8, text, "pub const Site = struct") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "pub const operations = [_]type{GetMode};\n") != null);
+    // `Thing` is a message of test_api: as a client operation its name would be taken.
+    var clash = test_api;
+    var web = site;
+    web.name = "Thing";
+    clash.rpcs = &.{web};
+    const none = try generated(arena_state.allocator(), clash);
+    try std.testing.expect(std.mem.indexOf(u8, none, "pub const operations = [_]type{};\n") != null);
 }
 
 test "refusals" {

@@ -84,6 +84,9 @@ message Response {
   int32 status = 1;
   string description = 2;
   bool error = 3;
+  // The headers of `Api.headers` (by `name`) this answer carries besides the `on_success` ones, such as the `Location` of a
+  // redirect.
+  repeated string headers = 4;
 }
 
 // A command of the command line that makes one call of the operation: `mopm <name>`. tools/api_gen.zig writes it into
@@ -111,6 +114,9 @@ message Operation {
   repeated string security = 3;
   repeated Response responses = 4;
   repeated Command commands = 5;
+  // An operation of the website, which the browser calls with its cookie: it has no `commands`, and the Zig client of the
+  // command line (src/core/registry_v2.zig) leaves it out. The OpenAPI document and the TypeScript types have it.
+  bool browser = 6;
 }
 
 // An entry of the error catalogue (`x-mopm-errors`), on a value of `ErrorCode`.
@@ -132,15 +138,18 @@ message Server {
   repeated string values = 5;
 }
 
-// A bearer token scheme (`type: http`, `scheme: bearer`).
+// A bearer token scheme (`type: http`, `scheme: bearer`), or, with `cookie`, a cookie (`type: apiKey`, `in: cookie`).
 message SecurityScheme {
   string name = 1;
   string bearer_format = 2;
   string description = 3;
+  // The name of the cookie that carries the credential. A scheme with a cookie has no `bearer_format`.
+  string cookie = 4;
 }
 
 // A response header of `components/headers`. `wire` is its name on the wire; `on_success` puts it on every success answer as
-// well as on the `Error` response.
+// well as on the `Error` response; `response_only` puts it only on the answers that name it (`Response.headers`), not on the
+// `Error` response.
 message Header {
   string name = 1;
   string wire = 2;
@@ -151,6 +160,7 @@ message Header {
   optional uint64 min_length = 6;
   optional int64 minimum = 7;
   bool on_success = 8;
+  bool response_only = 9;
 }
 
 // The document-level facts of the API, on its service. The service's leading comment is `info.description`.
