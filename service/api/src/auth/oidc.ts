@@ -233,7 +233,7 @@ export interface PackageVersion {
   name: string;
   version: string;
 }
-/** What a minted token is for: `publish` is the token of every exchange before `purpose` existed; `stage` may only prepare a group. */
+/** What a minted token is for: `publish` is the token of every exchange before `purpose` existed; `stage` may only prepare a group (and, minted under /api/v2, create the empty packages it names). */
 export type OidcPurpose = 'publish' | 'stage';
 export type OidcExchangeInput =
   | { jwt: string; name: string; version: string; purpose?: OidcPurpose }

@@ -252,9 +252,13 @@ test "the v2 OIDC exchange is matched to a namespace's publishers and creates no
     try expectCode(try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt("{{\"jwt\":\"{s}\",\"name\":\"acme/lib\",\"version\":\"1.0\"}}", .{jwt}), null), 400, "invalid_version");
 
     const set = "{{\"jwt\":\"{s}\",\"purpose\":\"stage\",\"packages\":[{{\"name\":\"acme/lib\",\"version\":\"1.1.0\"}},{{\"name\":\"{s}\",\"version\":\"1.0.0\"}}]}}";
-    const refused = try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt(set, .{ jwt, "alice/app" }), null);
+    // A set wholly in a namespace without the publisher is refused naming its first name; a set of two namespaces is the
+    // caller's mistake whatever they trust.
+    const untrusted = "{{\"jwt\":\"{s}\",\"purpose\":\"stage\",\"packages\":[{{\"name\":\"alice/app\",\"version\":\"1.1.0\"}},{{\"name\":\"alice/lib\",\"version\":\"1.0.0\"}}]}}";
+    const refused = try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt(untrusted, .{jwt}), null);
     try expectCode(refused, 403, "oidc_not_trusted");
     try std.testing.expectEqualStrings("No trusted publisher of 'alice/app' matches this CI identity.", str(refused.value.object.get("error").?, "message"));
+    try expectCode(try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt(set, .{ jwt, "alice/app" }), null), 400, "invalid_request");
     try expectCode(try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt(set, .{ jwt, "acme/lib" }), null), 400, "invalid_request");
     const staged = try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt(set, .{ jwt, "acme/new_one" }), null);
     try expectStatus(staged, 200);
@@ -263,4 +267,38 @@ test "the v2 OIDC exchange is matched to a namespace's publishers and creates no
     try std.testing.expect(nx.state.packageByName("acme/new_one") == null);
     // Its token may create the packages it names, in a namespace whose publisher it is.
     try expectStatus(try nx.call(.PUT, "/api/v2/packages/acme/new_one", "", str(staged.value, "token")), 201);
+}
+
+test "a v2 stage token creates the empty package it names in its own namespace, and no other; a set of two namespaces is refused" {
+    var nx: Nx = undefined;
+    try nx.setup();
+    defer nx.deinit();
+    const alice = try nx.session("alice");
+    // Two namespaces with the same publisher, so a refusal in the second is the token's, not the publisher's.
+    for ([_][]const u8{ "acme", "zeta" }) |ns| {
+        try nx.org(ns, "[{\"handle\":\"alice\",\"role\":\"admin\"}]");
+        try nx.registered(alice, ns);
+        try nx.control("/_fake/trusted", try nx.fmt("{{\"namespace\":\"{s}\",\"repository\":\"acme/release\"}}", .{ns}));
+    }
+    const set = "{{\"jwt\":\"{s}\",\"purpose\":\"stage\",\"packages\":[{{\"name\":\"{s}\",\"version\":\"1.0.0\"}},{{\"name\":\"{s}\",\"version\":\"1.0.0\"}}]}}";
+
+    // One set, one namespace: the registry mints one token for one namespace, and so does the fake.
+    const mixed = try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt(set, .{ try t.jwtFor(&nx, "acme/release"), "acme/anomaly", "zeta/anomaly" }), null);
+    try expectCode(mixed, 400, "invalid_request");
+    try std.testing.expectEqualStrings("The request is not valid: 'packages' names more than one namespace.", str(mixed.value.object.get("error").?, "message"));
+
+    const staged = try nx.call(.POST, "/api/v2/auth/oidc/exchange", try nx.fmt(set, .{ try t.jwtFor(&nx, "acme/release"), "acme/anomaly", "acme/json" }), null);
+    try expectStatus(staged, 200);
+    try std.testing.expectEqualStrings("stage", str(staged.value, "token_kind"));
+    const token = str(staged.value, "token");
+
+    // Its own package: created, empty.
+    try expectStatus(try nx.call(.PUT, "/api/v2/packages/acme/anomaly", "", token), 201);
+    try std.testing.expectEqual(@as(usize, 0), nx.state.packageByName("acme/anomaly").?.versions.items.len);
+    try expectStatus(try nx.call(.PUT, "/api/v2/packages/acme/anomaly", "", token), 200);
+    // Another package of its namespace, and the same name in another namespace the repository also publishes: refused.
+    for ([_][]const u8{ "acme/other", "zeta/anomaly" }) |key| {
+        try expectCode(try nx.call(.PUT, try nx.fmt("/api/v2/packages/{s}", .{key}), "", token), 403, "scope_missing");
+        try std.testing.expect(nx.state.packageByName(key) == null);
+    }
 }

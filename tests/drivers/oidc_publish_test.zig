@@ -18,7 +18,7 @@
 //! - `--dry-run --oidc` reads no environment and sends nothing; `pack` does not know `--oidc`;
 //! - a staged set, of one member or of three, asks GitHub once and exchanges once, in the `packages` form, and the one token
 //!   creates, uploads and commits the group: every member is served. A set wholly in a namespace that does not trust the job's
-//!   repository, and one that names a package of such a namespace beside a trusting one, each refuse the exchange: the run ends 1 with the
+//!   repository, and one that names packages of two namespaces (one token is minted for one namespace), each refuse the exchange: the run ends 1 with the
 //!   registry's message, GitHub was asked once, and no group was made (a namespace trusts a repository with /_fake/trusted,
 //!   and every package is made with PUT /api/v2/packages/<namespace>/<name>: an exchange creates nothing, and `mopm publish` sends that
 //!   PUT itself, with the exchanged token, before it uploads: the packages here exist already, so it answers 200 and says nothing);
@@ -308,7 +308,7 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     const one = try h.join(a, &.{ work, "staged_one" });
     try stage(a, one, &.{.{ "example/solo", "0.2.0" }});
     // Three sets of three: one wholly in the namespace that does not trust the repository, one that mixes it with a trusting
-    // namespace, and one wholly in the namespace that trusts it.
+    // namespace (refused as naming two namespaces, whatever they trust), and one wholly in the namespace that trusts it.
     const distrusted = try h.join(a, &.{ work, "staged_distrusted" });
     try stage(a, distrusted, &.{ .{ "stranger/grpq", "1.0.0" }, .{ "stranger/grpr", "1.1.0" }, .{ "stranger/grps", "1.2.0" } });
     const three = try h.join(a, &.{ work, "staged_three" });
@@ -335,11 +335,11 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
         h.contains(r.stderr, "No trusted publisher of 'stranger/grpq' matches this CI identity") and
         !exists(try h.join(a, &.{ distrusted, "state.json" })) and (try served(a, fake, "stranger/grpq", "1.0.0")) == null, describe(a, r));
 
-    // A set that names a package of a namespace that does not trust the repository, beside one that does: refused, before any group.
+    // A set that names packages of two namespaces, one of which does not trust the repository: refused, before any group.
     gh.calls = 0;
     r = try m.run(&.{ "publish", "--staged", three, "--config-dir", conf, "--oidc", "--registry", fake.base }, .both, null);
-    rep.check("a set that names a package of a namespace that does not trust the repository stops with the registry's message before any group", r.code == 1 and gh.calls == 1 and
-        h.contains(r.stderr, "refused the identity token for the 3 packages of the set") and h.contains(r.stderr, "No trusted publisher of 'stranger/untrusted' matches this CI identity") and
+    rep.check("a set that names packages of two namespaces stops with the registry's message before any group", r.code == 1 and gh.calls == 1 and
+        h.contains(r.stderr, "refused the identity token for the 3 packages of the set") and h.contains(r.stderr, "The request is not valid: 'packages' names more than one namespace.") and
         !exists(try h.join(a, &.{ three, "state.json" })) and (try served(a, fake, "example/oidcdemo", "0.3.0")) == null, describe(a, r));
 
     // A set of three packages of the trusting namespace: one identity request, one exchange, one group.

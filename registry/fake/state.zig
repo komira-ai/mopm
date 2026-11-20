@@ -123,7 +123,7 @@ pub const Namespace = struct {
 
 pub const TokenKind = enum { session, api, oidc };
 
-/// `stage` prepares a group (create, read, abort) and nothing else.
+/// `stage` prepares a group (create, read, abort) and nothing else (a CI token with it may create the empty packages it names).
 pub const Scope = enum { publish, yank, stage };
 
 pub const Token = struct {

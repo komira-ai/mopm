@@ -1,5 +1,5 @@
 //! What each token scope lets a token do in the fake, kept apart from the routes that ask. `stage` prepares a group (create, read, abort)
-//! and nothing else: it never commits, yanks or claims.
+//! and nothing else: it never commits, yanks or claims (a CI token with it creates the empty packages it names: `createPackage`).
 
 const std = @import("std");
 const st = @import("state.zig");
