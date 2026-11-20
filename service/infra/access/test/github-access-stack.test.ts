@@ -239,13 +239,15 @@ test('ids must be numeric', () => {
 
 test('stage config is validated', () => {
   expect(() => c.assertStage('staging')).toThrow();
+  expect(c.assertStage('gamma')).toBe('gamma');
+  expect(() => new GithubAccessStack(new App(), 'x', { stage: 'beta', repo: REPO, regions: [], env: { account: ACCOUNT, region: REGION } })).toThrow(/regions must not be empty/);
   expect(() => new GithubAccessStack(new App(), 'x', { stage: 'beta', repo: REPO, regions: ['us-west-2'] })).toThrow(/concrete/);
   expect(() => new GithubAccessStack(new App(), 'x', { stage: 'beta', repo: 'bad', regions: ['r'], env: { account: ACCOUNT, region: REGION } })).toThrow(/bad repo/);
 });
 
 test('public-repo hygiene: no 12-digit account id literal in the access sources', () => {
   const root = path.join(__dirname, '..');
-  for (const f of ['lib/contract.ts', 'lib/github-access-stack.ts', 'bin/access.ts', 'bin/bootstrap.ts', 'bin/oauth-secret.ts', 'lib/bootstrap.ts', 'lib/oauth-secret.ts', 'lib/held.ts', 'lib/diff.ts', 'BOOTSTRAP.md', 'cfn-exec-policy.template.json']) {
+  for (const f of ['lib/contract.ts', 'lib/github-access-stack.ts', 'bin/access.ts', 'bin/bootstrap.ts', 'bin/oauth-secret.ts', 'bin/e2b-secret.ts', 'lib/bootstrap.ts', 'lib/oauth-secret.ts', 'lib/e2b-secret.ts', 'lib/read-secret.ts', 'lib/held.ts', 'lib/diff.ts', 'BOOTSTRAP.md', 'cfn-exec-policy.template.json']) {
     const text = fs.readFileSync(path.join(root, f), 'utf8');
     expect(text.match(/(?<![0-9A-Za-z])\d{12}(?![0-9A-Za-z])/g) ?? []).toEqual([]);
   }

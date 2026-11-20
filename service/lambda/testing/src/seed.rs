@@ -103,7 +103,10 @@ mod tests {
     #[test]
     fn an_empty_document_is_an_empty_seed() {
         let s = Seed::parse("{}").unwrap();
-        assert!(s.packages.is_empty() && s.versions.is_empty() && s.owners.is_empty() && s.audit.is_empty());
+        assert!(s.packages.is_empty());
+        assert!(s.versions.is_empty());
+        assert!(s.owners.is_empty());
+        assert!(s.audit.is_empty());
     }
 
     #[test]

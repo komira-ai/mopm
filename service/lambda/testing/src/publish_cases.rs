@@ -90,6 +90,11 @@ pub async fn the_version_lock_first_claim_wins_and_others_learn_who_holds_it<S: 
     assert_eq!(s.claim_version("other", "1", "pub_y").await.unwrap(), "pub_y");
 }
 
+/// An update that declines to change the record.
+fn leave_unchanged(_: &PublishRecord) -> Option<PublishRecord> {
+    None
+}
+
 pub async fn publish_records_are_create_once_and_updates_are_compare_and_swap<S: PublishStore>(s: S) {
     let created = s.create_publish(&publish("pub_1")).await.unwrap();
     assert_eq!(created.status, PublishStatus::Pending);
@@ -99,10 +104,10 @@ pub async fn publish_records_are_create_once_and_updates_are_compare_and_swap<S:
     let got = s.get_publish("pub_1").await.unwrap().unwrap();
     assert_eq!((got.publish_id.as_str(), got.rev), ("pub_1", 0));
     assert_eq!(s.get_publish("nope").await.unwrap(), None);
-    assert_eq!(s.update_publish("nope", |c| Some(c.clone())).await.unwrap(), None);
+    assert_eq!(s.update_publish("nope", leave_unchanged).await.unwrap(), None);
 
     // f returns None: nothing is written
-    assert_eq!(s.update_publish("pub_1", |_| None).await.unwrap().unwrap().rev, 0);
+    assert_eq!(s.update_publish("pub_1", leave_unchanged).await.unwrap().unwrap().rev, 0);
     // five concurrent updates, each adding its own subdir: none is lost, rev counts them
     fn add(x: &'static str) -> impl FnMut(&PublishRecord) -> Option<PublishRecord> + Send {
         move |c| {

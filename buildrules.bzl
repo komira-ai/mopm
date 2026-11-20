@@ -1,7 +1,7 @@
 # Written by `buildrules sync`. Do not edit: `buildrules check` fails when this differs from what sync writes.
 # Binds the generated table (buildrules.lock.bzl) to the two macros of @buildrules//rules/rust:defs.bzl.
 load("@buildrules//rules/rust:defs.bzl", _cargo_package = "cargo_package", _cargo_workspace = "cargo_workspace")
-load(":buildrules.lock.bzl", "CARGO_LOCK_SHA256", "MANIFEST_SHA256", "MEMBERS", "PACKAGES", "RUSTC", "UNITS", "WORKSPACE")
+load(":buildrules.lock.bzl", "CARGO_LOCK_SHA256", "MANIFEST_SHA256", "MEMBERS", "PACKAGES", "RUSTC", "TOOLCHAIN", "UNITS", "WORKSPACE")
 
 THIRD_PARTY = "//third_party/buildrules"
 
@@ -11,6 +11,7 @@ CARGO = {
     "MEMBERS": MEMBERS,
     "PACKAGES": PACKAGES,
     "RUSTC": RUSTC,
+    "TOOLCHAIN": TOOLCHAIN,
     "UNITS": UNITS,
     "WORKSPACE": WORKSPACE,
 }
