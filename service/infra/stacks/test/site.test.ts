@@ -9,6 +9,7 @@ import {
   assertSiteBuild,
 } from '../lib/site-stack';
 import { DUMMY_ACCOUNT, DUMMY_ZONE_ID, SITE_STUB_DIR, bucketStatements, build } from './util';
+import { securityHeaders } from '../../../../site/tools/headers';
 
 type Json = any;
 
@@ -98,6 +99,22 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
       { Header: 'Permissions-Policy', Value: PERMISSIONS_POLICY, Override: true },
     ]);
     expect(PERMISSIONS_POLICY).toBe('camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  });
+
+  // The site's local preview (site/tools/preview.ts) sends securityHeaders() for its own connect-src: with the same
+  // builder, a page that breaks under this policy breaks under the preview.
+  test("the headers the policy sends, as HTTP headers, are the site's securityHeaders for this stage's API", () => {
+    const sec = policy.SecurityHeadersConfig;
+    const sent: Record<string, string> = {
+      'content-security-policy': sec.ContentSecurityPolicy.ContentSecurityPolicy,
+      'strict-transport-security': `max-age=${sec.StrictTransportSecurity.AccessControlMaxAgeSec}${sec.StrictTransportSecurity.IncludeSubdomains ? '; includeSubDomains' : ''}`,
+      'x-content-type-options': 'nosniff',
+      'x-frame-options': sec.FrameOptions.FrameOption,
+      'referrer-policy': sec.ReferrerPolicy.ReferrerPolicy,
+    };
+    for (const h of policy.CustomHeadersConfig.Items) sent[h.Header.toLowerCase()] = h.Value;
+    expect(Object.keys(sec).sort()).toEqual(['ContentSecurityPolicy', 'ContentTypeOptions', 'FrameOptions', 'ReferrerPolicy', 'StrictTransportSecurity']);
+    expect(sent).toEqual(securityHeaders(`https://api.${host}`));
   });
 
   test('two deployments: hashed assets, immutable and never pruned; pages, short-cached, pruned and invalidated', () => {
@@ -224,5 +241,15 @@ describe('the site build', () => {
         expect([page, ref, fs.existsSync(path.join(DEFAULT_SITE_DIR, ref))]).toEqual([page, ref, true]);
       }
     }
+  });
+
+  // The site's local preview (site/tools/preview.ts) and its E2B call are never deployed: no file of the build names
+  // E2B's create call or the key's variable.
+  test('the real build holds nothing of the local preview', () => {
+    for (const f of files(DEFAULT_SITE_DIR)) {
+      const text = fs.readFileSync(path.join(DEFAULT_SITE_DIR, f), 'utf8');
+      expect([f, /E2B_API_KEY|api\.e2b\.app|\/v2\/sandboxes/.test(text)]).toEqual([f, false]);
+    }
+    expect(files(DEFAULT_SITE_DIR).filter((f) => /preview/.test(f))).toEqual([]);
   });
 });
