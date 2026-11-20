@@ -681,11 +681,10 @@ fn scan(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
     let take = cfg.page_size;
     let slice = &rows[from.min(rows.len())..(from + take).min(rows.len())];
     let mut out = json!({"Items": slice, "Count": slice.len(), "ScannedCount": slice.len()});
-    if from + take < rows.len() {
-        if let Some(last) = full.get(from + take - 1) {
-            let lek: Item = key_attrs.iter().filter_map(|a| last.get(a).map(|v| (a.clone(), v.clone()))).collect();
-            out["LastEvaluatedKey"] = Value::Object(lek);
-        }
+    if take > 0 && from + take < rows.len() {
+        let last = &full[from + take - 1];
+        let lek: Item = key_attrs.iter().filter_map(|a| last.get(a).map(|v| (a.clone(), v.clone()))).collect();
+        out["LastEvaluatedKey"] = Value::Object(lek);
     }
     Ok(out)
 }

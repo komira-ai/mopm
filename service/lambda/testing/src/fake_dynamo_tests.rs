@@ -422,6 +422,19 @@ async fn a_scan_without_a_projection_returns_whole_items_in_pages_with_a_resume_
     );
 }
 
+#[tokio::test]
+async fn a_scan_with_a_page_size_of_zero_returns_no_items_and_no_resume_key() {
+    let mut cfg = FakeConfig::registry("t");
+    cfg.page_size = 0;
+    let fake = FakeDynamo::start(cfg);
+    fake.seed(PACKAGES, pkg("a"));
+    let got = call(&fake, "Scan", &json!({"TableName": PACKAGES})).await;
+    assert_eq!(
+        got.json(),
+        json!({"Items": [], "Count": 0, "ScannedCount": 0})
+    );
+}
+
 // ---- transactions ----
 
 fn transact_body(items: Vec<Value>, token: Option<&str>) -> Value {
