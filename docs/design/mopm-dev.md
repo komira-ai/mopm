@@ -433,13 +433,17 @@ frequently searched names that do not exist: it would be a list of names to regi
 
 ## 4. Web login and account
 
+[tutorial-sign-in.md](tutorial-sign-in.md) builds the part of this section the interactive tutorial needs (start,
+callback, sign-out, a session route and the `/api/*` behaviour) under `/api/v2` instead of `/api/v1`, as Rust Lambdas;
+PRs 4a, 4b and 5 below are cut down to match. Where the two notes differ, tutorial-sign-in.md holds.
+
 ### 4.1 Topology: the API under the site's own host
 
 **Decision (Q3): CloudFront serves `/api/*` on the site host** (`https://mopm.dev/api/v1/...`); `api.<site>` stays for
 the CLI and CI.
 
 - A site-distribution behaviour with the stage's API domain as origin, every header but `Host` forwarded, all methods;
-  caching follows the API's `Cache-Control` and is off wherever the cookie is read. `apiBase()` becomes `/api/v1`.
+  caching follows the API's `Cache-Control` and is off wherever the cookie is read. `apiBase()` becomes `/api/v2` (tutorial-sign-in.md, tu-I1).
 - The session cookie is **never sent to `api.<site>`**; no credentialed CORS anywhere. Cookie authentication and
   `/auth/web/*` also require a header only the distribution adds.
 - **Each new behaviour gets a response headers policy** (`nosniff`, `no-referrer`, HSTS, a `default-src 'none';
@@ -542,10 +546,10 @@ red ([appendix D](mopm-dev-appendix.md#d-test-plan)). "Port" means it waits for 
 | V | Rust tree | Workspace skeleton where the API owner agrees, vendored tantivy closure, one smoke test opening an in-memory index | V0, Q9 (location only) |
 | 2 | site | Landing and package page build; per-route budgets | 0 |
 | 3 | site stack | Go-live: CSP, edge router, headers policies, 403 and 404 to `/404.html` distribution-wide until `/api/*` lands (4.1); the `llms.txt` and `.md` routes come later with the agent-surface PRs (14, 18) | 0 |
-| 4a | API | Cookie plumbing, `/me`, sessions, `sessions_not_before` | port (Q9) |
-| 4b | API | Web OAuth flow in its own function | port, 4a |
+| 4a | API | Session list and revoke, `sessions_not_before`, `/me/tokens` with the cookie; the cookie plumbing itself is tutorial-sign-in.md's tu-A1 | tu-A1 |
+| 4b | API | Built as tutorial-sign-in.md's tu-A2 (Rust, `/api/v2`) | |
 | 4c | API | Invitee index, `inviteOwner`, list and accept | port |
-| 5 | site | `/api/*` behaviour, relative `apiBase`, login and account page | 3, 4a, 4b |
+| 5 | site | Account page (the `/api/*` behaviour and relative `apiBase` are tutorial-sign-in.md's tu-I1) | 3, 4a, tu-A2 |
 | 6 | spec | `spec/mopm-api.md` and `mopm-api-1.json`; `spec/search-api.md` (`mopm-search/v1`, `mopm-package/v1`, `mopm-symbol/v1`, `mopm-resolve/v1`); shared vectors (JSON edge cases, Unicode, fences), contract fixtures | |
 | 7 | fixture | `mojo doc` capture: fixture package with non-empty args and a struct with `__init__`; komira's `mojo_doc_json` with a golden | |
 | 8 | Rust crate | `mopm-apidoc`: validation, served form, "since", Markdown renderer and sanitiser | 6, 7, V |
