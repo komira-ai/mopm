@@ -205,18 +205,31 @@ role can use without a separate grant.
 ## E2B API key (once per stage)
 
 The tutorial's sandbox route (`POST /api/v2/tutorial/sandbox`, `docs/design/tutorial-sign-in.md` section 4) creates
-E2B sandboxes with the team's E2B API key, kept in Secrets Manager as `mopm/<stage>/e2b`, JSON `{"api_key"}`. In that
-design the stack that deploys the route's `tutorial-sandbox` function creates the secret, empty, with a resource policy
-that lets only that function read it. The owner stores the value with a held script, run with their own credentials for
+E2B sandboxes with the team's E2B API key, kept in Secrets Manager as `mopm/<stage>/e2b`, JSON `{"api_key"}`. The API
+stack creates the secret, empty, with a resource policy that lets only the `tutorial-sandbox` function read it, when it is
+deployed with the Rust functions' zips, which every deploy of `promote.yml` is; a stage deployed before that has neither
+the function nor the secret. Until a value is stored the route answers 503 `tutorial_unavailable` (it fails closed), so
+the stack can go out before the key. The owner stores the value with a held script, run with their own credentials for
 that stage's account. The script only stores a new version (`put-secret-value`): it never creates or deletes the
 secret, and while the secret does not exist on a stage it stops there and says to deploy the stack first.
 
 Order: on each stage, after the stack that creates the secret is deployed there, and before the route is relied on;
 beta first, then gamma, then prod, each checked before the next.
 
-1. In E2B's dashboard, create an API key for the team, one per stage, so a beta key can be revoked without touching
-   prod.
-2. Store it. Preview first; nothing is read or called without `--apply`. The key is read from standard input (hidden
+1. Check that the stage has the secret and its policy. The three calls are read-only and return no secret value; never use
+   `get-secret-value` for a check:
+   ```sh
+   aws secretsmanager describe-secret --profile <your profile> --region us-east-1 --secret-id mopm/<stage>/e2b --query '{versions: VersionIdsToStages, deleted: DeletedDate}'
+   aws secretsmanager get-resource-policy --profile <your profile> --region us-east-1 --secret-id mopm/<stage>/e2b --query ResourcePolicy --output text
+   aws lambda get-function-configuration --profile <your profile> --region us-east-1 --function-name mopm-<stage>-tutorial-sandbox --query Role --output text
+   ```
+   `ResourceNotFoundException`: the stage has not been deployed with the zips yet; wait for `promote.yml`. The policy must
+   hold exactly one statement, a `Deny` of `secretsmanager:GetSecretValue` to `*` with the condition `ArnNotEquals`
+   `aws:PrincipalArn` equal to the role the third call prints. Anything else: stop and deploy again rather than store
+   the key.
+2. In E2B's dashboard, create an API key for the team, one per stage, so a beta key can be revoked without touching
+   prod. A stage may be left without a key; its route then answers `tutorial_unavailable`, and no e2e suite calls it.
+3. Store it. Preview first; nothing is read or called without `--apply`. The key is read from standard input (hidden
    prompt on a terminal), never from a flag or an environment variable, and never printed. `--account` makes the script
    refuse a profile in another account:
    ```sh
@@ -226,6 +239,17 @@ beta first, then gamma, then prod, each checked before the next.
    An empty key, or one with whitespace, a line break or a control character in it, is refused before anything is
    stored. Rotation: create a new key in E2B and run the script again. The function reads the key at cold start, so
    instances already running keep the old key until Lambda replaces them: revoke the old key in E2B only after that.
+4. Check it, without reading the value:
+   - The first call of step 1 shows a version labelled `AWSCURRENT`, the version id the script printed.
+   - `curl -sS -i -X POST https://beta.mopm.dev/api/v2/tutorial/sandbox` (no cookie; `gamma.mopm.dev`, `mopm.dev` for
+     the other stages) answers 401 `session_required`: the route is deployed and gated. Ask the site host, not
+     `api.<site>`: the function refuses a request that did not come through the site's CDN.
+   - Signed in on the stage's site in a browser, a run in the tutorial gets a grant whose `expires_at` is about 30
+     minutes ahead. It also needs the stage's `tutorial.e2bTemplateId`; without one the route answers 503
+     `tutorial_unavailable` with `template_missing` in the function's log.
+   - The grant's access token must not be usable as an API key: `POST https://api.e2b.app/v2/sandboxes` with it as
+     `X-API-Key` must be refused, so the browser cannot create a sandbox, with or without the internet. Send the token
+     in a header read from a file or a prompt, never on the command line, and do not print it.
 
 ## Verification
 
