@@ -8,7 +8,20 @@ load("//:buildrules.bzl", "cargo_package")
 
 cargo_package(
     path = ".",
-    extra_srcs = ["//service/api:lambda-auth-grants.json"],
+    extra_srcs = [
+        "//service/api:lambda-auth-grants.json",
+        ":namespace_user_row.json",
+    ],
+)
+
+# The user namespace row the Rust adapter writes (tests/fixtures/namespace_user_row.json): this package's test holds
+# DynamoNamespaceStore's PutItem to it, and service/api's jest test (test/auth/namespace-row.test.ts) holds the TypeScript
+# DynamoNamespaceStore to the same row.
+export_file(
+    name = "namespace_user_row.json",
+    src = "tests/fixtures/namespace_user_row.json",
+    mode = "reference",
+    visibility = ["//service/api:"],
 )
 
 # This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
