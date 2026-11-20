@@ -12,6 +12,11 @@ const wl = @import("workflow_lint.zig");
 const sh = @import("shell_syntax.zig");
 const Allocator = std.mem.Allocator;
 
+// The rules for the one build of the Rust Lambda zips are tested in their own file.
+test {
+    _ = @import("function_zips_lint_test.zig");
+}
+
 // ---- the repository's workflows ---------------------------------------------------
 
 const Repo = struct {
@@ -61,8 +66,8 @@ test "promote.yml: the chain, the stages, no if and no continue-on-error" {
     try expectRepo("promote.yml", "  gamma-e2e:\n    needs: gamma-deploy\n", "  gamma-e2e:\n", &.{"promote.yml: gamma-e2e needs [], expected [\"gamma-deploy\"]"});
     try expectRepo("promote.yml", "  beta-deploy:\n", "  beta-deploy:\n    continue-on-error: true\n", &.{"promote.yml: beta-deploy must not set continue-on-error"});
     try expectRepo("promote.yml", "  beta-deploy:\n", "  beta-deploy:\n    if: always()\n", &.{"promote.yml: beta-deploy must not set if"});
-    try expectRepo("promote.yml", "  prod-smoke:\n", "  prod-smok:\n", &.{"promote.yml: jobs [\"beta-deploy\", \"beta-e2e\", \"gamma-deploy\", \"gamma-e2e\", \"prod-deploy\", \"prod-smok\"] differ from expected"});
-    try expectRepo("promote.yml", "with: { stage: beta }", "with: { stage: gamma }", &.{"promote.yml: beta-deploy must target stage beta"});
+    try expectRepo("promote.yml", "  prod-smoke:\n", "  prod-smok:\n", &.{"promote.yml: jobs [\"beta-deploy\", \"beta-e2e\", \"function-zips\", \"gamma-deploy\", \"gamma-e2e\", \"prod-deploy\", \"prod-smok\"] differ from expected"});
+    try expectRepo("promote.yml", "with: { stage: beta, function_zips: function-zips }", "with: { stage: gamma, function_zips: function-zips }", &.{"promote.yml: beta-deploy must target stage beta"});
     try expectRepo("promote.yml", "  gamma-deploy:\n    needs: beta-e2e\n    uses: ./.github/workflows/deploy.yml", "  gamma-deploy:\n    needs: beta-e2e\n    uses: ./.github/workflows/e2e.yml", &.{"promote.yml: gamma-deploy must call ./.github/workflows/deploy.yml"});
 }
 
