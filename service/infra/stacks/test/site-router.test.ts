@@ -177,6 +177,35 @@ test('the router is generated from the build it serves: another build has other 
   expect(run('/app.html')).toBe('/404.html');
 });
 
+test('a router of exactly the size limit is accepted, one byte more is refused', () => {
+  const base = Buffer.byteLength(siteRouterSource(['/a']));
+  const fit = ['/' + 'a'.repeat(1 + FUNCTION_MAX_BYTES - base)];
+  expect(Buffer.byteLength(siteRouterSource(fit))).toBe(FUNCTION_MAX_BYTES);
+  expect(() => siteRouterSource([fit[0] + 'a'])).toThrow(
+    `the edge router for this site build is ${FUNCTION_MAX_BYTES + 1} bytes; CloudFront Functions take at most ${FUNCTION_MAX_BYTES} (the build has 1 files)`,
+  );
+});
+
+test('a build with assets under two ids checks both; any other id is an earlier build', () => {
+  const r = load(siteRouterSource(['/index.html', '/assets/1111111111111111/main.js', '/assets/2222222222222222/site.css']));
+  const run = (uri: string) => (r({ request: request(uri) }) as Request).uri;
+  expect(run('/assets/1111111111111111/main.js')).toBe('/assets/1111111111111111/main.js');
+  expect(run('/assets/2222222222222222/site.css')).toBe('/assets/2222222222222222/site.css');
+  expect(run('/assets/1111111111111111/site.css')).toBe('/404.html');
+  expect(run('/assets/2222222222222222/main.js')).toBe('/404.html');
+  expect(run('/assets/3333333333333333/main.js')).toBe('/assets/3333333333333333/main.js');
+  expect(run('/assets/3333333333333333/views/')).toBe('/404.html');
+});
+
+test("a missing key under an earlier build's id is the bucket's to answer: the function leaves its 403 alone", () => {
+  // The router cannot know an earlier build's files; S3 answers 403 through OAC, and CloudFront runs no viewer function
+  // on an origin status of 400 or more, so that visitor gets the bucket's 403.
+  const uri = '/assets/ffffffffffffffff/never-built.js';
+  expect(edge(uri)).toBe('pass');
+  const res = response(403, { 'content-type': { value: 'application/xml' } });
+  expect(viewerResponse(uri, res)).toEqual(response(403, { 'content-type': { value: 'application/xml' } }));
+});
+
 test('a build whose router would exceed the CloudFront Functions size limit is refused, naming the sizes', () => {
   const files = Array.from({ length: 400 }, (_, i) => `/assets/0a1b2c3d4e5f6a7b/module-${String(i).padStart(4, '0')}.js`);
   expect(() => siteRouterSource(files)).toThrow(
