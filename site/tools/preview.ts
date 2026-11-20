@@ -95,7 +95,10 @@ export function e2bCreateBody(templateId: string, requestId: string): unknown {
   };
 }
 
-export type E2bFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<Response>;
+export type E2bFetch = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string; redirect: 'error'; signal: AbortSignal },
+) => Promise<Response>;
 
 /** The deadline's timer (as api.ts's): tests fire it by hand. */
 export interface Timers {
@@ -288,7 +291,7 @@ function fileAnswer(distDir: string, req: PreviewRequest, path: string): Preview
   const body = readFileSync(join(distDir, file));
   return {
     status,
-    headers: { ...headers, 'content-type': CONTENT_TYPES[ext] ?? 'application/octet-stream' },
+    headers: { ...headers, 'content-type': CONTENT_TYPES[ext] ?? 'application/octet-stream', 'content-length': String(body.length) },
     body: req.method === 'HEAD' ? Buffer.alloc(0) : body,
   };
 }
@@ -339,6 +342,8 @@ export function previewHandler(o: PreviewOptions): (req: PreviewRequest) => Prom
           method: 'POST',
           headers: { 'X-API-Key': o.e2bKey, 'Content-Type': 'application/json' },
           body: JSON.stringify(e2bCreateBody(o.e2bTemplate, id)),
+          // A redirect would carry the key to wherever it points: refuse it.
+          redirect: 'error',
           signal: ctl.signal,
         }),
         deadline,
@@ -440,10 +445,17 @@ export async function startPreview(o: Omit<PreviewOptions, 'port'>): Promise<Pre
     req.on('end', () => {
       // A server's IncomingMessage always has a method and a URL.
       const request: PreviewRequest = { method: String(req.method), url: String(req.url), headers: flatten(req.headers), bodyLength };
-      void (handle as (r: PreviewRequest) => Promise<PreviewResponse>)(request).then((a) => {
-        res.writeHead(a.status, a.headers);
-        res.end(a.body);
-      });
+      void (handle as (r: PreviewRequest) => Promise<PreviewResponse>)(request).then(
+        (a) => {
+          res.writeHead(a.status, a.headers);
+          res.end(a.body);
+        },
+        // A file that went away under the server (dist/ rebuilt while it runs): answer, and keep serving.
+        () => {
+          res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+          res.end('the preview could not read the site build; run it again after npm run build\n');
+        },
+      );
     });
   });
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));

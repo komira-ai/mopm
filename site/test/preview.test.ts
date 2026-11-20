@@ -288,7 +288,7 @@ describe('main', () => {
     expect(distFor(join(site, 'build', 'tools', 'tools'))).toBe(join(site, 'dist'));
     expect(d.distDir).toBe(distFor(join(site, 'tools')));
     // test/setup.ts makes the global fetch throw: the default fetch is the global one.
-    expect(() => d.fetch(E2B_CREATE_URL, { method: 'POST', headers: {}, body: '', signal: new AbortController().signal })).toThrow('network call in a test');
+    expect(() => d.fetch(E2B_CREATE_URL, { method: 'POST', headers: {}, body: '', redirect: 'error', signal: new AbortController().signal })).toThrow('network call in a test');
     expect(d.requestId()).toMatch(/^req-[0-9a-f]{12}$/);
     expect(d.requestId()).not.toBe(d.requestId());
     expect(d.now()).toBeInstanceOf(Date);
@@ -457,6 +457,7 @@ describe('the create call to E2B', () => {
     const [{ url, init }] = e2b;
     expect(url).toBe('https://api.e2b.app/v2/sandboxes');
     expect(init.method).toBe('POST');
+    expect(init.redirect).toBe('error');
     expect(init.headers).toEqual({ 'X-API-Key': KEY, 'Content-Type': 'application/json' });
     expect(JSON.parse(init.body)).toEqual({
       templateID: 'mopm-tutorial',
@@ -654,7 +655,12 @@ describe('the site', () => {
   test('HEAD has the headers and no body; other methods on a page: 405', async () => {
     const { preview: p } = await start();
     const head = await send(p, '/', { method: 'HEAD' });
-    expect([head.status, head.text, head.headers['content-type']]).toEqual([200, '', 'text/html; charset=utf-8']);
+    expect([head.status, head.text, head.headers['content-type'], head.headers['content-length']]).toEqual([
+      200,
+      '',
+      'text/html; charset=utf-8',
+      String(PAGES['index.html'].length),
+    ]);
     const put = await send(p, '/', { method: 'PUT' });
     expect([put.status, put.headers.allow, put.text]).toEqual([405, 'GET, HEAD', 'GET or HEAD only\n']);
   });
@@ -666,6 +672,18 @@ describe('the site', () => {
       expect([host, got.status, got.text]).toEqual([host, 421, `ask http://127.0.0.1:${p.port}/\n`]);
     }
     expect(e2b).toEqual([]);
+  });
+
+  test('a build that went away under the server: 500, and the server keeps answering', async () => {
+    const gone = mkdtempSync(join(SCRATCH, 'gone-'));
+    try {
+      const { preview: p } = await start({ distDir: gone });
+      const got = await send(p, '/nope');
+      expect([got.status, got.text]).toEqual([500, 'the preview could not read the site build; run it again after npm run build\n']);
+      expect((await session(p)).status).toBe(200);
+    } finally {
+      rmSync(gone, { recursive: true, force: true });
+    }
   });
 
   test('a request target that is not a path: 400', async () => {
