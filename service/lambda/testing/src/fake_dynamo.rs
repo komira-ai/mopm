@@ -75,10 +75,11 @@ pub fn registry_tables(stage: &str) -> Vec<TableDef> {
     ]
 }
 
-/// The web sign-in function's grants (`docs/design/tutorial-sign-in.md`, section 5) on the tables its stores
-/// write: `web_logins` (put, and the conditional update that consumes a row) and `namespaces` (the conditional put
-/// that creates a user namespace, and the read of a row another create holds). No `DeleteItem` anywhere: rows
-/// leave by TTL or never. In the format of [`Grants::parse`].
+/// The web sign-in function's grants (`docs/design/tutorial-sign-in.md`, section 5) on the two tables of its
+/// own stores, and on no other table (its `users` and `tokens` grants are not here yet): `web_logins` (put, and the
+/// conditional update that consumes a row) and `namespaces` (the conditional put that creates a user namespace, and
+/// the read of a row another create holds). No `DeleteItem`: rows leave by TTL or never. In the format of
+/// [`Grants::parse`].
 pub const WEB_LOGIN_GRANTS: &str = include_str!("../tests/fixtures/web_login_grants.json");
 
 /// What a role may call, per table (`service/api/test/fixtures/lambda-auth-grants.json`):
@@ -113,8 +114,8 @@ impl FakeConfig {
         FakeConfig { tables: registry_tables(stage), page_size: 2, grants: None }
     }
 
-    /// All tables of the data stack for `stage`, restricted to the web sign-in function's grants
-    /// ([`WEB_LOGIN_GRANTS`]).
+    /// All tables of the data stack for `stage`, restricted to the web sign-in function's grants on `web_logins` and
+    /// `namespaces` ([`WEB_LOGIN_GRANTS`]); every other table is denied.
     pub fn web_login(stage: &str) -> FakeConfig {
         let grants = Grants::parse(WEB_LOGIN_GRANTS).expect("the web sign-in grants are JSON");
         FakeConfig::registry(stage).with_grants(&format!("mopm-{stage}-"), grants)

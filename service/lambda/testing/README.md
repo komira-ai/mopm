@@ -19,6 +19,7 @@ Test support for the ports; no function links it.
   about unknown members and duplicates, so a scenario is data that the TS tests can load as well.
 * `fake_dynamo`: a DynamoDB on loopback for `mopm_aws`'s adapters, with the data stack's tables and `web_logins`, the
   web sign-in's table (`docs/design/tutorial-sign-in.md`, section 6). It enforces a role's grants when given them: `lambda-auth-grants.json` of the
-  TypeScript API, or `FakeConfig::web_login`, the web sign-in function's grants (`tests/fixtures/web_login_grants.json`:
-  put and update on `web_logins`, get and put on `namespaces`, no delete anywhere).
+  TypeScript API, or `FakeConfig::web_login`, the web sign-in function's grants on its two own tables
+  (`tests/fixtures/web_login_grants.json`: put and update on `web_logins`, get and put on `namespaces`, no delete; every
+  other table denied).
 * `fake_http`: a scripted HTTP server on loopback for the adapters of the other AWS services.

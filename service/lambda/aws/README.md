@@ -14,8 +14,8 @@ transaction (the SDK sets the `ClientRequestToken`); an update is read, state ma
 How they are tested (`mopm_testing::fake_dynamo`): the SDK talks real DynamoDB JSON over HTTP to a fake on loopback that
 refuses what DynamoDB refuses (raw reserved words in expressions, unused names or values, empty `begins_with`, non-string keys,
 a TTL that is not a number, a consistent read of an index, a starting key outside the query, a transaction without a token), pages
-like DynamoDB, and can enforce the Lambda role's grants from `lambda-auth-grants.json`, or the web sign-in function's
-(`FakeConfig::web_login`), under which the web sign-in adapters' tests run. The same contract scenarios that run on the memory
+like DynamoDB, and can enforce the Lambda role's grants from `lambda-auth-grants.json`, or the web sign-in function's on
+`web_logins` and `namespaces` (`FakeConfig::web_login`), under which the web sign-in adapters' tests run. The same contract scenarios that run on the memory
 stores run on these, and the tests assert the rows and requests as DynamoDB JSON.
 
 `services`: the adapters of the publish pipeline's other ports and of the OAuth secret: `S3Channel` (`ObjectStore`: 403 and 404 both
