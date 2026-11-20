@@ -13,6 +13,8 @@ import { Construct } from 'constructs';
 // The site's own route grammar: the edge router below is generated from it, so the router and the app shell accept the
 // same namespaces, names, versions and docs slugs (site/src/routes.ts imports nothing).
 import { DOC_SLUG, NAME, NAME_SEPARATORS, NAMESPACE, NAMESPACE_MAX, VERSION, VERSION_MAX } from '../../../../site/src/routes';
+// The site's security headers: the local preview (site/tools/preview.ts) sends the same ones, from the same builder.
+import { HSTS_MAX_AGE_SECONDS, PERMISSIONS_POLICY, contentSecurityPolicy as sitePolicy } from '../../../../site/tools/headers';
 import { StageConfig, edgeOriginSecretName, siteBucketName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 
@@ -38,7 +40,7 @@ export const NOT_FOUND_PAGE = '/404.html';
 export const FUNCTION_MAX_BYTES = 10240;
 
 /** HSTS on every response of the site host, pages and API alike: two years, subdomains included. */
-const HSTS_MAX_AGE = Duration.days(730);
+const HSTS_MAX_AGE = Duration.seconds(HSTS_MAX_AGE_SECONDS);
 
 /** The paths the site host sends to the stage's API (its API Gateway custom domain) instead of the bucket. */
 export const API_PATH_PATTERN = '/api/*';
@@ -51,24 +53,10 @@ export const API_CONTENT_SECURITY_POLICY = "default-src 'none'; sandbox; frame-a
 
 /** The Content-Security-Policy of a stage: nothing but the site itself, and the stage's own API for fetch. */
 export function contentSecurityPolicy(c: StageConfig): string {
-  return [
-    "default-src 'none'",
-    "script-src 'self'",
-    "style-src 'self'",
-    "img-src 'self'",
-    `connect-src https://${c.apiDomain}`,
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-    "object-src 'none'",
-    // The site writes the DOM only through createElement/setAttribute/text nodes (site/src/doc.ts; no HTML sink, which
-    // site/test/no-sinks.test.ts holds), so it needs no Trusted Types policy and may create none.
-    "require-trusted-types-for 'script'",
-    "trusted-types 'none'",
-  ].join('; ');
+  return sitePolicy(`https://${c.apiDomain}`);
 }
 
-export const PERMISSIONS_POLICY = 'camera=(), microphone=(), geolocation=(), payment=(), usb=()';
+export { PERMISSIONS_POLICY };
 
 /** Every file of a site build as the URI that names it ('/index.html', '/assets/<id>/main.js'), sorted. */
 export function siteFiles(dir: string, rel = ''): string[] {

@@ -12,6 +12,8 @@ export interface ContractCase {
   request: {
     path?: Record<string, string | number>;
     query?: Record<string, string | number>;
+    auth?: string;
+    body?: unknown;
   };
   response: { status: number; headers: Record<string, string>; body: unknown };
   /** Present ('invalid') only on cases the contract check must reject. */
@@ -23,7 +25,7 @@ export interface ContractCase {
 export const READ_OPS = ['getHealth', 'searchPackages', 'getPackage', 'getVersion'] as const;
 export type ReadOp = (typeof READ_OPS)[number];
 
-export function load(file: 'packages' | 'meta' | 'errors'): ContractCase[] {
+export function load(file: 'packages' | 'meta' | 'errors' | 'web-auth' | 'tutorial-sandbox'): ContractCase[] {
   const doc = JSON.parse(readFileSync(join(CONTRACT_DIR, `${file}.json`), 'utf8')) as { cases: ContractCase[] };
   return doc.cases;
 }
