@@ -26,6 +26,8 @@ _TEST_DATA = {
     "service/lambda/core/tests/fixtures/web_session_record.json": "//service/lambda/core:web_session_record.json",
     # The user namespace row the Rust namespace adapter writes (test/auth/namespace-row.test.ts).
     "service/lambda/aws/tests/fixtures/namespace_user_row.json": "//service/lambda/aws:namespace_user_row.json",
+    # The users and namespaces rows the TypeScript device login writes, which the Rust web login writes too (test/auth/device-login-rows.test.ts).
+    "service/lambda/fn_web_login/tests/fixtures/device_login_rows.json": "//service/lambda/fn_web_login:device_login_rows.json",
 }
 
 _TEST_TOOLS = {"bzip2": "buildrules//rules/pins:busybox"}
