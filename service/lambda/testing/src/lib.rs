@@ -4,10 +4,15 @@
 //! The contract suites are scenarios (`store_cases`, `auth_cases`, `publish_cases`) run by the macros
 //! [`store_contract_tests!`], [`auth_contract_tests!`] and [`publish_contract_tests!`] against any
 //! implementation: here against the memory ones, in `mopm_aws` against the DynamoDB ones.
+//!
+//! The fakes of outside services are servers on loopback: `fake_dynamo` (DynamoDB), `fake_http` (any HTTP service,
+//! scripted), and on it `fake_github` (the OAuth web flow and `GET /user`) and `fake_e2b` (E2B's create call).
 
 pub mod auth_cases;
 pub mod env;
 pub mod fake_dynamo;
+pub mod fake_e2b;
+pub mod fake_github;
 pub mod fake_http;
 pub mod memory_auth;
 pub mod memory_publish;
