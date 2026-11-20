@@ -33,7 +33,7 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    /// A complete answer: every member present, `domain` `e2b.app`.
+    /// An answer with the four members the tutorial reads present (`envdAccessToken` included) and `domain` `e2b.app`.
     pub fn example() -> Sandbox {
         Sandbox {
             template_id: "mopm-tutorial-test".into(),
@@ -61,7 +61,8 @@ impl Sandbox {
     }
 
     /// The answer's body: `templateID`, `sandboxID`, `envdVersion`, `envdAccessToken` (when present) and `domain`, the
-    /// members of E2B's `Sandbox` schema the tutorial reads (it ignores any other).
+    /// members of E2B's `Sandbox` schema the tutorial reads (it ignores any other). E2B's other members (`clientID`,
+    /// `alias`, `trafficAccessToken`) are left out: a client that comes to read one needs it added here first.
     pub fn to_json(&self) -> Value {
         let mut m = Map::new();
         m.insert("templateID".into(), json!(self.template_id));

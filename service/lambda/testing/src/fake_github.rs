@@ -11,14 +11,18 @@
 //!   challenge. Otherwise it answers GitHub's error (HTTP 200 with an `error` member, as GitHub does). The first exchange
 //!   that passes those checks uses the code up. The answer is JSON when `Accept` names `application/json`, a form
 //!   otherwise, as GitHub's.
-//! - **`GET /user`** answers the user of a token it issued (`Authorization: Bearer` or `token`), 401 otherwise.
+//!   A wrong `code_verifier` answering `bad_verification_code` is the fake's choice: GitHub does not document which
+//!   error it gives.
+//! - **`GET /user`** answers the user of a token it issued (`Authorization: Bearer` or `token`), 401 otherwise. As on
+//!   GitHub, `two_factor_authentication` is in the account's private view only, which a token gets with the `read:user`
+//!   or `user` scope; the scope is the authorization URL's ([`Grant::new`] grants `read:user`).
 //! - Any other route (method and path) is 404.
 //! - **Outage mode** ([`FakeGitHub::set_outage`]) answers every request with a status, a dropped connection or nothing.
 //!
 //! Every request is recorded in full, so a test asserts the verifier and secret that were sent, and how many times a
 //! token was used ([`FakeGitHub::token_uses`]).
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
@@ -92,7 +96,7 @@ impl GitHubUser {
 /// An error of the token endpoint, as GitHub names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenError {
-    /// The code is unknown, used, or its verifier is wrong.
+    /// The code is unknown or used (and, in the fake, its verifier is wrong).
     BadVerificationCode,
     IncorrectClientCredentials,
     RedirectUriMismatch,
@@ -124,13 +128,26 @@ impl TokenError {
         }
     }
 
-    /// `error`, `error_description` and `error_uri`, in GitHub's order.
+    /// `error`, `error_description` and `error_uri`, in GitHub's order. The `error_uri` is the troubleshooting page that
+    /// documents the error: the token request's for a bad code or bad credentials, the authorization request's for the
+    /// other two.
     pub fn pairs(self) -> [(&'static str, String); 3] {
+        let page = match self {
+            TokenError::BadVerificationCode | TokenError::IncorrectClientCredentials => {
+                "troubleshooting-oauth-app-access-token-request-errors"
+            }
+            TokenError::RedirectUriMismatch | TokenError::AccessDenied => {
+                "troubleshooting-authorization-request-errors"
+            }
+        };
         let anchor = self.code().replace('_', "-");
         [
             ("error", self.code().to_string()),
             ("error_description", self.description().to_string()),
-            ("error_uri", format!("https://docs.github.com/apps/managing-oauth-apps/troubleshooting-oauth-app-access-token-request-errors/#{anchor}")),
+            (
+                "error_uri",
+                format!("https://docs.github.com/apps/managing-oauth-apps/{page}/#{anchor}"),
+            ),
         ]
     }
 }
@@ -141,16 +158,19 @@ pub struct Grant {
     pub code: String,
     /// The S256 challenge the code is bound to ([`s256`] of the verifier).
     pub code_challenge: String,
+    /// The scopes granted, comma-separated as GitHub answers them.
+    pub scope: String,
     /// The user whose token the exchange answers, or the error it answers.
     pub outcome: Result<GitHubUser, TokenError>,
 }
 
 impl Grant {
-    /// `code`, exchanged with `code_verifier`, answers a token for `user`.
+    /// `code`, exchanged with `code_verifier`, answers a token for `user` with the scope `read:user`.
     pub fn new(code: &str, code_verifier: &str, user: GitHubUser) -> Grant {
         Grant {
             code: code.into(),
             code_challenge: s256(code_verifier),
+            scope: "read:user".into(),
             outcome: Ok(user),
         }
     }
@@ -160,6 +180,7 @@ impl Grant {
         Grant {
             code: code.into(),
             code_challenge: s256(code_verifier),
+            scope: "read:user".into(),
             outcome: Err(error),
         }
     }
@@ -198,8 +219,8 @@ pub enum AuthorizeRefusal {
 struct State {
     app: OAuthApp,
     grants: Vec<Grant>,
-    /// Issued tokens and their users, oldest first.
-    tokens: Vec<(String, GitHubUser)>,
+    /// Issued tokens, oldest first.
+    tokens: Vec<Issued>,
     outage: Option<Outage>,
     /// Codes issued by `authorize`.
     issued: u64,
@@ -211,8 +232,15 @@ pub struct FakeGitHub {
     state: Arc<Mutex<State>>,
 }
 
+/// A token the exchange gave, its user and its scope.
+struct Issued {
+    token: String,
+    user: GitHubUser,
+    scope: String,
+}
+
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
-    state.lock().expect("a lock is never held across a panic")
+    state.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl FakeGitHub {
@@ -247,7 +275,7 @@ impl FakeGitHub {
 
     /// The user signs in as `user` on the page of `authorize_url` and approves: the callback URL,
     /// `<redirect_uri>?code=<fresh code>&state=<the URL's state>` (`state` only when the URL has one). The code is bound
-    /// to the URL's `code_challenge`.
+    /// to the URL's `code_challenge` and grants the URL's `scope`.
     pub fn authorize(
         &self,
         authorize_url: &str,
@@ -260,9 +288,16 @@ impl FakeGitHub {
         let challenge = form_value(&query, "code_challenge")
             .unwrap_or_default()
             .to_string();
+        let scope = form_value(&query, "scope").unwrap_or_default();
+        let scope = scope
+            .split([' ', ','])
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(",");
         st.grants.push(Grant {
             code: code.clone(),
             code_challenge: challenge,
+            scope,
             outcome: Ok(user),
         });
         Ok(callback(&redirect_uri, &[("code", &code)], &query))
@@ -364,8 +399,8 @@ fn handle(st: &mut State, seen: &Seen) -> Answer {
     Answer::Reply(match (seen.method.as_str(), seen.path()) {
         ("POST", TOKEN_PATH) => exchange(st, seen),
         ("GET", USER_PATH) => {
-            match bearer(seen).and_then(|t| st.tokens.iter().find(|(k, _)| k == t)) {
-                Some((_, user)) => Reply::json(200, &user.to_json()),
+            match bearer(seen).and_then(|t| st.tokens.iter().find(|i| i.token == t)) {
+                Some(issued) => Reply::json(200, &view(issued)),
                 None => api_error(401, "Bad credentials"),
             }
         }
@@ -379,10 +414,10 @@ fn exchange(st: &mut State, seen: &Seen) -> Reply {
         .header("accept")
         .is_some_and(|a| a.contains("application/json"));
     let pairs: Vec<(&'static str, String)> = match redeem(st, &seen.form()) {
-        Ok(token) => vec![
+        Ok((token, scope)) => vec![
             ("access_token", token),
             ("token_type", "bearer".into()),
-            ("scope", "read:user".into()),
+            ("scope", scope),
         ],
         Err(e) => e.pairs().to_vec(),
     };
@@ -408,7 +443,7 @@ fn exchange(st: &mut State, seen: &Seen) -> Reply {
 }
 
 /// Checks the exchange's fields in GitHub's order (client, redirect URI, code, verifier) and uses the code up.
-fn redeem(st: &mut State, form: &[(String, String)]) -> Result<String, TokenError> {
+fn redeem(st: &mut State, form: &[(String, String)]) -> Result<(String, String), TokenError> {
     let field = |name| form_value(form, name);
     if field("client_id") != Some(st.app.client_id.as_str())
         || field("client_secret") != Some(st.app.client_secret.as_str())
@@ -428,8 +463,29 @@ fn redeem(st: &mut State, form: &[(String, String)]) -> Result<String, TokenErro
     let grant = st.grants.remove(i);
     let user = grant.outcome?;
     let token = FakeGitHub::token_for(&grant.code);
-    st.tokens.push((token.clone(), user));
-    Ok(token)
+    st.tokens.push(Issued {
+        token: token.clone(),
+        user,
+        scope: grant.scope.clone(),
+    });
+    Ok((token, grant.scope))
+}
+
+/// The user as the token sees it: `two_factor_authentication` is in the private view, which needs `read:user` or `user`.
+fn view(issued: &Issued) -> Value {
+    let private = issued
+        .scope
+        .split(',')
+        .any(|s| s == "read:user" || s == "user");
+    if private {
+        issued.user.to_json()
+    } else {
+        GitHubUser {
+            two_factor: None,
+            ..issued.user.clone()
+        }
+        .to_json()
+    }
 }
 
 #[cfg(test)]

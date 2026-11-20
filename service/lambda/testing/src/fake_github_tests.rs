@@ -603,3 +603,53 @@ async fn a_hanging_outage_answers_nothing_until_the_fake_is_dropped() {
     drop(fake);
     assert_eq!(hanging.await.expect("the client task"), Vec::<u8>::new());
 }
+
+#[test]
+fn each_error_uri_is_the_page_that_documents_the_error() {
+    let uri = |e: TokenError| e.pairs()[2].1.clone();
+    let base = "https://docs.github.com/apps/managing-oauth-apps";
+    assert_eq!(
+        uri(TokenError::IncorrectClientCredentials),
+        format!("{base}/troubleshooting-oauth-app-access-token-request-errors/#incorrect-client-credentials")
+    );
+    assert_eq!(
+        uri(TokenError::RedirectUriMismatch),
+        format!("{base}/troubleshooting-authorization-request-errors/#redirect-uri-mismatch")
+    );
+    assert_eq!(
+        uri(TokenError::AccessDenied),
+        format!("{base}/troubleshooting-authorization-request-errors/#access-denied")
+    );
+}
+
+/// Signs in through `authorize` with the URL's `scope` replaced, and answers the exchange and `GET /user`.
+async fn sign_in_with_scope(scope: &str) -> (serde_json::Value, serde_json::Value) {
+    let fake = FakeGitHub::start(app());
+    fake.authorize(&authorize_url(&[("scope", scope)]), octo())
+        .expect("GitHub calls back");
+    let token = exchange_json(&fake, &exchange_form("fake_code_1", &[]))
+        .await
+        .json();
+    let bearer = format!(
+        "Bearer {}",
+        token["access_token"].as_str().expect("a token")
+    );
+    (token, user(&fake, Some(&bearer)).await.json())
+}
+
+#[tokio::test]
+async fn the_token_has_the_authorization_url_s_scope_and_two_factor_needs_a_user_scope() {
+    let with_2fa = json!({"login": "octo", "id": 4242, "two_factor_authentication": true});
+    let without = json!({"login": "octo", "id": 4242});
+    for (scope, granted, me) in [
+        ("read:user", "read:user", &with_2fa),
+        ("read:user user:email", "read:user,user:email", &with_2fa),
+        ("user", "user", &with_2fa),
+        ("user:email", "user:email", &without),
+        ("", "", &without),
+    ] {
+        let (token, got) = sign_in_with_scope(scope).await;
+        assert_eq!(token["scope"], granted, "scope {scope:?}");
+        assert_eq!(&got, me, "scope {scope:?}");
+    }
+}

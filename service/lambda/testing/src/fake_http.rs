@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -72,7 +72,7 @@ pub(crate) fn form_value<'a>(pairs: &'a [(String, String)], name: &str) -> Optio
 
 /// `a=1&b=x+y%21` as `[("a", "1"), ("b", "x y!")]`. A pair without `=` has an empty value; a `%` not followed by two
 /// hex digits stays a `%`.
-pub(crate) fn decode_form(s: &str) -> Vec<(String, String)> {
+pub fn decode_form(s: &str) -> Vec<(String, String)> {
     s.split('&')
         .filter(|p| !p.is_empty())
         .map(|p| {
@@ -209,7 +209,9 @@ impl FakeHttp {
     }
 
     /// Serves every request with what `handler` answers for it, on the current tokio runtime. The handler sees each
-    /// request once, in the order they are recorded, after it is recorded.
+    /// request once, in the order they are recorded, after it is recorded. It runs under the server's lock, so it must
+    /// not call back into this `FakeHttp`; if it panics, that request's connection closes unanswered and the server
+    /// keeps serving the next ones.
     pub fn with_handler(handler: impl FnMut(&Seen) -> Answer + Send + 'static) -> FakeHttp {
         FakeHttp::serve_with(Box::new(handler))
     }
@@ -249,9 +251,8 @@ impl FakeHttp {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .expect("a lock is never held across a panic")
+        // A handler that panicked left the state whole: it runs after the request is recorded.
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Every request, oldest first.
@@ -263,10 +264,9 @@ impl FakeHttp {
     /// never be answered without a timer.
     pub async fn wait_for_requests(&self, n: usize) {
         let mut count = self.count.clone();
-        count
-            .wait_for(|c| *c >= n)
-            .await
-            .expect("the accept task holds the sender until the server is dropped");
+        count.wait_for(|c| *c >= n).await.expect(
+            "the server stopped accepting (an accept error) before that many requests came",
+        );
     }
 }
 
@@ -317,11 +317,11 @@ async fn serve(state: Arc<Mutex<State>>, counter: watch::Sender<usize>, mut stre
     };
     let head_only = seen.method == "HEAD";
     let answer = {
-        let mut st = state.lock().expect("a lock is never held across a panic");
-        let answer = (st.handler)(&seen);
-        st.seen.push(seen);
-        counter.send_replace(st.seen.len());
-        answer
+        let mut st = state.lock().unwrap_or_else(PoisonError::into_inner);
+        let State { seen: all, handler } = &mut *st;
+        all.push(seen);
+        counter.send_replace(all.len());
+        handler(&all[all.len() - 1])
     };
     let reply = match answer {
         Answer::Reply(reply) => reply,

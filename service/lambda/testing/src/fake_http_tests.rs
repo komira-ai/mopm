@@ -289,3 +289,25 @@ async fn waiting_for_requests_returns_once_that_many_are_recorded() {
     assert_eq!(fake.requests().len(), 2);
     sender.await.expect("the sender");
 }
+
+#[tokio::test]
+async fn a_handler_that_panics_closes_that_connection_and_the_server_keeps_serving() {
+    let fake = FakeHttp::with_handler(|seen| {
+        assert!(seen.path() != "/panic", "a scripted assertion fails");
+        Answer::Reply(Reply::new(200).body(seen.path().to_string()))
+    });
+    assert_eq!(
+        exchange_raw(&fake.endpoint(), &request("GET", "/panic", &[], b"")).await,
+        Vec::<u8>::new()
+    );
+    let next = exchange(&fake.endpoint(), &request("GET", "/next", &[], b""))
+        .await
+        .expect("an answer");
+    assert_eq!((next.status, next.text()), (200, "/next".to_string()));
+    let paths: Vec<String> = fake.requests().iter().map(|r| r.target.clone()).collect();
+    assert_eq!(
+        paths,
+        vec!["/panic".to_string(), "/next".to_string()],
+        "the request that panicked is recorded too"
+    );
+}
