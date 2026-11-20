@@ -1,0 +1,20 @@
+{
+  "$comment": "A web session's tokens row as the Rust writes it (mopm_core::token::web_session_fields for `token` at `now`, in mopm_ports' TokenRecord; service/lambda/ports/src/types.rs holds its output to `record`), which the TypeScript Authenticator accepts (service/api/test/auth/web-session-row.test.ts).",
+  "random_hex": "dd7faedc32f6c886c99a9ecfc09d821122bbab773fec5e8a54",
+  "token": "mopm_3v725xbs63einsm2t3h4bhmccerlxk3xh7wf5csu",
+  "now": "2026-11-20T10:00:00.000Z",
+  "record": {
+    "id": "tok_000102030405060708090a0b",
+    "kind": "session",
+    "github_id": 4242,
+    "name": "web login",
+    "hash": "b77369e554e543bc6a0f29685a6e41581eb26bb588568dae674b5df21dae798e",
+    "prefix": "mopm_3v725x",
+    "scopes": [],
+    "packages": [],
+    "all_current": false,
+    "fresh_until": "2026-11-20T10:00:00.000Z",
+    "created_at": "2026-11-20T10:00:00.000Z",
+    "expires_at": "2026-11-27T10:00:00.000Z"
+  }
+}
