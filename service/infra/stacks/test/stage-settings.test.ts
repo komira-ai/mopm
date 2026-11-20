@@ -60,6 +60,19 @@ describe.each(STAGES)('stage_settings on %s', (stage) => {
     });
   });
 
+  test('a block with only a template id keeps the default domain and timeout', () => {
+    const call = createCall(apiWithRust(stage, { tutorial: { e2bTemplateId: 'tpl-only' } }));
+    expect(call.parameters.Item).toEqual({
+      key: { S: 'stage_settings' },
+      redirect_uri: { S: `https://${SITE[stage]}/api/v2/auth/web/callback` },
+      site_origin: { S: `https://${SITE[stage]}` },
+      require_2fa: { BOOL: true },
+      e2b_template_id: { S: 'tpl-only' },
+      e2b_domain: { S: 'e2b.app' },
+      sandbox_timeout_s: { N: '1800' },
+    });
+  });
+
   test('the same item is written on update, so a changed value reaches the table at the next deploy', () => {
     const t = apiWithRust(stage, { tutorial: { e2bTemplateId: 'tpl' } });
     const cr = Object.values(t.findResources('Custom::AWS'))[0] as any;
@@ -131,6 +144,8 @@ describe.each(STAGES)('the Rust switch (rustZipDir) on %s', (stage) => {
     for (const [id, r] of Object.entries(a)) expect(b[id]).toEqual(r);
     const added = Object.keys(b).filter((id) => !(id in a)).map((id) => b[id].Type).sort();
     expect(added).toEqual(['AWS::IAM::Policy', 'AWS::IAM::Role', 'AWS::Lambda::Function', 'AWS::Logs::LogGroup', 'Custom::AWS']);
+    const runtimes = Object.values(b).filter((r) => r.Type === 'AWS::Lambda::Function').map((r) => r.Properties.Runtime);
+    expect(runtimes).not.toContain('provided.al2023');
   });
 
   test('the other stacks do not change with it', () => {

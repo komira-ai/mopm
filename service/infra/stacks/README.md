@@ -34,9 +34,10 @@ Account ids come from the CDK environment at deploy time and are never committed
   to 6 hours).
 - **Rust functions.** `RustFunction` (`lib/rust-function.ts`) is one Rust Lambda: `provided.al2023` on x86_64, named
   `mopm-<stage>-<function>`, code from `<rustZipDir>/<function>.zip`, no environment variable, and a role of its own with only
-  the grants it is given, GetItem of the config table's `stage_settings` item, and writing to its own log group. The API
-  stack creates the functions and the `stage_settings` writer (`lib/stage-settings.ts`) only when it is given `rustZipDir`;
-  no deploy passes it yet, so a deploy changes nothing in the API stack. The data stack has the `web_logins` table they use.
+  the grants it is given, GetItem of the config table's `stage_settings` item, and writing to its own log group. No
+  function is declared yet. Given `rustZipDir`, the API stack writes the `stage_settings` item (`lib/stage-settings.ts`), and
+  that is where the functions will be created; no deploy passes it yet, so a deploy changes nothing in the API stack. The
+  data stack has the `web_logins` table the sign-in uses.
 - **Quarantine.** The channel bucket is served through CloudFront with an origin access control; an explicit deny
   keeps `quarantine/*` unreachable through the distribution.
 - **Auth routes.** The same Lambda also serves login (`/auth/device`, `/auth/device/poll`), API tokens (`/me/tokens`) and

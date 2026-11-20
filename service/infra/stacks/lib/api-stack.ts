@@ -491,8 +491,9 @@ export class ApiStack extends Stack {
   }
 
   /**
-   * The Rust functions (docs/design/tutorial-sign-in.md, section 5), each a RustFunction on its routes of this API with its
-   * own grants, and the `stage_settings` item they read at cold start.
+   * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, section 5). Today that is the `stage_settings`
+   * item they read at cold start; no function is declared yet. A function is a RustFunction (lib/rust-function.ts) created here
+   * from `zipDir`.
    */
   private addRustFunctions(c: StageConfig, zipDir: string, require2fa: boolean): void {
     if (!fs.existsSync(zipDir)) {

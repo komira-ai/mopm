@@ -20,6 +20,8 @@ describe.each(STAGES)('DataStack %s', (stage) => {
 
   test('every table is on-demand, has PITR and AWS-managed encryption', () => {
     for (const r of tables) {
+      expect(r.Properties.BillingMode).toBe('PAY_PER_REQUEST');
+      expect(r.Properties.PointInTimeRecoverySpecification).toEqual({ PointInTimeRecoveryEnabled: true });
       expect(r.Properties.SSESpecification).toMatchObject({ SSEEnabled: true });
     }
   });
