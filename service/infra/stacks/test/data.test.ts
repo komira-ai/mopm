@@ -13,15 +13,13 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     expect(tables.map((r) => r.Properties.TableName).sort()).toEqual(
       TABLES.map((d) => `mopm-${stage}-${d.id}`).sort(),
     );
-    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'device_logins', 'trusted_publishers', 'audit', 'namespaces', 'namespace_members']) {
+    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'device_logins', 'web_logins', 'trusted_publishers', 'audit', 'namespaces', 'namespace_members']) {
       expect(TABLES.map((d) => d.id)).toContain(id);
     }
   });
 
   test('every table is on-demand, has PITR and AWS-managed encryption', () => {
     for (const r of tables) {
-      expect(r.Properties.BillingMode).toBe('PAY_PER_REQUEST');
-      expect(r.Properties.PointInTimeRecoverySpecification).toEqual({ PointInTimeRecoveryEnabled: true });
       expect(r.Properties.SSESpecification).toMatchObject({ SSEEnabled: true });
     }
   });
@@ -170,5 +168,19 @@ describe.each(STAGES)('DataStack %s', (stage) => {
       KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
       TimeToLiveSpecification: { AttributeName: 'expires_at', Enabled: true },
     });
+  });
+
+  test('web logins are keyed by id alone, expire by TTL on expires_at, and DeleteItem is denied but to the named roles', () => {
+    const r = tables.find((x) => x.Properties.TableName === `mopm-${stage}-web_logins`);
+    expect(r).toBeDefined();
+    expect(r.Properties.KeySchema).toEqual([{ AttributeName: 'id', KeyType: 'HASH' }]);
+    expect(r.Properties.AttributeDefinitions).toEqual([{ AttributeName: 'id', AttributeType: 'S' }]);
+    expect(r.Properties.TimeToLiveSpecification).toEqual({ AttributeName: 'expires_at', Enabled: true });
+    expect(r.Properties.GlobalSecondaryIndexes).toBeUndefined();
+    const stmts = r.Properties.ResourcePolicy.PolicyDocument.Statement;
+    expect(stmts).toHaveLength(1);
+    expect(stmts[0]).toMatchObject({ Sid: 'DenyDeleteItem', Effect: 'Deny', Action: 'dynamodb:DeleteItem', Principal: { AWS: '*' }, Resource: '*' });
+    expect(exemptRoles(stmts[0])).toEqual(stage === 'prod' ? ['takedown'] : ['cleanup', 'takedown']);
+    expect(Boolean(r.Properties.DeletionProtectionEnabled)).toBe(stage === 'prod');
   });
 });

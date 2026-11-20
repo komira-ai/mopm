@@ -1,5 +1,7 @@
 // Typed per-stage configuration. Nothing here is a secret or an account id:
 // the account comes from the CDK environment at deploy time (CDK_DEFAULT_ACCOUNT).
+import * as fs from 'fs';
+import * as path from 'path';
 
 export const STAGES = ['beta', 'gamma', 'prod'] as const;
 export type Stage = (typeof STAGES)[number];
@@ -16,6 +18,21 @@ export interface StageConfig {
   hostedZoneName: string;
   /** Dummy-synth only: skips the hosted zone lookup. Never set at real deploys. */
   hostedZoneId?: string;
+  /** The tutorial's sandbox settings, from the `tutorial` block of service/config/<stage>.json. Absent when the file has none. */
+  tutorial?: TutorialConfig;
+}
+
+/**
+ * The `tutorial` block of service/config/<stage>.json: what the `stage_settings` item of the config table says about
+ * sandboxes (docs/design/tutorial-sign-in.md, section 5). Every field is optional; lib/stage-settings.ts fills the defaults.
+ */
+export interface TutorialConfig {
+  /** The E2B template sandboxes are created from. Absent: the item has none, and the sandbox function answers `tutorial_unavailable`. */
+  e2bTemplateId?: string;
+  /** E2B's API domain. Default `e2b.app`. */
+  e2bDomain?: string;
+  /** The sandbox timeout E2B is asked for, in seconds. Default 1800. */
+  sandboxTimeoutS?: number;
 }
 
 /** ACM certificates for CloudFront must live in us-east-1, so every stack does. */
@@ -33,7 +50,66 @@ export function assertStage(s: string): Stage {
 /** Only beta and gamma are disposable. Prod is the only durable registry. */
 export const isDisposable = (stage: Stage): boolean => stage !== 'prod';
 
-export function stageConfig(stage: Stage, hostedZoneId?: string): StageConfig {
+/** service/config: the stages' configuration files, one `<stage>.json` each (the e2e workflow reads them too). */
+export const CONFIG_DIR = path.resolve(__dirname, '../../../config');
+
+/** The keys a stage's configuration file may have. Anything else is refused, so a misspelt key never passes as absent. */
+const FILE_KEYS = ['stage', 'siteDomain', 'condaDomain', 'apiDomain', 'hostedZoneName', 'disposable', 'tutorial'];
+const TUTORIAL_KEYS = ['e2bTemplateId', 'e2bDomain', 'sandboxTimeoutS'];
+/** A DNS host name: lower-case labels joined by dots, no scheme, port or path. */
+const HOST = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * Checks the parsed service/config/<stage>.json (`file` names it in errors) and returns its `tutorial` block. Refuses a key
+ * that is not in FILE_KEYS or TUTORIAL_KEYS and a tutorial value of the wrong kind. The other keys' values are held equal to
+ * stageConfig by test/config-files.test.ts.
+ */
+export function parseTutorialConfig(file: string, json: unknown): TutorialConfig | undefined {
+  if (!isObject(json)) throw new Error(`${file}: must be a JSON object`);
+  for (const k of Object.keys(json)) {
+    if (!FILE_KEYS.includes(k)) throw new Error(`${file}: unknown key '${k}'; the keys are ${FILE_KEYS.join(', ')}`);
+  }
+  const t = json.tutorial;
+  if (t === undefined) return undefined;
+  if (!isObject(t)) throw new Error(`${file}: 'tutorial' must be an object`);
+  for (const k of Object.keys(t)) {
+    if (!TUTORIAL_KEYS.includes(k)) throw new Error(`${file}: unknown key 'tutorial.${k}'; the keys are ${TUTORIAL_KEYS.join(', ')}`);
+  }
+  const out: TutorialConfig = {};
+  if (t.e2bTemplateId !== undefined) {
+    if (typeof t.e2bTemplateId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(t.e2bTemplateId)) {
+      throw new Error(`${file}: 'tutorial.e2bTemplateId' must be a non-empty string of letters, digits, '-' and '_'`);
+    }
+    out.e2bTemplateId = t.e2bTemplateId;
+  }
+  if (t.e2bDomain !== undefined) {
+    if (typeof t.e2bDomain !== 'string' || !HOST.test(t.e2bDomain)) {
+      throw new Error(`${file}: 'tutorial.e2bDomain' must be a host name such as e2b.app (no scheme, port or path)`);
+    }
+    out.e2bDomain = t.e2bDomain;
+  }
+  if (t.sandboxTimeoutS !== undefined) {
+    if (typeof t.sandboxTimeoutS !== 'number' || !Number.isInteger(t.sandboxTimeoutS) || t.sandboxTimeoutS <= 0) {
+      throw new Error(`${file}: 'tutorial.sandboxTimeoutS' must be a whole number of seconds above 0`);
+    }
+    out.sandboxTimeoutS = t.sandboxTimeoutS;
+  }
+  return out;
+}
+
+/** The `tutorial` block of service/config/<stage>.json, checked (parseTutorialConfig). */
+export function readTutorialConfig(stage: Stage): TutorialConfig | undefined {
+  const file = path.join(CONFIG_DIR, `${stage}.json`);
+  return parseTutorialConfig(`service/config/${stage}.json`, JSON.parse(fs.readFileSync(file, 'utf8')));
+}
+
+/**
+ * A stage's configuration. `tutorial` defaults to the block in service/config/<stage>.json (readTutorialConfig); tests pass
+ * their own.
+ */
+export function stageConfig(stage: Stage, hostedZoneId?: string, tutorial: TutorialConfig | undefined = readTutorialConfig(stage)): StageConfig {
   const site = stage === 'prod' ? ZONE : `${stage}.${ZONE}`;
   return {
     stage,
@@ -43,6 +119,7 @@ export function stageConfig(stage: Stage, hostedZoneId?: string): StageConfig {
     // Each stage account holds only its own zone; prod holds mopm.dev and delegates beta and gamma (service/infra/dns).
     hostedZoneName: site,
     ...(hostedZoneId ? { hostedZoneId } : {}),
+    ...(tutorial ? { tutorial } : {}),
   };
 }
 
