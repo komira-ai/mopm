@@ -22,6 +22,11 @@ path = "canary/tls_test.rs"
 name = "sdk_test"
 path = "canary/sdk_test.rs"
 
+[[test]]
+# The committed unit table (buildrules.lock.bzl) builds TLS on AWS-LC and has no ring.
+name = "graph_test"
+path = "canary/graph_test.rs"
+
 [dependencies]
 aws_lambda_events.workspace = true
 lambda_runtime.workspace = true
