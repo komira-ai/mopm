@@ -35,11 +35,17 @@ Account ids come from the CDK environment at deploy time and are never committed
 - **Rust functions.** `RustFunction` (`lib/rust-function.ts`) is one Rust Lambda: `provided.al2023` on x86_64, named
   `mopm-<stage>-<function>`, code from `<rustZipDir>/<function>.zip`, no environment variable, and a role of its own with only
   the grants it is given, GetItem of the config table's `stage_settings` item, and writing to its own log group. Given
-  `rustZipDir`, the API stack writes the `stage_settings` item (`lib/stage-settings.ts`) and declares one function,
-  `web-session` (`<rustZipDir>/web-session.zip`, Lambda `mopm-<stage>-web-session`), on GET `/api/v2/auth/web/session` and POST
-  `/api/v2/auth/web/logout`, with GetItem and UpdateItem on `tokens`, GetItem on `users` and GetSecretValue on the stage's
-  edge-origin secret; no deploy passes `rustZipDir` yet, so a deploy changes nothing in the API stack. The
-  data stack has the `web_logins` table the sign-in uses.
+  `rustZipDir`, the API stack writes the `stage_settings` item (`lib/stage-settings.ts`) and declares three functions:
+  `web-login` (`<rustZipDir>/web-login.zip`), on GET `/api/v2/auth/web/start` and `/api/v2/auth/web/callback`, with the grants of
+  `service/lambda/fn_web_login/tests/fixtures/role_grants.json` and GetSecretValue on the stage's OAuth app and edge-origin
+  secrets; `web-session` (`<rustZipDir>/web-session.zip`), on GET `/api/v2/auth/web/session` and POST `/api/v2/auth/web/logout`,
+  with GetItem and UpdateItem on `tokens`, GetItem on `users` and GetSecretValue on the stage's edge-origin secret; and
+  `tutorial-sandbox` (`<rustZipDir>/tutorial-sandbox.zip`), on POST `/api/v2/tutorial/sandbox`, with GetItem and UpdateItem on
+  `tokens`, GetItem on `users` (the grants of `service/lambda/fn_tutorial_sandbox/tests/fixtures/grants.json`, which its tests
+  run under) and GetSecretValue on the edge-origin and E2B secrets. The E2B secret `mopm/<stage>/e2b` is created with it
+  (`CfnSecret`: no value, nothing generated), with a resource policy of one Deny of GetSecretValue to every principal but that
+  function's role. No deploy passes `rustZipDir` yet, so a deploy
+  changes nothing in the API stack. The data stack has the `web_logins` table the sign-in uses.
 - **Quarantine.** The channel bucket is served through CloudFront with an origin access control; an explicit deny
   keeps `quarantine/*` unreachable through the distribution.
 - **Auth routes.** The same Lambda also serves login (`/auth/device`, `/auth/device/poll`), API tokens (`/me/tokens`) and

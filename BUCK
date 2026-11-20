@@ -1087,7 +1087,7 @@ export_file(
     name = "lambda.contract.v2.tutorial-sandbox.json",
     src = "tests/contract/api-v2/tutorial-sandbox.json",
     mode = "reference",
-    visibility = ["//service/lambda/web:"],
+    visibility = ["//service/lambda/fn_tutorial_sandbox:", "//service/lambda/web:"],
 )
 
 # The unit table `buildrules sync` writes, for the canary's graph_test (tools/lambda/canary/graph_test.rs): TLS on AWS-LC, no ring.
@@ -1429,6 +1429,7 @@ _LINT_PACKAGES = [
     "service/lambda/aws",
     "service/lambda/core",
     "service/lambda/e2b",
+    "service/lambda/fn_tutorial_sandbox",
     "service/lambda/fn_web_login",
     "service/lambda/fn_web_session",
     "service/lambda/validate",

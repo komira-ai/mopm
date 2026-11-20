@@ -971,6 +971,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "fn_tutorial_sandbox"
+version = "0.0.0"
+dependencies = [
+ "aws-sdk-dynamodb",
+ "aws-sdk-secretsmanager",
+ "aws_lambda_events",
+ "jiff",
+ "lambda_runtime",
+ "mopm_aws",
+ "mopm_core",
+ "mopm_e2b",
+ "mopm_ports",
+ "mopm_testing",
+ "mopm_web",
+ "serde_dynamo",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "fn_web_login"
 version = "0.0.0"
 dependencies = [
