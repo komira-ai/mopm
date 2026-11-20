@@ -1,7 +1,11 @@
 # mopm_ports: the registry's ports (traits the adapters implement). Built from Cargo.toml by buildrules' cargo_package.
 load("//:buildrules.bzl", "cargo_package")
 
-cargo_package(path = ".")
+# The web session row of mopm_core's fixtures: src/types.rs holds a TokenRecord built from mopm_core's fields to it.
+cargo_package(
+    path = ".",
+    extra_srcs = ["//service/lambda/core:web_session_record.json"],
+)
 
 # This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
 filegroup(

@@ -145,6 +145,8 @@ pub const Response = struct {
     description: []const u8,
     /// An `Error` answer the operation names besides `default`.
     is_error: bool = false,
+    /// Names of `Api.headers` this answer carries besides the `on_success` ones.
+    headers: []const []const u8 = &.{},
 };
 
 /// A command of the command line that makes one call of an rpc (`Command` of options.proto).
@@ -172,6 +174,8 @@ pub const Rpc = struct {
     security: []const []const u8,
     responses: []const Response,
     commands: []const Command = &.{},
+    /// An operation of the website: no commands, and not in the Zig client.
+    browser: bool = false,
 };
 
 pub const Server = struct {
@@ -186,6 +190,8 @@ pub const SecurityScheme = struct {
     name: []const u8,
     bearer_format: []const u8,
     description: []const u8,
+    /// The cookie that carries the credential; empty for a bearer scheme.
+    cookie: []const u8 = "",
 };
 
 pub const Header = struct {
@@ -197,6 +203,8 @@ pub const Header = struct {
     min_length: ?u64 = null,
     minimum: ?i64 = null,
     on_success: bool,
+    /// Only on the answers that name it, not on the `Error` response.
+    response_only: bool = false,
 };
 
 pub const Decl = union(enum) { message: usize, enumeration: usize };

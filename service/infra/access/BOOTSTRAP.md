@@ -154,10 +154,14 @@ everything else (the read API, token management, CI exchange) is unaffected, so 
    |---|---|---|---|
    | Application name | `mopm (beta)` | `mopm (gamma)` | `mopm` |
    | Homepage URL | `https://beta.mopm.dev` | `https://gamma.mopm.dev` | `https://mopm.dev` |
-   | Authorization callback URL | `https://beta.mopm.dev/` | `https://gamma.mopm.dev/` | `https://mopm.dev/` |
+   | Authorization callback URL | `https://beta.mopm.dev/api/v2/auth/web/callback` | `https://gamma.mopm.dev/api/v2/auth/web/callback` | `https://mopm.dev/api/v2/auth/web/callback` |
    | Enable Device Flow | checked | checked | checked |
 
-   The callback URL is required by GitHub's form but the device flow never uses it (the API has no callback route).
+   The device flow never sends a `redirect_uri`, so the callback URL does not affect `mopm login`. The URL is the route
+   of the web sign-in designed in `docs/design/tutorial-sign-in.md` (section 1), which is not in the API yet; GitHub
+   accepts a `redirect_uri` equal to the callback URL or below it. On an app created with the old value
+   (`https://<site>/`), change the field on the app's page and press "Update application": the client id and the client
+   secrets stay.
    The API asks for the scope `read:user` (the account and its two-factor flag) at login. Registering an organization
    namespace runs one more device flow that asks for `read:org`, to read the caller's membership once; the token is
    discarded. Scopes are asked for per flow, not set on the app: there is nothing to tick.
@@ -171,6 +175,21 @@ everything else (the read API, token management, CI exchange) is unaffected, so 
    It creates the secret, or stores a new version when it exists (rotation: generate a new client secret in GitHub, run
    it again). The API picks the new value up within five minutes, with no redeploy. A client-secret rotation does not
    end existing sessions.
+3a. Check that a stage's secret holds a current client secret, without reading its value. The device flow reads only
+   the client id, so a working `mopm login` does not show it. Compare the secret's last change with the app's client
+   secrets (`--region` as in step 3):
+   ```sh
+   aws secretsmanager describe-secret --profile <your profile> --region us-east-1 --secret-id mopm/<stage>/github-oauth --query '{changed: LastChangedDate, deleted: DeletedDate}'
+   ```
+   `describe-secret` returns no secret value; never use `get-secret-value` for this check.
+   - `ResourceNotFoundException`, or a `deleted` date (the secret is scheduled for deletion and the API cannot read
+     it): the secret is absent. Do steps 2 and 3.
+   - The app's page lists no client secret: the stored one was deleted on GitHub. Do steps 2 and 3.
+   - The app's page lists a client secret generated after `changed`, or on the same day: the stored value may be older
+     than it. Generate a new client secret and run step 3 again.
+   - Otherwise nothing newer than the stored value exists. This cannot show that the stored value is not a client
+     secret deleted on GitHub while an older one remains, and `changed` also moves when the secret's description or
+     tags change. When in doubt, generate a new client secret and run step 3 again: it ends no session.
 4. Check on beta first: `curl -sS -X POST https://api.beta.mopm.dev/api/v1/auth/device -H 'content-type: application/json'
    -d '{"client":"check"}'` must answer with a `user_code` and a GitHub `verification_uri` (a `503` means the secret is
    missing or unreadable; the API logs only the reason). The API requires the account to have two-factor authentication on (`MOPM_REQUIRE_2FA`, default on, set by `require2fa` on the
@@ -182,6 +201,31 @@ the six characters being the suffix Secrets Manager adds to every ARN) and use t
 `AUTH_GRANTS` in `service/infra/stacks/lib/api-stack.ts`; the stacks tests pin both. The secret is created by hand, not
 by CloudFormation, so no stack holds its value. It uses the account's default Secrets Manager key, which the Lambda
 role can use without a separate grant.
+
+## E2B API key (once per stage)
+
+The tutorial's sandbox route (`POST /api/v2/tutorial/sandbox`, `docs/design/tutorial-sign-in.md` section 4) creates
+E2B sandboxes with the team's E2B API key, kept in Secrets Manager as `mopm/<stage>/e2b`, JSON `{"api_key"}`. In that
+design the stack that deploys the route's `tutorial-sandbox` function creates the secret, empty, with a resource policy
+that lets only that function read it. The owner stores the value with a held script, run with their own credentials for
+that stage's account. The script only stores a new version (`put-secret-value`): it never creates or deletes the
+secret, and while the secret does not exist on a stage it stops there and says to deploy the stack first.
+
+Order: on each stage, after the stack that creates the secret is deployed there, and before the route is relied on;
+beta first, then gamma, then prod, each checked before the next.
+
+1. In E2B's dashboard, create an API key for the team, one per stage, so a beta key can be revoked without touching
+   prod.
+2. Store it. Preview first; nothing is read or called without `--apply`. The key is read from standard input (hidden
+   prompt on a terminal), never from a flag or an environment variable, and never printed. `--account` makes the script
+   refuse a profile in another account:
+   ```sh
+   npm --prefix service/infra/access run -s e2b-secret -- --stage beta --profile <your profile> --account <beta account id>
+   npm --prefix service/infra/access run -s e2b-secret -- --stage beta --profile <your profile> --account <beta account id> --apply
+   ```
+   An empty key, or one with whitespace, a line break or a control character in it, is refused before anything is
+   stored. Rotation: create a new key in E2B and run the script again. The function reads the key at cold start, so
+   instances already running keep the old key until Lambda replaces them: revoke the old key in E2B only after that.
 
 ## Verification
 

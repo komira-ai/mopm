@@ -14,10 +14,8 @@ use crate::records::{audit, group_row, rec, with_state};
 
 /// The domain error code of a failed call; a fault, or a success, fails the scenario.
 pub fn code_of<T: std::fmt::Debug>(r: PortResult<T>) -> ErrorCode {
-    match r {
-        Err(e) => e.registry().unwrap_or_else(|| panic!("a fault, not a domain error: {e}")).code,
-        Ok(v) => panic!("expected a domain error, got {v:?}"),
-    }
+    let e = r.expect_err("expected a domain error, got a success");
+    e.registry().expect("a fault, not a domain error").code
 }
 
 fn pkg(name: &str) -> PackageRecord {
@@ -330,3 +328,7 @@ macro_rules! contract_tests {
         )+
     };
 }
+
+#[cfg(test)]
+#[path = "store_cases_tests.rs"]
+mod tests;

@@ -19,20 +19,29 @@ import { RECIPES } from './replay-v2-recipes';
 // (//:contract does that). Also checked here, on GitHub's runners where //:contract is not run: every operation of the spec has a
 // passing success case, every error code and rejection code a case, and every error case follows the catalogue.
 
-/** Cases the handler cannot produce, with the reason (none). */
-// Every valid case is produced by the handler: name_taken and name_too_similar, the two codes only v1's claim answered, are not
-// in /api/v2's catalogue.
+/**
+ * Operations this router does not serve: the website's sign-in and tutorial sandbox, served by the website's Rust functions behind
+ * the site's /api/* behaviour. Their cases (tests/contract/api-v2/web-auth.json, tutorial-sandbox.json) are excluded by operationId
+ * rather than by case name, so a case added to those files needs no entry here.
+ */
+const NOT_THE_ROUTERS = new Set(['startWebLogin', 'completeWebLogin', 'getWebSession', 'webLogout', 'createTutorialSandbox']);
+const NOT_PRODUCED_REASON = 'served by the website\'s Rust functions, not this router';
+
+/** Valid cases the handler cannot produce, by case name, with the reason. */
+// Every other valid case is produced by the handler: name_taken and name_too_similar, the two codes only v1's claim answered, are
+// not in /api/v2's catalogue.
 const NOT_PRODUCED_V2: Record<string, string> = {};
 
 const ops = new Map(specOperations().map((o) => [o.operationId, o]));
 const catalogue = specCatalogue();
 const cases = loadV2Cases();
 const valid = cases.filter((c) => (c.expect ?? 'valid') === 'valid');
+for (const c of valid) if (NOT_THE_ROUTERS.has(c.operationId)) NOT_PRODUCED_V2[c.name] = NOT_PRODUCED_REASON;
 
 describe('the v2 contract cases are the spec\'s', () => {
   test('the spec was read: its operations, its error table and its rejection codes', () => {
-    expect(ops.size).toBe(28);
-    expect(Object.keys(catalogue).length).toBe(45);
+    expect(ops.size).toBe(33);
+    expect(Object.keys(catalogue).length).toBe(48);
     expect(specRejectionCodes()).toHaveLength(7);
     expect(cases.length).toBeGreaterThan(100);
   });
@@ -46,8 +55,8 @@ describe('the v2 contract cases are the spec\'s', () => {
     expect(cases.filter((c) => !ops.has(c.operationId)).map((c) => c.name)).toEqual([]);
   });
 
-  test('every operation of the spec has a passing success case', () => {
-    const ok = new Set(valid.filter((c) => c.response.status < 300).map((c) => c.operationId));
+  test('every operation of the spec has a passing success case (a redirect counts: any status below 400)', () => {
+    const ok = new Set(valid.filter((c) => c.response.status < 400).map((c) => c.operationId));
     expect([...ops.keys()].filter((id) => !ok.has(id))).toEqual([]);
   });
 
