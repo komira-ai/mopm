@@ -505,14 +505,34 @@ export class ApiStack extends Stack {
 
   /**
    * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, sections 2 and 5): the `stage_settings` item they
-   * read at cold start, and the web-session function (`<zipDir>/web-session.zip`) on GET /api/v2/auth/web/session and
-   * POST /api/v2/auth/web/logout. Each function is a RustFunction (lib/rust-function.ts) created here from `zipDir`.
+   * read at cold start, and the functions themselves, each a RustFunction (lib/rust-function.ts) created here from `zipDir`:
+   * - `web-login`, the GitHub sign-in of the website (GET /api/v2/auth/web/start and /callback). It is the only function that
+   *   reads the OAuth app secret besides the TypeScript handler's device login.
+   * - `web-session` (`<zipDir>/web-session.zip`) on GET /api/v2/auth/web/session and POST /api/v2/auth/web/logout.
    */
   private addRustFunctions(c: StageConfig, zipDir: string, require2fa: boolean): void {
     if (!fs.existsSync(zipDir)) {
       throw new Error(`the Rust function zips are missing: ${zipDir} does not exist`);
     }
     new StageSettingsWriter(this, 'StageSettings', { config: c, require2fa });
+    new RustFunction(this, 'WebLogin', {
+      config: c,
+      name: 'web-login',
+      zipDir,
+      api: this.api,
+      routes: [
+        { method: apigw.HttpMethod.GET, path: '/api/v2/auth/web/start' },
+        { method: apigw.HttpMethod.GET, path: '/api/v2/auth/web/callback' },
+      ],
+      // The grants of service/lambda/fn_web_login/tests/fixtures/role_grants.json (the config read is RustFunction's own).
+      tables: [
+        { table: 'web_logins', actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'] },
+        { table: 'users', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
+        { table: 'namespaces', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
+        { table: 'tokens', actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'] },
+      ],
+      secrets: [oauthSecretName(c.stage), edgeOriginSecretName(c.stage)],
+    });
     new RustFunction(this, 'WebSession', {
       config: c,
       name: 'web-session',

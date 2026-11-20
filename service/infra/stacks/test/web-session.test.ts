@@ -15,7 +15,7 @@ const flat = (s: Json): Json => ({ ...s, Resource: ([] as any[]).concat(s.Resour
 
 describe.each(STAGES)('the web-session function on %s', (stage) => {
   const t = Template.fromStack(build(stage, { rustZipDir: RUST_ZIP_STUB_DIR }).api);
-  const fns = Object.entries(resources(t, 'AWS::Lambda::Function')).filter(([, f]) => f.Properties.Runtime === 'provided.al2023');
+  const fns = Object.entries(resources(t, 'AWS::Lambda::Function')).filter(([, f]) => f.Properties.FunctionName === `mopm-${stage}-web-session`);
   const [fnId, fn] = fns[0]!;
   const roleId = fn.Properties.Role['Fn::GetAtt'][0] as string;
   const policies = Object.values(resources(t, 'AWS::IAM::Policy')).filter((p) => p.Properties.Roles.some((r: Json) => r.Ref === roleId));
@@ -91,14 +91,15 @@ describe.each(STAGES)('the web-session function on %s', (stage) => {
     for (const k of ROUTES) expect(tsRoutes).not.toContain(k);
   });
 
-  test("no other function's role or policy changes: the IAM resources of the API stack are those of the default build plus the web-session function's and the stage_settings writer's", () => {
+  test("no other function's role or policy changes: the IAM resources of the API stack are those of the default build plus the Rust functions' and the stage_settings writer's", () => {
     const off = Template.fromStack(build(stage).api).toJSON().Resources as Json;
     const on = Template.fromStack(build(stage, { rustZipDir: RUST_ZIP_STUB_DIR }).api).toJSON().Resources as Json;
     const iam = (rs: Json) => Object.fromEntries(Object.entries(rs).filter(([, r]) => r.Type === 'AWS::IAM::Role' || r.Type === 'AWS::IAM::Policy'));
     const a = iam(off);
     const b = iam(on);
     for (const [id, r] of Object.entries(a)) expect(b[id]).toEqual(r);
-    const added = Object.entries(b).filter(([id]) => !(id in a) && !id.startsWith('WebSession'));
+    // The web-login function's own role is held by web-login.test.ts.
+    const added = Object.entries(b).filter(([id]) => !(id in a) && !id.startsWith('WebSession') && !id.startsWith('WebLogin'));
     // What remains is the stage_settings writer's: its policy (PutStageSettings only) and the role of the function behind it.
     expect(added.map(([, r]) => r.Type).sort()).toEqual(['AWS::IAM::Policy', 'AWS::IAM::Role']);
     const writer = added.find(([, r]) => r.Type === 'AWS::IAM::Policy')![1];

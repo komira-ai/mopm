@@ -112,7 +112,8 @@ describe('the gateway routes every operation of the /api/v2 spec', () => {
   });
 });
 
-// With the Rust switch on, the session and logout operations are routed here, to the web-session function only.
+// With the Rust switch on, the sign-in operations are routed here to the web-login function, and session and logout to the
+// web-session function; the sandbox is not routed yet.
 describe.each(STAGES)('the gateway with the Rust functions on (%s)', (stage) => {
   const t = Template.fromStack(build(stage, { rustZipDir: RUST_ZIP_STUB_DIR }).api);
   const routes = Object.values(t.findResources('AWS::ApiGatewayV2::Route')) as any[];
@@ -129,9 +130,14 @@ describe.each(STAGES)('the gateway with the Rust functions on (%s)', (stage) => 
     }
   });
 
-  test('start, callback and the sandbox are still unrouted', () => {
-    for (const k of ['GET /api/v2/auth/web/start', 'GET /api/v2/auth/web/callback', 'POST /api/v2/tutorial/sandbox']) {
-      expect(keys).not.toContain(k);
+  test('start and callback route to the web-login function, and the sandbox is still unrouted', () => {
+    const integrations = t.findResources('AWS::ApiGatewayV2::Integration') as Record<string, any>;
+    const webLogin = Object.keys(t.findResources('AWS::Lambda::Function', { Properties: { FunctionName: `mopm-${stage}-web-login` } }));
+    expect(webLogin).toHaveLength(1);
+    for (const key of ['GET /api/v2/auth/web/start', 'GET /api/v2/auth/web/callback']) {
+      const integrationId = targetOf(key)['Fn::Join'][1].find((x: any) => x?.Ref)?.Ref as string;
+      expect(integrations[integrationId].Properties.IntegrationUri).toEqual({ 'Fn::GetAtt': [webLogin[0], 'Arn'] });
     }
+    expect(keys).not.toContain('POST /api/v2/tutorial/sandbox');
   });
 });

@@ -971,6 +971,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "fn_web_login"
+version = "0.0.0"
+dependencies = [
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-secretsmanager",
+ "aws_lambda_events",
+ "base64 0.23.1",
+ "form_urlencoded",
+ "getrandom 0.4.3",
+ "hex",
+ "jiff",
+ "lambda_runtime",
+ "mopm_aws",
+ "mopm_core",
+ "mopm_ports",
+ "mopm_testing",
+ "mopm_web",
+ "rustls",
+ "serde",
+ "serde_dynamo",
+ "serde_json",
+ "sha2 0.11.0",
+ "subtle",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "fn_web_session"
 version = "0.0.0"
 dependencies = [

@@ -80,6 +80,7 @@ futures-task 0.3.34 11376
 futures-util 0.3.34 169782
 generic-array 0.14.7 15950
 getrandom 0.3.4 50932
+getrandom 0.4.3 52437
 h2 0.4.20 180331
 hashbrown 0.15.5 140908
 hashbrown 0.17.1 155512

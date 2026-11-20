@@ -60,3 +60,30 @@ lambda_zip = rule(
         "_pack": attrs.exec_dep(default = "mopm//tools/lambda:zip_pack"),
     },
 )
+
+def _release_exe_impl(ctx):
+    outs = [o for o in ctx.attrs.release[DefaultInfo].default_outputs if o.basename == ctx.attrs.exe]
+    if len(outs) != 1:
+        fail("{}: the release step {} has {} outputs named `{}`, not one; its outputs are {}".format(
+            ctx.label,
+            ctx.attrs.release.label,
+            len(outs),
+            ctx.attrs.exe,
+            [o.basename for o in ctx.attrs.release[DefaultInfo].default_outputs],
+        ))
+    return [DefaultInfo(default_output = outs[0]), RunInfo(args = cmd_args(outs[0]))]
+
+# release_exe: the one executable of a Cargo package's `:release` step, by its file name. A package with a library and a
+# binary has both in that step (the `.rlib` first), and `lambda_zip` and a test's `env_tools` take a target's first output,
+# so a function with a library names its executable through this:
+#
+#     release_exe(name = "release_exe", release = ":release", exe = "web_login")
+#
+# Analysis fails, naming the outputs, unless exactly one output of the step has that name.
+release_exe = rule(
+    impl = _release_exe_impl,
+    attrs = {
+        "exe": attrs.string(),
+        "release": attrs.dep(),
+    },
+)

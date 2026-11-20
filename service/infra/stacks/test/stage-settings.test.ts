@@ -148,28 +148,37 @@ describe.each(STAGES)('the Rust switch (rustZipDir) on %s', (stage) => {
     expect(keys).not.toContain('POST /api/v2/auth/web/logout');
   });
 
-  test('present: every resource of the stack without it is there and unchanged; what is added is only the writer and the web-session function', () => {
+  test('present: every resource of the stack without it is there and unchanged; what is added is only the writer and the web-login and web-session functions', () => {
     const a = Template.fromStack(off.api).toJSON().Resources as Record<string, any>;
     const b = Template.fromStack(on.api).toJSON().Resources as Record<string, any>;
     for (const [id, r] of Object.entries(a)) expect(b[id]).toEqual(r);
     const added = Object.keys(b).filter((id) => !(id in a)).map((id) => b[id].Type).sort();
     expect(added).toEqual([
       'AWS::ApiGatewayV2::Integration',
+      'AWS::ApiGatewayV2::Integration',
+      'AWS::ApiGatewayV2::Route',
+      'AWS::ApiGatewayV2::Route',
       'AWS::ApiGatewayV2::Route',
       'AWS::ApiGatewayV2::Route',
       'AWS::IAM::Policy',
       'AWS::IAM::Policy',
+      'AWS::IAM::Policy',
       'AWS::IAM::Role',
       'AWS::IAM::Role',
+      'AWS::IAM::Role',
+      'AWS::Lambda::Function',
       'AWS::Lambda::Function',
       'AWS::Lambda::Function',
       'AWS::Lambda::Permission',
+      'AWS::Lambda::Permission',
+      'AWS::Logs::LogGroup',
       'AWS::Logs::LogGroup',
       'AWS::Logs::LogGroup',
       'Custom::AWS',
     ]);
     const fns = Object.values(b).filter((r) => r.Type === 'AWS::Lambda::Function');
-    expect(fns.filter((r) => r.Properties.Runtime === 'provided.al2023').map((r) => r.Properties.FunctionName)).toEqual([`mopm-${stage}-web-session`]);
+    const rust = fns.filter((r) => r.Properties.Runtime === 'provided.al2023').map((r) => r.Properties.FunctionName).sort();
+    expect(rust).toEqual([`mopm-${stage}-web-login`, `mopm-${stage}-web-session`]);
   });
 
   test('the other stacks do not change with it', () => {
