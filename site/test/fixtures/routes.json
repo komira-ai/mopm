@@ -1,5 +1,22 @@
 {
-  "$comment": "Route vectors for the site (parseRoute: view) and for the edge router of the site stack (edge: a CloudFront Function generated from src/routes.ts, run over every vector by service/infra/stacks/test/site-router.test.ts). edge is the URI the router rewrites the request to, \"redirect:<path>\" for a permanent (301) redirect to the normalised package name (the query kept), \"found:<path>\" for a temporary (302) redirect of a one-segment or flat version address to a search (src/routes.ts flatSearchPath), or \"pass\" when the request goes to the bucket unchanged (a missing key there is answered with the 404 page). view is the app-shell route, or null when the path never reaches the shell.",
+  "$comment": "Route vectors for the site (parseRoute: view) and for the edge router of the site stack (edge: a CloudFront Function generated from src/routes.ts and the files of a site build, run over every vector by service/infra/stacks/test/site-router.test.ts). files is the build the vectors assume: every file of it as the URI that names it, the assets of one build id under /assets/. edge is the URI the router rewrites the request to, \"redirect:<path>\" for a permanent (301) redirect to the normalised package name (the query kept), \"found:<path>\" for a temporary (302) redirect of a one-segment or flat version address to a search (src/routes.ts flatSearchPath), \"pass\" when the request goes to the bucket unchanged (a file of the build, or an asset of an earlier build, whose id is not this build's), or \"/404.html\" for anything else: the router answers it with the 404 page and status 404. view is the app-shell route, or null when the path never reaches the shell.",
+  "files": [
+    "/404.html",
+    "/app.html",
+    "/assets/0a1b2c3d4e5f6a7b/main.js",
+    "/assets/0a1b2c3d4e5f6a7b/site.css",
+    "/assets/0a1b2c3d4e5f6a7b/views/search.js",
+    "/docs/configuration/index.html",
+    "/docs/examples/index.html",
+    "/docs/getting-started/index.html",
+    "/docs/index.html",
+    "/docs/mopm-test/index.html",
+    "/docs/mopm-toml/index.html",
+    "/docs/publish-workspace/index.html",
+    "/docs/why/index.html",
+    "/index.html",
+    "/install.sh"
+  ],
   "vectors": [
     {
       "path": "/",
@@ -15,17 +32,17 @@
     },
     {
       "path": "/search/",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -50,7 +67,7 @@
     },
     {
       "path": "/packages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -80,7 +97,7 @@
     },
     {
       "path": "/packages/_ab",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -95,17 +112,17 @@
     },
     {
       "path": "/packages/a%2Fb",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/%68ttp_client",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/http_client/",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -125,42 +142,42 @@
     },
     {
       "path": "/packages/ab/1.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/ab/1.0.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/Foo/1.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/foo__bar/1.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/Foo/1.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/foo__bar/1.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/9lives/1.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/http_client%2F0.4.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -210,7 +227,7 @@
     },
     {
       "path": "/packages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/json",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -260,12 +277,12 @@
     },
     {
       "path": "/packages/komira-ai/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/a",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -290,62 +307,62 @@
     },
     {
       "path": "/packages/komira-ai/_ab",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/9lives",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/Komira-AI/json",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira--ai/json",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/-komira/json",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-/json",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira_ai/json",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira.ai/json",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai%2Fjson",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json%2F1.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/%6bomira-ai/json",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -390,107 +407,107 @@
     },
     {
       "path": "/packages/komira-ai/json/1.1.11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/1.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/1.0.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/1.00.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/1",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/1.0rc1",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/2.0dev3",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/v1",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/01.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/1.0.0-beta",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/1.0.0+local",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/versions",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/json/1.0.0/extra",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/Json/1.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/foo__bar/1.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/Komira-AI/json/1.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/json/1.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/komira-ai/9lives/1.0.0",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/packages/ab/1.0/extra",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "//packages/ab",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "//packages/komira-ai/json",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -575,17 +592,17 @@
     },
     {
       "path": "/docs/Bad_Slug",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/docs/../x",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/docs/a/b",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
@@ -610,16 +627,151 @@
     },
     {
       "path": "/nope.txt",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/robots.txt",
-      "edge": "pass",
+      "edge": "/404.html",
       "view": null
     },
     {
       "path": "/install.sh",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/nope",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/index.html/",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/hasOwnProperty",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/__proto__",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/constructor",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/docs/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/why/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/why/index",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/assets",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/assets/",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/assets/main.js",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/assets//main.js",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/assets/0a1b2c3d4e5f6a7b",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/assets/0a1b2c3d4e5f6a7b/",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/assets/0a1b2c3d4e5f6a7b/nope.js",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/assets/0a1b2c3d4e5f6a7b/views/",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/assets/0a1b2c3d4e5f6a7b/site.css",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/assets/0a1b2c3d4e5f6a7b/views/search.js",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/assets/ffffffffffffffff/main.js",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/assets/ffffffffffffffff/views/removed.js",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/assets/ffffffffffffffff/",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/docs/configuration/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/examples/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/getting-started/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/mopm-test/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/mopm-toml/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/publish-workspace/index.html",
       "edge": "pass",
       "view": null
     }
