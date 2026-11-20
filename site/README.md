@@ -34,10 +34,10 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 2. **No HTML sinks.** Markup is built only through `h()` and a `Doc`; no string of HTML reaches the DOM and no string
    runs as code. `test/no-sinks.test.ts` checks the source.
 3. **No inline script or style.** The site stack sends a Content-Security-Policy that allows scripts, styles and
-   images from `'self'` only, fetches from the stage's API host only, and requires Trusted Types with no policy (see
-   "How it is served"); `tools/check-dist.ts` refuses a tree that this policy would break.
-4. **One artifact for every stage.** Nothing stage-specific is compiled in: the API host comes from the page's
-   hostname (`src/host.ts`).
+   images from `'self'` only, fetches to the page's own origin and E2B's sandboxes only, and requires Trusted Types
+   with no policy (see "How it is served"); `tools/check-dist.ts` refuses a tree that this policy would break.
+4. **One artifact for every stage.** Nothing stage-specific is compiled in: the API is read on the page's own origin
+   (`/api/v2`), and `src/host.ts` only decides from the page's hostname whether there is an API at all.
 5. **No live calls in tests.** `test/setup.ts` makes the global `fetch` throw; the client takes `fetch` as a
    parameter, and tests replay the API contract fixtures of version 2 (`tests/contract/api-v2/` at the repository root).
 

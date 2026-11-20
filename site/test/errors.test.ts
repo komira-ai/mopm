@@ -124,7 +124,7 @@ test('the request id is kept on an answer that is not an envelope (a gateway 404
   }
 });
 
-test('a busy registry says to try again shortly (retry-after is not readable from a page)', () => {
+test('a busy registry says to try again shortly (the page does not use retry-after)', () => {
   const e = fromResponse(429, '{"error":{"code":"rate_limited","message":"Too many requests.","hint":"x"}}', null);
   expect(e.message).toBe('The registry is busy; try again shortly.');
 });

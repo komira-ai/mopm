@@ -4,7 +4,7 @@
 
 /**
  * The Content-Security-Policy: scripts, styles and images from the site itself only, fetches to `connectSrc` only, and
- * Trusted Types with no policy. `connectSrc` is one or more CSP sources, e.g. 'https://api.mopm.dev'.
+ * Trusted Types with no policy. `connectSrc` is one or more CSP sources, e.g. "'self' https://*.e2b.app".
  */
 export function contentSecurityPolicy(connectSrc: string): string {
   return [
