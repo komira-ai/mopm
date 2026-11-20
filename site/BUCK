@@ -134,7 +134,9 @@ export_file(
 export_file(
     name = "routes.json",
     src = "test/fixtures/routes.json",
-    visibility = ["//service/infra/stacks:"],
+    # At its own path, so mopm_core's include_str! (service/lambda/core/tests/return_to_routes.rs) finds it.
+    mode = "reference",
+    visibility = ["//service/infra/stacks:", "//service/lambda/core:"],
 )
 
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
