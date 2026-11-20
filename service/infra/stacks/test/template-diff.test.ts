@@ -102,6 +102,9 @@ const EXPECTED_PROD_DIFF = [
   'publish:AWS::Logs::LogGroup:UpdateReplacePolicy',
   'site:AWS::S3::Bucket:DeletionPolicy',
   'site:AWS::S3::Bucket:UpdateReplacePolicy',
+  // The edge-origin secret: prod retains it, beta and gamma are disposable (site.test.ts pins both).
+  'site:AWS::SecretsManager::Secret:DeletionPolicy',
+  'site:AWS::SecretsManager::Secret:UpdateReplacePolicy',
 ].sort();
 
 // What only the beta stage has: two variables of the API function (its Environment), CI_PUBLISHERS and MOPM_GROUPS_POLICY, and

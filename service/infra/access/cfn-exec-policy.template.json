@@ -54,7 +54,8 @@
         "kms:CreateGrant",
         "kms:Encrypt",
         "kms:Decrypt",
-        "kms:GenerateDataKey*"
+        "kms:GenerateDataKey*",
+        "secretsmanager:GetRandomPassword"
       ],
       "Resource": "*"
     },

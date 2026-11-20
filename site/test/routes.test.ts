@@ -41,13 +41,29 @@ test('every 302 goes to the search flatSearchPath names, and flatSearchPath answ
   }
 });
 
-test('a pass of a one- or two-segment package path has no redirect', () => {
+test('a one- or two-segment package path the router answers with the 404 page has no redirect', () => {
   const passes = V.filter((v) => {
     const parts = v.path.split('/');
-    return v.edge === 'pass' && parts[1] === 'packages' && (parts.length === 3 || parts.length === 4);
+    return v.edge === '/404.html' && parts[1] === 'packages' && (parts.length === 3 || parts.length === 4);
   });
   expect(passes.length).toBeGreaterThan(10);
   for (const v of passes) expect([v.path, flatSearchPath(v.path), parseRoute(v.path)]).toEqual([v.path, null, null]);
+});
+
+test("the vectors' build holds every page the site builds, and a pass is a file of that build or an asset of another", () => {
+  const files = vectors.files;
+  const pages = ['/404.html', '/app.html', '/docs/index.html', ...DOC_PAGES.map((d) => `/docs/${d.slug}/index.html`), '/index.html'];
+  expect(files.filter((f) => f.endsWith('.html')).sort()).toEqual(pages.sort());
+  expect(files).toContain('/install.sh');
+  const builds = new Set(files.filter((f) => f.startsWith('/assets/')).map((f) => f.split('/')[2]));
+  expect(builds.size).toBe(1);
+  for (const v of V.filter((x) => x.edge === 'pass')) {
+    const id = v.path.split('/')[2];
+    expect([v.path, files.includes(v.path) || (v.path.startsWith('/assets/') && !builds.has(id))]).toEqual([v.path, true]);
+  }
+  // Every file of the build is reached as it is, and each kind of answer appears.
+  for (const f of files) expect(V).toContainEqual(expect.objectContaining({ path: f, edge: 'pass' }));
+  for (const edge of ['/404.html', '/index.html', '/app.html', 'pass']) expect(V.some((v) => v.edge === edge)).toBe(true);
 });
 
 test('the vectors cover the edge cases the plan names', () => {

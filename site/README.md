@@ -99,17 +99,25 @@ or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.m
   resource is deleted, so if the first deploy (the one that replaces the placeholder page) rolls back, the bucket keeps
   the new pages under the old distribution settings (no CSP, router or 404 page): fix forward by deploying again; a
   rollback does not restore the placeholder.
-- **Edge router.** A CloudFront Function on viewer-request, generated from the grammar in `src/routes.ts`: `/` is
+- **Edge router.** A CloudFront Function on viewer-request and viewer-response, generated from the grammar in
+  `src/routes.ts` and the list of files in `dist/`: `/` is
   `index.html`; `/search`, `/packages/<namespace>/<name>` and `/packages/<namespace>/<name>/<version>` (a valid
   namespace, a valid, normalised name and a valid version) are `app.html`; `/docs`, `/docs/` and `/docs/<slug>[/]` are
   the docs page's `index.html`; a name under a valid namespace that normalises to a different valid name gets a 301 to
   the normalised path, query kept (a namespace is never normalised). A one-segment `/packages/<x>` and a flat
   `/packages/<name>/<version>`, the addresses of the names before namespaces, get a 302 to a search: for the name in
   every namespace, or for a namespace's packages when `<x>` is a namespace and no name (`src/routes.ts`
-  `flatSearchPath`). Everything else goes to the bucket as it is.
-- **Not found.** A missing key (403 or 404 from the bucket) gets `404.html` with status 404; nothing is answered with
-  the home page. These are distribution-wide error responses, an interim choice until the API is served from this
-  distribution (`docs/design/mopm-dev.md`, §4.1).
+  `flatSearchPath`). A file of the build goes to the bucket as it is, and so does an asset under an id that is not this
+  build's (an earlier build's, which the bucket keeps).
+- **Not found.** Anything else (an unknown page, a docs slug with no page, a file the build does not have, including
+  one under this build's `assets/<id>/`) is rewritten to `404.html`, and the same function turns that response's 200
+  into 404 on viewer-response; nothing is answered with the home page. There are no distribution-wide error
+  responses, so the API's JSON errors under `/api/*` reach the browser as JSON. A request for a key that exists in no
+  build under an earlier build's id gets the bucket's own 403.
+- **API.** `/api/*` goes to the stage's API (`api.<site host>`) over HTTPS, uncached, with every viewer header but
+  `Host`, the cookies and the query string, a 30 s origin read timeout, and an `x-mopm-edge` origin header whose value
+  is the generated secret `mopm/<stage>/edge-origin`. Its responses get their own headers: `nosniff`, `no-referrer`,
+  HSTS and `Content-Security-Policy: default-src 'none'; sandbox; frame-ancestors 'none'`. No page calls it yet.
 - **Headers.** The CSP `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src
   https://api.<site host>; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none';
   require-trusted-types-for 'script'; trusted-types 'none'`, plus HSTS, `X-Content-Type-Options`,

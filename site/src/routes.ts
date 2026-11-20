@@ -101,7 +101,7 @@ export function parseRoute(path: string): Route | null {
 
 /**
  * Where the edge router sends a one-segment package address, or a flat version address of the names before namespaces,
- * or null when the path is neither (the router passes it to the bucket, which answers 404):
+ * or null when the path is neither (the router answers it with the 404 page, status 404):
  *  - `/packages/<name>` (a canonical name) and `/packages/<name>/<version>`: a search for the name in every namespace.
  *    A flat name became `<namespace>/<name>` with the same name, so the search lists it.
  *  - `/packages/<namespace>` that is no canonical name ('komira-ai'): the namespace's packages.
