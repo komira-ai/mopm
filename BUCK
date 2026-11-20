@@ -1069,6 +1069,14 @@ export_file(
     visibility = ["//service/lambda/web:"],
 ) for f in ["web-auth.json", "tutorial-sandbox.json"]]
 
+# The unit table `buildrules sync` writes, for the canary's graph_test (tools/lambda/canary/graph_test.rs): TLS on AWS-LC, no ring.
+export_file(
+    name = "lambda.unit_table",
+    src = "buildrules.lock.bzl",
+    mode = "reference",
+    visibility = ["//tools/lambda:"],
+)
+
 # The corpus directory itself (mode reference: the source directory, not a copy), for mopm_validate.
 export_file(
     name = "validator_corpus_dir",
