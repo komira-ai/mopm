@@ -2,7 +2,18 @@
 # buildrules' cargo_package.
 load("//:buildrules.bzl", "cargo_package")
 
-cargo_package(path = ".")
+# The web sign-in function's grants (tests/fixtures/web_login_grants.json): `fake_dynamo` reads them with `include_str!`
+# from the library's sources, so they are an input of every compile of this crate, not only of its tests.
+export_file(
+    name = "web_login_grants.json",
+    src = "tests/fixtures/web_login_grants.json",
+    mode = "reference",
+)
+
+cargo_package(
+    path = ".",
+    extra_srcs = [":web_login_grants.json"],
+)
 
 # This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
 filegroup(

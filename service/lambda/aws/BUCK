@@ -7,7 +7,10 @@ load("//:buildrules.bzl", "cargo_package")
 
 cargo_package(
     path = ".",
-    extra_srcs = ["//service/api:lambda-auth-grants.json"],
+    extra_srcs = [
+        "//service/api:lambda-auth-grants.json",
+        ":namespace_user_row.json",
+    ],
 )
 
 # The user namespace row the Rust adapter writes (tests/fixtures/namespace_user_row.json): this package's test holds
