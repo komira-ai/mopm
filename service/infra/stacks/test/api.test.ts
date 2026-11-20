@@ -4,7 +4,7 @@ import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, V2_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
-import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
+import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, RUST_ZIP_STUB_DIR, build, tpl } from './util';
 
 const acts = (s: any): string[] => ([] as string[]).concat(s.Action);
 const flat = (v: any): string => (typeof v === 'string' ? v : JSON.stringify(v));
@@ -634,4 +634,21 @@ test('no stage allows another stage\'s origin (the three origin lists are pairwi
   const all = origins.flat();
   expect(new Set(all).size).toBe(all.length);
   expect(all.sort()).toEqual(['https://beta.mopm.dev', 'https://gamma.mopm.dev', 'https://mopm.dev']);
+});
+
+describe.each(STAGES)('the Rust switch (%s)', (stage) => {
+  const rustFunctions = (t: Template) => t.findResources('AWS::Lambda::Function', { Properties: { Runtime: 'provided.al2023' } });
+
+  test('with rustZipDir the API stack has exactly the three Rust functions, named for the stage', () => {
+    const t = Template.fromStack(build(stage, { rustZipDir: RUST_ZIP_STUB_DIR }).api);
+    expect(Object.values(rustFunctions(t)).map((r: any) => r.Properties.FunctionName).sort()).toEqual([
+      `mopm-${stage}-tutorial-sandbox`,
+      `mopm-${stage}-web-login`,
+      `mopm-${stage}-web-session`,
+    ]);
+  });
+
+  test('without rustZipDir the API stack has no Rust function', () => {
+    expect(Object.keys(rustFunctions(Template.fromStack(build(stage).api)))).toEqual([]);
+  });
 });
