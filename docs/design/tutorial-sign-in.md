@@ -13,6 +13,9 @@ with it any signed-in user could create sandboxes with the network on.
 
 ## For the tutorial's author: what to build against
 
+The guide to building the tutorial's pages against this, with type-checked code for an editor and a terminal over the
+sandbox's token, is [`docs/tutorial-author-guide.md`](../tutorial-author-guide.md).
+
 ### The endpoint
 
 `POST /api/v2/tutorial/sandbox` on the site's own host (`https://mopm.dev`, `https://beta.mopm.dev`, ...; section 2.1).
@@ -112,17 +115,20 @@ settles all three.
 
 ### Running it locally against the stub
 
-tu-S1 adds a preview server that serves the built site on `127.0.0.1` and plays our side of the contract:
+tu-S1's preview server (`site/tools/preview.ts`) serves the built site on `127.0.0.1` and plays our side of the
+contract:
 
 ```sh
-cd site && npm ci && npm run build
-npm run preview -- --scenario signed-out          # lesson text and the sign-in card, no editor
+cd site && npm ci --ignore-scripts --no-audit --no-fund && npm run build
+npm run preview -- --scenario signed-out          # the session and sandbox routes answer session_required
 npm run preview -- --scenario signed-in           # a fake session; with no key, the sandbox route answers tutorial_unavailable
 E2B_API_KEY=<a key from your own E2B account> \
   npm run preview -- --scenario signed-in --e2b-template base   # creates real sandboxes, internet off
 ```
 
-It prints its address (`http://127.0.0.1:<port>/tutorial`, the port picked by the system). In the `signed-in`
+It prints its address (`http://127.0.0.1:<port>/tutorial`, the port picked by the system). That address shows the
+tutorial page once tu-S2's build writes `dist/tutorial.html` (signed out: the lesson text and the sign-in card, no
+editor), and the site's 404 page when the build wrote no tutorial page. In the `signed-in`
 scenario, `GET /api/v2/auth/web/session` answers a fixed login and CSRF value. `POST /api/v2/tutorial/sandbox` makes the
 same checks as the real route (the CSRF header, `Origin`, `Sec-Fetch-Site`, no body). With `E2B_API_KEY` set, it sends
 E2B the same create body as the Rust function (section 4): the same JSON, from a second, TypeScript implementation

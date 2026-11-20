@@ -62,6 +62,13 @@ Flags:
 
 Exit codes: 0 done, 1 failed (nothing built, or E2B's error printed), 2 usage.
 
+## The author's guide's code
+
+`guide/` holds the browser code of `docs/tutorial-author-guide.md`: a client of one sandbox from the tutorial
+endpoint's grant (`sandbox.ts`), the editor's file calls (`editor.ts`) and a terminal over the sandbox's pseudo-terminal
+(`terminal.ts`). It is here because this package pins `e2b`, so `npm run typecheck` checks it against the version the
+page will use. It is not part of the template.
+
 ## Tests
 
 `//tutorial/template:test` and `:typecheck` (`npm test`, `npm run typecheck`), with the coverage floor
@@ -70,3 +77,6 @@ Exit codes: 0 done, 1 failed (nothing built, or E2B's error printed), 2 usage.
 `fetch` and a fake E2B build: no network, no key. One test runs E2B's own file selection (`test/upload-hashes.ts`,
 in a child Node process, because it needs a dynamic import Jest cannot run) to check that a lesson's `.mopm/` is
 not uploaded.
+
+`test/guide-*.test.ts` run `guide/` against fakes of the SDK's files and pty modules, and `test/guide-doc.test.ts`
+holds each code block of `docs/tutorial-author-guide.md` equal to its file in `guide/`.
