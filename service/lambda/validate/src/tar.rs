@@ -203,7 +203,7 @@ pub fn read_tar(buf: &[u8], limits: &Limits, budget: &mut Budget) -> Checked<Vec
         if let Some(px) = &pax_next {
             if let Some(s) = px.get("size") {
                 match js::parse_int(s, 10) {
-                    Some(v) if v >= 0 && v <= 9_007_199_254_740_991 => size = v,
+                    Some(v) if (0..=9_007_199_254_740_991).contains(&v) => size = v,
                     _ => return fail(RuleCode::TarHeader, "pax size is not a number"),
                 }
             }
@@ -359,7 +359,7 @@ mod tests {
     }
 
     fn refusal(t: &[u8]) -> (RuleCode, String) {
-        let e = read(t).err().expect("a refusal");
+        let e = read(t).expect_err("a refusal");
         (e.rule, e.message)
     }
 
@@ -529,7 +529,7 @@ mod tests {
         let body = "10 size=5\n";
         let t = tar(&[entry("P", body.as_bytes(), b'x'), {
             let mut e = header("a", 0, b'0');
-            e.extend_from_slice(&[b'1', b'2', b'3', b'4', b'5']);
+            e.extend_from_slice(b"12345");
             e.resize(BLOCK * 2, 0);
             e
         }]);

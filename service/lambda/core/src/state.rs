@@ -64,6 +64,9 @@ impl VersionEvent {
 }
 
 /// The result of an event.
+// Returned by value once per event and matched at once, never stored in a collection: the size of `Changed` costs nothing,
+// and a `Box` would add an allocation to every changed record.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Applied {
     /// The event changes nothing; the record stands (and keeps its `rev`).

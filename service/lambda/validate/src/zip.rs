@@ -299,7 +299,7 @@ mod tests {
     }
 
     fn message(z: &[u8]) -> String {
-        let e = read(z).err().expect("a refusal");
+        let e = read(z).expect_err("a refusal");
         assert_eq!(e.rule, RuleCode::ArchiveCorrupt, "{}", e.message);
         e.message
     }

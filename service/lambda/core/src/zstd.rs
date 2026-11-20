@@ -106,6 +106,7 @@ mod tests {
 
     #[test]
     fn is_a_pure_function_of_its_input() {
-        assert_eq!(zstd_frame(b"hello"), zstd_frame(&b"hello".to_vec()));
+        let copy = b"hello".to_vec();
+        assert_eq!(zstd_frame(b"hello"), zstd_frame(&copy));
     }
 }

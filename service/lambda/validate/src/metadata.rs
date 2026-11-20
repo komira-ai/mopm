@@ -226,7 +226,7 @@ fn check_native(item: &Value) -> Checked<NativeDecl> {
         }
     }
     if r.get("exclusive")
-        .is_some_and(|v| v.as_str().map_or(true, |s| !exclusive_ok(s)))
+        .is_some_and(|v| v.as_str().is_none_or(|s| !exclusive_ok(s)))
     {
         return bad(format!("native '{id}': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"));
     }
@@ -586,7 +586,7 @@ mod tests {
     }
 
     fn mopm_msg(v: Value) -> (RuleCode, String) {
-        let e = check_mopm(&obj(v)).err().expect("a refusal");
+        let e = check_mopm(&obj(v)).expect_err("a refusal");
         (e.rule, e.message)
     }
 

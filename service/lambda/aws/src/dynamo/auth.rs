@@ -105,6 +105,8 @@ impl DynamoAuthStore {
         }
     }
 
+    // One DynamoDB UpdateItem: the arguments are that request's own fields, set once each below.
+    #[allow(clippy::too_many_arguments)]
     async fn update(
         &self,
         table: &str,

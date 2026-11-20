@@ -135,9 +135,7 @@ mod tests {
     }
 
     fn refusal(data: &[u8]) -> (RuleCode, String) {
-        let e = run(data, &Limits::DEFAULT, u64::MAX)
-            .err()
-            .expect("a refusal");
+        let e = run(data, &Limits::DEFAULT, u64::MAX).expect_err("a refusal");
         (e.rule, e.message)
     }
 
@@ -220,7 +218,7 @@ mod tests {
             0xfd,
             0x00,
             0x00,
-            0x00 | (2 << 3) as u8,
+            (2 << 3) as u8, // block header: a raw block of 2 bytes, not the last
             0,
             0,
             b'a',
