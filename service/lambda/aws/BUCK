@@ -1,4 +1,5 @@
-# mopm_aws: the ports on the AWS SDK for Rust (official crates; nothing here signs a request).
+# mopm_aws: the ports on the AWS SDK for Rust (official crates; nothing here signs a request), and the outbound HTTPS client
+# (src/http.rs: hyper over rustls on the same AWS-LC; its tests are tests/http.rs and tests/native_roots.rs).
 #
 # The unit tests link rustls and the SDK over AWS-LC: aws-lc-sys is not built from its C sources, its unit links
 # buildrules//third_party/aws-lc:crypto[static-pic] (third_party/buildrules/overrides.json), and the archive reaches
