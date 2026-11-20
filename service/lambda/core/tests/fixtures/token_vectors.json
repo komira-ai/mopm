@@ -1,0 +1,33 @@
+{
+  "$comment": "Token vectors: for each 25 random bytes, the secret generateTokenSecret makes of them, hashToken's SHA-256 and mintToken's prefix (service/api/src/auth/tokens.ts), and the session's CSRF value (docs/design/tutorial-sign-in.md section 2). Held by service/lambda/core/tests/token_vectors.rs (mopm_core) and service/api/test/auth/token-vectors.test.ts (tokens.ts).",
+  "vectors": [
+    {
+      "random_hex": "00000000000000000000000000000000000000000000000000",
+      "token": "mopm_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "hash": "a013de81731c47cf7235a4f82ce1bc1a3efcdb02df98a6eec6fee980d3a349db",
+      "prefix": "mopm_aaaaaa",
+      "csrf": "xWcCkV1r9oST5Nrqj9DOsFbfC_KAZXaHtwzE9xsTu3A"
+    },
+    {
+      "random_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "token": "mopm_7777777777777777777777777777777777777777",
+      "hash": "d7c6f048b2645969bceef4a1e4f86160260743c65af29148ac8d81cc55e94260",
+      "prefix": "mopm_777777",
+      "csrf": "Gn0hJd5jx9uD7WYLbhIk77JA8de38y61m6gb5PBoh8s"
+    },
+    {
+      "random_hex": "000102030405060708090a0b0c0d0e0f101112131415161718",
+      "token": "mopm_aaaqeayeaudaocajbifqydiob4ibceqtcqkrmfyy",
+      "hash": "b771dc8a6890d99f406265926d70c4ec570dd39a5b2f1ee4d1874f8a8800fa77",
+      "prefix": "mopm_aaaqea",
+      "csrf": "LkEBUollMhZI3pw69q_XwSlNTkZkn4TPWaj_JeU8zuU"
+    },
+    {
+      "random_hex": "7829bf414ba6f3d7427de39ab419e334d85dba64e56b6e763a",
+      "token": "mopm_pau36qklu3z5oqt54onligpdgtmf3ote4vvw45r2",
+      "hash": "7471f710344ffbec3e603cb49e36b3dbe531a524ee6b03f75e443b27cb4a5410",
+      "prefix": "mopm_pau36q",
+      "csrf": "zLRlD8qqhkFPWrUNxd878NoztgQv_kbFsQS2v5Oiryk"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 // Proves: a dry run touches nothing and does not read the secret; --apply creates or updates the right secret with the
 // right JSON; the client secret is never in any argument, any output, or any file left behind; failures change nothing.
 import * as fs from 'fs';
-import { firstLine, oauthSecret } from '../lib/oauth-secret';
+import { USAGE, firstLine, oauthSecret } from '../lib/oauth-secret';
 import { FakeHost, Reply, acct } from './fake-host';
 
 const SENTINEL = 's3ntinel-client-secret-0123456789abcdef';
@@ -98,6 +98,7 @@ describe('bad input changes nothing and calls nothing', () => {
     ['secret with a double quote', BASE, 'ab"cd'],
     ['secret with a backslash', BASE, 'ab\\cd'],
     ['bad stage', ['--stage', 'dev', '--profile', 'p', '--client-id', ID], SENTINEL],
+    ['no stage', ['--profile', 'p', '--client-id', ID], SENTINEL],
     ['missing profile', ['--stage', 'beta', '--client-id', ID], SENTINEL],
     ['bad client id', ['--stage', 'beta', '--profile', 'p', '--client-id', 'bad id'], SENTINEL],
     ['no client id', ['--stage', 'beta', '--profile', 'p'], SENTINEL],
@@ -125,6 +126,13 @@ describe('wrong account', () => {
     expect(oauthSecret([...BASE, '--account', acct('5'), '--apply'], host, reading(SENTINEL))).toBe(0);
     expect(host.lines.some((l) => l.includes('create-secret'))).toBe(true);
   });
+});
+
+test('--help prints the usage and runs nothing', () => {
+  const { host } = setup('missing');
+  expect(oauthSecret(['--help'], host, { readSecret: noRead })).toBe(0);
+  expect(host.outLines).toEqual([USAGE]);
+  expect(host.calls).toEqual([]);
 });
 
 test('the secret is the first line of stdin, without its newline', () => {

@@ -56,7 +56,7 @@ jiff = { version = "0.2", default-features = false, features = ["std"] }
 base64 = "0.23"
 hex = "0.4"
 sha2 = "0.11"
-subtle = "2"
+subtle = { version = "2", default-features = false }
 getrandom = "0.4"
 percent-encoding = "2"
 form_urlencoded = "1"

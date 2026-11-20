@@ -1,8 +1,9 @@
 //! mopm_testing: the in-memory implementations of the ports (`mopm_ports`), the contract every
 //! implementation of a port must keep, a clock and a random source a test sets, and seeds.
 //!
-//! The contract suites are scenarios (`store_cases`, `auth_cases`, `publish_cases`) run by the macros
-//! [`store_contract_tests!`], [`auth_contract_tests!`] and [`publish_contract_tests!`] against any
+//! The contract suites are scenarios (`store_cases`, `auth_cases`, `publish_cases`, `namespace_cases`,
+//! `web_login_cases`) run by the macros [`store_contract_tests!`], [`auth_contract_tests!`],
+//! [`publish_contract_tests!`], [`namespace_contract_tests!`] and [`web_login_contract_tests!`] against any
 //! implementation: here against the memory ones, in `mopm_aws` against the DynamoDB ones.
 
 pub mod auth_cases;
@@ -10,12 +11,17 @@ pub mod env;
 pub mod fake_dynamo;
 pub mod fake_http;
 pub mod memory_auth;
+pub mod memory_namespaces;
 pub mod memory_publish;
 pub mod memory_store;
+pub mod memory_web_login;
+pub mod namespace_cases;
 pub mod publish_cases;
 pub mod records;
+pub mod scripted_http;
 pub mod seed;
 pub mod store_cases;
+pub mod web_login_cases;
 
 #[cfg(test)]
 mod memory_contract {
@@ -30,5 +36,13 @@ mod memory_contract {
     mod publish {
         use crate::memory_publish::MemoryPublishStore;
         crate::publish_contract_tests!(MemoryPublishStore::new);
+    }
+    mod namespaces {
+        use crate::memory_namespaces::MemoryNamespaceStore;
+        crate::namespace_contract_tests!(MemoryNamespaceStore::new);
+    }
+    mod web_login {
+        use crate::memory_web_login::MemoryWebLoginStore;
+        crate::web_login_contract_tests!(MemoryWebLoginStore::new);
     }
 }
