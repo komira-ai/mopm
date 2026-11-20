@@ -666,16 +666,6 @@
       "view": null
     },
     {
-      "path": "/docs/no-such-page",
-      "edge": "/404.html",
-      "view": null
-    },
-    {
-      "path": "/docs/no-such-page/",
-      "edge": "/404.html",
-      "view": null
-    },
-    {
       "path": "/docs/index.html",
       "edge": "pass",
       "view": null

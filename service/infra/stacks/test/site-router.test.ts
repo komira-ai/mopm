@@ -82,7 +82,11 @@ test('the vectors exercise every kind of answer, including a version route that 
 
 test('an unknown page, a missing docs page and a missing key under /assets/ of this build get the 404 page', () => {
   const [build] = new Set(FIXTURE.files.filter((f) => f.startsWith('/assets/')).map((f) => f.split('/')[2]));
-  for (const uri of ['/nope', '/nope.txt', '/docs/no-such-page/', `/assets/${build}/nope.js`, `/assets/${build}/`, '/assets/main.js']) {
+  // A docs slug the build has no page for is held here, not in the shared vectors: return_to (service/lambda/core) keeps
+  // every path of the docs grammar, and its vector test reads a kept path as one the router serves a page for.
+  for (const uri of [
+    '/nope', '/nope.txt', '/docs/no-such-page', '/docs/no-such-page/', `/assets/${build}/nope.js`, `/assets/${build}/`, '/assets/main.js',
+  ]) {
     expect([uri, edge(uri)]).toEqual([uri, '/404.html']);
     expect([uri, viewerResponse(uri, response(200)).statusCode]).toEqual([uri, 404]);
   }
