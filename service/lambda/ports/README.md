@@ -15,5 +15,5 @@ The traits the registry's logic is written against, and the records they carry. 
 | `error` | `PortError`: a domain error the registry answers with, an infrastructure fault, or an HTTP request that got no answer |
 
 Methods are `fn ... -> impl Future<Output = PortResult<_>> + Send` (async fn in traits, no `async-trait`, no
-boxing); an implementation writes `async fn`. There are two implementations of each store (memory, DynamoDB), which is
-why they are traits.
+boxing); an implementation writes `async fn`. Each store has a memory implementation (`mopm_testing`) and a DynamoDB one (`mopm_aws`), which is why they are
+traits; the DynamoDB adapters of `NamespaceStore` and `WebLoginStore` and the `hyper` `HttpClient` are not written yet.

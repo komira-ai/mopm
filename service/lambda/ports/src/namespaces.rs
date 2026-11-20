@@ -29,8 +29,8 @@ pub enum NamespaceKind {
     Org,
 }
 
-/// A row of `mopm-<stage>-namespaces`, keyed by `namespace` (`NamespaceRecord` of `namespaces.ts`). The
-/// DynamoDB adapter stores `github_id` as it does today (a string for the index, the number beside it).
+/// A row of `mopm-<stage>-namespaces`, keyed by `namespace` (`NamespaceRecord` of `namespaces.ts`). In the table,
+/// `dynamo-namespace-store.ts` stores `github_id` as a string (the index key) with the number beside it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NamespaceRecord {
     pub namespace: String,
@@ -100,6 +100,10 @@ mod tests {
         assert_eq!(user_namespace_for("a1-b2-c3"), Some("a1-b2-c3".to_string()));
         let longest = "a".repeat(39);
         assert_eq!(user_namespace_for(&longest), Some(longest.clone()));
+        // Lower-casing is Unicode's, as JavaScript's `toLowerCase`: the Kelvin sign becomes `k`, and the dotted
+        // capital I becomes `i` plus a combining dot, which is out of the grammar.
+        assert_eq!(user_namespace_for("\u{212A}evin"), Some("kevin".to_string()));
+        assert_eq!(user_namespace_for("\u{0130}nes"), None);
     }
 
     #[test]

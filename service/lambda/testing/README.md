@@ -11,7 +11,8 @@ Test support for the ports; no function links it.
   `web_login_contract_tests!`: the contract of each port, ported from `service/api/test/store.test.ts`,
   `auth-store.test.ts`, `publish/dynamo.test.ts` and the login's part of `auth-namespaces.test.ts` (the web login's is
   new), one `#[tokio::test]` per scenario on a fresh store. The memory stores run them here; `mopm_aws` runs the same
-  ones against its adapters.
+  ones against its adapters (the store, auth and publish suites today; the namespace and web-login suites once their
+  DynamoDB adapters exist).
 * `scripted_http`: `ScriptedHttp`, an `HttpClient` in memory that answers from a script (responses, or an `HttpError`
   such as a timeout, returned at once) and records every request as sent.
 * `env`: `FixedClock`, `SeededRng`. `records`: `rec` and `audit` of `test/helpers.ts`.

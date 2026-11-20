@@ -36,6 +36,17 @@ pub async fn a_row_is_consumed_once_and_comes_back_whole_with_consumed_at<S: Web
     assert_eq!(s.consume(&h(1), clock.now()).await.unwrap(), None, "a second consume gets nothing");
 }
 
+pub async fn a_row_stored_with_consumed_at_is_not_consumable<S: WebLoginStore>(s: S) {
+    let clock = FixedClock::at_millis(START_MS);
+    let taken = WebLoginRecord { consumed_at: Some("2026-11-19T11:59:00.000Z".to_string()), ..row(1) };
+    s.put(&taken).await.unwrap();
+    assert_eq!(s.consume(&h(1), clock.now()).await.unwrap(), None);
+    // Stored again without consumed_at, the row is consumable: what refused it was consumed_at alone.
+    s.put(&row(1)).await.unwrap();
+    let again = s.consume(&h(1), clock.now()).await.unwrap();
+    assert_eq!(again, Some(WebLoginRecord { consumed_at: Some("2026-11-19T12:00:00.000Z".to_string()), ..row(1) }));
+}
+
 pub async fn an_unknown_id_is_not_consumable<S: WebLoginStore>(s: S) {
     let clock = FixedClock::at_millis(START_MS);
     s.put(&row(1)).await.unwrap();
@@ -94,6 +105,7 @@ macro_rules! web_login_contract_tests {
             $crate::web_login_cases,
             [
                 a_row_is_consumed_once_and_comes_back_whole_with_consumed_at,
+                a_row_stored_with_consumed_at_is_not_consumable,
                 an_unknown_id_is_not_consumable,
                 a_row_is_consumable_until_the_millisecond_before_expires_at,
                 an_expired_row_stays_refused_and_is_not_marked_consumed,
