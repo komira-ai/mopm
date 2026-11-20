@@ -154,11 +154,9 @@ impl FakeDynamo {
         }
         let shared = Arc::new(Shared { cfg, state: Mutex::new(state) });
         let accept = shared.clone();
+        // The first accept error ends the server.
         let task = tokio::spawn(async move {
-            loop {
-                let Ok((stream, _)) = listener.accept().await else { return };
-                tokio::spawn(serve(accept.clone(), stream));
-            }
+            let _ = accept_all(listener, accept).await;
         });
         FakeDynamo { addr, shared, task }
     }
@@ -201,11 +199,18 @@ impl FakeDynamo {
 
 // ---- HTTP ------------------------------------------------------------------------------------------
 
+async fn accept_all(listener: TcpListener, shared: Arc<Shared>) -> Option<()> {
+    loop {
+        let (stream, _) = listener.accept().await.ok()?;
+        tokio::spawn(serve(shared.clone(), stream));
+    }
+}
+
 async fn serve(shared: Arc<Shared>, mut stream: TcpStream) {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 8192];
     let (head, body_start) = loop {
-        let Ok(n) = stream.read(&mut chunk).await else { return };
+        let n = stream.read(&mut chunk).await.unwrap_or(0);
         if n == 0 {
             return;
         }
@@ -222,7 +227,7 @@ async fn serve(shared: Arc<Shared>, mut stream: TcpStream) {
     };
     let len: usize = header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
     while buf.len() < body_start + len {
-        let Ok(n) = stream.read(&mut chunk).await else { return };
+        let n = stream.read(&mut chunk).await.unwrap_or(0);
         if n == 0 {
             return;
         }
@@ -734,8 +739,11 @@ fn transact(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, Fail
 }
 
 #[cfg(test)]
-#[path = "fake_dynamo_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "fake_dynamo_tests.rs"]
+mod more_tests;
 
 #[cfg(test)]
 #[path = "fake_dynamo_ops_tests.rs"]

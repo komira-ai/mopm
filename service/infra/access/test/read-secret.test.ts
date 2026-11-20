@@ -2,11 +2,12 @@
 // Proves: EAGAIN reads are retried via the blocking wait and the secret still comes back; /dev/tty is preferred and
 // closed, with fd 0 as the fallback; raw mode is restored after success, after a read error and after ctrl-C; the
 // non-terminal path is the first line of stdin and never touches the terminal; the secret is never echoed or
-// put in an error.
+// put in an error. readE2bKey shares that terminal path with its own prompt, and on a non-terminal keeps every line
+// but one final line ending, so a key that spans lines reaches the caller's refusal instead of being cut short.
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { SecretIo, openTerminal, readSecret, realSecretIo } from '../lib/read-secret';
+import { SecretIo, openTerminal, readE2bKey, readSecret, realSecretIo, withoutFinalNewline } from '../lib/read-secret';
 
 const SECRET = 's3ntinel-client-secret-0123456789abcdef';
 const eagain = () => Object.assign(new Error('EAGAIN: resource temporarily unavailable, read'), { code: 'EAGAIN' });
@@ -112,6 +113,46 @@ test('the secret is never written to the output: only the prompt and a newline',
   const { io, err } = fake([`${SECRET}\n`], { tty: 5 });
   readSecret('gamma', io);
   expect(err.join('')).toBe('GitHub OAuth app client secret for gamma (input hidden): \n');
+});
+
+describe('readE2bKey', () => {
+  const KEY = 'e2b_s3ntinel0123456789abcdef0123456789abcd';
+  test('terminal: its own prompt on stderr, the key hidden, and the same terminal handling as readSecret', () => {
+    const { io, err, log } = fake([`${KEY}\n`], { tty: 5 });
+    expect(readE2bKey('beta', io)).toBe(KEY);
+    expect(err.join('')).toBe('E2B API key for beta (input hidden): \n');
+    expect(log.filter((l) => l.startsWith('raw:'))).toEqual(['raw:true', 'raw:false']);
+    expect(log).toContain('close:5');
+  });
+  test('non-terminal: all of stdin less one final line ending, no prompt, no terminal touched', () => {
+    const { io, log, err } = fake([], { isTty: false, stdin: `${KEY}\r\n` });
+    expect(readE2bKey('beta', io)).toBe(KEY);
+    expect(log).toEqual(['readAll']);
+    expect(err).toEqual([]);
+  });
+  test('non-terminal: a second line is kept (so the caller refuses it), not cut off as readSecret does', () => {
+    const { io } = fake([], { isTty: false, stdin: `${KEY}\nsecond\n` });
+    expect(readE2bKey('beta', io)).toBe(`${KEY}\nsecond`);
+  });
+  test('without an io argument both readers use the real seams (realSecretIo)', () => {
+    const saved = { stdinIsTty: realSecretIo.stdinIsTty, readAllStdin: realSecretIo.readAllStdin };
+    realSecretIo.stdinIsTty = false;
+    realSecretIo.readAllStdin = () => `${KEY}\nsecond\n`;
+    try {
+      expect(readE2bKey('beta')).toBe(`${KEY}\nsecond`);
+      expect(readSecret('beta')).toBe(KEY);
+    } finally {
+      Object.assign(realSecretIo, saved);
+    }
+  });
+  test('withoutFinalNewline drops exactly one final line ending and nothing else', () => {
+    expect(withoutFinalNewline('k\n')).toBe('k');
+    expect(withoutFinalNewline('k\r\n')).toBe('k');
+    expect(withoutFinalNewline('k')).toBe('k');
+    expect(withoutFinalNewline('k\n\n')).toBe('k\n');
+    expect(withoutFinalNewline(' k \n')).toBe(' k ');
+    expect(withoutFinalNewline('')).toBe('');
+  });
 });
 
 describe('the real seams (no terminal needed)', () => {

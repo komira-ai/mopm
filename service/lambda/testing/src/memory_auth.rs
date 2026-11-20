@@ -129,5 +129,36 @@ impl AuthStore for MemoryAuthStore {
 }
 
 #[cfg(test)]
-#[path = "memory_auth_tests.rs"]
-mod tests;
+mod tests {
+    use super::*;
+
+    fn tp(name: &str, id: &str) -> TrustedPublisher {
+        serde_json::from_value(serde_json::json!({"name": name, "id": id, "repository_id": "1", "repository_owner_id": "2", "workflow": "w.yml", "added_at": "t", "added_by": 1}))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn removing_a_trusted_publisher_of_a_package_with_none_changes_nothing() {
+        let s = MemoryAuthStore::new();
+        s.remove_trusted_publisher("nobody", "x").await.unwrap();
+        assert!(s.list_trusted_publishers("nobody").await.unwrap().is_empty());
+        s.add_trusted_publisher(&tp("p", "a")).await.unwrap();
+        s.add_trusted_publisher(&tp("p", "b")).await.unwrap();
+        s.remove_trusted_publisher("p", "a").await.unwrap();
+        let left: Vec<String> = s.list_trusted_publishers("p").await.unwrap().into_iter().map(|t| t.id).collect();
+        assert_eq!(left, ["b"]);
+    }
+
+    #[tokio::test]
+    async fn dump_tokens_lists_every_stored_token_row() {
+        let s = MemoryAuthStore::new();
+        assert!(s.dump_tokens().is_empty());
+        let t: TokenRecord = serde_json::from_value(serde_json::json!({
+            "id": "t1", "kind": "api", "github_id": 7, "name": "n", "hash": "h", "prefix": "mopm_", "scopes": ["publish"], "packages": [],
+            "all_current": true, "created_at": "a", "expires_at": "b"
+        }))
+        .unwrap();
+        s.put_token(&t).await.unwrap();
+        assert_eq!(s.dump_tokens(), [t]);
+    }
+}

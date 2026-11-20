@@ -231,12 +231,8 @@ impl FakeHttp {
         let (counter, count) = watch::channel(0);
         let shared = state.clone();
         let task = tokio::spawn(async move {
-            // Dropping the set (when this task is aborted) aborts every connection's task.
-            let mut connections = JoinSet::new();
-            while let Ok((stream, _)) = listener.accept().await {
-                while connections.try_join_next().is_some() {}
-                connections.spawn(serve(shared.clone(), counter.clone(), stream));
-            }
+            // The first accept error ends the server, as before.
+            let _ = accept_all(listener, shared, counter).await;
         });
         FakeHttp {
             addr,
@@ -267,6 +263,21 @@ impl FakeHttp {
         count.wait_for(|c| *c >= n).await.expect(
             "the server stopped accepting (an accept error) before that many requests came",
         );
+    }
+}
+
+/// Serves every connection until `accept` fails. The connections' tasks belong to a set this function owns, so they all
+/// end when it returns or when the task running it is aborted (the server dropped): a hanging connection closes then.
+async fn accept_all(
+    listener: TcpListener,
+    state: Arc<Mutex<State>>,
+    counter: watch::Sender<usize>,
+) -> Option<()> {
+    let mut connections = JoinSet::new();
+    loop {
+        let (stream, _) = listener.accept().await.ok()?;
+        while connections.try_join_next().is_some() {}
+        connections.spawn(serve(state.clone(), counter.clone(), stream));
     }
 }
 
@@ -434,3 +445,136 @@ pub(crate) mod client {
 #[cfg(test)]
 #[path = "fake_http_tests.rs"]
 mod tests;
+
+/// `FakeHttp::start` as the S3, SQS, CloudFront and Secrets Manager adapters' tests use it.
+#[cfg(test)]
+mod start_tests {
+    use super::*;
+
+    async fn connect(fake: &FakeHttp) -> TcpStream {
+        TcpStream::connect(fake.addr).await.unwrap()
+    }
+
+    async fn read_to_end(stream: &mut TcpStream) -> Vec<u8> {
+        let mut out = Vec::new();
+        stream.read_to_end(&mut out).await.unwrap();
+        out
+    }
+
+    async fn exchange(fake: &FakeHttp, raw: &[u8]) -> String {
+        let mut s = connect(fake).await;
+        s.write_all(raw).await.unwrap();
+        String::from_utf8(read_to_end(&mut s).await).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_request_with_a_query_records_path_and_query_separately() {
+        let fake = FakeHttp::start(vec![]);
+        let reply = exchange(&fake, b"GET /bucket/key?list-type=2&prefix=a%2Fb HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"));
+        let seen = fake.requests();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].method, "GET");
+        assert_eq!(seen[0].path(), "/bucket/key");
+        assert_eq!(seen[0].query(), "list-type=2&prefix=a%2Fb");
+        assert_eq!(seen[0].target, "/bucket/key?list-type=2&prefix=a%2Fb");
+    }
+
+    #[tokio::test]
+    async fn a_request_without_a_query_has_an_empty_query() {
+        let fake = FakeHttp::start(vec![]);
+        exchange(&fake, b"GET /only/path HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        let seen = fake.requests();
+        assert_eq!(seen[0].path(), "/only/path");
+        assert_eq!(seen[0].query(), "");
+    }
+
+    #[tokio::test]
+    async fn headers_are_lower_cased_and_signed_headers_are_listed() {
+        let fake = FakeHttp::start(vec![]);
+        let auth = "AWS4-HMAC-SHA256 Credential=AK/20261119/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc";
+        exchange(&fake, format!("PUT /k HTTP/1.1\r\nHost: h\r\nAuthorization: {auth}\r\nContent-Length: 2\r\n\r\nhi").as_bytes()).await;
+        let seen = fake.requests();
+        assert_eq!(seen[0].header("host"), Some("h"));
+        assert_eq!(seen[0].header("missing"), None);
+        assert_eq!(seen[0].signed_headers(), vec!["host".to_string(), "x-amz-date".to_string()]);
+        assert_eq!(seen[0].body, b"hi");
+    }
+
+    #[tokio::test]
+    async fn a_request_without_authorization_has_no_signed_headers() {
+        let fake = FakeHttp::start(vec![]);
+        exchange(&fake, b"GET /k HTTP/1.1\r\nHost: h\r\n\r\n").await;
+        assert!(fake.requests()[0].signed_headers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_client_that_closes_mid_header_is_not_recorded_and_the_next_request_is_served() {
+        let fake = FakeHttp::start(vec![Reply::new(204)]);
+        let mut s = connect(&fake).await;
+        s.write_all(b"GET /half HTTP/1.1\r\nHost: x\r\n").await.unwrap();
+        s.shutdown().await.unwrap();
+        assert!(read_to_end(&mut s).await.is_empty());
+        assert!(fake.requests().is_empty());
+        let reply = exchange(&fake, b"GET /whole HTTP/1.1\r\nHost: x\r\n\r\n").await;
+        assert!(reply.starts_with("HTTP/1.1 204 OK\r\n"));
+        assert_eq!(fake.requests().len(), 1);
+        assert_eq!(fake.requests()[0].path(), "/whole");
+    }
+
+    #[tokio::test]
+    async fn a_client_that_closes_mid_body_is_not_recorded() {
+        let fake = FakeHttp::start(vec![]);
+        let mut s = connect(&fake).await;
+        s.write_all(b"PUT /k HTTP/1.1\r\nContent-Length: 10\r\n\r\nabc").await.unwrap();
+        s.shutdown().await.unwrap();
+        assert!(read_to_end(&mut s).await.is_empty());
+        assert!(fake.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_body_larger_than_one_read_is_recorded_whole() {
+        let fake = FakeHttp::start(vec![]);
+        let body: Vec<u8> = (0..20_000u32).map(|i| (i % 251) as u8).collect();
+        let mut raw = format!("PUT /big HTTP/1.1\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+        raw.extend_from_slice(&body);
+        let mut s = connect(&fake).await;
+        s.write_all(&raw).await.unwrap();
+        let reply = String::from_utf8(read_to_end(&mut s).await).unwrap();
+        assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert_eq!(fake.requests()[0].body, body);
+    }
+
+    #[tokio::test]
+    async fn an_error_status_is_answered_with_its_headers_and_body() {
+        let fake = FakeHttp::start(vec![Reply::new(404).header("x-amz-request-id", "r1").body("nope")]);
+        let reply = exchange(&fake, b"GET /k HTTP/1.1\r\n\r\n").await;
+        assert_eq!(reply, "HTTP/1.1 404 Error\r\nx-amz-request-id: r1\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnope");
+    }
+
+    #[tokio::test]
+    async fn a_reply_that_sets_content_length_is_not_given_a_second_one() {
+        let fake = FakeHttp::start(vec![Reply::new(200).header("Content-Length", "4").body("data")]);
+        let reply = exchange(&fake, b"GET /k HTTP/1.1\r\n\r\n").await;
+        assert_eq!(reply, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndata");
+    }
+
+    #[tokio::test]
+    async fn a_head_reply_carries_the_length_but_no_body() {
+        let fake = FakeHttp::start(vec![Reply::new(200).body("data")]);
+        let reply = exchange(&fake, b"HEAD /k HTTP/1.1\r\n\r\n").await;
+        assert_eq!(reply, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n");
+    }
+
+    #[tokio::test]
+    async fn replies_are_served_in_order_and_the_last_repeats() {
+        let fake = FakeHttp::start(vec![Reply::new(201), Reply::new(202)]);
+        let mut statuses = Vec::new();
+        for _ in 0..3 {
+            let reply = exchange(&fake, b"GET /k HTTP/1.1\r\n\r\n").await;
+            statuses.push(reply[9..12].to_string());
+        }
+        assert_eq!(statuses, ["201", "202", "202"]);
+        assert!(fake.endpoint().starts_with("http://127.0.0.1:"));
+    }
+}

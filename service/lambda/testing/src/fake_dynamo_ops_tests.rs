@@ -4,7 +4,7 @@
 
 use serde_json::{json, Value};
 
-use super::tests::{
+use super::more_tests::{
     assert_refused, call, fake, fake_with_grants, pkg, put, put_cond, tput, transact_body, DENIED,
     PACKAGES, VALIDATION, VERSIONS,
 };
@@ -37,7 +37,7 @@ fn values(pairs: &[(&str, &str)]) -> Value {
 }
 
 fn vquery(kc: &str, n: &[(&str, &str)], v: &[(&str, &str)]) -> Value {
-    super::tests::query_with(kc, names(n), values(v))
+    super::more_tests::query_with(kc, names(n), values(v))
 }
 
 async fn seed_versions(fake: &FakeDynamo) {

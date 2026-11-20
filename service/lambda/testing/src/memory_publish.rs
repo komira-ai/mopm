@@ -439,6 +439,16 @@ mod tests {
         f.set(true);
         assert!(f.read_only().await.unwrap());
     }
+
+    #[tokio::test]
+    async fn secrets_are_read_by_id_and_an_absent_id_is_none() {
+        let s = MemorySecrets::new();
+        assert_eq!(s.read("a").await.unwrap(), None);
+        s.set("a", "one");
+        s.set("a", "two");
+        assert_eq!(s.read("a").await.unwrap().as_deref(), Some("two"));
+        assert_eq!(s.read("b").await.unwrap(), None);
+    }
 }
 
 #[cfg(test)]
