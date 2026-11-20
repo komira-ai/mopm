@@ -19,8 +19,8 @@ const nothingWritten = async (h: Harness, name: string) => {
 };
 
 describe('the claim rate limit', () => {
-  test('the defaults are 50 a day for an account and 50 for a token', () => {
-    expect(DEFAULT_PUBLISH_CONFIG).toMatchObject({ claimRatePerAccountPerDay: 50, claimRatePerTokenPerDay: 50 });
+  test('the defaults are 50 a day for an account and 50 for a token, and 500 for a CI namespace and each of its tokens', () => {
+    expect(DEFAULT_PUBLISH_CONFIG).toMatchObject({ claimRatePerAccountPerDay: 50, claimRatePerTokenPerDay: 50, claimRatePerCiNamespacePerDay: 500 });
   });
 
   test('per account: the Nth claim passes, the N+1th is 429 rate_limited with Retry-After to midnight, and writes nothing', async () => {
@@ -78,6 +78,15 @@ describe('the claim rate limit', () => {
     const tokens = await account(h, 7, 2);
     expect((await claim(h, tokens[0]!, 'alpha')).statusCode).toBe(201);
     expect((await claim(h, tokens[1]!, 'bravo')).statusCode).toBe(429);
+  });
+
+  test('MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY sets the CI namespace limit; 0, x and a negative number stop the cold start naming it', () => {
+    expect(publishConfigFromEnv({}).claimRatePerCiNamespacePerDay).toBe(500);
+    expect(publishConfigFromEnv({ MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY: '' }).claimRatePerCiNamespacePerDay).toBe(500);
+    expect(publishConfigFromEnv({ MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY: '7' })).toMatchObject({ claimRatePerCiNamespacePerDay: 7, claimRatePerAccountPerDay: 50, claimRatePerTokenPerDay: 50 });
+    for (const bad of ['0', 'x', '-1', '1.5']) {
+      expect(() => publishConfigFromEnv({ MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY: bad })).toThrow(new Error('MOPM_CLAIM_RATE_PER_CI_NAMESPACE_DAY must be an integer of at least 1'));
+    }
   });
 
   test('only a claim that is written is charged: a taken, reserved, invalid or too similar name costs no quota', async () => {
