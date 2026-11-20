@@ -202,6 +202,31 @@ the six characters being the suffix Secrets Manager adds to every ARN) and use t
 by CloudFormation, so no stack holds its value. It uses the account's default Secrets Manager key, which the Lambda
 role can use without a separate grant.
 
+## E2B API key (once per stage)
+
+The tutorial's sandbox route (`POST /api/v2/tutorial/sandbox`, `docs/design/tutorial-sign-in.md` section 4) creates
+E2B sandboxes with the team's E2B API key, kept in Secrets Manager as `mopm/<stage>/e2b`, JSON `{"api_key"}`. In that
+design the stack that deploys the route's `tutorial-sandbox` function creates the secret, empty, with a resource policy
+that lets only that function read it. The owner stores the value with a held script, run with their own credentials for
+that stage's account. The script only stores a new version (`put-secret-value`): it never creates or deletes the
+secret, and while the secret does not exist on a stage it stops there and says to deploy the stack first.
+
+Order: on each stage, after the stack that creates the secret is deployed there, and before the route is relied on;
+beta first, then gamma, then prod, each checked before the next.
+
+1. In E2B's dashboard, create an API key for the team, one per stage, so a beta key can be revoked without touching
+   prod.
+2. Store it. Preview first; nothing is read or called without `--apply`. The key is read from standard input (hidden
+   prompt on a terminal), never from a flag or an environment variable, and never printed. `--account` makes the script
+   refuse a profile in another account:
+   ```sh
+   npm --prefix service/infra/access run -s e2b-secret -- --stage beta --profile <your profile> --account <beta account id>
+   npm --prefix service/infra/access run -s e2b-secret -- --stage beta --profile <your profile> --account <beta account id> --apply
+   ```
+   An empty key, or one with whitespace, a line break or a control character in it, is refused before anything is
+   stored. Rotation: create a new key in E2B and run the script again. The function reads the key at cold start, so
+   instances already running keep the old key until Lambda replaces them: revoke the old key in E2B only after that.
+
 ## Verification
 
 Run `deploy.yml` on `main` for `beta`: `aws sts get-caller-identity` must show the deploy role. The same
