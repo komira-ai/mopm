@@ -14,7 +14,8 @@ exchange of the same token is refused as `oidc_token_invalid`.
 
 `purpose` is optional: `publish` (the default, the token this call has always minted) or `stage`. A `stage` token
 has the one scope `stage`: the same packages, versions, namespace and life as the `publish` token of the same request,
-but it can only prepare a group (`createGroup`, `getGroup`, `abortGroup`); `commitGroup`, `commitPublish`, `setYanked`
+but it can only prepare a group (`createGroup`, `getGroup`, `abortGroup`) and create the empty packages it names
+(`createPackage`); `commitGroup`, `commitPublish`, `setYanked`
 and `yankGroup` refuse it as `scope_missing`. Any other `purpose` is
 `invalid_request`, before the CI identity token is spent.
 

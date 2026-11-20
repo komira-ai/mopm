@@ -362,7 +362,9 @@ pub fn getPackage(ctx: *Ctx, params: []const []const u8) anyerror!Response {
 }
 
 /// Whether token `t` names the package `key` for creating it: an API token with `publish` whose `packages` lists it, a
-/// CI identity token minted for it (either purpose: a set is staged only once its packages exist). A session always does.
+/// CI identity token minted for it, `publish` or `stage` (a set is staged only once its packages exist, and an empty
+/// package publishes nothing). A session always does. A CI token of `/api/v2` names packages of one namespace only (the
+/// exchange refuses a set of two), so a token minted for another namespace never names `key`, as in the registry.
 fn tokenNames(t: *const st.Token, key: []const u8) bool {
     switch (t.kind) {
         .session => return true,
@@ -427,8 +429,9 @@ fn publishes(s: *st.State, key: []const u8, repository: []const u8) bool {
 }
 
 /// `POST /auth/oidc/exchange` under v2: `name` (or each `packages[].name`) is a full name, matched to the publishers of its
-/// namespace; it mints a token for the CI identity of the repository and creates nothing (`PUT` creates). A name whose
-/// namespace does not have the repository as a publisher, or does not exist, is `oidc_not_trusted` naming it.
+/// namespace; it mints a token for the CI identity of the repository and creates nothing (`PUT` creates). A set naming
+/// two namespaces is `invalid_request`. A name whose namespace does not have the repository as a publisher, or does not
+/// exist, is `oidc_not_trusted` naming it.
 pub fn exchangeOidcToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
     const jwt = util.getStr(obj, "jwt") orelse return resp.invalid(ctx.arena, "'jwt' must be a string");
@@ -468,6 +471,12 @@ pub fn exchangeOidcToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         for (wanted.items[0..i]) |earlier| {
             if (std.mem.eql(u8, earlier.name, w.name)) return resp.invalid(ctx.arena, "'packages' names a package twice");
         }
+    }
+    // As in the registry: one token is minted for one namespace, so a set naming two is the caller's mistake, found before
+    // the token is looked at.
+    const namespace = names.namespaceOf(wanted.items[0].name).?;
+    for (wanted.items[1..]) |w| {
+        if (!std.mem.eql(u8, names.namespaceOf(w.name).?, namespace)) return resp.invalid(ctx.arena, "'packages' names more than one namespace");
     }
     const repository = auth.oidcRepository(ctx, jwt) orelse
         return resp.fail(ctx.arena, .oidc_token_invalid, &.{.{ "detail", "not a token with a repository claim" }});

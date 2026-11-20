@@ -87,13 +87,16 @@ export class CreateService {
   }
 
   /**
-   * The token must name the package: a session always; an API token with `publish` for it; a CI token minted for this
-   * namespace and name. Answers the account's id, or undefined for a CI token.
+   * The token must name the package: a session always; an API token with `publish` for it; a CI token with `publish` or
+   * `stage` minted for this namespace and name. A stage token may create because a group is staged only once its packages
+   * exist, and an empty package publishes nothing (an API token stays `publish`-only). Answers the account's id, or
+   * undefined for a CI token.
    */
   private requireNamed(p: Principal, namespace: string, full: string): number | undefined {
     const publish = p.scopes.includes('publish');
     if (p.github_id !== undefined && (p.kind === 'session' || (p.kind === 'api' && publish && p.packages.includes(full)))) return p.github_id;
-    if (p.kind === 'oidc' && publish && p.ci_namespace === namespace && p.packages.includes(full)) return undefined;
+    const ciMay = publish || p.scopes.includes('stage');
+    if (p.kind === 'oidc' && ciMay && p.ci_namespace === namespace && p.packages.includes(full)) return undefined;
     throw missingScope(full);
   }
 

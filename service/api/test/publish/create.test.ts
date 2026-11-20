@@ -62,6 +62,62 @@ describe('createPackage: who may create', () => {
   });
 });
 
+describe('createPackage: a CI token with the stage scope', () => {
+  // `mopm publish --staged --oidc --no-commit` creates each new member's package with its stage token before it stages the group.
+  test('a stage token minted for the namespace creates the package it names: claimed, no owner, no version, audited as the namespace', async () => {
+    const r = await rig();
+    const t = await r.ci('komira-ai', ['komira-ai/anomaly', 'komira-ai/json'], { scopes: ['stage'] });
+    expect(await r.creates.create(t, 'komira-ai', 'anomaly')).toEqual({ created: true });
+    expect(await r.registry.getPackage('komira-ai/anomaly')).toEqual({ name: 'komira-ai/anomaly', state: 'claimed', created_at: '2026-10-14T12:00:00.000Z' });
+    expect(await r.registry.listOwners('komira-ai/anomaly')).toEqual([]);
+    expect(await r.registry.listVersions('komira-ai/anomaly')).toEqual([]);
+    expect(await r.registry.listAudit('komira-ai/anomaly')).toEqual([{ name: 'komira-ai/anomaly', ts: '2026-10-14T12:00:00.000Z', id: 'a_id0001', actor: 'ci:ns:komira-ai', action: 'create' }]);
+    expect(await r.creates.create(t, 'komira-ai', 'anomaly')).toEqual({ created: false });
+  });
+
+  test('a stage token with a ci_owner is audited as that repository', async () => {
+    const r = await rig();
+    expect(await r.creates.create(await r.ci('komira-ai', ['komira-ai/anomaly'], { scopes: ['stage'], ci_owner: 'gh-repo:99' }), 'komira-ai', 'anomaly')).toEqual({ created: true });
+    expect((await r.registry.listAudit('komira-ai/anomaly'))[0]!.actor).toBe('ci:gh-repo:99');
+  });
+
+  test.each([
+    ['for another package of its namespace', 'komira-ai', ['komira-ai/json'], 'komira-ai', 'anomaly'],
+    ['minted for another namespace, naming the full name', 'alice', ['komira-ai/anomaly'], 'komira-ai', 'anomaly'],
+    ['minted for another namespace, naming the same name there', 'alice', ['alice/anomaly'], 'komira-ai', 'anomaly'],
+    ['of the v1 exchange (no namespace)', undefined, ['komira-ai/anomaly'], 'komira-ai', 'anomaly'],
+  ])('a stage token %s is scope_missing naming publish and the full name, and writes nothing', async (_label, ns, packages, namespace, name) => {
+    const r = await rig();
+    const t = await r.ci(ns as string, packages, { scopes: ['stage'] });
+    expect(await refused(r.creates.create(t, namespace, name))).toEqual({
+      status: 403,
+      code: 'scope_missing',
+      message: `The token does not have the 'publish' scope for '${namespace}/${name}'.`,
+    });
+    await nothingWritten(r, `${namespace}/${name}`);
+  });
+
+  test('an API token with only the stage scope still may not create, even naming the package', async () => {
+    const r = await rig();
+    expect((await refused(r.creates.create(await r.api(CAROL, ['komira-ai/anomaly'], ['stage']), 'komira-ai', 'anomaly'))).code).toBe('scope_missing');
+    await nothingWritten(r, 'komira-ai/anomaly');
+  });
+
+  test('over the HTTP route: PUT with a stage token is 201 for its own package and 403 for another package or namespace', async () => {
+    const r = await rig();
+    const t = await r.ci('komira-ai', ['komira-ai/anomaly'], { scopes: ['stage'] });
+    const answer = async (path: string) => {
+      const res = await r.call('PUT', path, t);
+      return [res.statusCode, res.statusCode === 201 ? undefined : JSON.parse(res.body).error.code];
+    };
+    expect(await answer('/api/v2/packages/komira-ai/anomaly')).toEqual([201, undefined]);
+    expect(await answer('/api/v2/packages/komira-ai/other')).toEqual([403, 'scope_missing']);
+    expect(await answer('/api/v2/packages/alice/anomaly')).toEqual([403, 'scope_missing']);
+    await nothingWritten(r, 'komira-ai/other');
+    await nothingWritten(r, 'alice/anomaly');
+  });
+});
+
 describe('createPackage: defaults', () => {
   test('without an injected clock or id source the audit row still gets a unique id of 32 hex digits', async () => {
     const r = await rig();
@@ -144,7 +200,7 @@ describe('createPackage: refusals, in order', () => {
     ['an API token with only the yank scope', (r: Rig) => r.api(ALICE, ['alice/json'], ['yank'])],
     ['a CI token minted for another namespace', (r: Rig) => r.ci('komira-ai', ['alice/json'])],
     ['a CI token that does not name the package', (r: Rig) => r.ci('alice', ['alice/other'])],
-    ['a CI token with only the stage scope', (r: Rig) => r.ci('alice', ['alice/json'], { scopes: ['stage'] })],
+    ['a CI token with only the yank scope', (r: Rig) => r.ci('alice', ['alice/json'], { scopes: ['yank'] })],
     ['a CI token of the v1 exchange (no namespace)', async (r: Rig) => r.ci(undefined as unknown as string, ['alice/json'])],
   ])('%s is scope_missing naming publish and the full name', async (_label, token) => {
     const r = await rig();
