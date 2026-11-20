@@ -45,19 +45,23 @@ zig_test(
 # The canary: a Lambda function built from the pinned crates (Cargo.toml, third_party/buildrules) with buildrules' cargo_unit
 # rules, to hold the build foundation of the registry's Rust functions. Nothing deploys it. Built from Cargo.toml by
 # `cargo_package` (this package is a Cargo package, `mopm_canary`: the executable `canary`, and the integration tests
-# `tls_test` and `sdk_test`):
+# `tls_test`, `sdk_test` and `graph_test`):
 #
 #   :release           the function's executable (`bootstrap`), the release profile
-#   :test              the unit tests of main.rs, :tls_test and :sdk_test, one marker each
+#   :test              the unit tests of main.rs, :tls_test, :sdk_test and :graph_test, one marker each
 #   :canary_e2e_test   runs the release executable against a fake Lambda runtime API on loopback and holds its answer
 #   :canary_zip        the deployment package; not built unless :test and :canary_e2e_test passed on that binary
 #
-#   canary/tls_test.rs rustls on aws-lc-rs over buildrules' AWS-LC: handshakes, a refused name, the version
-#   canary/sdk_test.rs the AWS SDK for Rust: one DynamoDB GetItem on loopback, and a client of each service
+#   canary/tls_test.rs   rustls on aws-lc-rs over buildrules' AWS-LC: handshakes, a refused name, the version
+#   canary/sdk_test.rs   the AWS SDK for Rust: one DynamoDB GetItem on loopback, and a client of each service
+#   canary/graph_test.rs the committed unit table (//:buildrules.lock.bzl, an extra source) builds TLS on AWS-LC and has no ring
 #
 # aws-lc-sys is not built from its C sources: third_party/buildrules/overrides.json links buildrules' AWS-LC into each test
 # and executable. See tools/lambda/README.md.
-cargo_package(path = ".")
+cargo_package(
+    path = ".",
+    extra_srcs = ["//:lambda.unit_table"],
+)
 
 zig_test(
     name = "canary_e2e_test",

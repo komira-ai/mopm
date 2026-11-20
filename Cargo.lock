@@ -1660,15 +1660,21 @@ dependencies = [
  "aws-sdk-sqs",
  "base64 0.23.1",
  "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
  "jiff",
  "mopm_core",
  "mopm_ports",
  "mopm_testing",
+ "rustls",
  "serde",
  "serde_dynamo",
  "serde_json",
  "sha2 0.11.0",
  "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
