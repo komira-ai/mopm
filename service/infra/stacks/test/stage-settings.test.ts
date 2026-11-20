@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
@@ -58,6 +59,12 @@ describe.each(STAGES)('stage_settings on %s', (stage) => {
       e2b_domain: { S: 'e2b.example' },
       sandbox_timeout_s: { N: '600' },
     });
+  });
+
+  test('the item written for beta with a full tutorial block is the item the Rust side parses (service/lambda/web fixture)', () => {
+    const call = createCall(apiWithRust('beta', { tutorial: { e2bTemplateId: 'tpl-abc_1', e2bDomain: 'e2b.example', sandboxTimeoutS: 600 }, require2fa: false }));
+    const fixture = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../lambda/web/tests/fixtures/stage_settings_item.json'), 'utf8'));
+    expect(call.parameters.Item).toEqual(fixture);
   });
 
   test('a block with only a template id keeps the default domain and timeout', () => {
@@ -130,22 +137,39 @@ describe.each(STAGES)('the Rust switch (rustZipDir) on %s', (stage) => {
   const off = build(stage);
   const on = build(stage, { rustZipDir: RUST_ZIP_STUB_DIR });
 
-  test('absent: no Rust function, no custom resource, no stage_settings writer', () => {
+  test('absent: no Rust function, no custom resource, no stage_settings writer, no web-session route', () => {
     const t = Template.fromStack(off.api);
     t.resourceCountIs('Custom::AWS', 0);
     const runtimes = Object.values(t.findResources('AWS::Lambda::Function')).map((f: any) => f.Properties.Runtime);
     expect(runtimes).not.toContain('provided.al2023');
     expect(runtimes.every((r) => r === 'nodejs22.x')).toBe(true);
+    const keys = Object.values(t.findResources('AWS::ApiGatewayV2::Route')).map((r: any) => r.Properties.RouteKey);
+    expect(keys).not.toContain('GET /api/v2/auth/web/session');
+    expect(keys).not.toContain('POST /api/v2/auth/web/logout');
   });
 
-  test('present: every resource of the stack without it is there and unchanged; what is added is only the writer', () => {
+  test('present: every resource of the stack without it is there and unchanged; what is added is only the writer and the web-session function', () => {
     const a = Template.fromStack(off.api).toJSON().Resources as Record<string, any>;
     const b = Template.fromStack(on.api).toJSON().Resources as Record<string, any>;
     for (const [id, r] of Object.entries(a)) expect(b[id]).toEqual(r);
     const added = Object.keys(b).filter((id) => !(id in a)).map((id) => b[id].Type).sort();
-    expect(added).toEqual(['AWS::IAM::Policy', 'AWS::IAM::Role', 'AWS::Lambda::Function', 'AWS::Logs::LogGroup', 'Custom::AWS']);
-    const runtimes = Object.values(b).filter((r) => r.Type === 'AWS::Lambda::Function').map((r) => r.Properties.Runtime);
-    expect(runtimes).not.toContain('provided.al2023');
+    expect(added).toEqual([
+      'AWS::ApiGatewayV2::Integration',
+      'AWS::ApiGatewayV2::Route',
+      'AWS::ApiGatewayV2::Route',
+      'AWS::IAM::Policy',
+      'AWS::IAM::Policy',
+      'AWS::IAM::Role',
+      'AWS::IAM::Role',
+      'AWS::Lambda::Function',
+      'AWS::Lambda::Function',
+      'AWS::Lambda::Permission',
+      'AWS::Logs::LogGroup',
+      'AWS::Logs::LogGroup',
+      'Custom::AWS',
+    ]);
+    const fns = Object.values(b).filter((r) => r.Type === 'AWS::Lambda::Function');
+    expect(fns.filter((r) => r.Properties.Runtime === 'provided.al2023').map((r) => r.Properties.FunctionName)).toEqual([`mopm-${stage}-web-session`]);
   });
 
   test('the other stacks do not change with it', () => {
