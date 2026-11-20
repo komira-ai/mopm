@@ -319,6 +319,19 @@ test "the checker refuses a lesson.json that is missing, not JSON, or refused by
     try std.testing.expect(std.mem.startsWith(u8, found.items[0], try std.fmt.allocPrint(a, "{s}/hello: lesson.json: /editable/0: ", .{t.root})));
 }
 
+test "the checker refuses an order the schema takes but that is not written as an integer: 1.0, 1e30" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var t = try Tree.init(a, &.{"hello"});
+    defer t.deinit();
+    for ([_][]const u8{ "1.0", "1e30" }) |order| {
+        const json = try h.readFile(a, hello_json);
+        try t.put(a, "hello/lesson.json", try std.mem.replaceOwned(u8, a, json, "\"order\": 1,", try std.fmt.allocPrint(a, "\"order\": {s},", .{order})));
+        try t.expectProblems(a, &.{"{r}/hello: lesson.json: /order: write the order as an integer, such as 1"});
+    }
+}
+
 test "the checker refuses two lessons of one order" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -366,8 +379,8 @@ const DeadRegistry = struct {
         while (true) {
             const conn = self.server.accept() catch return;
             conn.stream.close();
-            if (self.stopping.load(.seq_cst)) return;
             _ = self.offered.fetchAdd(1, .seq_cst);
+            if (self.stopping.load(.seq_cst)) return;
         }
     }
 
@@ -382,7 +395,8 @@ const DeadRegistry = struct {
         s.close();
         self.thread.join();
         self.server.deinit();
-        return self.offered.load(.seq_cst);
+        // Every connection is counted, the last one (stop's own) too.
+        return self.offered.load(.seq_cst) - 1;
     }
 };
 

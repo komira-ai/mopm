@@ -9,7 +9,8 @@
 //!   - project/mopm.toml is a file, and project/mopm.lock passes spec/lock.schema.json and the lock rules of
 //!     spec/lock.md (contract.lockProblems);
 //!   - each editable path names a file under project/ (the schema has already refused `..`, absolute paths and
-//!     backslashes, so the path cannot leave project/);
+//!     backslashes, so the path names nothing outside project/; a symbolic link in it is followed, as a copy does);
+//!   - the order is written as an integer (the schema's `integer` also takes 1.0);
 //!   - no two lessons share an order.
 //! A file directly under tutorial/lessons is refused, and so is a tree with no lesson.
 //!
@@ -106,7 +107,11 @@ fn lessonProblems(a: Allocator, schemas: Schemas, lessons: std.fs.Dir, id: []con
         const rel = try std.fmt.allocPrint(a, "project/{s}", .{p.string});
         if (fileSize(dir, rel) == null) try c.problem(a, out, "{s}: the editable file {s} is not a file under project/", .{ where, p.string });
     }
-    return c.getInt(doc, "order").?;
+    // The schema's integer is any whole number, 1.0 and 1e30 too; the builds read an integer.
+    return c.getInt(doc, "order") orelse {
+        try c.problem(a, out, "{s}: lesson.json: /order: write the order as an integer, such as 1", .{where});
+        return null;
+    };
 }
 
 /// The size of the file `rel` of `dir` (a link is followed), or null when there is no file there (nothing, a directory,
