@@ -1,0 +1,7 @@
+node_modules/
+build/
+coverage/
+# tsc output written next to the sources by mistake (they are .ts)
+*.js
+!jest.config.js
+!test/chalk-stub.js

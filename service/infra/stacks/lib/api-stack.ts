@@ -12,9 +12,9 @@ import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 import { StageConfig, channelBucketName, e2bSecretName, edgeOriginSecretName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
-import { RustFunction } from './rust-function';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 import { StageSettingsWriter } from './stage-settings';
+import { RustFunction } from './rust-function';
 
 export interface ApiStackProps extends StackProps {
   config: StageConfig;
@@ -494,14 +494,34 @@ export class ApiStack extends Stack {
 
   /**
    * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, section 5): the `stage_settings` item they read
-   * at cold start, and the tutorial sandbox function with the E2B secret only it may read. A function is a RustFunction
-   * (lib/rust-function.ts) created here from `zipDir`.
+   * at cold start, and the functions themselves. A function is a RustFunction (lib/rust-function.ts) created here from `zipDir`.
+   * - `web-login`, the GitHub sign-in of the website (GET /api/v2/auth/web/start and /callback). It is the only function that
+   *   reads the OAuth app secret besides the TypeScript handler's device login.
+   * - `tutorial-sandbox`, the tutorial's sandboxes (POST /api/v2/tutorial/sandbox), with the E2B secret only it may read.
    */
   private addRustFunctions(c: StageConfig, zipDir: string, require2fa: boolean): void {
     if (!fs.existsSync(zipDir)) {
       throw new Error(`the Rust function zips are missing: ${zipDir} does not exist`);
     }
     new StageSettingsWriter(this, 'StageSettings', { config: c, require2fa });
+    new RustFunction(this, 'WebLogin', {
+      config: c,
+      name: 'web-login',
+      zipDir,
+      api: this.api,
+      routes: [
+        { method: apigw.HttpMethod.GET, path: '/api/v2/auth/web/start' },
+        { method: apigw.HttpMethod.GET, path: '/api/v2/auth/web/callback' },
+      ],
+      // The grants of service/lambda/fn_web_login/tests/fixtures/role_grants.json (the config read is RustFunction's own).
+      tables: [
+        { table: 'web_logins', actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'] },
+        { table: 'users', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
+        { table: 'namespaces', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
+        { table: 'tokens', actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'] },
+      ],
+      secrets: [oauthSecretName(c.stage), edgeOriginSecretName(c.stage)],
+    });
 
     // L1, not the L2 Secret: the L2 generates a value when given none. This one has no value until the operator writes the key.
     const e2b = new secretsmanager.CfnSecret(this, 'E2bSecret', {
