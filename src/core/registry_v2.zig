@@ -4,7 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const http = @import("http.zig");
 
-pub const sources_sha256 = "0274d1c9958a036d209291857a36d468935e45a2a002f710071c09200a4cd14d";
+pub const sources_sha256 = "628dd8531edfcb040ec8975a8dc2fa8e324b2fdafee8d3636512724bef92ce6f";
 
 pub const base_path = "/api/v2";
 
@@ -1043,7 +1043,8 @@ pub const OidcExchangeResponseTokenKind = enum {
 
 /// `publish` creates, uploads, reads, aborts and commits groups and publishes single versions; it may also yank.
 /// `yank` yanks. `stage` prepares a group (create, read, abort) and nothing else: it cannot commit a group, publish a
-/// single version, yank or create a package, and it is not enough alone where `publish` or `yank` is asked for.
+/// single version, yank or create a package (save that a token from the OIDC exchange creates the empty packages it
+/// names), and it is not enough alone where `publish` or `yank` is asked for.
 pub const TokenScope = enum {
     publish,
     yank,
@@ -2152,7 +2153,8 @@ pub const PollDeviceLogin = struct {
 ///
 /// `purpose` is optional: `publish` (the default, the token this call has always minted) or `stage`. A `stage` token
 /// has the one scope `stage`: the same packages, versions, namespace and life as the `publish` token of the same request,
-/// but it can only prepare a group (`createGroup`, `getGroup`, `abortGroup`); `commitGroup`, `commitPublish`, `setYanked`
+/// but it can only prepare a group (`createGroup`, `getGroup`, `abortGroup`) and create the empty packages it names
+/// (`createPackage`); `commitGroup`, `commitPublish`, `setYanked`
 /// and `yankGroup` refuse it as `scope_missing`. Any other `purpose` is
 /// `invalid_request`, before the CI identity token is spent.
 pub const ExchangeOidcToken = struct {
@@ -2499,8 +2501,10 @@ pub const GetPackage = struct {
 /// or builtin, `mopm`, `mojo`, `max`, `modular`, `std`, `stdlib` or a top-level module of the Mojo standard library
 /// is `name_reserved`, and its message says which. A package has no claim and no expiry. Creation is rate limited per
 /// account and per token: 50 a UTC day each, unless the operator of the registry has set a higher daily limit for the
-/// account; over it the call is `rate_limited` and `Retry-After` says when the day ends. An API token that has only
-/// the `stage` scope is refused (`scope_missing`).
+/// account; over it the call is `rate_limited` and `Retry-After` says when the day ends. A token from the OIDC exchange,
+/// `publish` or `stage`, creates only a package it names, in the namespace it was minted for: a group is staged only
+/// once its packages exist, and an empty package publishes nothing. An API token that has only the `stage` scope is
+/// refused (`scope_missing`).
 ///
 /// Answers 201 with the package it made, or 200 with the package as it is when it already exists.
 pub const CreatePackage = struct {
