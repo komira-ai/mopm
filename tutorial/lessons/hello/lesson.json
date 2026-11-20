@@ -1,0 +1,7 @@
+{
+  "title": "Hello, world",
+  "summary": "Run your first Mojo program with mopm.",
+  "order": 1,
+  "editable": ["src/main.mojo"],
+  "actions": { "run": "mopm run" }
+}

@@ -19,6 +19,7 @@ filegroup(
         "service_infra_dns": "//service/infra/dns:coverage_floor",
         "service_infra_stacks": "//service/infra/stacks:coverage_floor",
         "site": "//site:coverage_floor",
+        "tutorial_lessons": "//:tutorial_lessons_coverage_floor",
     },
 )
 
