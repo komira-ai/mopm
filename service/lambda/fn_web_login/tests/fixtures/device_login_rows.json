@@ -1,0 +1,23 @@
+{
+  "github_user": { "id": 4242, "login": "Alice-Dev", "two_factor_authentication": true },
+  "now": "2026-11-19T12:00:00.000Z",
+  "users": [
+    {
+      "github_id": { "S": "4242" },
+      "github_id_num": { "N": "4242" },
+      "handle": { "S": "Alice-Dev" },
+      "created_at": { "S": "2026-11-19T12:00:00.000Z" },
+      "last_login_at": { "S": "2026-11-19T12:00:00.000Z" },
+      "two_factor": { "BOOL": true }
+    }
+  ],
+  "namespaces": [
+    {
+      "namespace": { "S": "alice-dev" },
+      "kind": { "S": "user" },
+      "github_id": { "S": "4242" },
+      "github_id_num": { "N": "4242" },
+      "created_at": { "S": "2026-11-19T12:00:00.000Z" }
+    }
+  ]
+}

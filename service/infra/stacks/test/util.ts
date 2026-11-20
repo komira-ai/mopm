@@ -17,7 +17,7 @@ export const HANDLER_STUB_DIR = path.join(__dirname, 'fixtures/api-handler');
 /** A stand-in for the site build (site/dist): the pages and an assets/ directory, so tests synthesize without a build. */
 export const SITE_STUB_DIR = path.join(__dirname, 'fixtures/site');
 
-/** A stand-in for the Rust functions' zips (lambda_zip's output): two tiny zips, each holding a text `bootstrap`. */
+/** A stand-in for the Rust functions' zips (lambda_zip's output): three tiny zips (`fixture-a`, `fixture-b`, `web-login`), each holding a text `bootstrap`. */
 export const RUST_ZIP_STUB_DIR = path.join(__dirname, 'fixtures/rust-zips');
 
 /** `rustZipDir` turns the Rust functions on (ApiStack); `tutorial` replaces the stage file's `tutorial` block. */

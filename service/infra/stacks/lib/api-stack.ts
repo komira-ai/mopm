@@ -10,9 +10,10 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
-import { StageConfig, channelBucketName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
+import { StageConfig, channelBucketName, edgeOriginSecretName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 import { StageSettingsWriter } from './stage-settings';
+import { RustFunction } from './rust-function';
 
 export interface ApiStackProps extends StackProps {
   config: StageConfig;
@@ -491,14 +492,33 @@ export class ApiStack extends Stack {
   }
 
   /**
-   * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, section 5). Today that is the `stage_settings`
-   * item they read at cold start; no function is declared yet. A function is a RustFunction (lib/rust-function.ts) created here
-   * from `zipDir`.
+   * What the Rust functions need in this stack (docs/design/tutorial-sign-in.md, section 5): the `stage_settings` item they read
+   * at cold start, and the functions themselves. A function is a RustFunction (lib/rust-function.ts) created here from `zipDir`.
+   * Today that is `web-login`, the GitHub sign-in of the website (GET /api/v2/auth/web/start and /callback). It is the only
+   * function that reads the OAuth app secret besides the TypeScript handler's device login.
    */
   private addRustFunctions(c: StageConfig, zipDir: string, require2fa: boolean): void {
     if (!fs.existsSync(zipDir)) {
       throw new Error(`the Rust function zips are missing: ${zipDir} does not exist`);
     }
     new StageSettingsWriter(this, 'StageSettings', { config: c, require2fa });
+    new RustFunction(this, 'WebLogin', {
+      config: c,
+      name: 'web-login',
+      zipDir,
+      api: this.api,
+      routes: [
+        { method: apigw.HttpMethod.GET, path: '/api/v2/auth/web/start' },
+        { method: apigw.HttpMethod.GET, path: '/api/v2/auth/web/callback' },
+      ],
+      // The grants of service/lambda/fn_web_login/tests/fixtures/role_grants.json (the config read is RustFunction's own).
+      tables: [
+        { table: 'web_logins', actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'] },
+        { table: 'users', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
+        { table: 'namespaces', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
+        { table: 'tokens', actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'] },
+      ],
+      secrets: [oauthSecretName(c.stage), edgeOriginSecretName(c.stage)],
+    });
   }
 }
