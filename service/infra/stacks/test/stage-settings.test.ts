@@ -148,14 +148,18 @@ describe.each(STAGES)('the Rust switch (rustZipDir) on %s', (stage) => {
     expect(keys).not.toContain('POST /api/v2/auth/web/logout');
   });
 
-  test('present: every resource of the stack without it is there and unchanged; what is added is only the writer and the web-login and web-session functions', () => {
+  test('present: every resource of the stack without it is there and unchanged; what is added is only the writer, the web-login, web-session and tutorial-sandbox functions, and the E2B secret with its policy', () => {
     const a = Template.fromStack(off.api).toJSON().Resources as Record<string, any>;
     const b = Template.fromStack(on.api).toJSON().Resources as Record<string, any>;
     for (const [id, r] of Object.entries(a)) expect(b[id]).toEqual(r);
     const added = Object.keys(b).filter((id) => !(id in a)).map((id) => b[id].Type).sort();
+    // Three Rust functions (an integration, a role, a log group and an invoke permission each; five routes) and the writer
+    // (a function, its role and log group, the custom resource), and the E2B secret with its policy.
     expect(added).toEqual([
       'AWS::ApiGatewayV2::Integration',
       'AWS::ApiGatewayV2::Integration',
+      'AWS::ApiGatewayV2::Integration',
+      'AWS::ApiGatewayV2::Route',
       'AWS::ApiGatewayV2::Route',
       'AWS::ApiGatewayV2::Route',
       'AWS::ApiGatewayV2::Route',
@@ -163,22 +167,29 @@ describe.each(STAGES)('the Rust switch (rustZipDir) on %s', (stage) => {
       'AWS::IAM::Policy',
       'AWS::IAM::Policy',
       'AWS::IAM::Policy',
+      'AWS::IAM::Policy',
       'AWS::IAM::Role',
       'AWS::IAM::Role',
       'AWS::IAM::Role',
+      'AWS::IAM::Role',
+      'AWS::Lambda::Function',
       'AWS::Lambda::Function',
       'AWS::Lambda::Function',
       'AWS::Lambda::Function',
       'AWS::Lambda::Permission',
       'AWS::Lambda::Permission',
+      'AWS::Lambda::Permission',
       'AWS::Logs::LogGroup',
       'AWS::Logs::LogGroup',
       'AWS::Logs::LogGroup',
+      'AWS::Logs::LogGroup',
+      'AWS::SecretsManager::ResourcePolicy',
+      'AWS::SecretsManager::Secret',
       'Custom::AWS',
     ]);
     const fns = Object.values(b).filter((r) => r.Type === 'AWS::Lambda::Function');
     const rust = fns.filter((r) => r.Properties.Runtime === 'provided.al2023').map((r) => r.Properties.FunctionName).sort();
-    expect(rust).toEqual([`mopm-${stage}-web-login`, `mopm-${stage}-web-session`]);
+    expect(rust).toEqual([`mopm-${stage}-tutorial-sandbox`, `mopm-${stage}-web-login`, `mopm-${stage}-web-session`]);
   });
 
   test('the other stacks do not change with it', () => {

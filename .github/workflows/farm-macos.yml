@@ -54,7 +54,7 @@ jobs:
       # The same komira commit as commit_hash in .buckconfig and farm.yml's; bump them together.
       - name: connect to the farm (linux and macOS workers)
         if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}
-        uses: komira-ai/komira/.github/actions/farm-connect@9504a2daf88754de25d93f62a76ea2955ebc38c8
+        uses: komira-ai/komira/.github/actions/farm-connect@aefee53266277c55b40ccbf35782a296ceecf687
         with:
           ts-client-id: ${{ vars.TS_CLIENT_ID }}
           ts-audience: ${{ vars.TS_AUDIENCE }}

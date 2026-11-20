@@ -98,8 +98,10 @@ describe.each(STAGES)('the web-session function on %s', (stage) => {
     const a = iam(off);
     const b = iam(on);
     for (const [id, r] of Object.entries(a)) expect(b[id]).toEqual(r);
-    // The web-login function's own role is held by web-login.test.ts.
-    const added = Object.entries(b).filter(([id]) => !(id in a) && !id.startsWith('WebSession') && !id.startsWith('WebLogin'));
+    // The web-login and tutorial-sandbox functions' own roles are held by web-login.test.ts and tutorial-sandbox.test.ts.
+    const added = Object.entries(b).filter(
+      ([id]) => !(id in a) && !id.startsWith('WebSession') && !id.startsWith('WebLogin') && !id.startsWith('TutorialSandbox'),
+    );
     // What remains is the stage_settings writer's: its policy (PutStageSettings only) and the role of the function behind it.
     expect(added.map(([, r]) => r.Type).sort()).toEqual(['AWS::IAM::Policy', 'AWS::IAM::Role']);
     const writer = added.find(([, r]) => r.Type === 'AWS::IAM::Policy')![1];

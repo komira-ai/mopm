@@ -145,6 +145,12 @@ export const oauthSecretName = (s: Stage) => `mopm/${s}/github-oauth`;
  */
 export const edgeOriginSecretName = (s: Stage) => `mopm/${s}/edge-origin`;
 
+/**
+ * The secret holding a stage's E2B API key (`{"api_key": "<key>"}`). The API stack creates it empty (lib/api-stack.ts): no value
+ * is generated, and the operator writes the key (service/docs/runbook.md). Only the tutorial sandbox function may read it.
+ */
+export const e2bSecretName = (s: Stage) => `mopm/${s}/e2b`;
+
 /** FIFO queues of the publish pipeline (the API stack builds the validate queue's URL from the name, so the names live here). */
 export const validateQueueName = (s: Stage) => `mopm-${s}-validate.fifo`;
 export const validateDlqName = (s: Stage) => `mopm-${s}-validate-dlq.fifo`;

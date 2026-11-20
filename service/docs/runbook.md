@@ -137,6 +137,14 @@ publish `published`. See "The sparse index writer" below.
   functions read it at cold start (docs/design/tutorial-sign-in.md, section 5). Change a value in `service/config/<stage>.json`
   and deploy; a hand `put-item` lasts only until a deploy changes a value. It is written only when the API stack is given the
   Rust functions' zips, which no deploy does yet.
+- **E2B key (tutorial sandbox).** The secret `mopm/<stage>/e2b`, JSON `{"api_key": "<key>"}`, is created by the API stack (with
+  the Rust functions' zips) with no value: nothing is generated, and the stack never writes one. Until the owner stores the key
+  with the held step (`service/infra/access/BOOTSTRAP.md`, "E2B API key"; `npm --prefix service/infra/access run -s e2b-secret`),
+  `POST /api/v2/tutorial/sandbox` answers 503 `tutorial_unavailable` and the function's log line says `secret_missing`; it reads
+  the secret again on the next request, so storing the key needs no redeploy. The secret's resource policy denies
+  `secretsmanager:GetSecretValue` to every principal except the `mopm-<stage>-tutorial-sandbox` function's role (writing a value
+  and CloudFormation are not denied), so nobody else can read the key, an administrator included, short of editing that policy.
+  The same 503 with `template_missing` means the stage's `tutorial.e2bTemplateId` is not set.
 - **Groups switch.** `POST /groups`, `GET /groups/{id}` and `DELETE /groups/{id}` are deployed with the API, and a create is
   answered 404 `route_not_found` unless the item `groups_enabled` of the stage's config table admits the caller. The item is
   `{"key": "groups_enabled", "mode": "allow", "actors": ["u:<github id>"]}` for a list of accounts, or `{"key": "groups_enabled", "mode":
@@ -479,14 +487,26 @@ A group that is stuck at step 2 is rolled forward (the sweeper, or a redrive) or
 ## Deleting the global names (held)
 
 Once packages live in namespaces (docs/design/namespaces.md, section 12.4), the flat names are deleted by a held tool,
-`service/api/src/ops/delete-global-names/`, built by `npm run build` in `service/api` to `dist/ops/delete-global-names/bin.js`. It
-runs with the stage's takedown role (on beta and gamma, the takedown or the cleanup role): the only roles the tables and the channel
-bucket let delete. Every setting is a flag; the AWS credentials are the SDK's standard variables.
+`service/api/src/ops/delete-global-names/`, built by `npm run build` in `service/api` to `dist/ops/delete-global-names/bin.js`. Every
+setting is a flag; the AWS credentials are the SDK's standard variables.
 
 ```text
 node dist/ops/delete-global-names/bin.js --stage=<beta|gamma|prod> --bucket=<channel bucket> --distribution=<channel CloudFront id> \
   --config-url=https://<api host>/index/config.json [--region=<region>] [--apply=<digest>]
 ```
+
+Without npm, Buck2 builds the same three things the command needs: the bundle (`//service/api:dist`), the `node_modules` it
+leaves the AWS SDK's DynamoDB packages to (`//service/api:node_modules`) and the pinned node (`//tools/node:node`). Build them with
+`--materializations=all --show-full-output` (a farm cache hit is otherwise not downloaded). Node looks for `node_modules` next to the
+script, so stage the two together in a directory of the workspace scratch directory: copy `<dist>/ops/delete-global-names/bin.js`
+into it, link `<node_modules>` into it as `node_modules`, and run `<node>/bin/node <that directory>/bin.js ...` from there.
+
+The dry run only reads (the tables, the bucket's listing and `config.json`), so any session that can read them runs it. With an SSO
+profile, `aws configure export-credentials --profile <profile> --format env` gives the SDK's variables. `--apply` deletes, and only
+the stage's takedown role (on beta and gamma, the takedown or the cleanup role) may: the tables and the channel bucket deny every
+delete to any other principal. No stack creates those roles (the policies name them only); a stage has one only once its owner
+created it. An `--apply` run as any other role stops at its first delete (exit status 1); what came before it stays (the first
+name's audit record, and when that name has no version 1 index file, its rewritten root repodata and the CDN invalidation of it).
 
 - **Without `--apply` it is a dry run and changes nothing.** It lists the work from the stage: every package whose name has no
   namespace, with its versions, owners and trusted publishers, its `.conda` files at the bucket's root (`<subdir>/mojo-<name>-*.conda`)

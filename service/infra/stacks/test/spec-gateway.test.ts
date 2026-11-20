@@ -26,8 +26,8 @@ const NOT_SERVED_YET = [
 /**
  * Operations of the /api/v2 spec that are not the TypeScript Lambda's: the website's sign-in and tutorial sandbox. They are served
  * by the website's own functions behind the site's /api/* behaviour. This gateway has no route for them in the default build; with
- * `rustZipDir` it routes the session and logout operations to the web-session function (not to the TypeScript Lambda), and still
- * none of the others. Remove an entry when the TypeScript Lambda serves it.
+ * `rustZipDir` it routes each to its Rust function (web-login, web-session, tutorial-sandbox), never to the TypeScript Lambda.
+ * Remove an entry when the TypeScript Lambda serves it.
  */
 const NOT_THE_TS_LAMBDA_V2 = [
   'GET /api/v2/auth/web/start',
@@ -112,8 +112,8 @@ describe('the gateway routes every operation of the /api/v2 spec', () => {
   });
 });
 
-// With the Rust switch on, the sign-in operations are routed here to the web-login function, and session and logout to the
-// web-session function; the sandbox is not routed yet.
+// With the Rust switch on, the sign-in operations are routed here to the web-login function, session and logout to the
+// web-session function, and the sandbox to the tutorial-sandbox function.
 describe.each(STAGES)('the gateway with the Rust functions on (%s)', (stage) => {
   const t = Template.fromStack(build(stage, { rustZipDir: RUST_ZIP_STUB_DIR }).api);
   const routes = Object.values(t.findResources('AWS::ApiGatewayV2::Route')) as any[];
@@ -130,7 +130,7 @@ describe.each(STAGES)('the gateway with the Rust functions on (%s)', (stage) => 
     }
   });
 
-  test('start and callback route to the web-login function, and the sandbox is still unrouted', () => {
+  test('start and callback route to the web-login function', () => {
     const integrations = t.findResources('AWS::ApiGatewayV2::Integration') as Record<string, any>;
     const webLogin = Object.keys(t.findResources('AWS::Lambda::Function', { Properties: { FunctionName: `mopm-${stage}-web-login` } }));
     expect(webLogin).toHaveLength(1);
@@ -138,6 +138,14 @@ describe.each(STAGES)('the gateway with the Rust functions on (%s)', (stage) => 
       const integrationId = targetOf(key)['Fn::Join'][1].find((x: any) => x?.Ref)?.Ref as string;
       expect(integrations[integrationId].Properties.IntegrationUri).toEqual({ 'Fn::GetAtt': [webLogin[0], 'Arn'] });
     }
-    expect(keys).not.toContain('POST /api/v2/tutorial/sandbox');
+  });
+
+  test('the sandbox routes to the tutorial-sandbox function', () => {
+    const integrations = t.findResources('AWS::ApiGatewayV2::Integration') as Record<string, any>;
+    const sandbox = Object.keys(t.findResources('AWS::Lambda::Function', { Properties: { FunctionName: `mopm-${stage}-tutorial-sandbox` } }));
+    expect(sandbox).toHaveLength(1);
+    expect(keys.filter((k) => k === 'POST /api/v2/tutorial/sandbox')).toHaveLength(1);
+    const integrationId = targetOf('POST /api/v2/tutorial/sandbox')['Fn::Join'][1].find((x: any) => x?.Ref)?.Ref as string;
+    expect(integrations[integrationId].Properties.IntegrationUri).toEqual({ 'Fn::GetAtt': [sandbox[0], 'Arn'] });
   });
 });
