@@ -11,7 +11,7 @@ contract. Nothing here describes the registry's internals.
 | `package-metadata.schema.json` | `<name>.mopm.json`, embedded in every package |
 | `api/openapi.yaml` | the HTTP API under `/api/v1`: login, tokens, publish, yank, owners, packages, search, health; the error catalogue; auth schemes; the additive-only versioning rule |
 | `api/mopm/registry/v2/*.proto` | the source of the HTTP API under `/api/v2`: every operation, its messages, the error codes and catalogue, and the HTTP mapping (`google.api.http`); `options.proto` says how the JSON and the OpenAPI keywords follow from them |
-| `api/openapi-v2.yaml` | the HTTP API under `/api/v2`, served beside v1, generated from the protos above by `zig build gen-api` (`tools/api_gen.zig`): package names in owner namespaces (`komira-ai/json`), namespaces, no owners or claims; its own error catalogue |
+| `api/openapi-v2.yaml` | the HTTP API under `/api/v2`, served beside v1, generated from the protos above by `zig build gen-api` (`tools/api_gen.zig`): package names in owner namespaces (`komira-ai/json`), namespaces, no owners or claims; its own error catalogue; also the website's operations (`/auth/web/*` sign-in and `POST /tutorial/sandbox`), which authenticate with a session cookie (`__Host-mopm_session`), not a bearer token, and are served by the website, not by the registry's TypeScript Lambda |
 | `channel.md` | the conda channel at `conda.<site>`: layout, naming, immutability and yank as clients see them |
 | `index.md`, `index-record.schema.json`, `index-config.schema.json`, `takedowns.schema.json` | the static sparse index the CLI reads |
 | `index-record-1.schema.json`, `takedowns-1.schema.json` | version 1 of the index, which a registry still serves for released CLIs (`index.md`, "Version 1") |

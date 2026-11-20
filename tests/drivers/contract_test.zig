@@ -16,7 +16,7 @@
 //!     tests/contract/api-v2/*.json against openapi-v2.yaml, the same checks
 //!     for each pair: "valid" ones have no problem, "invalid" ones
 //!     (counter-examples with one defect each) are REJECTED; every operation
-//!     has a passing success case, every error code and every rejection code
+//!     has a passing case with a declared non-error status (a redirect counts), every error code and every rejection code
 //!     a case
 //!  5. the examples under tests/contract/examples/<kind>/valid pass and those
 //!     under <kind>/invalid fail, with the lock rules JSON Schema cannot say
@@ -103,7 +103,7 @@ fn checkApi(a: Allocator, t: *c.Tally, counts: *Counts, spec: Value, spec_name: 
                 if (problems.items.len == 0) {
                     const response = c.get(case, "response") orelse .null;
                     const status = c.getInt(response, "status") orelse 0;
-                    if (status < 300) try seen_ok.put(c.getStr(case, "operationId") orelse "", {});
+                    if (status < 400) try seen_ok.put(c.getStr(case, "operationId") orelse "", {});
                     const body = c.get(response, "body");
                     if (status >= 400 and body != null and body.? == .object) {
                         if (c.getStr(c.get(body.?, "error") orelse .null, "code")) |code| try seen_codes.put(code, {});

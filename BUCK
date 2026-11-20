@@ -1062,6 +1062,13 @@ export_file(
 )
 
 export_file(
+    name = "lambda.spec.openapi-v2.yaml",
+    src = "spec/api/openapi-v2.yaml",
+    mode = "reference",
+    visibility = ["//service/lambda/core:"],
+)
+
+export_file(
     name = "lambda.contract.errors.json",
     src = "tests/contract/api/errors.json",
     mode = "reference",
