@@ -734,3 +734,7 @@ fn transact(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, Fail
     Ok(json!({}))
 }
 
+
+#[cfg(test)]
+#[path = "fake_dynamo_tests.rs"]
+mod tests;
