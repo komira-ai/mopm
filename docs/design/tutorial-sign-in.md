@@ -622,7 +622,9 @@ Operator:
 
 - **tu-O1 (operator)** On each stage, before tu-A2 deploys; needs the owner's hands:
   - set the OAuth app's callback URL;
-  - check with the held `oauth-secret` script's dry run that the secret holds a current `client_secret`.
+  - check that the secret holds a current `client_secret` with the read-only comparison of
+    `service/infra/access/BOOTSTRAP.md` ("GitHub OAuth app", step 3a), and store a new one with the held `oauth-secret`
+    script when it is absent or stale.
 - **tu-O2 (operator)** On each stage, after tu-X2 and before tu-A3 deploys; needs the owner's hands:
   - write `mopm/<stage>/e2b` with the held script of tu-A3;
   - build the E2B template of tu-X2 and set its id in the stage settings.
