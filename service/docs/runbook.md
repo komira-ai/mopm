@@ -489,8 +489,9 @@ node dist/ops/delete-global-names/bin.js --stage=<beta|gamma|prod> --bucket=<cha
 
 Without npm, Buck2 builds the same three things the command needs: the bundle (`//service/api:dist`), the `node_modules` it
 leaves the AWS SDK's DynamoDB packages to (`//service/api:node_modules`) and the pinned node (`//tools/node:node`). Build them with
-`--materializations=all --show-full-output` (a farm cache hit is otherwise not downloaded), then run
-`NODE_PATH=<node_modules> <node>/bin/node <dist>/ops/delete-global-names/bin.js ...`.
+`--materializations=all --show-full-output` (a farm cache hit is otherwise not downloaded). Node looks for `node_modules` next to the
+script, so stage the two together in a directory of the workspace scratch directory: copy `<dist>/ops/delete-global-names/bin.js`
+into it, link `<node_modules>` into it as `node_modules`, and run `<node>/bin/node <that directory>/bin.js ...` from there.
 
 The dry run only reads (the tables, the bucket's listing and `config.json`), so any session that can read them runs it. With an SSO
 profile, `aws configure export-credentials --profile <profile> --format env` gives the SDK's variables. `--apply` deletes, and only
