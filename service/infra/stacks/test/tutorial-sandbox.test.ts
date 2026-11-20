@@ -191,14 +191,8 @@ describe.each(STAGES)('the tutorial-sandbox function on %s', (stage) => {
           }
         }
       }
-      for (const [who, st] of statements) {
-        checked++;
-        if (st.Effect !== 'Allow') continue;
-        const actions: string[] = ([] as string[]).concat(st.Action);
-        const reads = actions.some((a) => globMatches(a.toLowerCase(), 'secretsmanager:getsecretvalue'));
-        const matches = (st.Resource as string[]).some((r) => globMatches(r, secretArn));
-        expect({ who, reaches: reads && matches }).toEqual({ who, reaches: false });
-      }
+      checked += statements.length;
+      expect(readersOf(statements, secretArn)).toEqual([]);
     }
     expect(checked).toBeGreaterThan(10);
   });
@@ -207,6 +201,54 @@ describe.each(STAGES)('the tutorial-sandbox function on %s', (stage) => {
     const off = Template.fromStack(build(stage).api);
     off.resourceCountIs('AWS::SecretsManager::Secret', 0);
     off.resourceCountIs('AWS::SecretsManager::ResourcePolicy', 0);
+  });
+});
+
+/**
+ * Who, of `statements` (each `[who, statement]`, Resource flattened to strings), is allowed GetSecretValue on `secretArn`:
+ * an Allow whose Action glob matches it and whose Resource glob matches the ARN.
+ */
+function readersOf(statements: Array<[string, any]>, secretArn: string): string[] {
+  return statements
+    .filter(([, st]) => {
+      if (st.Effect !== 'Allow') return false;
+      const actions: string[] = ([] as string[]).concat(st.Action);
+      const reads = actions.some((a) => globMatches(a.toLowerCase(), 'secretsmanager:getsecretvalue'));
+      return reads && ([] as string[]).concat(st.Resource).some((r) => globMatches(r, secretArn));
+    })
+    .map(([who]) => who);
+}
+
+describe('readersOf, the check that no other role reads the E2B secret', () => {
+  const arn = `arn:aws:secretsmanager:us-east-1:${A}:secret:mopm/beta/e2b-AbCdEf`;
+  const allow = (Action: string | string[], Resource: string | string[]) => ({ Effect: 'Allow', Action, Resource });
+
+  test('reports a role allowed GetSecretValue on the secret, by exact ARN, a stage wildcard, a service wildcard or *', () => {
+    expect(
+      readersOf(
+        [
+          ['exact', allow('secretsmanager:GetSecretValue', `arn:aws:secretsmanager:us-east-1:${A}:secret:mopm/beta/e2b-??????`)],
+          ['stage', allow(['s3:GetObject', 'secretsmanager:GetSecretValue'], `arn:aws:secretsmanager:us-east-1:${A}:secret:mopm/beta/*`)],
+          ['service', allow('secretsmanager:*', '*')],
+          ['all', allow('*', ['arn:aws:s3:::b', '*'])],
+        ],
+        arn,
+      ),
+    ).toEqual(['exact', 'stage', 'service', 'all']);
+  });
+
+  test('does not report a Deny, another action, or another secret', () => {
+    expect(
+      readersOf(
+        [
+          ['deny', { Effect: 'Deny', Action: 'secretsmanager:GetSecretValue', Resource: '*' }],
+          ['describe', allow('secretsmanager:DescribeSecret', '*')],
+          ['other', allow('secretsmanager:GetSecretValue', `arn:aws:secretsmanager:us-east-1:${A}:secret:mopm/beta/edge-origin-??????`)],
+          ['longer', allow('secretsmanager:GetSecretValue', `arn:aws:secretsmanager:us-east-1:${A}:secret:mopm/beta/e2b-x-??????`)],
+        ],
+        arn,
+      ),
+    ).toEqual([]);
   });
 });
 
