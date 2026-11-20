@@ -15,12 +15,18 @@ aws-sdk-secretsmanager.workspace = true
 aws-sdk-sqs.workspace = true
 base64.workspace = true
 hex.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
 jiff.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_dynamo.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 mopm_testing.workspace = true
-tokio.workspace = true
+tokio-rustls.workspace = true

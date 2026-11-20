@@ -1,6 +1,6 @@
 # mopm_aws
 
-The ports on the AWS SDK for Rust. Nothing here signs a request or retries one: the SDK does.
+The ports on the AWS SDK for Rust, and the outbound HTTPS client. Nothing here signs a request or retries one: the SDK does.
 
 `dynamo`: `DynamoStore`, `DynamoAuthStore`, `DynamoPublishStore`, the DynamoDB adapters of the three stores. The rows they
 write are the TypeScript adapters' (a version keyed by the canonical version with `version_spelling` beside it; an owner's
@@ -20,3 +20,12 @@ length and one sha256, signed for the clock it is given), `SqsFifoQueue`, `Cloud
 tested against `mopm_testing::fake_http`, a scripted server on loopback that records the request exactly as the SDK sent it.
 What no test here can show is the services' own behaviour (S3 refusing a body whose digest differs from the signed one, SQS FIFO
 deduplication windows, CloudFront propagation): the first real exercise is the stage deployment.
+
+`http`: `HyperHttpClient`, the `HttpClient` port (the GitHub and E2B calls) on hyper's client over rustls on the workspace's AWS-LC
+(the aws-lc-rs provider, named explicitly), HTTP/1.1. It sends `https://` URLs only and refuses any other before connecting; trusts
+the system's roots (`with_native_roots`, read as the SDK's clients read them) or the ones given (`with_roots`); bounds the whole
+exchange by the request's `timeout`; refuses a response body over its cap; returns a redirect without following it; and uses no proxy.
+A request that gets no answer is an `HttpError`: `Tls` when rustls refused the handshake, `Connect` otherwise, `Timeout` past the
+timeout, with a detail that names only the host and port and the causes. It is tested over real TLS on loopback (`tests/http.rs`,
+`tests/native_roots.rs`): a TLS front for `mopm_testing::fake_http`, servers that reset, stall or cut an answer short, and the
+test-only certificates of `tests/fixtures`. `tools/lambda/canary/graph_test.rs` holds the unit table to AWS-LC with no `ring`.
