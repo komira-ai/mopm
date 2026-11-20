@@ -12,7 +12,7 @@ _NODE = "//tools/node:node"
 
 # The tests read the specification and the contract cases at their paths in the repository
 # (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`, `.../tests/contract/api-v2`, `.../toolchain`, `.../src/core/names.zig`,
-# `../../../lambda/core/tests/fixtures`), and the validator's tests run
+# `../../../lambda/core/tests/fixtures`, `../../../lambda/aws/tests/fixtures`), and the validator's tests run
 # `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
 _TEST_DATA = {
     "spec": "//:spec",
@@ -24,6 +24,8 @@ _TEST_DATA = {
     # The token vectors and the web session row the Rust core is held to (test/auth/*.test.ts).
     "service/lambda/core/tests/fixtures/token_vectors.json": "//service/lambda/core:token_vectors.json",
     "service/lambda/core/tests/fixtures/web_session_record.json": "//service/lambda/core:web_session_record.json",
+    # The user namespace row the Rust namespace adapter writes (test/auth/namespace-row.test.ts).
+    "service/lambda/aws/tests/fixtures/namespace_user_row.json": "//service/lambda/aws:namespace_user_row.json",
 }
 
 _TEST_TOOLS = {"bzip2": "buildrules//rules/pins:busybox"}

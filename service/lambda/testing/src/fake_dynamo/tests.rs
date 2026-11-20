@@ -579,3 +579,104 @@ async fn an_index_over_a_table_with_a_sort_key_orders_by_index_sort_then_table_k
     let r = ok(&fake, "Query", body).await;
     assert_eq!(r["Items"], json!([{"name": s("a"), "github_id": s("9")}, {"name": s("b"), "github_id": s("9")}]));
 }
+
+// ---- the web sign-in's tables, `>` conditions, ReturnValues and its grants ------------------------------
+
+const WEB_LOGINS: &str = "mopm-t-web_logins";
+const NAMESPACES: &str = "mopm-t-namespaces";
+
+fn n(v: &str) -> Value {
+    json!({"N": v})
+}
+
+fn later_than(bound: Value) -> Value {
+    let mut b = update("SET #s = :v", json!({"#s": "state", "#e": "expires"}), json!({":v": s("x"), ":b": bound}));
+    b["ConditionExpression"] = json!("#e > :b");
+    b
+}
+
+#[tokio::test]
+async fn a_greater_than_condition_compares_integers_and_an_absent_or_other_typed_attribute_is_false() {
+    let fake = start();
+    fake.seed(PKG, json!({"name": s("a"), "expires": n("100")}));
+    ok(&fake, "UpdateItem", later_than(n("99"))).await;
+    for bound in ["100", "101"] {
+        let (_, v) = call(&fake, "UpdateItem", later_than(n(bound))).await;
+        assert_eq!(kind(&v), CONDITION, "100 > {bound}");
+    }
+    ok(&fake, "UpdateItem", later_than(n("-5"))).await;
+    fake.seed(PKG, json!({"name": s("a"), "expires": s("100")}));
+    let (_, v) = call(&fake, "UpdateItem", later_than(n("1"))).await;
+    assert_eq!(kind(&v), CONDITION, "a string is not greater than a number");
+    fake.seed(PKG, json!({"name": s("a")}));
+    let (_, v) = call(&fake, "UpdateItem", later_than(n("1"))).await;
+    assert_eq!(kind(&v), CONDITION, "an absent attribute is not greater than anything");
+    assert_eq!(fake.dump(PKG), vec![json!({"name": s("a")})], "a failed condition wrote nothing");
+}
+
+#[tokio::test]
+async fn a_greater_than_on_anything_but_integer_numbers_is_unsupported() {
+    let fake = start();
+    refused(&fake, "UpdateItem", later_than(s("1")), VALIDATION, "fake: unsupported comparison operand :b").await;
+    refused(&fake, "UpdateItem", later_than(n("1.5")), VALIDATION, "fake: unsupported comparison operand :b").await;
+    let mut size = later_than(n("1"));
+    size["ConditionExpression"] = json!("size(#e) > :b");
+    refused(&fake, "UpdateItem", size, VALIDATION, "fake: unsupported condition size(#e) > :b").await;
+    fake.seed(PKG, json!({"name": s("a"), "expires": n("1.5")}));
+    refused(&fake, "UpdateItem", later_than(n("1")), VALIDATION, r#"fake: unsupported comparison of {"N":"1.5"}"#).await;
+}
+
+#[tokio::test]
+async fn an_update_answers_the_new_item_for_all_new_nothing_for_none_and_refuses_other_return_values() {
+    let fake = start();
+    let set = |rv: Option<&str>, v: &str| {
+        let mut b = update("SET #s = :v", json!({"#s": "state"}), json!({":v": s(v)}));
+        if let Some(rv) = rv {
+            b["ReturnValues"] = json!(rv);
+        }
+        b
+    };
+    assert_eq!(ok(&fake, "UpdateItem", set(Some("ALL_NEW"), "x")).await, json!({"Attributes": {"name": s("a"), "state": s("x")}}));
+    assert_eq!(ok(&fake, "UpdateItem", set(Some("NONE"), "y")).await, json!({}));
+    assert_eq!(ok(&fake, "UpdateItem", set(None, "z")).await, json!({}));
+    refused(&fake, "UpdateItem", set(Some("ALL_OLD"), "w"), VALIDATION, "fake: unsupported ReturnValues ALL_OLD").await;
+    assert_eq!(fake.dump(PKG), vec![json!({"name": s("a"), "state": s("z")})], "the refused update wrote nothing");
+}
+
+#[tokio::test]
+async fn the_web_logins_and_namespaces_tables_check_their_keys_ttl_and_index_keys() {
+    let fake = start();
+    ok(&fake, "PutItem", put_body(WEB_LOGINS, json!({"id": s("h"), "expires_at": n("1795090200")}), None)).await;
+    refused(&fake, "PutItem", put_body(WEB_LOGINS, json!({"id": s("h"), "expires_at": s("soon")}), None), VALIDATION, "TimeToLive attribute expires_at must be a number").await;
+    ok(&fake, "PutItem", put_body(NAMESPACES, json!({"namespace": s("alice"), "github_id": s("7"), "github_id_num": n("7")}), None)).await;
+    refused(
+        &fake,
+        "PutItem",
+        put_body(NAMESPACES, json!({"namespace": s("bob"), "github_id": n("8")}), None),
+        VALIDATION,
+        "One or more parameter values were invalid: Type mismatch for Index Key github_id Expected: S",
+    )
+    .await;
+    let mut by_account = query_body(NAMESPACES, json!({"#g": "github_id"}), json!({":g": s("7")}), "#g = :g");
+    by_account["IndexName"] = json!("by_github_id");
+    assert_eq!(ok(&fake, "Query", by_account).await["Count"], json!(1));
+}
+
+#[tokio::test]
+async fn the_web_login_grants_allow_put_and_update_on_web_logins_get_and_put_on_namespaces_and_no_delete() {
+    let fake = FakeDynamo::start(FakeConfig::web_login("t"));
+    let denied = |op: &str, table: &str| format!("User is not authorized to perform: dynamodb:{op} on resource: {table}");
+    ok(&fake, "PutItem", put_body(WEB_LOGINS, json!({"id": s("h")}), None)).await;
+    let consume = json!({"TableName": WEB_LOGINS, "Key": {"id": s("h")}, "UpdateExpression": "SET #c = :c", "ExpressionAttributeNames": {"#c": "consumed_at"}, "ExpressionAttributeValues": {":c": s("t")}});
+    ok(&fake, "UpdateItem", consume).await;
+    refused(&fake, "GetItem", json!({"TableName": WEB_LOGINS, "Key": {"id": s("h")}}), "AccessDeniedException", &denied("GetItem", WEB_LOGINS)).await;
+    refused(&fake, "DeleteItem", json!({"TableName": WEB_LOGINS, "Key": {"id": s("h")}}), "AccessDeniedException", &denied("DeleteItem", WEB_LOGINS)).await;
+    ok(&fake, "PutItem", put_body(NAMESPACES, json!({"namespace": s("alice")}), None)).await;
+    ok(&fake, "GetItem", json!({"TableName": NAMESPACES, "Key": {"namespace": s("alice")}})).await;
+    refused(&fake, "DeleteItem", json!({"TableName": NAMESPACES, "Key": {"namespace": s("alice")}}), "AccessDeniedException", &denied("DeleteItem", NAMESPACES)).await;
+    let update = json!({"TableName": NAMESPACES, "Key": {"namespace": s("alice")}, "UpdateExpression": "SET #k = :k", "ExpressionAttributeNames": {"#k": "kind"}, "ExpressionAttributeValues": {":k": s("user")}});
+    refused(&fake, "UpdateItem", update, "AccessDeniedException", &denied("UpdateItem", NAMESPACES)).await;
+    refused(&fake, "GetItem", json!({"TableName": TOKENS, "Key": {"token_hash": s("t")}}), "AccessDeniedException", &denied("GetItem", TOKENS)).await;
+    assert_eq!(fake.dump(WEB_LOGINS).len(), 1);
+    assert_eq!(fake.dump(NAMESPACES).len(), 1);
+}
