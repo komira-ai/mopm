@@ -655,6 +655,19 @@ zig_test(  # buck-only: docs/examples.md: the files under examples/ are what mop
     **_TOOLS
 )
 
+zig_test(  # buck-only: tutorial/README.md: every tutorial/lessons/<id>/ passes spec/tutorial-lesson.schema.json and tests/drivers/tutorial_lessons.zig, and its mopm.lock is what mopm lock writes
+    name = "tutorial_lessons",
+    src = "tests/drivers/tutorial_lessons_test.zig",
+    imports = _CONTRACT_LIBS + [
+        "tests/drivers/harness.zig",
+        "tests/drivers/tutorial_lessons.zig",
+        "spec/lock.schema.json",
+        "spec/tutorial-lesson.schema.json",
+    ] + glob(["tutorial/lessons/**"]),
+    env_tools = {"MOPM": ":mopm"},
+    **_TOOLS
+)
+
 # ---- build.zig and this file name the same build, and the check can go red ----
 
 zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
@@ -835,6 +848,7 @@ _AUTOLINK_DATA = [
     "tests/e2e/prog_outer.mojo",
     "tests/e2e/repl.stdin",
     "tests/e2e/repl_outer.stdin",
+    "tutorial/lessons/hello",
 ]
 zig_test(  # buck-only: the group-publish check (tests/drivers/group_e2e.zig) against a loopback registry that serves the group routes
     name = "group_e2e",
@@ -1059,6 +1073,14 @@ export_file(
     src = "tests/contract/api/errors.json",
     mode = "reference",
     visibility = ["//service/lambda/core:"],
+)
+
+# The unit table `buildrules sync` writes, for the canary's graph_test (tools/lambda/canary/graph_test.rs): TLS on AWS-LC, no ring.
+export_file(
+    name = "lambda.unit_table",
+    src = "buildrules.lock.bzl",
+    mode = "reference",
+    visibility = ["//tools/lambda:"],
 )
 
 # The corpus directory itself (mode reference: the source directory, not a copy), for mopm_validate.
@@ -1663,6 +1685,15 @@ zig_coverage(
     test_targets = [":agents"],
     # The check alone: the test file reads the real files and is not counted.
     expect = ["tests/drivers/agents_check.zig"],
+)
+
+zig_coverage(
+    name = "tutorial_lessons_coverage",
+    blocks = False,
+    floor = "coverage/tutorial_lessons.txt",
+    test_targets = [":tutorial_lessons"],
+    # The checker alone: the test file reads the real lessons and is not counted.
+    expect = ["tests/drivers/tutorial_lessons.zig"],
 )
 
 zig_coverage(

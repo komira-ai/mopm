@@ -20,7 +20,10 @@
 //!      native code can produce;
 //!   5. in the split prefix, controls: stock `mojo run` and `mojo repl`
 //!      given greet and outer but not inner must NOT print the values, so
-//!      the transitive entry is load-bearing.
+//!      the transitive entry is load-bearing;
+//!   6. the tutorial's first lesson (tutorial/lessons/hello): its `run`
+//!      action from lesson.json, in a copy of its project/ with the pixi
+//!      prefix, exits 0 and prints exactly `Hello, world!`.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -276,4 +279,31 @@ fn run(a: Allocator, rep: *h.Report) !void {
     }
     const none = try c.mopmRun(pixi, &.{ "run", args_src }, null);
     rep.check("mopm run with no --: the program gets no arguments", !none.signaled and none.code == 0 and std.mem.eql(u8, none.text, "count 0\n"), none.text);
+
+    // 6. The tutorial's first lesson: the page runs its `run` action in the lesson's directory, a copy of its project/.
+    try tutorialHello(&c, pixi);
+}
+
+/// The hello lesson's `run` action (lesson.json, `actions.run`), as the tutorial page runs it: in a copy of project/, the
+/// command's words with the built mopm for `mopm` and `--prefix <prefix>` for the environment the sandbox has synced.
+fn tutorialHello(c: *Ctx, prefix: []const u8) !void {
+    const a = c.a;
+    // The farm stages the lesson in the work directory (BUCK, data); `zig build test-autolink` runs from the checkout.
+    const staged = try h.join(a, &.{ c.m.work, "tutorial/lessons/hello" });
+    const lesson = if (std.fs.cwd().access(staged, .{})) |_| staged else |_| "tutorial/lessons/hello";
+    const doc = try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ lesson, "lesson.json" })));
+    const action = doc.object.get("actions").?.object.get("run").?.string;
+
+    const project = try h.join(a, &.{ c.out, "tutorial_hello" });
+    try h.copyTree(a, try h.join(a, &.{ lesson, "project" }), project);
+    var argv = std.ArrayList([]const u8).init(a);
+    var words = std.mem.splitScalar(u8, action, ' ');
+    _ = words.next(); // `mopm`
+    try argv.append(c.mopm);
+    while (words.next()) |w| try argv.append(w);
+    try argv.appendSlice(&.{ "--prefix", prefix });
+    var env = try c.m.freshEnv();
+    const r = try h.run(a, argv.items, &env, .{ .cwd = project });
+    const ok = !r.signaled and r.code == 0 and std.mem.eql(u8, r.text, "Hello, world!\n");
+    c.rep.check(try h.fmt(a, "tutorial hello: `{s}` in its project prints Hello, world!", .{action}), ok, try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
 }
