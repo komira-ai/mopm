@@ -133,6 +133,17 @@ async fn one_client_sends_one_request_after_another() {
 }
 
 #[tokio::test]
+async fn repeated_header_names_keep_their_values_together_in_first_seen_order() {
+    let fake = FakeHttp::start(vec![Reply::new(200).header("Set-Cookie", "a=1").header("X-One", "1").header("Set-Cookie", "b=2")]);
+    let addr = tls_front(&fake, trusted_cert()).await;
+    let mut req = get(https(addr, "/"));
+    req.headers = pairs(&[("X-B", "1"), ("X-A", "2"), ("X-B", "3")]);
+    let answer = client().send(req).await.unwrap();
+    assert_eq!(answer.headers, pairs(&[("set-cookie", "a=1"), ("set-cookie", "b=2"), ("x-one", "1"), ("content-length", "0"), ("connection", "close")]));
+    assert_eq!(fake.requests()[0].headers, pairs(&[("x-b", "1"), ("x-b", "3"), ("x-a", "2"), ("host", &addr.to_string())]));
+}
+
+#[tokio::test]
 async fn a_header_value_that_is_not_utf8_is_read_lossily() {
     let addr = tls_server(trusted_cert(), |mut tls| async move {
         read_head(&mut tls).await;

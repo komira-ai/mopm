@@ -15,8 +15,9 @@
 //!   `detail` is the host and port, then the causes. It never holds the path, query, userinfo, headers or body of the
 //!   request.
 //!
-//! Response header names are lower-case (as hyper keeps them), in hyper's order: first-seen order of the names, with
-//! the values of a repeated name together. A value that is not UTF-8 is read lossily.
+//! Headers go through hyper's `HeaderMap` both ways: names are lower-cased, and the order is the first-seen order of the
+//! names with the values of a repeated name together (so request headers are sent in the port's order except that a
+//! repeated name's later values move up to its first). A response header value that is not UTF-8 is read lossily.
 
 use std::error::Error as StdError;
 use std::io;
