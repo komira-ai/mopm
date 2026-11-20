@@ -20,6 +20,19 @@ const NOT_SERVED_YET = [
   'DELETE /api/v1/packages/{name}/owners/{github_id}',
 ];
 
+/**
+ * Operations of the /api/v2 spec that are not the TypeScript Lambda's: the website's sign-in and tutorial sandbox. They are served
+ * by the website's own functions behind the site's /api/* behaviour, so this API's gateway has no route for them. Remove an entry
+ * when this gateway routes it.
+ */
+const NOT_THE_TS_LAMBDA_V2 = [
+  'GET /api/v2/auth/web/start',
+  'GET /api/v2/auth/web/callback',
+  'GET /api/v2/auth/web/session',
+  'POST /api/v2/auth/web/logout',
+  'POST /api/v2/tutorial/sandbox',
+];
+
 function specOperations(file: string = SPEC, prefix = '/api/v1'): string[] {
   const out: string[] = [];
   let inPaths = false;
@@ -58,7 +71,8 @@ describe('the gateway routes every operation of the spec', () => {
   });
 });
 
-// The v2 half: every operation of spec/api/openapi-v2.yaml is a gateway route `METHOD /api/v2<path>`, and V2_ROUTES holds nothing else.
+// The v2 half: every operation of spec/api/openapi-v2.yaml except the website's is a gateway route `METHOD /api/v2<path>`,
+// and V2_ROUTES holds nothing else.
 describe('the gateway routes every operation of the /api/v2 spec', () => {
   const ops = specOperations(SPEC_V2, '/api/v2');
 
@@ -70,15 +84,22 @@ describe('the gateway routes every operation of the /api/v2 spec', () => {
     expect(ops).toContain('GET /api/v2/namespaces/{namespace}/members');
     expect(ops).toContain('PUT /api/v2/namespaces/{namespace}/members/{user}');
     expect(ops).toContain('DELETE /api/v2/namespaces/{namespace}/members/{user}');
+    for (const o of NOT_THE_TS_LAMBDA_V2) expect(ops).toContain(o);
   });
 
-  test.each(ops)('%s is a gateway route', (op) => {
+  const served = ops.filter((o) => !NOT_THE_TS_LAMBDA_V2.includes(o));
+
+  test.each(served)('%s is a gateway route', (op) => {
     expect(routed.has(op)).toBe(true);
   });
 
-  test('V2_ROUTES lists exactly the operations of the spec, each once', () => {
+  test.each(NOT_THE_TS_LAMBDA_V2)('%s is the website\'s, so this gateway has no route for it', (op) => {
+    expect(routed.has(op)).toBe(false);
+  });
+
+  test('V2_ROUTES lists exactly the operations of the spec the TypeScript Lambda serves, each once', () => {
     const listed = V2_ROUTES.map((r) => `${r.method} ${r.path}`);
-    expect([...listed].sort()).toEqual([...ops].sort());
+    expect([...listed].sort()).toEqual([...served].sort());
     expect(new Set(listed).size).toBe(listed.length);
   });
 

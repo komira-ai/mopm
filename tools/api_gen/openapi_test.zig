@@ -907,3 +907,87 @@ test "a string is written plain only when it reads back as the same string" {
         }
     }
 }
+
+test "a cookie scheme is an apiKey in a cookie and a bearer scheme stays http bearer" {
+    var state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer state.deinit();
+    var api = sample();
+    api.security_schemes = &.{
+        .{ .name = "userToken", .bearer_format = "token", .description = "A user token." },
+        .{ .name = "otherToken", .bearer_format = "", .description = "", .cookie = "__Host-session" },
+    };
+    const got = try writeOk(state.allocator(), api);
+    const want =
+        \\  securitySchemes:
+        \\    userToken:
+        \\      type: http
+        \\      scheme: bearer
+        \\      bearerFormat: token
+        \\      description: "A user token."
+        \\    otherToken:
+        \\      type: apiKey
+        \\      in: cookie
+        \\      name: __Host-session
+        \\  headers:
+        \\
+    ;
+    try std.testing.expect(std.mem.indexOf(u8, got, want) != null);
+}
+
+test "refuses a scheme with both a cookie and a bearer format" {
+    var api = sample();
+    api.security_schemes = &.{
+        .{ .name = "userToken", .bearer_format = "token", .description = "", .cookie = "c" },
+        .{ .name = "otherToken", .bearer_format = "", .description = "" },
+    };
+    try expectBad(api, "the security scheme 'userToken' has both a cookie and a bearer_format");
+}
+
+test "a response lists the headers it names after the on_success ones, once, and the Error response omits response_only headers" {
+    var state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer state.deinit();
+    var api = sample();
+    api.headers = &.{
+        .{ .name = "RequestId", .wire = "x-request-id", .description = "The request.", .required = true, .type = "string", .min_length = 1, .on_success = true },
+        .{ .name = "Where", .wire = "location", .description = "", .required = true, .type = "string", .on_success = false, .response_only = true },
+    };
+    var rpc = fixture_rpcs[1];
+    rpc.responses = &.{.{ .status = 204, .description = "Stored.", .headers = &.{ "Where", "RequestId" } }};
+    api.rpcs = &.{rpc};
+    const got = try writeOk(state.allocator(), api);
+    const put =
+        \\        "204":
+        \\          description: Stored.
+        \\          headers:
+        \\            x-request-id:
+        \\              $ref: "#/components/headers/RequestId"
+        \\            location:
+        \\              $ref: "#/components/headers/Where"
+        \\        default:
+        \\
+    ;
+    try std.testing.expect(std.mem.indexOf(u8, got, put) != null);
+    const err_resp =
+        \\    Error:
+        \\      description: "Any error."
+        \\      headers:
+        \\        x-request-id:
+        \\          $ref: "#/components/headers/RequestId"
+        \\      content:
+        \\
+    ;
+    try std.testing.expect(std.mem.indexOf(u8, got, err_resp) != null);
+    try std.testing.expect(std.mem.indexOf(u8, got, "    Where:\n") != null);
+}
+
+test "refuses a response that names an undeclared header and a header that is both on_success and response_only" {
+    var api = sample();
+    var rpc = fixture_rpcs[1];
+    rpc.responses = &.{.{ .status = 204, .description = "Stored.", .headers = &.{"Nope"} }};
+    api.rpcs = &.{rpc};
+    try expectBad(api, "rpc PutThing: the response 204 names the header 'Nope', which is not declared");
+
+    api = sample();
+    api.headers = &.{.{ .name = "Both", .wire = "both", .description = "", .required = false, .type = "string", .on_success = true, .response_only = true }};
+    try expectBad(api, "the header 'Both' is both on_success and response_only");
+}

@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::error::*;
 
 const SPEC: &str = include_str!("../../../../spec/api/openapi.yaml");
+const SPEC_V2: &str = include_str!("../../../../spec/api/openapi-v2.yaml");
 const CONTRACT_ERRORS: &str = include_str!("../../../../tests/contract/api/errors.json");
 
 struct SpecError {
@@ -55,9 +56,39 @@ fn spec_line(line: &str) -> Option<(String, SpecError)> {
     (rest[end..].trim() == "}").then_some((code.to_string(), SpecError { status, message, hint }))
 }
 
+fn spec_table(text: &str) -> BTreeMap<String, SpecError> {
+    let at = text.find("\nx-mopm-errors:").expect("the spec has the table");
+    text[at..].lines().skip(1).filter_map(spec_line).collect()
+}
+
 fn spec_errors() -> BTreeMap<String, SpecError> {
-    let at = SPEC.find("\nx-mopm-errors:").expect("the spec has the table");
-    SPEC[at..].lines().skip(1).filter_map(spec_line).collect()
+    spec_table(SPEC)
+}
+
+fn spec_errors_v2() -> BTreeMap<String, SpecError> {
+    spec_table(SPEC_V2)
+}
+
+/// What differs between the website table and a spec's error table: a code the spec lacks, or one whose
+/// status, message or hint is not the table's. Empty when they agree.
+fn web_problems(spec: &BTreeMap<String, SpecError>) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (code, t) in WEB_CATALOGUE {
+        let Some(want) = spec.get(code.as_str()) else {
+            problems.push(format!("web {code}: the spec lacks it"));
+            continue;
+        };
+        if code.status() != want.status {
+            problems.push(format!("web {code} status: {} != {}", code.status(), want.status));
+        }
+        if t.message != want.message {
+            problems.push(format!("web {code} message: {:?} != {:?}", t.message, want.message));
+        }
+        if t.hint != want.hint {
+            problems.push(format!("web {code} hint: {:?} != {:?}", t.hint, want.hint));
+        }
+    }
+    problems
 }
 
 #[test]
@@ -80,6 +111,49 @@ fn every_template_has_the_spec_text_and_its_code_the_spec_status() {
             assert_eq!(code.status(), want.status, "{name} {code} status");
         }
     }
+}
+
+#[test]
+fn every_website_template_has_the_v2_spec_text_and_its_code_the_v2_status() {
+    let spec = spec_errors_v2();
+    let codes: Vec<ErrorCode> = WEB_CATALOGUE.iter().map(|(c, _)| *c).collect();
+    for code in [ErrorCode::SessionRequired, ErrorCode::CsrfFailed, ErrorCode::TutorialUnavailable] {
+        assert!(codes.contains(&code), "{code} is not in the website table");
+    }
+    assert_eq!(web_problems(&spec), Vec::<String>::new());
+}
+
+#[test]
+fn the_website_comparison_fails_on_a_status_a_hint_or_a_missing_code() {
+    let mut spec = spec_errors_v2();
+    spec.get_mut("tutorial_unavailable").unwrap().status = 500;
+    assert_eq!(web_problems(&spec), vec!["web tutorial_unavailable status: 503 != 500".to_string()]);
+
+    let mut spec = spec_errors_v2();
+    spec.get_mut("csrf_failed").unwrap().hint = "Try later.".to_string();
+    assert_eq!(
+        web_problems(&spec),
+        vec!["web csrf_failed hint: \"Reload the page and try again.\" != \"Try later.\"".to_string()]
+    );
+
+    let mut spec = spec_errors_v2();
+    spec.get_mut("session_required").unwrap().message = "Nope.".to_string();
+    assert_eq!(
+        web_problems(&spec),
+        vec!["web session_required message: \"You are not signed in to the website.\" != \"Nope.\"".to_string()]
+    );
+
+    let mut spec = spec_errors_v2();
+    spec.remove("session_required");
+    assert_eq!(web_problems(&spec), vec!["web session_required: the spec lacks it".to_string()]);
+}
+
+#[test]
+fn the_website_codes_are_answered_with_their_own_statuses() {
+    assert_eq!(
+        [ErrorCode::SessionRequired, ErrorCode::CsrfFailed, ErrorCode::TutorialUnavailable].map(ErrorCode::status),
+        [401, 403, 503]
+    );
 }
 
 #[test]
@@ -108,12 +182,24 @@ fn the_status_tables_of_the_typescript_registry() {
         ("upload_invalid", 400), ("publish_not_found", 404), ("upload_used", 409), ("payload_too_large", 413),
         ("limit_exceeded", 403), ("rate_limited", 429), ("read_only_mode", 503),
     ];
-    assert_eq!(ts.len(), ErrorCode::ALL.len(), "every code of the registry is in the list, and no other");
     for (text, status) in ts {
         let code = ErrorCode::parse(text).unwrap_or_else(|| panic!("no code {text}"));
         assert_eq!(code.status(), *status, "{text}");
         assert_eq!(code.as_str(), *text);
     }
+    // Every other code is one of the v2 API only (the website's), listed in the v2 spec with its status.
+    let spec_v2 = spec_errors_v2();
+    let mut v2_only = Vec::new();
+    for code in ErrorCode::ALL {
+        if ts.iter().any(|(text, _)| *text == code.as_str()) {
+            continue;
+        }
+        let want = spec_v2.get(code.as_str()).unwrap_or_else(|| panic!("{code} is in neither the TypeScript list nor the v2 spec"));
+        assert_eq!(code.status(), want.status, "{code} v2 status");
+        v2_only.push(*code);
+    }
+    assert_eq!(v2_only, [ErrorCode::SessionRequired, ErrorCode::CsrfFailed, ErrorCode::TutorialUnavailable]);
+    assert_eq!(ts.len() + v2_only.len(), ErrorCode::ALL.len(), "every code of the registry is in one list, and no other");
 }
 
 #[test]
@@ -121,6 +207,14 @@ fn codes_round_trip_through_their_text_and_unknown_text_is_no_code() {
     for code in ErrorCode::ALL {
         assert_eq!(ErrorCode::parse(code.as_str()), Some(*code));
         assert_eq!(code.to_string(), code.as_str());
+    }
+    for (text, code) in [
+        ("session_required", ErrorCode::SessionRequired),
+        ("csrf_failed", ErrorCode::CsrfFailed),
+        ("tutorial_unavailable", ErrorCode::TutorialUnavailable),
+    ] {
+        assert_eq!(ErrorCode::parse(text), Some(code));
+        assert_eq!(code.as_str(), text);
     }
     assert_eq!(ErrorCode::parse("gone_fishing"), None);
     assert_eq!(ErrorCode::parse("Invalid_Request"), None);

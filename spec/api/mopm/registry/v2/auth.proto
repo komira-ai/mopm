@@ -127,3 +127,30 @@ message OidcExchangeResponse {
   Version version = 5;
   repeated Entry packages = 6;
 }
+
+message StartWebLoginParams {
+  // The page of the site to come back to after the sign-in, a path such as `/tutorial/hello`. A value that is not a page of
+  // the site (it does not start with one `/`, has a backslash or a control character, is longer than 256 characters, or is
+  // outside the site's routes) becomes `/tutorial`; it is never refused.
+  string return_to = 1 [(field) = {param: "ReturnTo"}];
+}
+
+message CompleteWebLoginParams {
+  // GitHub's authorization code; absent when the person did not authorize.
+  string code = 1 [(field) = {param: "OAuthCode"}];
+  // The `state` that `startWebLogin` sent GitHub.
+  string state = 2 [(field) = {param: "OAuthState"}];
+  // GitHub's error when the person did not authorize, such as `access_denied`.
+  string error = 3 [(field) = {param: "OAuthError"}];
+}
+
+// The user signed in to the website.
+message WebSession {
+  // The user's GitHub login, as GitHub spells it.
+  string login = 1 [(field) = {required: true, min_length: 1, max_length: 39}];
+  // The value every cookie-authenticated `POST` sends as `X-Mopm-CSRF`: base64url, without padding, of the SHA-256 of
+  // `mopm-csrf`, a zero byte and the session token. It is the same for the whole session and nothing stores it.
+  string csrf = 2 [(field) = {required: true, pattern: "^[A-Za-z0-9_-]{43}$"}];
+  // When the session ends: seven days after the sign-in. It is never extended.
+  Timestamp expires_at = 3 [(field) = {required: true}];
+}

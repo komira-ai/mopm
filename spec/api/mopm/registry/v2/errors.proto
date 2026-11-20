@@ -79,6 +79,9 @@ enum ErrorCode {
   ERROR_CODE_LAST_OWNER = 43 [(error) = {status: 409, message: "'{user}' is the last owner of '{namespace}'.", hint: "Make another member an owner first."}];
   ERROR_CODE_MEMBER_NOT_FOUND = 44 [(error) = {status: 404, message: "'{user}' is not a member of '{namespace}'.", hint: "List the members with 'mopm org list {namespace}'."}];
   ERROR_CODE_USER_NOT_FOUND = 45 [(error) = {status: 404, message: "There is no mopm user '{user}'.", hint: "A user gets their name at their first 'mopm login'."}];
+  ERROR_CODE_SESSION_REQUIRED = 46 [(error) = {status: 401, message: "You are not signed in to the website.", hint: "Sign in with GitHub, then try again."}];
+  ERROR_CODE_CSRF_FAILED = 47 [(error) = {status: 403, message: "The request did not come from a page of the website.", hint: "Reload the page and try again."}];
+  ERROR_CODE_TUTORIAL_UNAVAILABLE = 48 [(error) = {status: 503, message: "The sandbox service did not answer.", hint: "Wait {retry_after} seconds and try again; the Retry-After header says how long."}];
 }
 
 // Why a publish was rejected after it was accepted (`PublishStatus`).

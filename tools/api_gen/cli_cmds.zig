@@ -9,7 +9,8 @@
 //! string, an integer, a boolean or an enum, a wrapper message of one, a repeated one of these (the flag may be given more
 //! than once), or a union of a wrapper of repeated strings and a constant string (`names_or_const`).
 //!
-//! A refusal (an operation without commands, a command name that is not unique or not made of words of `[a-z][a-z0-9-]*`,
+//! A browser operation (model.Rpc.browser, the website's) has no commands and no entry. A refusal (any other operation
+//! without commands, a browser operation with commands, a command name that is not unique or not made of words of `[a-z][a-z0-9-]*`,
 //! an argument, `set` or `defaults` entry that does not fit the request, ...) is `bad`, with the reason naming the rpc.
 
 const std = @import("std");
@@ -181,6 +182,10 @@ const Gen = struct {
     /// Every operation has commands, every name is words of `[a-z][a-z0-9-]*`, no name is another's or another's first words.
     fn checkNames(g: *Gen) Error!void {
         for (g.api.rpcs) |rpc| {
+            if (rpc.browser) {
+                if (rpc.commands.len > 0) return g.fail("rpc {s}: is a browser operation and has commands", .{rpc.name});
+                continue;
+            }
             if (rpc.commands.len == 0) return g.fail("rpc {s}: has no `commands` in its (operation) option", .{rpc.name});
             for (rpc.commands) |c| {
                 var words = std.mem.splitScalar(u8, c.name, ' ');
