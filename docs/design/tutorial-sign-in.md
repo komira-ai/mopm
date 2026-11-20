@@ -64,38 +64,49 @@ Errors are the API's usual envelope, `{"error": {"code", "message", "hint"}}` wi
 
 There is no limit to refuse with: a signed-in user may ask for as many sandboxes as they like (section 4).
 
-After the grant, errors come from the E2B SDK in the browser: a `CommandExitError` is the program's own non-zero exit
-(show the exit code; it is not an error of the page); a `NotFoundError`, or any connection error once `expires_at` has
-passed, means the sandbox has ended: ask the endpoint for a new one and run again, once.
+After the grant, errors come from the E2B SDK in the browser (e2b 2.64.0):
 
-### The frontend, in 20 lines
+- `CommandExitError` is the program's own non-zero exit. Show the exit code; it is not an error of the page.
+- `SandboxNotRunningError` (killed or timed out) or `SandboxUnreachableError` means the sandbox is gone. Ask the
+  endpoint for a new one and run again, once.
+- `SandboxNotFoundError` comes only from E2B's platform API, which the page never calls. `NotFoundError` is a missing
+  file or command.
+
+### The frontend, in about 20 lines
 
 ```ts
-import { Sandbox, CommandExitError } from 'e2b'           // pinned exactly in site/package.json (section 7)
+import { Sandbox, CommandExitError, SandboxNotRunningError, SandboxUnreachableError } from 'e2b' // pinned (section 7)
 
-export async function runLesson(code: string, show: (text: string) => void): Promise<number | 'signed-out'> {
-  const s = await fetch('/api/v2/auth/web/session', { credentials: 'same-origin' })
-  if (s.status === 401) return 'signed-out'
-  const { csrf } = await s.json()
-  const r = await fetch('/api/v2/tutorial/sandbox', {
-    method: 'POST', credentials: 'same-origin', headers: { 'X-Mopm-CSRF': csrf },
-  })
-  if (!r.ok) throw new Error((await r.json()).error.code)  // see the error table
+let sbx: Sandbox | null = null, until = 0                  // one sandbox per page, reused until near expires_at
+async function sandbox(csrf: string): Promise<Sandbox> {   // csrf from GET /api/v2/auth/web/session
+  if (sbx && Date.now() < until - 60_000) return sbx
+  const r = await fetch('/api/v2/tutorial/sandbox', { method: 'POST', credentials: 'same-origin', headers: { 'X-Mopm-CSRF': csrf } })
+  if (!r.ok) throw new Error(await r.json().then((b) => b.error.code, () => 'tutorial_unavailable')) // the error table
   const g = await r.json()
   // Sandbox.connect() needs the team API key; the constructor takes only this sandbox's token (section 4).
-  const sbx = new Sandbox({ sandboxId: g.sandbox_id, sandboxDomain: g.domain,
-                            envdVersion: g.envd_version, envdAccessToken: g.access_token })
-  await sbx.files.write('/home/user/lessons/hello/src/main.mojo', code)
+  sbx = new Sandbox({ sandboxId: g.sandbox_id, sandboxDomain: g.domain, envdVersion: g.envd_version, envdAccessToken: g.access_token })
+  until = Date.parse(g.expires_at)
+  return sbx
+}
+
+export async function runLesson(csrf: string, code: string, show: (t: string) => void, again = true): Promise<number> {
+  const s = await sandbox(csrf)
   try {
-    await sbx.commands.run('mopm run', { cwd: '/home/user/lessons/hello', timeoutMs: 20_000, onStdout: show, onStderr: show })
+    await s.files.write('/home/user/lessons/hello/src/main.mojo', code)
+    await s.commands.run('mopm run', { cwd: '/home/user/lessons/hello', timeoutMs: 20_000, onStdout: show, onStderr: show })
     return 0
-  } catch (e) { if (e instanceof CommandExitError) return e.exitCode; throw e }
+  } catch (e) {
+    if (e instanceof CommandExitError) return e.exitCode   // the program failed, not the page
+    if (again && (e instanceof SandboxNotRunningError || e instanceof SandboxUnreachableError)) { sbx = null; return runLesson(csrf, code, show, false) }
+    throw e
+  }
 }
 ```
 
-The snippet type-checks against `e2b` 2.64.0's published types. A real page keeps one sandbox per page and reuses it
-for every run until `expires_at`. It keeps the grant in memory only, never in `localStorage`, and it maps errors as the
-table says (tu-S2). Whether the bundled SDK runs under the site's CSP and talks to E2B from a browser origin is
+The snippet was type-checked (`tsc` 5.9.3, `strict`) against `e2b` 2.64.0's published types; a misspelled
+constructor field fails that check. It is the minimum. The real page (tu-S2) keeps the grant in memory only, never in
+`localStorage`. It maps every error code to the table's message, and on `csrf_failed` it fetches the session again and
+retries once. For E2B's `base` template, replace `mopm run` with a command the template has, such as `echo`. Whether the bundled SDK runs under the site's CSP and talks to E2B from a browser origin is
 **unverified**. The constructor is exported and typed public, but E2B's SDK comments mark it `@internal` (section 4). tu-X1
 settles all three.
 
@@ -106,7 +117,7 @@ tu-S1 adds a preview server that serves the built site on `127.0.0.1` and plays 
 ```sh
 cd site && npm ci && npm run build
 npm run preview -- --scenario signed-out          # lesson text and the sign-in card, no editor
-npm run preview -- --scenario signed-in           # a fake session; the sandbox route answers tutorial_unavailable
+npm run preview -- --scenario signed-in           # a fake session; with no key, the sandbox route answers tutorial_unavailable
 E2B_API_KEY=<a key from your own E2B account> \
   npm run preview -- --scenario signed-in --e2b-template base   # creates real sandboxes, internet off
 ```
@@ -114,15 +125,19 @@ E2B_API_KEY=<a key from your own E2B account> \
 It prints its address (`http://127.0.0.1:<port>/tutorial`, the port picked by the system). In the `signed-in`
 scenario, `GET /api/v2/auth/web/session` answers a fixed login and CSRF value. `POST /api/v2/tutorial/sandbox` makes the
 same checks as the real route (the CSRF header, `Origin`, `Sec-Fetch-Site`, no body). With `E2B_API_KEY` set, it sends
-the same create request to E2B as the Rust function does (section 4). Your page code is therefore the same against the
+E2B the same create body as the Rust function (section 4): the same JSON, from a second, TypeScript implementation
+that tu-S1's tests hold equal to section 4. Your page code is therefore the same against the
 stub and against prod. Other scenarios: `csrf-failed`, `unavailable`, `session-expired` (the session route answers 200,
 then the sandbox route answers 401). The preview sends the site's CSP, so a CSP problem shows up locally.
 
-E2B's `base` template has no Mojo toolchain, so before tu-X2's template exists, wire the page with commands such as
-`echo` or `python3 -c`. The key is your own, read from the environment as E2B's tools read it, and the preview never
-writes it anywhere.
+Running code needs a real sandbox, so the success path needs a key. Get it from your own E2B account (E2B's Hobby
+plan). Without a key, the scenarios cover every other state of the page, and tu-S2's tests use a fake runner in place of
+the SDK. E2B's `base` template has no Mojo toolchain, so before tu-X2's template exists, wire the page with commands
+such as `echo` or `python3 -c`. The key is read from the environment, as E2B's own tools read it. That is the one
+setting that is not a flag, because it is secret material (S2). The preview never writes it anywhere.
 
-Until tu-S1 lands, a fake `fetch` that answers the two examples above is enough to start on the page.
+Until tu-S1 lands, a fake `fetch` for our two routes (the session example of section 2 and the error table above) is
+enough to build every state of the page except a real run.
 
 ## Decisions at a glance
 
@@ -294,8 +309,8 @@ The gate sits where letting a stranger through costs us something: getting a san
 }
 ```
 
-- `allow_internet_access: false` turns the internet off, as the CEO ruled. E2B documents it as behaving "the same as
-  specifying denyOut to 0.0.0.0/0 in the network config" (E2B, "Internet access" and "Create sandbox (v2)"). The only
+- `allow_internet_access: false` turns the internet off, as the CEO ruled. E2B documents it as equivalent to setting `network.denyOut`
+  to `['0.0.0.0/0']` (E2B, "Internet access" and "Create sandbox (v2)"). The only
   call that changes a running sandbox's network is the platform API's `PUT /sandboxes/{sandboxID}/network`, which needs
   the team key (e2b 2.64.0, `updateNetwork`). The browser's token cannot reach it.
 - `network.allowPublicTraffic: false` means the sandbox's own URLs accept traffic only with its traffic access token
@@ -304,7 +319,7 @@ The gate sits where letting a stranger through costs us something: getting a san
   setting is **unverified**: the SDK sends the traffic token on none of its agent calls, which suggests it does. tu-X1
   checks it, and if the setting breaks the agent, the field is dropped and the note amended.
 - `timeout: 1800` and `autoPause: false`: E2B ends the sandbox 30 minutes after creation, and kills rather than pauses
-  it (E2B, "Sandbox lifecycle": the timeout is in seconds on the API; `autoPause` defaults to false). **This is
+  it (E2B, "Create sandbox (v2)": `timeout` is in seconds, default 300; `autoPause` defaults to false). **This is
   cleanup, not a limit.** Its only job is to end a sandbox whose tab was closed: the browser cannot extend or kill a
   sandbox, because both calls need the team key. A user who is still working gets a new sandbox from the same route,
   as often as they like. The editor holds their files and the page writes them again before each run, so a new sandbox
@@ -330,7 +345,7 @@ the envd API reference). What it opens:
 | this sandbox's files: read, write, list | creating any sandbox, with any network setting |
 | running commands and terminals in this sandbox, with their output | changing a sandbox's network (`PUT /sandboxes/{id}/network`) |
 | nothing in any other sandbox | extending, pausing, resuming or killing a sandbox; listing the team's sandboxes |
-| | connecting to a sandbox by id (`POST /sandboxes/{id}/connect`, E2B, "Connect to sandbox") |
+| | connecting to a sandbox by id (`POST /v2/sandboxes/{id}/connect`, E2B, "Connect to sandbox") |
 | | building and deleting templates |
 
 The token dies with its sandbox. If it leaks, for example through a flaw in the page, the holder controls that one
@@ -355,7 +370,7 @@ So:
    API reference). The response of our endpoint does not change.
 3. tu-X1 asks E2B whether a token-only `connect` is supported or planned.
 
-**The key**: `mopm/<stage>/e2b`, a Secrets Manager secret holding `{api_key}`, written by a held operator script like
+**The key**: `mopm/<stage>/e2b`, a Secrets Manager secret holding `{api_key}`, written by a held operator script (tu-O2) like
 the OAuth secret's.
 
 - Its resource policy has one explicit `Deny` of `secretsmanager:GetSecretValue`, with the condition
@@ -374,13 +389,11 @@ does not see or store your code." The "What mopm.dev stores" page of tu-S3 says 
 them and the pinned mopm release, so mopm, the Mojo toolchain and every lesson's synced project are already inside, and
 a run downloads nothing. Nothing can be downloaded anyway with the internet off. The Mojo 1.0.0 closure for `linux-64`
 is about 229 MiB compressed (`src/core/toolchain/mojo-1.0.0-linux-64.json`). The template definition follows E2B's
-template format (E2B, "Template quickstart"). Building it needs the team key, so it is an operator step (tu-O1) that
+template format (E2B, "Template quickstart"). Building it needs the team key, so it is an operator step (tu-O2) that
 writes the resulting template id into the stage settings.
 
-**What the rulings leave open, stated for the record.** With no limits, a signed-in user with a script can create
-sandboxes until E2B's concurrency limit for our team refuses more. Until those sandboxes time out, the tutorial answers
-`tutorial_unavailable` to everyone, and we pay for every sandbox-second. One log line per created sandbox (section 6)
-shows who did it. E2B's own team limits and the 30-minute cleanup are the only bounds. This note adds none, as ruled.
+**No limits.** As ruled, this note adds none. E2B's own plan limits, such as its concurrency limit for our team,
+still apply, and E2B refusing a sandbox is `tutorial_unavailable`.
 
 ## 5. The functions: the first Rust Lambdas
 
@@ -472,7 +485,8 @@ address. The site distribution's standard logs stay off.
   The real one calls the routes with `credentials: 'same-origin'`; tests use a fake that replays the contract
   examples. A `LessonRunner` over the SDK (`site/src/tutorial/runner.ts`) writes the files and runs `mopm run` or
   `mopm test` in the lesson's directory. It holds one sandbox per page, asks for a new one when `expires_at` is less
-  than a minute away or the sandbox is gone, and tests replace it with a fake.
+  than a minute away, or when the SDK raises `SandboxNotRunningError` or `SandboxUnreachableError`. Tests replace it
+with a fake.
 - **Lessons** are `tutorial/lessons/<id>/`: `lesson.md`, `lesson.json` (title, summary, order, editable files, actions)
   and `project/` (a mopm project with `mopm.toml` and `mopm.lock`). The site build reads the first two and the template
   build takes `project/`. One schema, `spec/tutorial-lesson.schema.json`, is the contract between them.
@@ -499,7 +513,7 @@ Contract first, so the tutorial can be built against it:
 - **tu-S1 (M) The stub**: `site/src/tutorial/gate.ts` with the real client and the replaying fake, and
   `site/tools/preview.ts` with an npm script `preview`.
   - The preview serves `dist/` on 127.0.0.1 (port 0, printed) with the site's headers and answers our routes per the
-    `--scenario` flag, as "Running it locally" says.
+    `--scenario` flag, as "Running it locally" says; `--e2b-template` names the template it creates sandboxes from.
   - With `E2B_API_KEY` in its environment, it sends section 4's create body to E2B through an injected `fetch`.
   - `site/src/host.ts` maps `127.0.0.1` and `localhost` to the relative API base.
   - Nothing of it reaches a deployed stage.
@@ -513,7 +527,8 @@ Contract first, so the tutorial can be built against it:
     - signed out shows the lesson and the sign-in link with the right `return_to`, and no editor;
     - signed in shows the editor and the login;
     - each error code renders its message, and `session_required` keeps the edited code;
-    - an ended sandbox is replaced once and the run repeated, and a grant near `expires_at` is replaced before a run;
+    - a `SandboxNotRunningError` or `SandboxUnreachableError` replaces the sandbox once and repeats the run, and a
+      grant near `expires_at` is replaced before a run;
     - a non-zero exit shows its code;
     - control and bidi characters show as markers;
     - the draft survives a reload through `localStorage`, the page works when `localStorage` throws, and the grant
@@ -605,9 +620,10 @@ The sandbox:
 
 Operator:
 
-- **tu-O1 (operator)** On each stage, before tu-A2 and tu-A3 deploy; needs the owner's hands:
+- **tu-O1 (operator)** On each stage, before tu-A2 deploys; needs the owner's hands:
   - set the OAuth app's callback URL;
-  - check with the held `oauth-secret` script's dry run that the secret holds a current `client_secret`;
+  - check with the held `oauth-secret` script's dry run that the secret holds a current `client_secret`.
+- **tu-O2 (operator)** On each stage, after tu-X2 and before tu-A3 deploys; needs the owner's hands:
   - write `mopm/<stage>/e2b` with the held script of tu-A3;
   - build the E2B template of tu-X2 and set its id in the stage settings.
 
@@ -622,8 +638,8 @@ Go-live:
 
 - tu-P1 first. tu-S1 follows tu-P1, and tu-S2 follows tu-S1, in parallel with everything below.
 - tu-F1, tu-I1 and tu-X1 start at once. tu-F2 follows tu-F1, and tu-F3 follows tu-F2.
-- tu-A1 follows tu-F2 and tu-F3. tu-A2 follows tu-A1 and deploys after tu-O1.
-- tu-X2 follows tu-X1. tu-A3 follows tu-A1 and tu-F2, and deploys after tu-O1 and tu-X2.
+- tu-O1 can be done at any time. tu-A1 follows tu-F2 and tu-F3. tu-A2 follows tu-A1 and deploys after tu-O1.
+- tu-X2 follows tu-X1, and tu-O2 follows tu-X2. tu-A3 follows tu-A1 and tu-F2, and deploys after tu-O2.
 - tu-S3 follows tu-S2, once tu-A2, tu-A3 and tu-I1 are deployed to prod.
 - Deploys stay automatic from main.
 
@@ -693,16 +709,17 @@ E2B's documentation, read for this revision:
   `X-Access-Token` header, secure access by default from SDK 2.0.0 and always from 2.51.0.
 - "Internet access", <https://docs.e2b.dev/sandbox/internet-access>: `allowInternetAccess` /
   `allow_internet_access`, and `allowPublicTraffic` as a create-only option.
-- "Sandbox lifecycle", <https://docs.e2b.dev/sandbox/lifecycle>: the timeout, `setTimeout`, and the longest run per
-  plan.
+- "Sandbox lifecycle", <https://docs.e2b.dev/sandbox/lifecycle>: `setTimeout`, and the longest run per plan.
 - "Connect to sandbox", <https://docs.e2b.dev/api-reference/sandboxes/connect-to-sandbox>: connecting by id needs
-  `X-API-Key`, and returns the access token.
+  `X-API-Key`, and returns the access token. The page marks this path deprecated in favour of
+  `POST /v2/sandboxes/{id}/connect`, which the SDK calls; that one needs the key too.
 - "Create sandbox (v2)", <https://docs.e2b.dev/api-reference/sandboxes/create-sandbox-v2>: `POST /v2/sandboxes`, its
-  body (`templateID`, `timeout` in seconds, `allow_internet_access`, `autoPause`, `network.allowPublicTraffic`,
+  body (`templateID`, `timeout` in seconds with default 300, `autoPause` with default false, `allow_internet_access`, `network.allowPublicTraffic`,
   `metadata`) and its answer (`sandboxID`, `envdAccessToken`, `envdVersion`, `domain`, `trafficAccessToken`).
 - The envd API reference, <https://docs.e2b.dev/api-reference/envd/environment-variables>: the sandbox agent's
   endpoints, authenticated by the sandbox access token in `X-Access-Token`.
 - "Template quickstart", <https://docs.e2b.dev/template/quickstart>: defining and building a template.
 
 The `e2b` npm package, version 2.64.0 (MIT): the `Sandbox` constructor and its `@internal` comment, `updateNetwork`,
-and the agent client sending `X-Access-Token`.
+the agent client sending `X-Access-Token`, and the errors `CommandExitError`, `SandboxNotRunningError` and
+`SandboxUnreachableError`.
