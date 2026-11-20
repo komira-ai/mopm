@@ -6,9 +6,10 @@ Account ids come from the CDK environment at deploy time and are never committed
 ## Runbook notes
 
 - **Tearing down beta or gamma.** The channel bucket and the DynamoDB tables carry a delete-deny that exempts only
-  named roles (`mopm-<stage>-takedown`, plus `mopm-<stage>-cleanup` on beta and gamma). The stack does not create
-  those roles; the access stack does. A non-empty beta or gamma bucket can be destroyed only by a session
-  assuming the cleanup role. Without it, `cdk destroy` fails on the bucket policy.
+  named roles (`mopm-<stage>-takedown`, plus `mopm-<stage>-cleanup` on beta and gamma). No stack creates
+  those roles, neither these nor the access stack (whose roles are `mopm-<stage>-deploy` and `mopm-<stage>-e2e`);
+  none exists until it is created outside the stacks. A non-empty beta or gamma bucket can be destroyed only by a session
+  assuming the cleanup or the takedown role. Without one, `cdk destroy` fails on the bucket policy.
 - **DynamoDB resource policy is unproven.** The table resource policy is a raw property override that nothing
   validates against CloudFormation. The first beta deploy is the proof: if CloudFormation rejects the `Resource`
   or `Principal` form, the data stack fails there and the policy shape needs adjusting.
