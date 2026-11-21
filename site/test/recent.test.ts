@@ -33,8 +33,8 @@ test('one call: GET /packages?sort=updated&limit=8, and its answer decodes', asy
     urls.push(url);
     return responseOf(listCase('search by name prefix in every namespace'));
   };
-  const r = await client(fetchFn, 'https://api.mopm.dev/api/v2').searchPackages(recentQuery());
-  expect(urls).toEqual(['https://api.mopm.dev/api/v2/packages?sort=updated&limit=8']);
+  const r = await client(fetchFn, '/api/v2').searchPackages(recentQuery());
+  expect(urls).toEqual(['/api/v2/packages?sort=updated&limit=8']);
   expect(RECENT_LIMIT).toBe(8);
   expect(r.kind).toBe('ok');
 });

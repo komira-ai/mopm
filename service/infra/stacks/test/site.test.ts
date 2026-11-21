@@ -6,7 +6,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { STAGES, edgeOriginSecretName, stageConfig } from '../lib/config';
 import {
   API_CONTENT_SECURITY_POLICY, API_PATH_PATTERN, ASSETS_CACHE_CONTROL, DEFAULT_SITE_DIR, EDGE_HEADER, FUNCTION_MAX_BYTES,
-  PAGES_CACHE_CONTROL, PERMISSIONS_POLICY, SiteStack, assertSiteBuild, siteFiles, siteRouterSource,
+  PAGES_CACHE_CONTROL, PERMISSIONS_POLICY, SiteStack, assertSiteBuild, contentSecurityPolicy, siteFiles, siteRouterSource,
 } from '../lib/site-stack';
 import { DUMMY_ACCOUNT, DUMMY_ZONE_ID, SITE_STUB_DIR, bucketStatements, build } from './util';
 import { apiBehaviour, behaviourFor, edgeHeaderProblems } from './site-edge';
@@ -68,22 +68,37 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
     t.hasResourceProperties('AWS::CertificateManager::Certificate', { DomainName: host, ValidationMethod: 'DNS' });
   });
 
-  test("the CSP is exactly the site's own origin plus this stage's API for fetch, with no wildcard and no unsafe- source", () => {
+  test("the CSP's connect-src is exactly the site's own origin and E2B's sandboxes; every other directive is as before", () => {
     const csp = policy.SecurityHeadersConfig.ContentSecurityPolicy;
     expect(csp).toEqual({
       Override: true,
       ContentSecurityPolicy:
         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; " +
-        `connect-src https://api.${host}; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; ` +
+        "connect-src 'self' https://*.e2b.app; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; " +
         "object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'",
     });
-    expect(c.apiDomain).toBe(`api.${host}`);
-    expect(csp.ContentSecurityPolicy).not.toContain('*');
+    expect(contentSecurityPolicy(c)).toBe(csp.ContentSecurityPolicy);
+    // The pages read the API under /api/* on their own host: no API host is named, this stage's or another's.
+    expect(csp.ContentSecurityPolicy).not.toContain('https://api.');
     expect(csp.ContentSecurityPolicy).not.toContain('unsafe-');
-    // No other stage's API (a prod page must not talk to beta, nor beta to prod).
-    for (const other of STAGES.filter((s) => s !== stage)) {
-      expect(csp.ContentSecurityPolicy).not.toContain(`https://${stageConfig(other).apiDomain};`);
-    }
+    // The one wildcard is E2B's sandboxes, in connect-src.
+    expect(csp.ContentSecurityPolicy.split('*')).toHaveLength(2);
+    // Against the policy before: connect-src changed from this stage's API host, and nothing else did.
+    const directives = (p: string) => p.split('; ');
+    const was = directives(before.headersPolicy.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy);
+    const now = directives(csp.ContentSecurityPolicy);
+    expect(was.filter((d) => !now.includes(d))).toEqual([`connect-src https://api.${host}`]);
+    expect(now.filter((d) => !was.includes(d))).toEqual(["connect-src 'self' https://*.e2b.app"]);
+    expect(now.map((d) => d.split(' ')[0])).toEqual(was.map((d) => d.split(' ')[0]));
+  });
+
+  test("a stage whose tutorial block names another E2B domain allows that domain's sandboxes, and not e2b.app", () => {
+    const s = build(stage, { tutorial: { e2bDomain: 'sandbox.example' } });
+    const other = Template.fromStack(s.site).findResources('AWS::CloudFront::ResponseHeadersPolicy').HeadersECA0794E;
+    const csp: string = other.Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy;
+    expect(csp).toContain("; connect-src 'self' https://*.sandbox.example; ");
+    expect(csp).not.toContain('e2b.app');
+    expect(csp).toBe(policy.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy.replace('*.e2b.app', '*.sandbox.example'));
   });
 
   test('the pages send that policy: the default behaviour names the site policy, the API behaviour its own', () => {
@@ -92,12 +107,15 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
     expect(dist.CacheBehaviors.map((b: Json) => b.ResponseHeadersPolicyId)).toEqual([{ Ref: 'ApiHeaders86A8FCD8' }]);
   });
 
-  test("the pages' headers policy, bucket origin, default behaviour and distribution settings are the ones before, byte for byte", () => {
+  test("the pages' headers policy (but its connect-src), bucket origin, default behaviour and distribution settings are the ones before, byte for byte", () => {
     // Same logical ids: CloudFormation updates the distribution, the policy and the router in place.
     expect([before.distributionId, before.headersPolicyId, before.routerId]).toEqual(['Distribution830FAC52', 'HeadersECA0794E', 'Router16807C72']);
     expect(t.findResources('AWS::CloudFront::Distribution')[before.distributionId]).toBeDefined();
     expect(t.findResources('AWS::CloudFront::Function')[before.routerId]).toBeDefined();
-    expect(JSON.stringify(policy)).toBe(JSON.stringify(before.headersPolicy));
+    // The pages' headers policy changes only in its CSP's connect-src (the test above holds that string).
+    const beforePolicy = JSON.parse(JSON.stringify(before.headersPolicy));
+    beforePolicy.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy = contentSecurityPolicy(c);
+    expect(JSON.stringify(policy)).toBe(JSON.stringify(beforePolicy));
     expect(JSON.stringify(dist.Origins[0])).toBe(JSON.stringify(before.bucketOrigin));
     // The changes, and nothing else: the error responses are gone (the router answers the 404 page), the API origin and
     // behaviour are added, and the router also runs on viewer-response (to give that page its 404).
@@ -133,7 +151,7 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
 
   // The site's local preview (site/tools/preview.ts) sends securityHeaders() for its own connect-src: with the same
   // builder, a page that breaks under this policy breaks under the preview.
-  test("the headers the policy sends, as HTTP headers, are the site's securityHeaders for this stage's API", () => {
+  test("the headers the policy sends, as HTTP headers, are the site's securityHeaders for its own origin and E2B", () => {
     const sec = policy.SecurityHeadersConfig;
     const sent: Record<string, string> = {
       'content-security-policy': sec.ContentSecurityPolicy.ContentSecurityPolicy,
@@ -144,7 +162,7 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
     };
     for (const h of policy.CustomHeadersConfig.Items) sent[h.Header.toLowerCase()] = h.Value;
     expect(Object.keys(sec).sort()).toEqual(['ContentSecurityPolicy', 'ContentTypeOptions', 'FrameOptions', 'ReferrerPolicy', 'StrictTransportSecurity']);
-    expect(sent).toEqual(securityHeaders(`https://api.${host}`));
+    expect(sent).toEqual(securityHeaders("'self' https://*.e2b.app"));
   });
 
   test('two deployments: hashed assets, immutable and never pruned; pages, short-cached, pruned and invalidated', () => {

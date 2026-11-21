@@ -3,9 +3,10 @@
 // fetch is a network error and an aborted one a timeout.
 import { client, type FetchFn, type Timers } from '../src/api';
 import { type ErrorKind, fromResponse, kindOfStatus } from '../src/errors';
+import { API_BASE } from '../src/host';
 import { READ_OPS, responseOf, validErrorCases } from './fixtures';
 
-const BASE = 'https://api.mopm.dev/api/v2';
+const BASE = API_BASE;
 
 // Every code in errors.json. Read codes map by meaning; codes of other operations (which the site never calls) fall
 // back to their status class. A new code in the fixtures fails the first test until it is added here.
@@ -123,7 +124,7 @@ test('the request id is kept on an answer that is not an envelope (a gateway 404
   }
 });
 
-test('a busy registry says to try again shortly (retry-after is not readable from a page)', () => {
+test('a busy registry says to try again shortly (the page does not use retry-after)', () => {
   const e = fromResponse(429, '{"error":{"code":"rate_limited","message":"Too many requests.","hint":"x"}}', null);
   expect(e.message).toBe('The registry is busy; try again shortly.');
 });
