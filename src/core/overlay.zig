@@ -15,10 +15,14 @@
 //!
 //! The set never reaches a lock or a manifest: a lock made with it names the
 //! registry's channel and file URLs and the files' sha256, so the same lock holds
-//! once the versions are published. A package the set holds is resolved from the
-//! set alone (the registry is not asked about it); a package it lacks falls
-//! through to the registry. `Index` and `Channel` are the two sources, generic
-//! over the registry's. Nothing here writes below the directory.
+//! once the versions are published. A package the set holds is answered by the set
+//! (its staged line stands in for the package's index file), a package it lacks
+//! falls through to the registry. The registry is asked for a staged package too:
+//! when it already holds the staged version, the set adds its builds to that
+//! version and the registry's record, with its other versions, is what resolution
+//! sees (`mergedIndexText`); when it does not, the staged line alone is the
+//! package. `Index` and `Channel` are the two sources, generic over the registry's.
+//! Nothing here writes below the directory.
 //!
 //! Members with the action `skip` are already on the registry with these bytes
 //! and are left to it. A set that holds a `refuse` member is refused whole.
@@ -64,7 +68,7 @@ fn contains(list: []const []const u8, s: []const u8) bool {
     return false;
 }
 
-fn sha256Hex(bytes: []const u8) [64]u8 {
+pub fn sha256Hex(bytes: []const u8) [64]u8 {
     var d: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
     return std.fmt.bytesToHex(d, .lower);
@@ -246,6 +250,100 @@ pub fn indexText(arena: Allocator, m: *const Member) Allocator.Error![]const u8 
     return out.items;
 }
 
+/// The index file of a staged package when the registry has one (`held`, its text). When the registry's lines include
+/// the staged version, the registry's lines with the staged builds added to the line of that version: the version's
+/// own fields (dependencies, native libraries, state) and the registry's builds of it stay the registry's, a build both
+/// hold is the staged one (`registryDiffers` compares it with the registry's), the top-level `build`, `requires_mojo`
+/// and `files` are those of the lowest compiler as the registry writes them, and the registry's other versions stay.
+/// The staged line alone when the registry holds no line of the staged version, or `held` is not an index file this
+/// can read: the staged version is then new, and the set is the package.
+pub fn mergedIndexText(arena: Allocator, m: *const Member, held: []const u8) Allocator.Error![]const u8 {
+    const staged = try indexText(arena, m);
+    var out = std.ArrayList(u8).init(arena);
+    var merged = false;
+    var lines = std.mem.splitScalar(u8, held, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \r\t");
+        if (line.len == 0) continue;
+        const doc = std.json.parseFromSliceLeaky(std.json.Value, arena, line, .{}) catch |e| switch (e) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return staged,
+        };
+        if (doc != .object) return staged;
+        const version = getStr(doc.object, "version") orelse return staged;
+        if (merged or !sameVersion(version, m.version)) {
+            try out.appendSlice(line);
+            try out.append('\n');
+            continue;
+        }
+        const line_merged = (try addBuilds(arena, m, doc.object)) orelse return staged;
+        try std.json.stringify(line_merged, .{}, out.writer());
+        try out.append('\n');
+        merged = true;
+    }
+    return if (merged) out.items else staged;
+}
+
+fn lessBuild(_: void, a: std.json.Value, b: std.json.Value) bool {
+    return resolve.lessCompiler({}, resolve.compilerOfBuild(getStr(a.object, "build").?).?, resolve.compilerOfBuild(getStr(b.object, "build").?).?);
+}
+
+/// `b` as an entry of an index line's `builds`.
+fn buildValue(arena: Allocator, b: resolve.Build) Allocator.Error!std.json.Value {
+    var files = std.json.Array.init(arena);
+    for (b.files) |f| {
+        var o = std.json.ObjectMap.init(arena);
+        try o.put("subdir", .{ .string = f.subdir });
+        try o.put("filename", .{ .string = f.filename });
+        try o.put("sha256", .{ .string = f.sha256 });
+        try o.put("size", .{ .integer = @intCast(f.size) });
+        try files.append(.{ .object = o });
+    }
+    var o = std.json.ObjectMap.init(arena);
+    try o.put("build", .{ .string = b.build });
+    try o.put("requires_mojo", .{ .string = b.requires_mojo });
+    try o.put("files", .{ .array = files });
+    return .{ .object = o };
+}
+
+/// The registry's `line` of the staged version with the staged builds in its `builds`; null when the line is not one
+/// this can add to (no `builds` and no top-level build, or a build whose compiler it cannot read).
+fn addBuilds(arena: Allocator, m: *const Member, line: std.json.ObjectMap) Allocator.Error!?std.json.Value {
+    var builds = std.ArrayList(std.json.Value).init(arena);
+    if (line.get("builds")) |listed| {
+        if (listed != .array) return null;
+        try builds.appendSlice(listed.array.items);
+    } else {
+        var only = std.json.ObjectMap.init(arena);
+        for ([_][]const u8{ "build", "requires_mojo", "files" }) |key| {
+            try only.put(key, line.get(key) orelse return null);
+        }
+        try builds.append(.{ .object = only });
+    }
+    for (builds.items) |b| {
+        if (b != .object) return null;
+        const name = getStr(b.object, "build") orelse return null;
+        if (resolve.compilerOfBuild(name) == null) return null;
+    }
+    for (m.builds) |sb| {
+        const value = try buildValue(arena, sb);
+        var replaced = false;
+        for (builds.items) |*b| {
+            if (std.mem.eql(u8, getStr(b.object, "build").?, sb.build)) {
+                b.* = value;
+                replaced = true;
+            }
+        }
+        if (!replaced) try builds.append(value);
+    }
+    std.mem.sort(std.json.Value, builds.items, {}, lessBuild);
+    var result = line;
+    const primary = builds.items[0].object;
+    for ([_][]const u8{ "build", "requires_mojo", "files" }) |key| try result.put(key, primary.get(key).?);
+    try result.put("builds", .{ .array = std.json.Array.fromOwnedSlice(arena, builds.items) });
+    return .{ .object = result };
+}
+
 fn sameVersion(a: []const u8, b: []const u8) bool {
     if (std.mem.eql(u8, a, b)) return true;
     const x = resolve.semverOf(a) orelse return false;
@@ -292,13 +390,23 @@ fn buildDiffers(arena: Allocator, dir: []const u8, m: *const Member, staged: res
     return null;
 }
 
+fn holdsBuild(m: *const Member, build: []const u8) bool {
+    for (m.builds) |b| {
+        if (std.mem.eql(u8, b.build, build)) return true;
+    }
+    return false;
+}
+
 /// The channels whose repodata.json the registry has to be asked for, each as `<namespace>/<subdir>`: those of the files
-/// of every picked version the set does not hold.
+/// of the build each picked version has for the Mojo, unless the set holds that build (a version the set adds a build to
+/// has other builds that only the registry holds).
 pub fn registrySubdirs(arena: Allocator, ov: Overlay, res: resolve.Resolution) Allocator.Error![]const []const u8 {
     var out = std.ArrayList([]const u8).init(arena);
     for (res.packages) |p| {
-        if (ov.member(p.record.name) != null) continue;
         const build = p.record.buildFor(res.mojo) orelse continue;
+        if (ov.member(p.record.name)) |m| {
+            if (sameVersion(m.version, p.record.version) and holdsBuild(m, build.build)) continue;
+        }
         for (build.files) |f| {
             const key = try std.fmt.allocPrint(arena, "{s}/{s}", .{ names.namespaceOf(p.record.name), f.subdir });
             if (!contains(out.items, key)) try out.append(key);
@@ -307,8 +415,9 @@ pub fn registrySubdirs(arena: Allocator, ov: Overlay, res: resolve.Resolution) A
     return out.items;
 }
 
-/// The resolver's source of index files: a staged package from the set, anything else from `Inner` (the registry's),
-/// and `asked` set when `Inner` was asked.
+/// The resolver's source of index files: a staged package from the set (merged into the registry's record of its version
+/// when the registry holds that version), anything else from `Inner` (the registry's), and `asked` set when `Inner` was
+/// asked.
 pub fn Index(comptime Inner: type) type {
     return struct {
         overlay: *const Overlay,
@@ -316,9 +425,10 @@ pub fn Index(comptime Inner: type) type {
         asked: *bool,
 
         pub fn fetch(self: @This(), arena: Allocator, name: []const u8, diag: *resolve.Diagnostic) resolve.Error!?[]const u8 {
-            if (self.overlay.member(name)) |m| return try indexText(arena, m);
             self.asked.* = true;
-            return self.inner.fetch(arena, name, diag);
+            const held = try self.inner.fetch(arena, name, diag);
+            const m = self.overlay.member(name) orelse return held;
+            return try mergedIndexText(arena, m, held orelse return try indexText(arena, m));
         }
     };
 }
@@ -519,7 +629,7 @@ fn groupBuilds(arena: Allocator, staged: []StagedBuild, files: []const resolve.F
 
 const conda_fixture = @import("conda_fixture.zig");
 
-const test_sha = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+pub const test_sha = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
 
 /// A staged package file: a `.conda` whose metadata is `meta`.
 fn testConda(a: Allocator, name: []const u8, version: []const u8, meta: []const u8) ![]u8 {
@@ -527,11 +637,11 @@ fn testConda(a: Allocator, name: []const u8, version: []const u8, meta: []const 
     return conda_fixture.simple(a, try names.condaName(a, name), version, &.{.{ .name = path, .data = meta }});
 }
 
-const TestFile = struct { subdir: []const u8 = "linux-64", build: []const u8 = "mojo1.0.0_0", bytes: []const u8 };
-const TestMember = struct { name: []const u8, version: []const u8, action: []const u8 = "upload", files: []const TestFile = &.{} };
+pub const TestFile = struct { subdir: []const u8 = "linux-64", build: []const u8 = "mojo1.0.0_0", bytes: []const u8 };
+pub const TestMember = struct { name: []const u8, version: []const u8, action: []const u8 = "upload", files: []const TestFile = &.{} };
 
 /// Writes a staged set into a fresh temporary directory and returns its path; plan.json is the one `members` give.
-fn testSet(a: Allocator, tmp: *std.testing.TmpDir, members: []const TestMember) ![]const u8 {
+pub fn testSet(a: Allocator, tmp: *std.testing.TmpDir, members: []const TestMember) ![]const u8 {
     var plan = std.ArrayList(u8).init(a);
     try plan.appendSlice("{\"version\":2,\"members\":[");
     for (members, 0..) |m, i| {
@@ -706,11 +816,10 @@ test "a staged set that is not what it says is refused, naming why" {
     }
 }
 
-/// An inner source that fails the test when it is asked anything.
-const Forbidden = struct {
-    pub fn fetch(_: Forbidden, _: Allocator, what: []const u8, _: *resolve.Diagnostic) resolve.Error!?[]const u8 {
-        std.debug.print("the registry was asked for {s}\n", .{what});
-        return error.ResolveFailed;
+/// A registry that holds no package of the test: every index file it is asked for is absent.
+const NoRecord = struct {
+    pub fn fetch(_: NoRecord, _: Allocator, _: []const u8, _: *resolve.Diagnostic) resolve.Error!?[]const u8 {
+        return null;
     }
 };
 
@@ -728,7 +837,7 @@ const ForbiddenChannel = struct {
 
 const MemoryIndex = resolve.MemoryIndex;
 
-test "a closure the set holds is resolved and locked without asking the registry anything; a package it lacks falls through" {
+test "a closure the set holds is resolved and locked from the set when the registry holds none of it, without its repodata; a package it lacks falls through" {
     const plan = @import("install_plan.zig");
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -744,12 +853,12 @@ test "a closure the set holds is resolved and locked without asking the registry
     var why: []const u8 = "";
     const ov = try load(a, dir, &why);
 
-    // Fully staged: the inner source fails the test if it is asked for anything.
+    // Fully staged, the registry holding none of it: the set's lines are the packages, and no repodata is asked.
     var asked = false;
     var diag: resolve.Diagnostic = .{};
     const roots = [_]resolve.Root{.{ .name = "acme/applib", .requirement = "=0.2.0" }};
-    const res = try resolve.resolve(a, Index(Forbidden){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.0.0", .roots = &roots }, &diag);
-    try std.testing.expect(!asked);
+    const res = try resolve.resolve(a, Index(NoRecord){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.0.0", .roots = &roots }, &diag);
+    try std.testing.expect(asked);
     try std.testing.expectEqual(@as(usize, 2), res.packages.len);
     try std.testing.expectEqualStrings("acme/applib", res.packages[0].record.name);
     try std.testing.expectEqualStrings("acme/libbase", res.packages[1].record.name);
@@ -1040,7 +1149,7 @@ test "a plan that is not what the spec says is refused, naming the member" {
 // ------------------------------------------------------------ a staged version with several builds
 
 /// A staged package file like `testConda`, with `stamp` inside so that two files of one package differ.
-fn testCondaStamped(a: Allocator, name: []const u8, version: []const u8, meta: []const u8, stamp: []const u8) ![]u8 {
+pub fn testCondaStamped(a: Allocator, name: []const u8, version: []const u8, meta: []const u8, stamp: []const u8) ![]u8 {
     const path = try std.fmt.allocPrint(a, "lib/mojo/{s}.mopm.json", .{names.importName(name)});
     return conda_fixture.simple(a, try names.condaName(a, name), version, &.{ .{ .name = path, .data = meta }, .{ .name = "lib/stamp.txt", .data = stamp } });
 }
@@ -1147,24 +1256,24 @@ test "a staged version with builds for two compilers is resolved and locked for 
     var asked = false;
     var diag: resolve.Diagnostic = .{};
 
-    const res10 = try resolve.resolve(a, Index(Forbidden){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.0.0", .roots = &roots }, &diag);
+    const res10 = try resolve.resolve(a, Index(NoRecord){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.0.0", .roots = &roots }, &diag);
     const l10 = try plan.buildLock(a, res10, "https://conda.example/", channel, null, &diag);
     try std.testing.expectEqual(@as(usize, 2), l10.packages.len);
     try std.testing.expectEqualStrings("https://conda.example/acme/linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", l10.packages[0].url);
     try std.testing.expectEqualStrings(&sha256Hex(b.l10), l10.packages[0].sha256);
     try std.testing.expectEqualStrings("https://conda.example/acme/osx-arm64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", l10.packages[1].url);
 
-    const res11 = try resolve.resolve(a, Index(Forbidden){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.1.0", .roots = &roots }, &diag);
+    const res11 = try resolve.resolve(a, Index(NoRecord){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.1.0", .roots = &roots }, &diag);
     const l11 = try plan.buildLock(a, res11, "https://conda.example/", channel, null, &diag);
     try std.testing.expectEqual(@as(usize, 1), l11.packages.len);
     try std.testing.expectEqualStrings("mojo1.1.0_0", l11.packages[0].build);
     try std.testing.expectEqualStrings("https://conda.example/acme/linux-64/mojo-acme.libbase-0.1.0-mojo1.1.0_0.conda", l11.packages[0].url);
     try std.testing.expectEqualStrings(&sha256Hex(b.l11), l11.packages[0].sha256);
     try std.testing.expectEqual(@as(u64, b.l11.len), l11.packages[0].size);
-    try std.testing.expect(!asked);
+    try std.testing.expect(asked);
 
     // A Mojo with no staged build is told which there are.
-    try std.testing.expectError(error.ResolveFailed, resolve.resolve(a, Index(Forbidden){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.2.0", .roots = &roots, .mojoc_message = true }, &diag));
+    try std.testing.expectError(error.ResolveFailed, resolve.resolve(a, Index(NoRecord){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.2.0", .roots = &roots, .mojoc_message = true }, &diag));
     try std.testing.expectEqualStrings("acme/libbase 0.1.0 has no .mojoc for Mojo 1.2.0 (published for: 1.0.0, 1.1.0). Build with mojo 1.0.0, ask the publisher for a 1.2.0 build, or pin a version that has one.", diag.message);
 }
 
