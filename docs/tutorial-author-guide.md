@@ -520,10 +520,14 @@ with E2B's `Template()` builder (E2B, "Template quickstart", <https://docs.e2b.d
 1. E2B's base image (`e2bdev/base`, Debian).
 2. mopm, the release of the repository's `VERSION`, downloaded from GitHub, checked against its sha256 and installed
    at `/usr/local/bin/mopm` (as root).
-3. For each lesson under `tutorial/lessons/<id>/`: its `project/` copied to `/home/user/lessons/<id>/` and
-   `mopm sync --locked` run there, which installs the lesson's pinned Mojo toolchain and packages. The sandbox has no
-   internet, so everything a run needs is installed here.
-4. `user` and `/home/user` as the sandbox's user and working directory.
+3. `/etc/profile.d/mopm-tutorial.sh` (as root), which turns the Mojo toolchain's telemetry off
+   (`MODULAR_TELEMETRY_ENABLED=false`) for every command in the sandbox. With no internet the export can never be
+   sent, and with it on every `mopm run` waited about 20 s after its output.
+4. For each lesson under `tutorial/lessons/<id>/`: its `project/` copied to `/home/user/lessons/<id>/`, that directory
+   and `/home/user/lessons` given to `user` (E2B's copy creates them as root), and `mopm sync --locked` run there as
+   `user`, which installs the lesson's pinned Mojo toolchain and packages. The sandbox has no internet, so everything
+   a run needs is installed here.
+5. `user` and `/home/user` as the sandbox's user and working directory.
 
 **Add a lesson**: a directory `tutorial/lessons/<id>/` with `lesson.md`, `lesson.json` and `project/`
 (`tutorial/README.md` says what each holds). The template reads the lessons when it is built, so it needs no change;

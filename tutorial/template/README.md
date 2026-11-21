@@ -9,8 +9,12 @@ The template holds:
 - mopm, the release named below: its `linux-x86_64` file downloaded from the GitHub release, checked against the
   sha256 the release's `SHA256SUMS` lists for it (read when the build runs, and written into the step), and its
   binary installed at `/usr/local/bin/mopm`;
-- every lesson under `tutorial/lessons/<id>/`: its `project/` copied to `/home/user/lessons/<id>/`, and
-  `mopm sync --locked` run there, so the lesson's pinned Mojo toolchain and locked packages are already installed;
+- `/etc/profile.d/mopm-tutorial.sh`, which sets `MODULAR_TELEMETRY_ENABLED=false` for every command run in the
+  sandbox (E2B runs them as `bash -l`). The sandbox has no internet, so the Mojo toolchain's telemetry can never be
+  sent, and with it on, every `mopm run` waited about 20 s after the program's output for the export to give up;
+- every lesson under `tutorial/lessons/<id>/`: its `project/` copied to `/home/user/lessons/<id>/`, that directory
+  and `/home/user/lessons` given to `user` (E2B's copy creates them as root), and `mopm sync --locked` run there as
+  `user`, so the lesson's pinned Mojo toolchain and locked packages are already installed;
 - `user` (E2B's default sandbox user) and `/home/user` as the sandbox's user and working directory.
 
 The definition is `src/definition.ts`, written with the `Template()` builder of the `e2b` package (pinned exactly in

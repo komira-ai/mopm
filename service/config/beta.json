@@ -4,5 +4,8 @@
   "condaDomain": "conda.beta.mopm.dev",
   "apiDomain": "api.beta.mopm.dev",
   "hostedZoneName": "beta.mopm.dev",
-  "disposable": true
+  "disposable": true,
+  "tutorial": {
+    "e2bTemplateId": "7sxi6jst2rgzzmf6lb4s"
+  }
 }
