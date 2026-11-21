@@ -54,10 +54,12 @@ message VersionDetail {
   Tombstone tombstone = 5;
   Timestamp published_at = 6 [(field) = {required: true}];
   string published_by = 7;
-  // The conda requirement on the compiler, e.g. `==1.0.0`.
+  // The conda requirement on the compiler of the version's primary build (the build with the lowest Mojo version), e.g.
+  // `==1.0.0`. `builds` lists every build.
   string requires_mojo = 8 [(field) = {required: true, min_length: 1}];
   repeated Dep deps = 9 [(field) = {required: true}];
   repeated NativeRef native = 10 [(field) = {required: true}];
+  // The files of the primary build, one per platform directory. `builds` lists the files of every build.
   repeated FileRef files = 11 [(field) = {required: true, min_items: 1}];
   Sha256 manifest_sha256 = 12 [(field) = {required: true}];
   // The group (`createGroup`) that published this version. Absent for a version a single publish made, and for a version
@@ -86,4 +88,19 @@ message VersionDetail {
   // Sanitised HTML. Never trust it on a cookie-authenticated origin.
   string readme_html = 21 [(field) = {nullable: true}];
   Provenance provenance = 22 [(field) = {required: true}];
+  // Every build of the version, one per Mojo compiler, sorted by compiler version (numerically, part by part). The first
+  // is the primary build that `requires_mojo` and `files` show. A version published before builds were listed has one.
+  // Absent from a registry that predates this field: then `requires_mojo` and `files` are the version's only build.
+  repeated VersionBuild builds = 23;
+}
+
+// The files of a version built with one Mojo compiler. The dependencies, metadata and state are the version's, the same
+// for every build.
+message VersionBuild {
+  // `mojo<compiler>_0`, as in the file names, e.g. `mojo1.0.0_0`.
+  string build = 1 [(field) = {required: true, min_length: 1}];
+  // The conda requirement on the compiler, e.g. `==1.0.0`.
+  string requires_mojo = 2 [(field) = {required: true, min_length: 1}];
+  // One file per platform directory, each named `mojo-<namespace>.<name>-<version>-<build>.conda`.
+  repeated FileRef files = 3 [(field) = {required: true, min_items: 1}];
 }

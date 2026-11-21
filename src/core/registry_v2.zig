@@ -4,7 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const http = @import("http.zig");
 
-pub const sources_sha256 = "bd9822c8173fd0647686abe7509eab62306f439d0d00d177a036eb028f8f21a3";
+pub const sources_sha256 = "192e5ff0ac9ac4571714e5516b272e09b2262335c192197d600f1c0751fb9af3";
 
 pub const base_path = "/api/v2";
 
@@ -1260,10 +1260,12 @@ pub const VersionDetail = struct {
     tombstone: ?Tombstone = null,
     published_at: Timestamp,
     published_by: ?[]const u8 = null,
-    /// The conda requirement on the compiler, e.g. `==1.0.0`.
+    /// The conda requirement on the compiler of the version's primary build (the build with the lowest Mojo version), e.g.
+    /// `==1.0.0`. `builds` lists every build.
     requires_mojo: []const u8,
     deps: []const Dep,
     native: []const NativeRef,
+    /// The files of the primary build, one per platform directory. `builds` lists the files of every build.
     files: []const FileRef,
     manifest_sha256: Sha256,
     /// The group (`createGroup`) that published this version. Absent for a version a single publish made, and for a version
@@ -1292,6 +1294,21 @@ pub const VersionDetail = struct {
     /// Sanitised HTML. Never trust it on a cookie-authenticated origin.
     readme_html: ?[]const u8 = null,
     provenance: Provenance,
+    /// Every build of the version, one per Mojo compiler, sorted by compiler version (numerically, part by part). The first
+    /// is the primary build that `requires_mojo` and `files` show. A version published before builds were listed has one.
+    /// Absent from a registry that predates this field: then `requires_mojo` and `files` are the version's only build.
+    builds: ?[]const VersionBuild = null,
+};
+
+/// The files of a version built with one Mojo compiler. The dependencies, metadata and state are the version's, the same
+/// for every build.
+pub const VersionBuild = struct {
+    /// `mojo<compiler>_0`, as in the file names, e.g. `mojo1.0.0_0`.
+    build: []const u8,
+    /// The conda requirement on the compiler, e.g. `==1.0.0`.
+    requires_mojo: []const u8,
+    /// One file per platform directory, each named `mojo-<namespace>.<name>-<version>-<build>.conda`.
+    files: []const FileRef,
 };
 
 pub const CreateNamespaceRequest = struct {
