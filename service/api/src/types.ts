@@ -34,7 +34,10 @@ export interface VersionRecord {
   name: string;
   /** The spelling that was published (and is in the file name). */
   version: string;
-  /** The key create-once is enforced on (the version itself: a version has one spelling). */
+  /**
+   * The key create-once is enforced on: the version itself for a version's row (a version has one spelling), and
+   * `<version>+<build>` for the row of a build added to a published version (src/builds.ts), whose `version` is the spelling.
+   */
   canonical: string;
   build: string;
   state: VersionState;

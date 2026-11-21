@@ -207,3 +207,44 @@ describe('the namespace of a package (there are no owners in version 2)', () => 
     expect(decodeVersionDetail(bodyOf('getVersion')).name).toBe('komira-ai/json');
   });
 });
+
+describe('builds of a version', () => {
+  const twoBuilds = () => bodyOf('getVersion', (b) => Array.isArray(b.builds) && (b.builds as unknown[]).length === 2);
+
+  test('a version with two builds decodes each build with its requirement and files', () => {
+    const v = twoBuilds();
+    const d = decodeVersionDetail(v);
+    expect(d.builds).toEqual(v.builds);
+    expect(d.builds!.map((b) => b.requires_mojo)).toEqual(['==1.0.0', '==1.2.0']);
+  });
+
+  test('a version without builds decodes without them', () => {
+    const v = bodyOf('getVersion');
+    delete v.builds;
+    expect(decodeVersionDetail(v)).not.toHaveProperty('builds');
+  });
+
+  test('builds that are not an array are treated as absent', () => {
+    const v = bodyOf('getVersion');
+    v.builds = 'mojo1.0.0_0';
+    expect(decodeVersionDetail(v)).not.toHaveProperty('builds');
+  });
+
+  test.each(['build', 'requires_mojo', 'files'])('a build without %s is an error naming it', (field) => {
+    const v = twoBuilds();
+    delete (v.builds as Record<string, unknown>[])[1][field];
+    expect(() => decodeVersionDetail(v)).toThrow(new RegExp(`builds\\[1\\]\\.${field}`));
+  });
+
+  test('a mistyped file of a build is an error', () => {
+    const v = twoBuilds();
+    ((v.builds as Record<string, unknown>[])[0].files as Record<string, unknown>[])[0].size = '1';
+    expect(() => decodeVersionDetail(v)).toThrow(/builds\[0\]\.files\[0\]\.size/);
+  });
+
+  test('a build that is not an object is an error', () => {
+    const v = twoBuilds();
+    v.builds = [null];
+    expect(() => decodeVersionDetail(v)).toThrow(/builds\[0\]/);
+  });
+});

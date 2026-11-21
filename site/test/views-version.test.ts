@@ -409,3 +409,32 @@ describe('the channels of the dependencies', () => {
     expect(text(page)).not.toContain(text(DEP_CHANNELS_NOTE));
   });
 });
+
+describe('a version with several builds', () => {
+  const two = () => versionFixture('version detail with two builds');
+  const out = html(render(two()));
+
+  test('the Mojo fact and the Requires Mojo row list every build\'s requirement, in order', () => {
+    expect(out).toContain('Mojo <strong>==1.0.0 · ==1.2.0</strong>');
+    expect(out).toContain('<code>==1.0.0 · ==1.2.0</code>');
+  });
+
+  test('the files table, the count and the platforms show the files of every build', () => {
+    const v = two();
+    const all = v.builds!.flatMap((b) => b.files);
+    expect(all.length).toBeGreaterThan(v.files.length);
+    for (const f of all) expect(out).toContain(`>${f.filename}<`);
+    expect(out.split('class="hash-box copy-box"').length - 1).toBe(all.length);
+    expect(out).toContain(`Files <span class="count">${all.length}</span>`);
+  });
+
+  test('a version whose builds are absent or empty renders as one with its top-level fields', () => {
+    const plain = versionFixture('version detail', (raw) => delete raw.builds);
+    const empty = versionFixture('version detail', (raw) => (raw.builds = []));
+    const one = versionFixture('version detail');
+    expect(one.builds).toHaveLength(1);
+    expect(html(render(empty))).toBe(html(render(plain)));
+    expect(html(render(one))).toBe(html(render(plain)));
+    expect(html(render(plain))).toContain('Mojo <strong>==1.0.0</strong>');
+  });
+});

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Principal } from '../auth';
 import { NAME_PATTERN, NamespaceError, type NamespaceAccess } from '../auth';
 import { AuthError } from '../auth/errors';
+import { buildOfFile, buildRowKey, buildsOf, foldBuilds, isBuildRow, splitRowKey } from '../builds';
 import { condaNameOf, splitFullName } from '../names';
 import { ciActorOf } from '../auth/ci-publishers';
 import { RegistryError, versionExists } from '../errors';
@@ -97,7 +98,10 @@ export const detailVia = (p: Principal, detail?: Record<string, string>): Record
   return via === undefined ? detail : { ...detail, via };
 };
 
-/** Deterministic: committing the same upload ids again is the same publish, which is what makes a retry safe. */
+/**
+ * Deterministic: committing the same upload ids again is the same publish, which is what makes a retry safe. `canonical` is the
+ * key of the row the publish fills: the version's, or `<version>+<build>` for a build added to a published version.
+ */
 export const publishIdFor = (name: string, canonical: string, uploadIds: readonly string[]) =>
   `pub_${createHash('sha256')
     .update([name, canonical, ...[...uploadIds].sort()].join('\0'))
@@ -124,8 +128,11 @@ export class PublishService {
     const req = this.parseBegin(name, version, body);
     const owner = await this.requireOwner(p, name);
     await this.rateLimit(p);
-    await this.checkQuota(name, req.size);
-    await this.reserve(p, owner, name, version, canonical, req.sha256);
+    const versions = await this.d.registry.listVersions(name);
+    this.checkQuota(name, req.size, versions);
+    // The row this upload fills: the version's, or the row of one more build when the version is already published.
+    const rowKey = this.rowKeyFor(name, version, canonical, req, versions);
+    await this.reserve(p, owner, name, version, rowKey, req.sha256);
 
     const now = this.now();
     const uploadId = `upl_${this.newId()}`;
@@ -135,7 +142,7 @@ export class PublishService {
       upload_id: uploadId,
       name,
       version,
-      canonical,
+      canonical: rowKey,
       subdir: req.subdir,
       filename: req.filename,
       sha256: req.sha256,
@@ -191,8 +198,8 @@ export class PublishService {
    * publishes. The error is `limit_exceeded` (403): the project is full, whatever the size of this file, which is
    * not what `payload_too_large` (the per-file cap) says.
    */
-  private async checkQuota(name: string, size: number): Promise<void> {
-    const used = liveBytes(await this.d.registry.listVersions(name));
+  private checkQuota(name: string, size: number, versions: readonly VersionRecord[]): void {
+    const used = liveBytes(versions);
     const quota = this.d.config.projectQuotaBytes;
     if (used + size > quota) {
       const remaining = String(Math.max(0, quota - used));
@@ -204,7 +211,24 @@ export class PublishService {
     }
   }
 
-  /** Create the pending version (a reserved number), or join one that nobody has committed yet. */
+  /**
+   * The key of the row an upload fills. A version that is not published (no row, a pending one, a yanked or taken-down
+   * one) is filled as a whole, under its own key: `reserve` creates or joins the row, or refuses a number that is taken.
+   * A version that is published (as a reader sees it, builds folded in) and was published by a single takes one more build, never a replaced one: the
+   * file's build must be one the version does not have, and the upload then fills the row of that build,
+   * `<version>+<build>`.
+   */
+  private rowKeyFor(name: string, version: string, canonical: string, file: { subdir: string; filename: string }, versions: readonly VersionRecord[]): string {
+    const base = versions.find((v) => v.canonical === canonical);
+    // A version a group holds is the group's, whatever it reads: `reserve` refuses it like any other number a single does not take.
+    if (base?.state !== 'published' || base.group_id !== undefined) return canonical;
+    const build = buildOfFile(name, version, file.filename)!; // parseFileFacts checked the name
+    const have = buildsOf(base).find((b) => b.build === build);
+    if (have !== undefined) throw versionExists(name, version, have.files[0]!.sha256);
+    return buildRowKey(canonical, build);
+  }
+
+  /** Create the pending row (a reserved number, or a reserved build of a published version), or join one that nobody has committed yet. */
   private async reserve(p: Principal, handle: string, name: string, version: string, canonical: string, sha256: string) {
     const now = this.now().toISOString();
     const rec: VersionRecord = {
@@ -223,7 +247,9 @@ export class PublishService {
       manifest_sha256: sha256,
       rev: 0,
     };
-    const audit = { name, ts: now, id: `a_${this.newId()}`, actor: actorOf(p), action: 'publish_begin', version, ...(detailVia(p) ? { detail: detailVia(p) } : {}) };
+    const { build } = splitRowKey(canonical);
+    const detail = build === undefined ? detailVia(p) : { ...detailVia(p), build };
+    const audit = { name, ts: now, id: `a_${this.newId()}`, actor: actorOf(p), action: 'publish_begin', version, ...(detail ? { detail } : {}) };
     try {
       await this.d.registry.createVersion(rec, audit);
       return;
@@ -231,7 +257,7 @@ export class PublishService {
       if (!(err instanceof RegistryError) || err.code !== 'version_exists') throw err;
     }
     // The number exists. A pending one that no commit has taken is still only a reservation: join it.
-    const current = await this.d.registry.getVersion(name, version);
+    const current = await this.d.registry.getVersion(name, canonical);
     if (!current) throw versionExists(name, version, sha256);
     // A number held by a group is the group's: whether it has committed (the row reads `published`) or not (it reads
     // `pending`), a single publish does not join it. The one exception is a group that is dead: its number is free, and
@@ -273,7 +299,11 @@ export class PublishService {
     const req = parseCommit(body);
     const handle = await this.requireOwner(p, name);
     const actor = actorOf(p);
-    const publishId = publishIdFor(name, canonical, req.upload_ids);
+    // The row the uploads fill (begin chose it): the version's, or `<version>+<build>` for a build added to a published
+    // version. It is read off the first upload; an unknown or foreign one leaves the version's own key, and the checks below refuse it.
+    const first = await this.d.publishes.getUpload(req.upload_ids[0]!);
+    const rowKey = first !== undefined && first.name === name && first.version === version ? first.canonical : canonical;
+    const publishId = publishIdFor(name, rowKey, req.upload_ids);
     const accepted = { publish_id: publishId, status_url: `/api/${splitFullName(name) ? 'v2' : 'v1'}/publishes/${publishId}` };
 
     // The same upload ids again resume the publish already made (and send the message again if it never left).
@@ -294,6 +324,8 @@ export class PublishService {
       if (u.used_by !== undefined && u.used_by !== publishId) {
         throw new PublishError('upload_used', `The upload '${id}' was already used.`, { upload_id: id });
       }
+      // A publish fills one row: files of two builds of a published version were begun for two build rows.
+      if (u.canonical !== rowKey) throw invalidRequest('the uploads are not for one version row: a build added to a published version is one build per publish');
       const stat = await this.d.objects.head(u.key);
       if (!stat || stat.size !== u.size) throw uploadInvalid('a file was not uploaded');
       uploads.push(u);
@@ -305,11 +337,12 @@ export class PublishService {
       seen.add(k);
     }
 
-    const v = await this.d.registry.getVersion(name, version);
+    const v = await this.d.registry.getVersion(name, rowKey);
     if (!v) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
     // A group's number is the group's: a single commit does not take it, whatever state it reads.
     if (v.state !== 'pending' || v.group_id !== undefined) throw versionExists(name, version, v.files[0]?.sha256 ?? v.manifest_sha256);
-    const holder = await this.d.publishes.claimVersion(name, canonical, publishId);
+    if (isBuildRow({ canonical: rowKey })) await this.checkAdd(name, version, canonical, req.manifest_sha256, uploads[0]!.sha256);
+    const holder = await this.d.publishes.claimVersion(name, rowKey, publishId);
     if (holder !== publishId) {
       const other = await this.d.publishes.getPublish(holder);
       throw versionExists(name, version, other?.files[0]?.sha256 ?? uploads[0]!.sha256);
@@ -325,7 +358,7 @@ export class PublishService {
       publish_id: publishId,
       name,
       version,
-      canonical,
+      canonical: rowKey,
       actor,
       ...viaField(p),
       published_by: handle,
@@ -341,6 +374,17 @@ export class PublishService {
     });
     await this.enqueue(rec);
     return accepted;
+  }
+
+  /**
+   * A build added to a version is claimed only for a version that is still published (a yanked or taken-down one takes no
+   * more files), and, when the commit declares the manifest, only if it is the version's: a commit for another source is
+   * refused here, before the build is claimed, so that the build stays free for the right one.
+   */
+  private async checkAdd(name: string, version: string, canonical: string, declared: string | undefined, uploadSha: string): Promise<void> {
+    const base = (await this.d.registry.listVersions(name)).find((v) => v.canonical === canonical);
+    if (base?.state !== 'published') throw versionExists(name, version, base?.manifest_sha256 ?? uploadSha);
+    if (declared !== undefined && declared !== base.manifest_sha256) throw versionExists(name, version, base.manifest_sha256);
   }
 
   private async enqueue(rec: PublishRecord): Promise<void> {
@@ -379,8 +423,10 @@ export class PublishService {
       detail: detailVia(p, { by: handle, ...(req.yanked ? { reason: req.reason } : {}) }),
     };
     const after = await this.d.registry.updateVersion(name, version, req.yanked ? { type: 'yank', reason: req.reason } : { type: 'unyank' }, audit);
-    const subdirs = repodataDirsOf(name, after.files.map((f) => f.subdir));
-    const rev = packageRev(await this.d.registry.listVersions(name));
+    // The version as a reader sees it: the files of every build, the ones added later included.
+    const versions = await this.d.registry.listVersions(name);
+    const subdirs = repodataDirsOf(name, versions.find((v) => v.canonical === after.canonical)!.files.map((f) => f.subdir));
+    const rev = packageRev(versions);
     if (!req.yanked && subdirs.length > 0) {
       // Unyank: the sparse index must not say `published` before repodata lists the file (the CLI fails closed on
       // that). One chain, one subdir at a time; the last repodata job sends the `index_pkg`.
@@ -493,10 +539,14 @@ async function requireWriter(registry: Store, p: Principal, name: string, namesp
   return handle;
 }
 
-/** Bytes of the files that are still on the channel: published and yanked versions (a tombstone's bytes are gone). */
+/**
+ * Bytes of the files that are still on the channel: published and yanked versions (a tombstone's bytes are gone). The builds added to a
+ * version count with it, as a reader sees them (`foldBuilds`): given the stored rows or the records `listVersions` folds, the answer is the
+ * same, so a taken-down version's added builds are gone with it.
+ */
 export function liveBytes(versions: readonly VersionRecord[]): number {
   let n = 0;
-  for (const v of versions) if (v.state === 'published' || v.state === 'yanked') for (const f of v.files) n += f.size;
+  for (const v of foldBuilds(versions)) if (v.state === 'published' || v.state === 'yanked') for (const f of v.files) n += f.size;
   return n;
 }
 

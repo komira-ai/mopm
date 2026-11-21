@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { channelFileKey } from '../channel-paths';
-import { API_VIEW, type GroupMember, type GroupMembers } from '../group';
+import { foldBuilds, splitRowKey } from '../builds';
+import { API_ROWS_VIEW, type GroupMember, type GroupMembers } from '../group';
 import { bitmapHas, bitmapSet, memberAuditId, type GroupFailure, type GroupRecord, type GroupStore } from '../group-store';
 import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
@@ -14,7 +15,7 @@ import { quarantineKeyFor, uploadIdFor } from './group-keys';
 import { ended, groupAudit, pastDeadline } from './group-lifecycle';
 import type { ObjectStore, PublishStore, Queue } from './ports';
 import { liveBytes } from './service';
-import { fillFrom, optionsFor, Rejected, validateArchives, warningsOf } from './validator';
+import { checkAddedBuild, fillFrom, optionsFor, Rejected, validateArchives, warningsOf } from './validator';
 
 /**
  * The group's validator: the job the group queue carries once a group has been committed to validation (POST
@@ -37,6 +38,11 @@ import { fillFrom, optionsFor, Rejected, validateArchives, warningsOf } from './
  *
  * Every step is idempotent, and after the commit nothing here is done again: a message for a committed group does no more
  * than delete what is left in quarantine and queue the first step of the chain that follows (repodata hops, index hops, the flip: group-chain.ts).
+ *
+ * A member that adds a build to a published version (its `canonical` is a build row's key, src/builds.ts) is validated like any other,
+ * and its facts are then checked against the version (`checkAddedBuild`: same sources, same system libraries, a build the version
+ * lacks); a rejection is the group's as any member's is. Its row is staged with its own files only, and every step after that, the
+ * copy, the commit, the flip and the burn of a failed group, is keyed by the build's row, so the version's row is never written.
  *
  * A defect in our own code (anything that is not a verdict) is thrown, so the message is retried and, after the queue's
  * receive limit, lands in the dead-letter queue, which has an alarm. A group whose rows are not as staged is such a defect:
@@ -237,9 +243,17 @@ class GroupJob {
     const input = await d.registry.getCommitInput(this.gid, this.h.commit_hash ?? '', i);
     if (!input) throw new Error(`group ${this.gid}: the commit input of ${m.name} (${this.h.commit_hash ?? 'no hash'}) is missing`);
     const files = row.files.map((f) => ({ subdir: f.subdir, filename: f.filename, sha256: f.sha256, key: quarantineKeyFor(uploadIdFor(this.gid, m, f), f.filename) }));
+    // A build added to a version: the version, as a reader sees it, must still be published, and must accept the build. The version's
+    // display fields, readme and source commit stay the version's: the commit's are not used for the build.
+    const { canonical, build } = splitRowKey(m.canonical);
+    const base = build === undefined ? undefined : foldBuilds(rows.get(m.name)!).find((r) => r.canonical === canonical);
+    if (build !== undefined && base?.state !== 'published') {
+      throw verdict('version_exists', `${m.name} ${m.version} is not published, and a build is added to a published version only`, false, m.name);
+    }
     let facts;
     try {
       facts = await validateArchives(d.objects, await optionsFor({ ...d, log: this.log }), { name: row.name, version: row.version, ...(input.manifest_sha256 !== undefined ? { manifest_sha256: input.manifest_sha256 } : {}) }, files);
+      if (base !== undefined) checkAddedBuild(base, facts);
     } catch (err) {
       if (err instanceof Rejected) throw verdict(err.code, err.message, false, m.name);
       throw err;
@@ -247,8 +261,10 @@ class GroupJob {
     // A group's status does not carry warnings yet: they are in the job's log, with the group and the member.
     const warnings = warningsOf(facts);
     if (warnings.length > 0) this.log({ level: 'info', msg: 'group member passed with warnings', group_id: this.gid, member: m.name, warnings });
-    const fill = fillFrom(d.channelUrl, this.now(), m.name, { version: row.version, ...(input.display ? { display: input.display } : {}), ...(input.source_commit !== undefined ? { source_commit: input.source_commit } : {}), published_by: row.published_by ?? this.h.actor }, row.files, facts);
-    await d.registry.applyGroupEvent(m.name, row.version, { type: 'stage', group_id: this.gid, attempt: this.h.attempt, fill }, this.audit(i, m, 'group_stage'));
+    const display = build === undefined && input.display ? { display: input.display } : {};
+    const sourceCommit = build === undefined && input.source_commit !== undefined ? { source_commit: input.source_commit } : {};
+    const fill = fillFrom(d.channelUrl, this.now(), m.name, { version: row.version, ...display, ...sourceCommit, published_by: row.published_by ?? this.h.actor }, row.files, facts);
+    await d.registry.applyGroupEvent(m.name, m.canonical, { type: 'stage', group_id: this.gid, attempt: this.h.attempt, fill }, this.audit(i, m, 'group_stage'));
   }
 
   // --- phase 2 -----------------------------------------------------------------------------------------------------
@@ -369,7 +385,7 @@ class GroupJob {
     for (let i = 0; i < list.length; i += PARALLEL) {
       await Promise.all(
         list.slice(i, i + PARALLEL).map((m, k) =>
-          this.d.registry.applyGroupEvent(m.name, m.version, { type: 'group_burn', group_id: this.gid, reason_code: failure.code, date }, this.audit(i + k, m, 'group_burn')),
+          this.d.registry.applyGroupEvent(m.name, m.canonical, { type: 'group_burn', group_id: this.gid, reason_code: failure.code, date }, this.audit(i + k, m, 'group_burn')),
         ),
       );
     }
@@ -437,11 +453,14 @@ class GroupJob {
 
   // --- the rows -----------------------------------------------------------------------------------------------------
 
-  /** The members' packages' rows as the API view shows them. Before the commit a group's rows are `pending`, so this is them as stored. */
+  /**
+   * The members' packages' rows as the API shows them, not folded: a build added to a version is a row of its own. Before the commit a
+   * group's rows are `pending`, so this is them as stored.
+   */
   private rows(): Promise<Rows> {
     return this.d.registry.versionsOf(
       this.members.members.map((m) => m.name),
-      API_VIEW,
+      API_ROWS_VIEW,
     );
   }
 

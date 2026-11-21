@@ -4,7 +4,8 @@ import type { Principal } from '../auth';
 import { NAME_PATTERN, type NamespaceAccess } from '../auth';
 import { AuthError } from '../auth/errors';
 import { RegistryError, versionExists } from '../errors';
-import { API_VIEW, type GroupMembers } from '../group';
+import { buildOfFile, buildRowKey, buildsOf, foldBuilds, splitRowKey } from '../builds';
+import { API_ROWS_VIEW, type GroupMembers } from '../group';
 import { bitmapHas, bitmapIndexes, bitmapSet, memberAuditId, type GroupFailure, type GroupRecord, type GroupStore } from '../group-store';
 import { Metrics } from '../metrics';
 import type { Store } from '../store';
@@ -35,12 +36,20 @@ import type { UploadRecord } from './types';
  *   2. the group's id is a hash of the actor and the declared set, so the same request is the same group;
  *   3. an existing group is resumed (open), returned as it is (validating, committed, visible), refused (failed), or
  *      reopened with the next attempt (expired, aborted, rejected, superseded);
+ *   3a. each member is a new version, or a build added to a version that is published (`resolveAdds`);
  *   4. a new or reopened group takes a place among the actor's open groups, is checked against the rows it will reserve,
  *      charges the group rate counter once for the attempt, supersedes the actor's own open groups that share a member,
  *      and writes its member list and header;
  *   5. only then are the members' rows reserved, sixteen at a time, within a time budget; the header's `reserved`
  *      checkpoint records how far it got, and the same request continues from there.
  * A row therefore never exists without a header.
+ *
+ * A member is `{name, version, files}` whether it is a new version or an add. It is an add when the version's row is published as a
+ * reader sees it: its files must then all be of one build that the version does not have, and the version must not be yanked or
+ * taken down. From then on the member's `canonical` is the row key of that build (`buildRowKey`, src/builds.ts), and every place
+ * that keys a member by it (the reservation, the rows, the bitmaps, the upload ids, the supersede check, a takeover) reaches the
+ * build's own row; the group's id is still hashed from what the request said, so a repeat of a request is the same group. A
+ * member that is a new version may have files of several builds.
  */
 
 type GroupRegistry = Store & GroupStore;
@@ -73,6 +82,7 @@ export interface GroupFileRequest {
 export interface GroupMemberRequest {
   name: string;
   version: string;
+  /** The key of the member's row: the version's canonical form, or, once the create has found the member to be a build added to a published version, that build's row key (`<canonical>+<build>`). */
   canonical: string;
   /** Sorted by subdir and file name. */
   files: GroupFileRequest[];
@@ -293,6 +303,9 @@ export class GroupService {
     if (header?.status === 'failed') {
       throw groupConflict('group_failed', `group ${gid} failed after its files were copied, and its version numbers are burned; publish a new version of each package`);
     }
+    // Only a group that is not past reserving decides its adds: once it is validating or committed, its builds are among the version's.
+    const resolved = await this.resolveAdds(req);
+    req = resolved.req;
 
     let created = false;
     /** The caller's own groups this call ended. A later call that continues the group does not repeat them. */
@@ -304,7 +317,7 @@ export class GroupService {
       this.rateFits(p, req);
       const slot = await this.takeSlot(actor, gid, req, now, req.onOverlap ?? 'supersede');
       try {
-        pre = await this.preflight(gid, req, new Set(slot.supersede), now);
+        pre = await this.preflight(gid, req, new Set(slot.supersede), now, resolved.rows);
         const refund = await this.charge(p, req, now);
         superseded = await this.supersede(actor, slot.supersede, now);
         const opened = await this.open(actor, viaField(p), gid, req, header, deadline, now);
@@ -320,7 +333,7 @@ export class GroupService {
       if (header.status !== 'open') return { created: false, body: this.unchanged(header, req) };
     } else {
       // An open group, asked for again: continue where the checkpoint says.
-      pre = await this.preflight(gid, req, new Set(), now);
+      pre = await this.preflight(gid, req, new Set(), now, resolved.rows);
     }
 
     const reserved = await this.reserveAll(p, handle, header, req, pre, started);
@@ -337,6 +350,34 @@ export class GroupService {
         members: reserved.members,
       },
     };
+  }
+
+  /**
+   * Decide each member: a new version (its row is absent or pending: the preflight tells whose), or a build added to a published
+   * version, whose `canonical` becomes the build's row key. Refused, before anything is written: a member whose version is yanked
+   * or taken down (`version_exists`), one whose version already has the build (`version_exists`, naming the build), and one that
+   * adds files of more than one build (`invalid_request`). Answers the rows it read, as stored (a build added to a version is a row of
+   * its own), which the preflight uses.
+   */
+  private async resolveAdds(req: GroupRequest): Promise<{ req: GroupRequest; rows: Map<string, VersionRecord[]> }> {
+    const rows = await this.d.registry.versionsOf(
+      req.members.map((m) => m.name),
+      API_ROWS_VIEW,
+    );
+    const members = req.members.map((m): GroupMemberRequest => {
+      const pkg = rows.get(m.name)!;
+      const row = pkg.find((r) => r.canonical === m.canonical);
+      if (row === undefined || row.state === 'pending') return m;
+      const sha = row.files[0]?.sha256 ?? row.manifest_sha256;
+      if (row.state !== 'published') throw versionExists(m.name, m.version, sha);
+      // The create checked every file's name, so each names a build.
+      const builds = [...new Set(m.files.map((f) => buildOfFile(m.name, m.version, f.filename)!))];
+      if (builds.length > 1) throw invalidRequest(`'${m.name}' ${m.version} is published, and a build is added to it one at a time; the files are of ${builds.join(', ')}`);
+      const folded = foldBuilds(pkg).find((r) => r.canonical === m.canonical)!;
+      if (buildsOf(folded).some((b) => b.build === builds[0])) throw versionExists(m.name, `${m.version} (build ${builds[0]})`, sha);
+      return { ...m, canonical: buildRowKey(m.canonical, builds[0]!) };
+    });
+    return { req: { ...req, members }, rows };
   }
 
   /** The header of a new group, or of a dead one opened again with the next attempt (the member list and the old attempt's other checkpoints are reset). */
@@ -479,17 +520,13 @@ export class GroupService {
   }
 
   /**
-   * Read the rows the members will reserve, and refuse before anything is written when a number cannot be had or a package
-   * is full. Returns which members already have their row for this group and the groups whose rows may be taken over (dead
+   * Look at the rows the members will reserve (`rows`, read by `resolveAdds`), and refuse before anything is written when a number
+   * cannot be had or a package is full. Returns which members already have their row for this group and the groups whose rows may be taken over (dead
    * ones, and the ones about to be superseded).
    */
-  private async preflight(gid: string, req: GroupRequest, superseding: Set<string>, now: Date): Promise<Pre> {
+  private async preflight(gid: string, req: GroupRequest, superseding: Set<string>, now: Date, rows: Map<string, VersionRecord[]>): Promise<Pre> {
     const reg = this.d.registry;
     const quota = this.d.config.projectQuotaBytes;
-    const rows = await reg.versionsOf(
-      req.members.map((m) => m.name),
-      API_VIEW,
-    );
     const mine = new Set<number>();
     const orphans = new Set<string>();
     const dead = new Set<string>(superseding);
@@ -514,7 +551,8 @@ export class GroupService {
       const row = pkg.find((r) => r.canonical === m.canonical);
       if (!row) continue;
       const sha = row.files[0]?.sha256 ?? row.manifest_sha256;
-      if (row.state !== 'pending') throw versionExists(m.name, m.version, sha);
+      const added = splitRowKey(m.canonical).build;
+      if (row.state !== 'pending') throw versionExists(m.name, added === undefined ? m.version : `${m.version} (build ${added})`, sha);
       if (row.group_id === gid) {
         mine.add(idx);
       } else if (row.group_id !== undefined) {

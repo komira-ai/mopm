@@ -10,8 +10,11 @@ publishes nothing and makes nothing visible.
 The token must be an API token with the `publish` or `stage` scope for every member's package, and the caller must be
 able to write the namespace of each package; or a CI identity token minted by `exchangeOidcToken` for a publisher of the
 namespace, which must name every member's package and version. The first member
-that fails any of these refuses the whole group and is named in the error. A number that a published version
-already holds is `version_exists`; one that another group is still using is `group_conflict`. A
+that fails any of these refuses the whole group and is named in the error. A member is a new version (it may have
+the files of several builds), or a build added to a version that is published, whether a single publish or another group
+published it: its files must then be those of one build that the version does not have. A number that a yanked or
+taken-down version holds, and a build that a published version already has, are `version_exists`; one that another
+group is still using is `group_conflict`. A
 `group_conflict` carries a `reason` (see `Error`) that tells the causes apart without reading the message.
 
 The id of a group is a function of the caller and the declared set: the same request again is the same group. The

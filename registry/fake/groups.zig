@@ -12,6 +12,8 @@
 //!   is visible); a yank or unyank moves one stage per poll too;
 //! - a group is open for 12 hours of the fake's clock (`/_fake/clock`), and the
 //!   next request that meets an open group past its deadline expires it;
+//! - a member whose version is published adds a build to it (publish.zig, `addRefusal`): the group reserves the build and not the
+//!   version, appends the files when it is visible, and its yank leaves such a version as it is;
 //! - `/_fake/groups` turns group publishing off (`createGroup` then answers
 //!   `route_not_found`, as a registry that has not enabled it does).
 //! The fake keeps no rate counter for groups: a client tests a 429 with
@@ -252,6 +254,7 @@ fn memberState(g: *const st.Group, m: st.GroupMember) []const u8 {
 /// Whether the member's row is still this group's: the group holds the number, or published the version. A row another group or a
 /// single publish took after this group ended is not.
 fn holdsRow(g: *const st.Group, m: st.GroupMember) bool {
+    if (m.add) return true; // the group never held the version's row: the files are its own
     if (m.row.group) |held| if (held == g) return true;
     const id = m.row.group_id orelse return false;
     return std.mem.eql(u8, id, g.id);
@@ -358,7 +361,15 @@ fn fileAnswer(ctx: *Ctx, f: st.GroupFile) Allocator.Error!FileAnswer {
 // ---------------------------------------------------------------------------
 
 /// What holds the number of a declared member.
-const Held = union(enum) { free, mine, adopt, fail: Response };
+const Held = union(enum) { free, mine, adopt, add, fail: Response };
+
+/// Whether `row` is a version that is published (or was, and is yanked or taken down): a member whose version is such a row adds a build.
+fn isPublishedRow(row: *const st.Version) bool {
+    return switch (row.state) {
+        .published, .yanked, .tombstoned => true,
+        .pending, .rejected => false,
+    };
+}
 
 fn rowHash(v: *const st.Version) []const u8 {
     if (v.files.len > 0) return v.files[0].sha256;
@@ -374,6 +385,13 @@ fn contains(list: []const *st.Group, g: *const st.Group) bool {
 
 fn holder(ctx: *Ctx, gid: []const u8, m: ReqMember, p: *st.Package, superseding: []const *st.Group) Allocator.Error!Held {
     const row = publish.findVersion(p, m.version) orelse return .free;
+    if (isPublishedRow(row)) {
+        // A published version takes one build it does not have; the manifest is compared at the commit.
+        const filenames = try ctx.arena.alloc([]const u8, m.files.len);
+        for (m.files, filenames) |f, *name| name.* = f.filename;
+        if (try publish.addRefusal(ctx, p, row, filenames, null)) |r| return .{ .fail = r };
+        return .add;
+    }
     if (row.state != .pending or row.group == null) {
         return .{ .fail = try resp.fail(ctx.arena, .version_exists, &.{ .{ "name", p.name }, .{ "version", row.version }, .{ "sha256", rowHash(row) } }) };
     }
@@ -570,7 +588,11 @@ fn reserve(ctx: *Ctx, g: *st.Group, members: []const ReqMember, packages: []*st.
             try declared.append(.{ .subdir = u.subdir, .filename = u.filename, .sha256 = u.sha256, .size = u.size, .path = "" });
         }
         var action: []const u8 = "join";
-        const row = if (publish.findVersion(p, m.version)) |r| r else blk: {
+        const found = publish.findVersion(p, m.version);
+        // A member whose version is published adds a build: the group reserves the build, not the version, which it leaves as it is.
+        const is_add = if (found) |r| isPublishedRow(r) else false;
+        if (is_add) action = "new";
+        const row = found orelse blk: {
             action = "new";
             break :blk try s.add(st.Version, &p.versions, .{
                 .package = p,
@@ -580,14 +602,14 @@ fn reserve(ctx: *Ctx, g: *st.Group, members: []const ReqMember, packages: []*st.
                 .published_by = g.user.handle,
             });
         };
-        if (fresh) {
+        if (fresh and !is_add) {
             row.group = g;
             row.files = declared.items;
             row.manifest_sha256 = uploads.items[0].sha256;
         }
         const readme: ?st.GroupReadme = if (m.readme) |r| try gr.declare(ctx, g, p.name, m.version, r) else null;
         if (!fresh) g.members[at].readme = readme;
-        try stored.append(.{ .package = p, .version = row.version, .files = uploads.items, .row = row, .readme = readme });
+        try stored.append(.{ .package = p, .version = row.version, .files = uploads.items, .row = row, .readme = readme, .add = is_add });
         var files = std.ArrayList(FileAnswer).init(ctx.arena);
         for (uploads.items) |gf| try files.append(try fileAnswer(ctx, gf));
         const readme_answer = if (readme) |r| try gr.answer(ctx, r) else null;
@@ -698,7 +720,16 @@ fn advance(ctx: *Ctx, g: *st.Group) anyerror!void {
                 for (m.files, files) |gf, *out| {
                     out.* = .{ .subdir = gf.subdir, .filename = gf.filename, .sha256 = gf.sha256, .size = gf.size, .path = gf.upload.path.? };
                 }
+                if (m.add) {
+                    // The version keeps everything it has; it gains the build.
+                    try publish.appendBuild(s, m.row, files);
+                    m.package.updated_at = g.committed_at;
+                    continue;
+                }
                 m.row.files = files;
+                m.row.manifest_stated = m.manifest_sha256;
+                // The hash the commit stated is the version's, as the hosted registry keeps the archive's (which the commit states).
+                if (m.manifest_sha256.len > 0) m.row.manifest_sha256 = m.manifest_sha256;
                 m.row.state = .published;
                 m.row.published_at = g.committed_at;
                 m.row.group = null;
@@ -723,7 +754,8 @@ fn advanceYank(ctx: *Ctx, g: *st.Group) anyerror!void {
     switch (y.state) {
         .yanking => {
             for (g.members) |*m| {
-                if (m.row.state != .published) continue;
+                // A build added to a version has no state of its own: the group's yank leaves such a member's version as it is.
+                if (m.add or m.row.state != .published) continue;
                 m.row.state = .yanked;
                 m.row.yank_reason = y.reason;
                 m.yanked_by_group = true;
@@ -895,6 +927,15 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
                 return resp.fail(ctx.arena, .upload_invalid, &.{.{ "detail", detail }});
             }
         }
+    }
+    // A member that adds a build to a published version states the manifest the version was committed with (what it states at this
+    // commit, or, as a single commit does, the sha256 of its first file when it states none), and the build must still be free.
+    for (g.members, manifests) |m, sha| {
+        if (!m.add) continue;
+        const filenames = try ctx.arena.alloc([]const u8, m.files.len);
+        for (m.files, filenames) |f, *name| name.* = f.filename;
+        const stated = if (sha.?.len > 0) sha.? else m.files[0].sha256;
+        if (try publish.addRefusal(ctx, m.package, m.row, filenames, stated)) |r| return r;
     }
     const texts = switch (try gr.load(ctx, g, readmes)) {
         .ok => |loaded| loaded,

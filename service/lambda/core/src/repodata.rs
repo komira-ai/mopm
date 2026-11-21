@@ -17,7 +17,8 @@ pub const COMPILER_PACKAGE: &str = "mojo-compiler";
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum RepodataError {
-    /// The same file name in two records: a bug in the caller (the store holds one record per version).
+    /// The same file name twice: a bug in the caller (the store holds one record per version, and a file name
+    /// names its build).
     #[error("repodata: file {0} appears twice")]
     DuplicateFile(String),
     #[error(transparent)]
@@ -32,12 +33,31 @@ pub struct RepodataFiles {
     pub zst: Vec<u8>,
 }
 
-/// The conda dependencies of a record: the compiler pin, the package dependencies as `mojo-<name> <range>`
-/// (or `mojo-<name>`), and the system libraries the package loads (`native_depends`, as its index.json
-/// requires them); the libraries it ships are no dependency; no duplicates, sorted as JavaScript sorts strings.
-fn depends_of(r: &VersionRecord) -> Vec<String> {
+/// The compiler of a build string `mojo<compiler>_0`: dot-separated runs of ASCII digits (`mojo1.1.0_0` is `1.1.0`).
+fn compiler_of(build: &str) -> Option<&str> {
+    let compiler = build.strip_prefix("mojo")?.strip_suffix("_0")?;
+    compiler
+        .split('.')
+        .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        .then_some(compiler)
+}
+
+/// The build a file of `name` `version` belongs to, with its compiler: what its name has after
+/// `mojo-<name>-<version>-` and before `.conda`, when that is `mojo<compiler>_0`.
+fn build_of_file<'a>(name: &str, version: &str, filename: &'a str) -> Option<(&'a str, &'a str)> {
+    let build = filename
+        .strip_prefix(format!("mojo-{name}-{version}-").as_str())?
+        .strip_suffix(".conda")?;
+    Some((build, compiler_of(build)?))
+}
+
+/// The conda dependencies of one file of a record: the compiler pin (`requires` is the compiler requirement of the
+/// file's own build), the package dependencies as `mojo-<name> <range>` (or `mojo-<name>`), and the system libraries
+/// the package loads (`native_depends`, as its index.json requires them); every build of a version shares the last
+/// two. The libraries it ships are no dependency; no duplicates, sorted as JavaScript sorts strings.
+fn depends_of(r: &VersionRecord, requires: &str) -> Vec<String> {
     let mut specs: BTreeSet<String> = BTreeSet::new();
-    specs.insert(format!("{COMPILER_PACKAGE} {}", r.requires_mojo));
+    specs.insert(format!("{COMPILER_PACKAGE} {requires}"));
     for d in &r.deps {
         match d.range.as_deref().filter(|s| !s.is_empty()) {
             Some(range) => specs.insert(format!("mojo-{} {range}", d.name)),
@@ -57,7 +77,8 @@ fn depends_of(r: &VersionRecord) -> Vec<String> {
 /// `repodata.json` text for one subdir. `published` records of the subdir are listed under
 /// `packages.conda`; `yanked` ones leave it and are listed under `removed` (the files stay
 /// downloadable), and so do `tombstoned` ones (their bytes are gone; the name tells a client the
-/// file was withdrawn); `pending` records appear nowhere.
+/// file was withdrawn); `pending` records appear nowhere. A version with several builds (one per Mojo
+/// compiler) lists each file under its own build, which pins the compiler that build was made with.
 pub fn build_repodata_json(
     subdir: &str,
     records: &[VersionRecord],
@@ -80,12 +101,18 @@ pub fn build_repodata_json(
                 removed.push(f.filename.clone());
                 continue;
             }
+            // The build of a file is the end of its name. The record's own build stands for a name that does not
+            // carry one, and states the record's own `requires_mojo`; any other build pins its own compiler.
+            let (build, requires) = match build_of_file(&r.name, &r.version, &f.filename) {
+                Some((build, compiler)) if build != r.build => (build, format!("=={compiler}")),
+                _ => (r.build.as_str(), r.requires_mojo.clone()),
+            };
             conda.insert(
                 f.filename.clone(),
                 json!({
-                    "build": r.build,
+                    "build": build,
                     "build_number": 0,
-                    "depends": depends_of(r),
+                    "depends": depends_of(r, &requires),
                     "name": format!("mojo-{}", r.name),
                     "sha256": f.sha256,
                     "size": f.size,
@@ -359,7 +386,7 @@ mod tests {
             "libzlib".to_string(),
         ];
         assert_eq!(
-            depends_of(&r),
+            depends_of(&r, &r.requires_mojo),
             [
                 "libzlib",
                 "mojo-alpha >=1",
@@ -380,9 +407,12 @@ mod tests {
             id: "komira_libc_posix".to_string(),
             soname: "libkomira_libc_posix.a".to_string(),
         }];
-        assert_eq!(depends_of(&r), ["mojo-compiler ==1.0.0"]);
+        assert_eq!(depends_of(&r, &r.requires_mojo), ["mojo-compiler ==1.0.0"]);
         r.native_depends = vec!["lz4-c >=1.9.3".to_string()];
-        assert_eq!(depends_of(&r), ["lz4-c >=1.9.3", "mojo-compiler ==1.0.0"]);
+        assert_eq!(
+            depends_of(&r, &r.requires_mojo),
+            ["lz4-c >=1.9.3", "mojo-compiler ==1.0.0"]
+        );
     }
 
     /// A small deterministic generator (xorshift64*), so the properties below need no dependency.
@@ -570,5 +600,261 @@ mod tests {
         };
         assert_eq!(bytes(&restored), bytes(&published));
         assert_eq!(hex('a').len(), 64);
+    }
+
+    /// A file of `p` 1.0.0 of `build` in `subdir`.
+    fn build_file(build: &str, subdir: &str, sha: char) -> crate::types::FileRef {
+        crate::types::FileRef {
+            subdir: subdir.to_string(),
+            filename: format!("mojo-p-1.0.0-{build}.conda"),
+            sha256: hex(sha),
+            size: 1000,
+            url: None,
+        }
+    }
+
+    /// The version 1.0.0 of `p` with its build for Mojo 1.0.0 (linux-64: `c`) and its builds for Mojo 1.2.0
+    /// (linux-64: `a`, osx-arm64: `b`). `primary` is the build the record itself states (its `build` and
+    /// `requires_mojo`).
+    fn two_builds(primary: &str) -> VersionRecord {
+        let mut r = rec("p", "1.0.0");
+        r.build = format!("mojo{primary}_0");
+        r.requires_mojo = format!("=={primary}");
+        r.deps = vec![Dep {
+            name: "q".to_string(),
+            range: Some(">=1".to_string()),
+        }];
+        r.native_depends = vec!["lz4-c >=1.9.3".to_string()];
+        r.files = vec![
+            build_file("mojo1.2.0_0", "linux-64", 'a'),
+            build_file("mojo1.2.0_0", "osx-arm64", 'b'),
+            build_file("mojo1.0.0_0", "linux-64", 'c'),
+        ];
+        r
+    }
+
+    fn entries(subdir: &str, records: &[VersionRecord]) -> Value {
+        serde_json::from_str(&build_repodata_json(subdir, records).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn each_file_is_listed_under_its_own_build_and_its_depends_pin_that_builds_compiler() {
+        // The same answer whichever build the record itself states.
+        for primary in ["1.0.0", "1.2.0"] {
+            let records = [two_builds(primary)];
+            let linux = &entries("linux-64", &records)["packages.conda"];
+            let keys: Vec<&String> = linux.as_object().unwrap().keys().collect();
+            assert_eq!(
+                keys,
+                [
+                    "mojo-p-1.0.0-mojo1.0.0_0.conda",
+                    "mojo-p-1.0.0-mojo1.2.0_0.conda"
+                ],
+                "{primary}"
+            );
+            let old = &linux["mojo-p-1.0.0-mojo1.0.0_0.conda"];
+            assert_eq!(old["build"], "mojo1.0.0_0", "{primary}");
+            assert_eq!(
+                old["depends"],
+                json!(["lz4-c >=1.9.3", "mojo-compiler ==1.0.0", "mojo-q >=1"]),
+                "{primary}"
+            );
+            let new = &linux["mojo-p-1.0.0-mojo1.2.0_0.conda"];
+            assert_eq!(new["build"], "mojo1.2.0_0", "{primary}");
+            assert_eq!(
+                new["depends"],
+                json!(["lz4-c >=1.9.3", "mojo-compiler ==1.2.0", "mojo-q >=1"]),
+                "{primary}"
+            );
+            let osx =
+                &entries("osx-arm64", &records)["packages.conda"]["mojo-p-1.0.0-mojo1.2.0_0.conda"];
+            assert_eq!(osx["build"], "mojo1.2.0_0", "{primary}");
+            assert_eq!(
+                osx["depends"],
+                json!(["lz4-c >=1.9.3", "mojo-compiler ==1.2.0", "mojo-q >=1"]),
+                "{primary}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_repodata_of_a_version_with_two_builds_is_these_exact_bytes() {
+        let a = hex('a');
+        let c = hex('c');
+        let depends = |compiler: &str| {
+            format!(r#"["lz4-c >=1.9.3","mojo-compiler =={compiler}","mojo-q >=1"]"#)
+        };
+        let entry = |build: &str, compiler: &str, sha: &str| {
+            format!(
+                r#""mojo-p-1.0.0-{build}.conda":{{"build":"{build}","build_number":0,"depends":{},"name":"mojo-p","sha256":"{sha}","size":1000,"subdir":"linux-64","version":"1.0.0"}}"#,
+                depends(compiler)
+            )
+        };
+        let want = format!(
+            r#"{{"info":{{"subdir":"linux-64"}},"packages":{{}},"packages.conda":{{{},{}}},"removed":[]}}"#,
+            entry("mojo1.0.0_0", "1.0.0", &c),
+            entry("mojo1.2.0_0", "1.2.0", &a)
+        );
+        assert_eq!(
+            build_repodata_json("linux-64", &[two_builds("1.0.0")]).unwrap(),
+            want
+        );
+        assert_eq!(
+            build_repodata_json("linux-64", &[two_builds("1.2.0")]).unwrap(),
+            want
+        );
+    }
+
+    #[test]
+    fn every_entry_of_a_version_with_several_builds_has_the_same_name_version_and_keys() {
+        let doc = entries("linux-64", &[two_builds("1.0.0")]);
+        let all = doc["packages.conda"].as_object().unwrap();
+        assert_eq!(all.len(), 2);
+        for e in all.values() {
+            let keys: Vec<&String> = e.as_object().unwrap().keys().collect();
+            assert_eq!(
+                keys,
+                [
+                    "build",
+                    "build_number",
+                    "depends",
+                    "name",
+                    "sha256",
+                    "size",
+                    "subdir",
+                    "version"
+                ]
+            );
+            assert_eq!(e["name"], "mojo-p");
+            assert_eq!(e["version"], "1.0.0");
+            assert_eq!(e["build_number"], 0);
+            assert_eq!(e["subdir"], "linux-64");
+        }
+    }
+
+    #[test]
+    fn a_yanked_version_lists_the_files_of_every_build_under_removed() {
+        let mut r = two_builds("1.0.0");
+        r.state = VersionState::Yanked;
+        r.yank_reason = Some("broken".to_string());
+        let doc = entries("linux-64", &[r]);
+        assert_eq!(doc["packages.conda"], json!({}));
+        assert_eq!(
+            doc["removed"],
+            json!([
+                "mojo-p-1.0.0-mojo1.0.0_0.conda",
+                "mojo-p-1.0.0-mojo1.2.0_0.conda"
+            ])
+        );
+    }
+
+    #[test]
+    fn the_output_does_not_depend_on_the_order_of_the_files_of_the_record() {
+        let r = two_builds("1.0.0");
+        let mut reversed = r.clone();
+        reversed.files.reverse();
+        assert_eq!(
+            build_repodata("linux-64", &[reversed]).unwrap(),
+            build_repodata("linux-64", &[r]).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_file_whose_name_names_no_build_is_listed_under_the_records_build_and_requires_mojo() {
+        let mut r = rec("p", "1.0.0");
+        r.requires_mojo = ">=1.0,<2".to_string();
+        r.files[0].filename = "whatever.conda".to_string();
+        let doc = entries("linux-64", &[r]);
+        let e = &doc["packages.conda"]["whatever.conda"];
+        assert_eq!(e["build"], "mojo1.0.0_0");
+        assert_eq!(e["depends"], json!(["mojo-compiler >=1.0,<2"]));
+    }
+
+    #[test]
+    fn the_records_own_requires_mojo_is_what_its_own_build_states() {
+        let mut r = rec("p", "1.0.0");
+        r.requires_mojo = ">=1.0,<2".to_string();
+        let doc = entries("linux-64", &[r]);
+        assert_eq!(
+            doc["packages.conda"]["mojo-p-1.0.0-mojo1.0.0_0.conda"]["depends"],
+            json!(["mojo-compiler >=1.0,<2"])
+        );
+    }
+
+    #[test]
+    fn two_files_of_one_name_in_one_version_are_still_refused() {
+        let mut r = two_builds("1.0.0");
+        r.files.push(build_file("mojo1.2.0_0", "linux-64", 'd'));
+        assert_eq!(
+            build_repodata_json("linux-64", &[r]).unwrap_err(),
+            RepodataError::DuplicateFile("mojo-p-1.0.0-mojo1.2.0_0.conda".to_string())
+        );
+    }
+
+    #[test]
+    fn a_build_string_is_mojo_dot_separated_digits_underscore_zero() {
+        for (build, compiler) in [
+            ("mojo1.0.0_0", "1.0.0"),
+            ("mojo1.10.0_0", "1.10.0"),
+            ("mojo26_0", "26"),
+            ("mojo0.0_0", "0.0"),
+        ] {
+            assert_eq!(compiler_of(build), Some(compiler), "{build}");
+        }
+        for build in [
+            "",
+            "mojo_0",
+            "mojo1.0.0",
+            "mojo1.0.0_1",
+            "mojo1.0.0_00",
+            "1.0.0_0",
+            "max1.0.0_0",
+            "mojo1..0_0",
+            "mojo.1_0",
+            "mojo1._0",
+            "mojo1.x_0",
+            "mojo1_0_0",
+            "mojo-1.0_0",
+            "mojo\u{661}_0",
+            " mojo1.0.0_0",
+            "mojo1.0.0_0 ",
+        ] {
+            assert_eq!(compiler_of(build), None, "{build:?}");
+        }
+    }
+
+    #[test]
+    fn the_build_of_a_file_is_what_its_name_has_between_the_version_and_dot_conda() {
+        assert_eq!(
+            build_of_file("p", "1.0.0", "mojo-p-1.0.0-mojo1.2.0_0.conda"),
+            Some(("mojo1.2.0_0", "1.2.0"))
+        );
+        for filename in [
+            "whatever.conda",
+            "mojo-p-1.0.0-mojo1.2.0_0.tar.bz2",
+            "mojo-p-1.0.0-mojo1.2.0_0",
+            "mojo-p-1.0.0-mojo1.2.0_1.conda",
+            "mojo-p-1.0.0-.conda",
+            "mojo-p-1.0.0-.conda.conda",
+            "mojo-p-1.0.1-mojo1.2.0_0.conda",
+            "mojo-q-1.0.0-mojo1.2.0_0.conda",
+            "xmojo-p-1.0.0-mojo1.2.0_0.conda",
+        ] {
+            assert_eq!(build_of_file("p", "1.0.0", filename), None, "{filename}");
+        }
+    }
+
+    #[test]
+    fn a_file_of_another_version_or_package_in_the_record_falls_back_to_the_records_build() {
+        let mut r = two_builds("1.0.0");
+        r.files = vec![build_file("mojo1.2.0_0", "linux-64", 'a')];
+        r.files[0].filename = "mojo-p-1.0.1-mojo1.2.0_0.conda".to_string();
+        let doc = entries("linux-64", &[r]);
+        let e = &doc["packages.conda"]["mojo-p-1.0.1-mojo1.2.0_0.conda"];
+        assert_eq!(e["build"], "mojo1.0.0_0");
+        assert_eq!(
+            e["depends"],
+            json!(["lz4-c >=1.9.3", "mojo-compiler ==1.0.0", "mojo-q >=1"])
+        );
     }
 }

@@ -188,9 +188,11 @@ test "a group commit takes manifest_sha256 from some members and not from others
     _ = try fx.status(idOf(created));
     _ = try fx.status(idOf(created));
     try std.testing.expectEqualStrings("visible", try fx.status(idOf(created)));
+    // A member whose commit stated a manifest holds it; one that stated none holds the sha256 of its first file.
     for (abc) |n| {
         const v = try versionReply(&fx, n, "1.0.0");
-        try std.testing.expectEqualStrings(try fx.sha(try std.fmt.allocPrint(a, "{s}x", .{n})), v.value.object.get("manifest_sha256").?.string);
+        const want = if (std.mem.eql(u8, n, "pkg_b")) try fx.sha("pkg_b") else try fx.sha(try std.fmt.allocPrint(a, "{s}x", .{n}));
+        try std.testing.expectEqualStrings(want, v.value.object.get("manifest_sha256").?.string);
     }
 }
 

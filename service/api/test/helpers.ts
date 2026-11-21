@@ -8,7 +8,9 @@ const safeCanonical = (v: string) => {
     return v; // deliberately invalid versions are used to test refusal
   }
 };
-import type { AuditEntry, VersionRecord } from '../src/types';
+import { buildRowKey, requiresMojoOf } from '../src/builds';
+import { condaNameOf } from '../src/names';
+import type { AuditEntry, FileRef, VersionRecord } from '../src/types';
 
 export const hex = (c: string) => c.repeat(64);
 
@@ -35,6 +37,29 @@ export function rec(over: Partial<VersionRecord> & { name: string; version: stri
     rev: 0,
     ...over,
   };
+}
+
+/** One file of build `build` of `name` `version`, named as the registry names it. */
+export function buildFile(name: string, version: string, build: string, subdir = 'linux-64', digit = 'a'): FileRef {
+  const filename = `${condaNameOf(name)}-${version}-${build}.conda`;
+  return { subdir, filename, sha256: hex(digit), size: 1000, url: `https://conda.example.invalid/${subdir}/${filename}` };
+}
+
+/**
+ * The row of a build added to a published version later: keyed `<version>+<build>`, holding that build's files, in the
+ * state `published` with revision 1 unless `over` says otherwise.
+ */
+export function buildRow(name: string, version: string, build: string, over: Partial<VersionRecord> = {}): VersionRecord {
+  return rec({
+    name,
+    version,
+    canonical: buildRowKey(version, build),
+    build,
+    requires_mojo: requiresMojoOf(build),
+    files: [buildFile(name, version, build, 'linux-64', 'b')],
+    rev: 1,
+    ...over,
+  });
 }
 
 let seq = 0;

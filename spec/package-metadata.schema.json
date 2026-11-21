@@ -30,6 +30,11 @@
       "type": "string",
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
     },
+    "source_sha256": {
+      "description": "The sha256 of the package's sources, as lowercase hex: of the text made of one line '<sha256 of the file> <path>' and a newline per file, sorted by the bytes of the path, with paths relative to the package directory and '/' as the separator. The files are the package's mopm.toml, every regular file below its library directory ([targets] lib, src/<import name> by default; a symlink is read through) and the source of each program of [targets] bins. mopm pack, publish and stage write it whenever the library directory exists. Two builds of one version for different Mojo compilers carry the same value: the registry takes a build for another compiler into a published version only when it does, and a version without the key can get none.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "deps": {
       "description": "Direct Mojo dependencies.",
       "type": "array",

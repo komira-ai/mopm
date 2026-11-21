@@ -67,10 +67,34 @@ regenerated whole from the registry's source of truth and is written determinist
 `published_at`). A line:
 
 ```json
-{"v":2,"name":"komira-ai/http_client","version":"0.4.0","build":"mojo1.0.0_0","state":"published","published_at":"2026-11-13T12:00:00Z","requires_mojo":"==1.0.0","deps":[{"name":"komira-ai/http_core","range":">=1.2,<2"}],"native":[],"files":[{"subdir":"linux-64","filename":"mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda","sha256":"...","size":123456,"url":"https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda"}],"manifest_sha256":"..."}
+{"v":2,"name":"komira-ai/http_client","version":"0.4.0","build":"mojo1.0.0_0","state":"published","published_at":"2026-11-13T12:00:00Z","requires_mojo":"==1.0.0","deps":[{"name":"komira-ai/http_core","range":">=1.2,<2"}],"native":[],"files":[{"subdir":"linux-64","filename":"mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda","sha256":"...","size":123456,"url":"https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda"}],"builds":[{"build":"mojo1.0.0_0","requires_mojo":"==1.0.0","files":[{"subdir":"linux-64","filename":"mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda","sha256":"...","size":123456,"url":"https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda"}]},{"build":"mojo1.1.0_0","requires_mojo":"==1.1.0","files":[{"subdir":"linux-64","filename":"mojo-komira-ai.http_client-0.4.0-mojo1.1.0_0.conda","sha256":"...","size":123470,"url":"https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.http_client-0.4.0-mojo1.1.0_0.conda"}]}],"manifest_sha256":"..."}
 ```
 
 (`...` stands for a 64-character hex digest.)
+
+### Builds of a version
+
+A version has one or more **builds**, one for each Mojo compiler it was built with (`channel.md`, "Package naming").
+The record carries them in `builds`, an array of every build of the version sorted by compiler version (compared as
+dot-separated numbers, so `1.10.0` follows `1.9.0`). An element has `build` (`mojo<compiler>_0`), `requires_mojo`
+(`==<compiler>`) and `files` (at least one, in the shape of the record's `files`). The top-level `build`,
+`requires_mojo` and `files` are the version's **primary build**, the first element of `builds`, so a reader that
+predates `builds` sees one build. `deps`, `native`, `manifest_sha256`, `state`, `published_at` and the other keys
+belong to the version and are the same for every build.
+
+- A reader that knows `builds` uses it and ignores the top-level `build`, `requires_mojo` and `files`. A reader that
+  does not know it ignores it (unknown keys are ignored, below) and reads the primary build only; it never sees a file of
+  another build.
+- Each file of a build is named after that build: `mojo-<namespace>.<name>-<version>-<build>.conda`. No build string
+  and no compiler repeats in `builds`; a record that repeats one is not valid.
+- The registry writes `builds` on every version 2 line, including a version published before `builds` existed (then it
+  holds one element, the top-level build).
+- A build added to a published version (`channel.md`, "Package naming") appears in `builds` as a new element; the
+  primary build changes when the added build has a lower compiler than every build before it, and then the top-level
+  keys change with it. The `files` of a build already listed never change.
+- A version with no build for the Mojo a project lists is not resolved for it; the error names every build:
+  `<name> <version> has no .mojoc for Mojo 1.1.0 (published for: 1.0.0, 1.2.0)`, and the rest of the message as in
+  `unit-graph.md`.
 
 Rules a reader applies:
 
@@ -132,7 +156,9 @@ has the same rules with these differences:
 ## Versioning
 
 Additive only, like the API (`api/openapi.yaml`): new optional keys can appear
-in a record at any time; a change that would break a reader gets a new `v`
+in a record at any time (`builds` is one: it needs no new `v` and no new `index_version`, because a reader that does not
+know it reads the primary build from keys whose meaning did not change, and the presence of `builds` tells the two
+shapes apart); a change that would break a reader gets a new `v`
 and a new `index_version`, served beside the old one for as long as released
 CLIs need it. Version 2 is that change for namespaces: a reader of version 1
 cannot read a version 2 file and the other way round, so `index_versions`
