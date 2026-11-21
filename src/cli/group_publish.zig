@@ -35,7 +35,8 @@
 //! once and says when to try again, unless the registry's Retry-After is short (http.max_retry_after_secs), when the
 //! request waits that long and goes again; it is never retried into the limit. A request that can be repeated without
 //! changing anything (every PUT of a file, every poll) is repeated, at most `--retries` times with jittered waits, when
-//! the connection fails or times out (`--timeout`), its TLS handshake or a TLS read fails, or the server answers 500, 502, 503 or 504; a 4xx other than 429 is
+//! the connection fails or times out (`--timeout`), its TLS handshake or a TLS read fails (not a server certificate the
+//! handshake rejects: that is reported at once), or the server answers 500, 502, 503 or 504; a 4xx other than 429 is
 //! final at once. The POSTs (create, commit) are sent once: a rerun of the command is their retry. The token (`$MOPM_TOKEN`, else the login's) is read after
 //! the plan has been checked, goes only to the registry's API, is never printed, and is taken out of the environment of every
 //! program mopm starts (src/core/child_env.zig).

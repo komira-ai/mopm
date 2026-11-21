@@ -14,6 +14,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const tls_connect = @import("tls_connect.zig");
 
 /// The longest a connection may take to be made, and the longest a read or a write may wait for the server.
 pub const default_timeout_secs: u32 = 30;
@@ -102,7 +103,15 @@ fn requestOnce(arena: Allocator, method: std.http.Method, url: []const u8, optio
     const uri = try std.Uri.parse(url);
     var header_buf: [16 * 1024]u8 = undefined;
     const authorization: ?[]const u8 = if (options.token) |t| try std.fmt.allocPrint(arena, "Bearer {s}", .{t}) else null;
+    // An https connection is made here, so the handshake's own error is kept (src/core/tls_connect.zig); `client.deinit`
+    // closes it if `open` fails.
+    const tls_conn: ?*std.http.Client.Connection = if (std.ascii.eqlIgnoreCase(uri.scheme, "https")) blk: {
+        const hp = hostPort(url) orelse break :blk null;
+        try tls_connect.loadCertificates(&client);
+        break :blk try tls_connect.connect(&client, hp.host, hp.port);
+    } else null;
     var req = try client.open(method, uri, .{
+        .connection = tls_conn,
         .server_header_buffer = &header_buf,
         .keep_alive = false,
         .headers = .{
@@ -228,17 +237,17 @@ pub fn retryableAnswer(a: Answer) bool {
 
 /// Whether a request that ended in `e` may succeed when repeated: the connection broke, was refused or reset, the
 /// name server failed for now, the time limit ran out, or TLS failed on the connection. An error of the request itself
-/// (a bad URL, a body too long) is not. The standard client reports every failure of the TLS handshake as
-/// `TlsInitializationFailed` (the peer closed or reset the connection, sent something it could not read, or presented a
-/// certificate it rejected), and a TLS record it could not read after that as `TlsFailure`. Neither says which, so
-/// both are tried again: a lasting cause such as a rejected certificate costs the bounded retries, then is reported.
+/// (a bad URL, a body too long) is not, and neither is a certificate the handshake rejected (tls_connect.zig: it
+/// keeps its own error, such as `CertificateHostMismatch` or `TlsCertificateNotVerified`, none of them listed here). Every
+/// other failure of the TLS handshake is `TlsInitializationFailed` (the peer closed or reset the connection, or sent
+/// something that could not be read), and a TLS record that could not be read after it is `TlsFailure`.
 pub fn retryableError(e: anyerror) bool {
     const name = @errorName(e);
     const transient = [_][]const u8{
-        "RequestTimedOut",        "ConnectTimedOut",      "ConnectionRefused",     "ConnectionResetByPeer", "ConnectionTimedOut",
-        "NetworkUnreachable",     "BrokenPipe",           "EndOfStream",           "TemporaryNameServerFailure", "UnexpectedConnectFailure",
-        "UnexpectedReadFailure",  "UnexpectedWriteFailure", "TlsConnectionTruncated", "TlsAlert",
-        "TlsInitializationFailed", "TlsFailure",
+        "RequestTimedOut",       "ConnectTimedOut",        "ConnectionRefused",      "ConnectionResetByPeer",      "ConnectionTimedOut",
+        "NetworkUnreachable",    "BrokenPipe",             "EndOfStream",            "TemporaryNameServerFailure", "UnexpectedConnectFailure",
+        "UnexpectedReadFailure", "UnexpectedWriteFailure", "TlsConnectionTruncated", "TlsAlert",                   "TlsInitializationFailed",
+        "TlsFailure",
     };
     for (transient) |t| {
         if (std.mem.eql(u8, name, t)) return true;
@@ -491,6 +500,15 @@ test "a TLS handshake that did not finish and a TLS record that could not be rea
     var post = ScriptedIo{ .results = &.{ error.TlsInitializationFailed, answerWith(200, null) } };
     try std.testing.expectError(error.TlsInitializationFailed, retrying(std.testing.allocator, &post, .POST, "https://x/", .{}, .{}));
     try std.testing.expectEqual(@as(usize, 1), post.calls);
+}
+
+test "a rejected certificate is reported at once: neither a wrong name nor an untrusted chain is retried" {
+    for ([_]anyerror{ error.CertificateHostMismatch, error.TlsCertificateNotVerified, error.CertificateExpired }) |rejected| {
+        var io = ScriptedIo{ .results = &.{ rejected, answerWith(200, null) } };
+        try std.testing.expectError(rejected, retrying(std.testing.allocator, &io, .PUT, "https://x/", .{}, .{ .retries = 3 }));
+        try std.testing.expectEqual(@as(usize, 1), io.calls);
+        try std.testing.expectEqual(@as(usize, 0), io.pauses);
+    }
 }
 
 test "a 429 waits the Retry-After the server named, when it is short, and stops when it is long" {

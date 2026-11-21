@@ -81,6 +81,7 @@ test {
     _ = @import("test_report.zig");
     _ = @import("test_filter.zig");
     _ = @import("http.zig");
+    _ = @import("tls_connect.zig");
     _ = @import("registry.zig");
     _ = @import("credentials.zig");
     _ = @import("ci_oidc.zig");

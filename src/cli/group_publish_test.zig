@@ -695,6 +695,51 @@ test "a PUT whose TLS handshake or TLS read fails is repeated, and the run publi
     try std.testing.expect(!contains(console.err.items, "run the same command again"));
 }
 
+test "a PUT whose TLS handshake keeps failing stops after the last retry and names the failure" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 0, .err = error.TlsInitializationFailed },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.net.policy.retries = 2;
+    try std.testing.expectEqual(Result.failed, p.run());
+    // a once, b three times (the try and 2 retries), nothing after.
+    try std.testing.expectEqual(@as(usize, 1 + 3), script.count(.PUT));
+    try std.testing.expect(!contains(script.seen.items[script.seen.items.len - 1].url, "commit"));
+    try expectContains(console.err.items, "uploading mojo-acme.pb-1.0.0-x.conda failed: TlsInitializationFailed; run the same command again to resume group " ++ gid);
+}
+
+test "a PUT whose server certificate is rejected is not repeated: the run stops at once and names the certificate error" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    for ([_]anyerror{ error.CertificateHostMismatch, error.TlsCertificateNotVerified }) |rejected| {
+        var script = newScript(a, &.{
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+            .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+            .{ .method = .PUT, .suffix = "/put/b", .status = 0, .err = rejected },
+            .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        });
+        var console = Console.init(a, null);
+        var p = publisher(a, &tmp, plan, &script, &console);
+        try std.testing.expectEqual(Result.failed, p.run());
+        try std.testing.expectEqual(@as(usize, 2), script.count(.PUT));
+        try std.testing.expectEqual(@as(u64, 0), script.slept);
+        try expectContains(console.err.items, try std.fmt.allocPrint(a, "uploading mojo-acme.pb-1.0.0-x.conda failed: {s}; run the same command again to resume group " ++ gid, .{@errorName(rejected)}));
+    }
+}
+
 test "a 4xx other than 429 is final: the PUT is not repeated, though the next try would have worked" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
