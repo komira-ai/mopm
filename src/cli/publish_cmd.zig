@@ -16,6 +16,12 @@
 //! begin an upload per file and PUT the bytes to the URL it names, commit the
 //! uploads, and poll the publish until it is `published` or `rejected`.
 //!
+//! Both write the digest of the package's sources into the metadata of every file (`source_sha256`, src/core/source_digest.zig)
+//! when the package's library directory exists; when it does not, they say so on standard error and write none. The digest is
+//! the same whichever compiler `--compiler` names. `publish` makes the same requests when the version is already published:
+//! nothing here refuses it, the registry decides, and it takes a build for another Mojo into a published version only when
+//! the sources are the same (`source_sha256`) and the build is new.
+//!
 //! Before the first upload, `publish` creates the package when the registry does not have it (`PUT /api/v2/packages/<namespace>/<name>`,
 //! no body: 201 says `created <name> on <stage>`, 200 means it was there already and says nothing). The registry checks first that
 //! the token's user may write the namespace; a refusal is printed and nothing is uploaded. `--dry-run` sends nothing.
@@ -39,6 +45,7 @@ const http = core.http;
 const manifest = core.manifest;
 const conda = core.conda;
 const bins_mod = core.bins;
+const source_digest = core.source_digest;
 const registry = core.registry;
 const credentials = core.credentials;
 const ci_oidc = core.ci_oidc;
@@ -205,15 +212,17 @@ pub fn readmeProblem(arena: Allocator, path: []const u8, bytes: []const u8) Allo
     return null;
 }
 
-const Prepared = struct {
+pub const Prepared = struct {
     m: manifest.Manifest,
     packs: []const conda.Packed,
     manifest_dir: []const u8,
+    /// A line to say on standard error before going on (without the `mopm: `): the package carries no source digest.
+    note: ?[]const u8 = null,
 };
 
 /// Reads the manifest and the `.mojoc` files and packs them. Null after
 /// printing why not (nothing has touched the network by then).
-fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
+pub fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
     const src = std.fs.cwd().readFileAlloc(arena, f.manifest, 1 << 20) catch |e| {
         err("{s}: {s}\n", .{ f.manifest, @errorName(e) });
         return null;
@@ -274,6 +283,18 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         error.OutOfMemory => return error.OutOfMemory,
     };
 
+    // The digest of the package's sources, the same in every build of the version, whichever compiler made it.
+    var source_sha256: []const u8 = "";
+    var note: ?[]const u8 = null;
+    switch (try source_digest.ofPackage(arena, m, std.fs.path.dirname(f.manifest) orelse ".", f.manifest)) {
+        .digest => |d| source_sha256 = try arena.dupe(u8, &d),
+        .no_library => |lib| note = try source_digest.noLibraryNote(arena, m, lib),
+        .bad => |reason| {
+            err("{s}: {s}\n", .{ f.manifest, reason });
+            return null;
+        },
+    }
+
     var packs = std.ArrayList(conda.Packed).init(arena);
     for (f.mojoc) |entry| {
         const bytes = std.fs.cwd().readFileAlloc(arena, entry.path, 1 << 30) catch |e| {
@@ -294,6 +315,7 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
             .mojoc = bytes,
             .natives = native_files.get(entry.subdir) orelse &.{},
             .bins = bins,
+            .source_sha256 = source_sha256,
         });
         if (cmd == .publish and p.bytes.len > max_file_bytes) {
             err("{s} is {d} bytes; a package file is at most {d} bytes\n", .{ p.file_name, p.bytes.len, max_file_bytes });
@@ -305,7 +327,7 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         err("{d} files; a version has at most {d}\n", .{ packs.items.len, max_files });
         return null;
     }
-    return .{ .m = m, .packs = packs.items, .manifest_dir = std.fs.path.dirname(f.manifest) orelse "." };
+    return .{ .m = m, .packs = packs.items, .manifest_dir = std.fs.path.dirname(f.manifest) orelse ".", .note = note };
 }
 
 /// What `nativeFiles` found: the archives by subdir, or why the package cannot be packed.
@@ -475,6 +497,7 @@ pub fn main(arena: Allocator, cmd_name: []const u8, args: []const []const u8, cl
 
 fn packCmd(arena: Allocator, f: Flags) anyerror!u8 {
     const prep = (try prepare(arena, .pack, f)) orelse return 1;
+    if (prep.note) |n| err("{s}\n", .{n});
     const out = std.io.getStdOut().writer();
     for (prep.packs) |p| {
         const dir = try std.fs.path.join(arena, &.{ f.out, p.subdir });
@@ -499,6 +522,7 @@ pub fn findToken(s: registry_cmd.Session) anyerror!?[]const u8 {
 
 fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
     const prep = (try prepare(arena, .publish, f)) orelse return 1;
+    if (prep.note) |n| err("{s}\n", .{n});
     var refused = false;
     const readme = try loadReadme(arena, f, prep, &refused);
     if (refused) return 1;

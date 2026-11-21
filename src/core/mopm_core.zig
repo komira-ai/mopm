@@ -33,6 +33,7 @@ pub const credentials = @import("credentials.zig");
 pub const ci_oidc = @import("ci_oidc.zig");
 pub const conda = @import("conda.zig");
 pub const bins = @import("bins.zig");
+pub const source_digest = @import("source_digest.zig");
 pub const resolve = @import("resolve.zig");
 pub const lock = @import("lock.zig");
 pub const lock_libs = @import("lock_libs.zig");
@@ -86,6 +87,7 @@ test {
     _ = @import("conda.zig");
     _ = @import("conda_names_test.zig");
     _ = @import("bins.zig");
+    _ = @import("source_digest.zig");
     _ = @import("resolve.zig");
     _ = @import("lock.zig");
     _ = @import("lock_test.zig");

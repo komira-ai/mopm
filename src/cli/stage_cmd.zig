@@ -3,6 +3,14 @@
 //!
 //!   mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version>
 //!              --out <dir> --registry <prod|gamma|beta|url>
+//!   mopm stage --workspace-root <dir> [<package>...] --artifacts <mojo version>=<dir>... --out <dir> --registry <...>
+//!
+//! The artifacts are of one Mojo compiler (`--artifacts <dir>` with one `--compiler`) or of several (`--artifacts <mojo>=<dir>`,
+//! once per compiler, and no `--compiler`: a value is of that form when the text before its first '=' is a compiler, digits
+//! and dots). Mixing the forms, naming a compiler twice, or `--compiler` with `<mojo>=<dir>` is refused. Each member is packed
+//! for every compiler and gets one file per platform directory that holds its artifact for that compiler; a compiler with
+//! none for a member is refused. A member's source digest (src/core/source_digest.zig) is computed once, so every compiler's
+//! files carry the same metadata.
 //!
 //! It reads no token and writes nothing to the registry. Steps, each of which refuses before the next:
 //!
@@ -24,11 +32,16 @@
 //!    empty or badly named one is refused. Nothing built is packed: the program is built where it is run.
 //!    Every file is packed twice and the two must be the same bytes; the metadata inside must hold no URL, no lock
 //!    entry and no path.
-//! 4. Registry. `GET <api_v2_url>/packages/<namespace>/<name>/<version>` (no token) decides each member: not there, `upload`; published with
-//!    the same files (same sha256s), `skip`; published with other bytes, yanked, or tombstoned (its number is burned),
-//!    `refuse`.
+//! 4. Registry. `GET <api_v2_url>/packages/<namespace>/<name>/<version>` (no token) decides each member from the builds the
+//!    version has (a build is the files of one compiler, `mojo<compiler>_0`; `builds` of the answer, or the version's files as one
+//!    build when the answer has none). Not there: `upload`, with every staged build. Yanked or tombstoned (its number is burned):
+//!    `refuse`. Published: a staged build the version has must be the same files, byte for byte (else `refuse`: a published file is
+//!    never replaced, so bump the version); a staged build the version lacks is an add, allowed when the member's
+//!    `manifest_sha256` is the version's (else `refuse`: built from other sources) and when it is the only one (else `refuse`: the
+//!    registry takes one Mojo build per publish); an add is an `upload` member of the plan whose files are that build's only.
+//!    A published version with no new build is `skip`.
 //! 5. Write. `<out>/<subdir>/<file>.conda` for each upload member (the file is `mojo-<namespace>.<name>-...`), its readme
-//!    at `<out>/<namespace>/<name>/README.md`, and `plan.json` (version 2, members named by full name) last, which a reader
+//!    at `<out>/<namespace>/<name>/README.md` (none for an add: a published version's readme is not changed), and `plan.json` (version 2, members named by full name) last, which a reader
 //!    treats as proof the set is complete. A set with a `refuse` member is written too (`publish --staged` refuses it
 //!    whole) and the run ends 1.
 //!
@@ -41,6 +54,7 @@ const http = core.http;
 const manifest = core.manifest;
 const conda = core.conda;
 const bins_mod = core.bins;
+const source_digest = core.source_digest;
 const registry = core.registry;
 const semver = core.semver;
 const publish_cmd = @import("publish_cmd.zig");
@@ -54,27 +68,58 @@ const Console = gp.Console;
 pub const usage =
     \\usage: mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version>
     \\                  --out <dir> --registry <prod|gamma|beta|url>
+    \\       mopm stage --workspace-root <dir> [<package>...] --artifacts <mojo version>=<dir>...
+    \\                  --out <dir> --registry <prod|gamma|beta|url>
     \\
     \\  pack the members of the workspace under <dir> (the named packages and what they depend on, or all)
     \\  from <artifacts>/<subdir>/<namespace>/<import name>.mojoc, check each version against the registry, and write the
     \\  staged set (spec/staged-set.md) to <out>. Reads no token. --registry is required: there is no default.
     \\
+    \\  One compiler: --artifacts <dir> --compiler <mojo version>. Several: --artifacts <mojo version>=<dir>, once per
+    \\  compiler and with no --compiler; each member is packed for every compiler.
+    \\  A version the registry has gets a build for a compiler it lacks when the sources are the same, one build per publish.
+    \\
 ;
+
+/// The artifacts of one Mojo compiler: `<dir>/<subdir>/<namespace>/<import name>.mojoc` for each subdir.
+pub const Build = struct { compiler: []const u8, artifacts: []const u8 };
 
 pub const Flags = struct {
     workspace_root: []const u8,
     packages: []const []const u8 = &.{},
-    artifacts: []const u8,
-    compiler: []const u8,
+    /// `--artifacts <dir>` of the form with one `--compiler`; empty in the `<mojo>=<dir>` form.
+    artifacts: []const u8 = "",
+    /// The `--compiler` of that form.
+    compiler: []const u8 = "",
+    /// `--artifacts <mojo>=<dir>`, one per compiler, in the order given; empty in the form with `--compiler`.
+    builds: []const Build = &.{},
     out: []const u8,
     registry: []const u8,
 };
+
+/// The compilers to stage and where each one's artifacts are, by compiler version in numeric order, whatever order they were given in.
+pub fn buildsOf(arena: Allocator, f: Flags) Allocator.Error![]const Build {
+    const list = if (f.builds.len > 0) try arena.dupe(Build, f.builds) else try arena.dupe(Build, &.{.{ .compiler = f.compiler, .artifacts = f.artifacts }});
+    std.mem.sort(Build, list, {}, buildLess);
+    return list;
+}
+
+fn buildLess(_: void, a: Build, b: Build) bool {
+    return conda.compilerOrder(a.compiler, b.compiler) == .lt;
+}
+
+/// `<mojo>=<dir>` when the text before the first '=' is a compiler version (digits and dots); null for any other value.
+fn namedBuild(value: []const u8) ?Build {
+    const eq = std.mem.indexOfScalar(u8, value, '=') orelse return null;
+    if (!conda.validCompiler(value[0..eq])) return null;
+    return .{ .compiler = value[0..eq], .artifacts = value[eq + 1 ..] };
+}
 
 pub const Parsed = union(enum) { ok: Flags, bad: []const u8 };
 
 pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Parsed {
     var root: ?[]const u8 = null;
-    var artifacts: ?[]const u8 = null;
+    var artifacts = std.ArrayList([]const u8).init(arena);
     var compiler: ?[]const u8 = null;
     var out: ?[]const u8 = null;
     var reg: ?[]const u8 = null;
@@ -86,9 +131,17 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
             try packages.append(a);
             continue;
         }
+        if (std.mem.eql(u8, a, "--artifacts")) {
+            if (i + 1 >= args.len or args[i + 1].len == 0) return .{ .bad = "--artifacts needs a value" };
+            i += 1;
+            try artifacts.append(args[i]);
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--compiler") and compiler != null) {
+            return .{ .bad = "--compiler is given twice; to stage several compilers, name each one in --artifacts <mojo version>=<dir> and leave --compiler out" };
+        }
         const takes = [_]struct { []const u8, *?[]const u8 }{
             .{ "--workspace-root", &root },
-            .{ "--artifacts", &artifacts },
             .{ "--compiler", &compiler },
             .{ "--out", &out },
             .{ "--registry", &reg },
@@ -103,17 +156,29 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
         }
         if (!matched) return .{ .bad = try std.fmt.allocPrint(arena, "unexpected argument '{s}'", .{a}) };
     }
-    const need = [_]struct { []const u8, ?[]const u8 }{
-        .{ "--workspace-root <dir>", root },
-        .{ "--artifacts <dir>", artifacts },
-        .{ "--compiler <exact mojo version>", compiler },
-        .{ "--out <dir>", out },
-    };
-    for (need) |n| {
-        if (n[1] == null) return .{ .bad = try std.fmt.allocPrint(arena, "{s} is required", .{n[0]}) };
+    if (root == null) return .{ .bad = "--workspace-root <dir> is required" };
+    if (artifacts.items.len == 0) return .{ .bad = "--artifacts <dir> is required" };
+
+    // `--artifacts <dir>` (with one --compiler) or `--artifacts <mojo>=<dir>` (one per compiler): one form.
+    var named = std.ArrayList(Build).init(arena);
+    var plain: usize = 0;
+    for (artifacts.items) |value| {
+        if (namedBuild(value)) |b| {
+            if (b.artifacts.len == 0) return .{ .bad = try std.fmt.allocPrint(arena, "--artifacts {s}: no directory after the '='", .{value}) };
+            for (named.items) |seen| {
+                if (std.mem.eql(u8, seen.compiler, b.compiler)) return .{ .bad = try std.fmt.allocPrint(arena, "--artifacts names the compiler {s} twice", .{b.compiler}) };
+            }
+            try named.append(b);
+        } else plain += 1;
     }
+    if (named.items.len > 0 and plain > 0) return .{ .bad = "--artifacts is given both as <dir> and as <mojo version>=<dir>; use one form" };
+    if (plain > 1) return .{ .bad = "--artifacts <dir> is given more than once; with one --compiler give one directory, or name each compiler as --artifacts <mojo version>=<dir>" };
+    if (named.items.len > 0 and compiler != null) return .{ .bad = "--compiler cannot be used with --artifacts <mojo version>=<dir>: the compiler is the text before the '='" };
+    if (plain == 1 and compiler == null) return .{ .bad = "--compiler <exact mojo version> is required" };
+    if (out == null) return .{ .bad = "--out <dir> is required" };
     if (reg == null) return .{ .bad = "--registry is required: there is no default, so a set is never checked against (and later published to) a registry by accident" };
-    return .{ .ok = .{ .workspace_root = root.?, .packages = packages.items, .artifacts = artifacts.?, .compiler = compiler.?, .out = out.?, .registry = reg.? } };
+    if (named.items.len > 0) return .{ .ok = .{ .workspace_root = root.?, .packages = packages.items, .builds = named.items, .out = out.?, .registry = reg.? } };
+    return .{ .ok = .{ .workspace_root = root.?, .packages = packages.items, .artifacts = artifacts.items[0], .compiler = compiler.?, .out = out.?, .registry = reg.? } };
 }
 
 // ----------------------------------------------------------------- members
@@ -329,11 +394,24 @@ pub fn order(arena: Allocator, members: []const Member, named: []const []const u
 
 // -------------------------------------------------------------------- pack
 
+/// The files of a member built with one compiler: one per platform directory that has the member's artifact.
+pub const StagedBuild = struct {
+    compiler: []const u8,
+    /// `mojo<compiler>_0`, as in the file names and in `builds` of the registry's answer.
+    build: []const u8,
+    packs: []const conda.Packed,
+};
+
 pub const Staged = struct {
     member: Member,
+    /// Every file of every build, by compiler and then platform directory.
     packs: []const conda.Packed,
+    /// The same files by build, in the order of the compiler versions.
+    builds: []const StagedBuild = &.{},
     /// The readme text and its path below the staged directory, or null.
     readme: ?[]const u8 = null,
+    /// A line to say before going on: the package has no source digest.
+    note: ?[]const u8 = null,
 };
 
 /// What the metadata inside a package must not hold: it is the manifest as published, so a URL, a lock entry or a
@@ -355,11 +433,13 @@ pub fn metadataProblem(arena: Allocator, in: conda.Input, paths: []const []const
 /// where the archive name is `lib<id>.a` (or the `soname` of the `[native.<id>]`).
 pub const native_dir_suffix = ".native";
 
-/// Packs `m` from the artifacts, or the reason it cannot be.
-pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifacts: []const u8, compiler: []const u8) !Result(Staged) {
+/// Packs `m` from the artifacts of every build in `builds`, or the reason it cannot be.
+pub fn packMember(arena: Allocator, members: []const Member, m: Member, builds: []const Build) !Result(Staged) {
     const T = Staged;
     if (try publish_cmd.versionProblem(arena, m.version)) |p| return bad(T, arena, "{s}: {s}", .{ m.name, p });
-    if (!conda.validCompiler(compiler)) return bad(T, arena, "--compiler {s}: an exact Mojo version is digits and dots, such as 1.0.0", .{compiler});
+    for (builds) |b| {
+        if (!conda.validCompiler(b.compiler)) return bad(T, arena, "--compiler {s}: an exact Mojo version is digits and dots, such as 1.0.0", .{b.compiler});
+    }
     var path_versions = std.ArrayList(conda.PathVersion).init(arena);
     var paths = std.ArrayList([]const u8).init(arena);
     for (m.m.dependencies) |d| {
@@ -385,45 +465,37 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
         for (m.deps) |e| edge = edge or std.mem.eql(u8, members[e].m.package.full_name, d.full_name);
         if (is_member != edge) return bad(T, arena, "{s}: the packed dependency on {s} is not the one the workspace has", .{ m.m.package.full_name, d.full_name });
     }
+    // The digest of the member's sources, once: every compiler's files carry the same metadata.
+    var source_sha256: []const u8 = "";
+    var note: ?[]const u8 = null;
+    switch (try source_digest.ofPackage(arena, m.m, m.dir, "mopm.toml")) {
+        .digest => |d| source_sha256 = try arena.dupe(u8, &d),
+        .no_library => |lib| note = try source_digest.noLibraryNote(arena, m.m, lib),
+        .bad => |reason| return bad(T, arena, "{s}: {s}", .{ m.name, reason }),
+    }
 
-    var packs = std.ArrayList(conda.Packed).init(arena);
-    for (conda.subdirs) |subdir| {
-        const file = try std.fmt.allocPrint(arena, "{s}/{s}/{s}/{s}.mojoc", .{ artifacts, subdir, m.m.package.namespace, m.import });
-        const bytes = std.fs.cwd().readFileAlloc(arena, file, 1 << 30) catch |e| switch (e) {
-            error.FileNotFound => continue,
-            else => return bad(T, arena, "{s}: {s}", .{ file, @errorName(e) }),
+    const one = Packer{ .m = m, .deps = deps, .native_deps = native_deps, .bins = bins, .source_sha256 = source_sha256, .paths = paths.items };
+    var all = std.ArrayList(conda.Packed).init(arena);
+    var staged_builds = std.ArrayList(StagedBuild).init(arena);
+    for (builds) |b| {
+        const packs = switch (try one.pack(arena, b.artifacts, b.compiler)) {
+            .ok => |p| p,
+            .bad => |why_not| return .{ .bad = why_not },
         };
-        if (bytes.len == 0) return bad(T, arena, "{s} is empty", .{file});
-        // The static archives of the member's `[native.<id>]`, as `mopm pack --native` would be given them.
-        var natives = std.ArrayList(conda.Native).init(arena);
-        if (m.m.native.len > 0) {
-            if (std.mem.eql(u8, subdir, "noarch")) {
-                return bad(T, arena, "{s} declares native libraries, which are built for one platform; its artifact must be under linux-64 (or another subdir), not noarch ({s})", .{ m.name, file });
+        if (packs.len == 0) {
+            // With one compiler there is no compiler to name.
+            if (builds.len == 1) {
+                return bad(T, arena, "{s} has no build artifact: expected {s}/<subdir>/{s}/{s}.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{ m.name, b.artifacts, m.m.package.namespace, m.import });
             }
-            for (m.m.native) |n| {
-                const archive_name = try n.archiveName(arena);
-                const nfile = try std.fmt.allocPrint(arena, "{s}/{s}/{s}/{s}{s}/{s}", .{ artifacts, subdir, m.m.package.namespace, m.import, native_dir_suffix, archive_name });
-                const nbytes = std.fs.cwd().readFileAlloc(arena, nfile, 1 << 30) catch |e| switch (e) {
-                    error.FileNotFound => return bad(T, arena, "{s}: native library '{s}' has no archive for {s}: expected {s}", .{ m.name, n.id, subdir, nfile }),
-                    else => return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, @errorName(e) }),
-                };
-                const native = conda.Native{ .id = n.id, .soname = archive_name, .needs = n.needs, .exclusive = n.exclusive, .link = n.link, .archive = nbytes };
-                if (try conda.nativeProblem(arena, native)) |why_not| return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, why_not });
-                try natives.append(native);
-            }
+            return bad(T, arena, "{s} has no build artifact for Mojo {s}: expected {s}/<subdir>/{s}/{s}.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{ m.name, b.compiler, b.artifacts, m.m.package.namespace, m.import });
         }
-        const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = deps, .native_deps = native_deps, .mojoc = bytes, .natives = natives.items, .bins = bins };
-        const p = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
-        const again = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
-        if (!std.mem.eql(u8, p.bytes, again.bytes)) return bad(T, arena, "{s}: packing {s} twice gave different bytes", .{ m.name, file });
-        if (p.bytes.len > plan_mod.max_file_bytes) return bad(T, arena, "{s} is {d} bytes; a package file is at most {d} bytes", .{ p.file_name, p.bytes.len, plan_mod.max_file_bytes });
-        if (try metadataProblem(arena, in, paths.items)) |problem| return bad(T, arena, "{s}: {s}", .{ m.name, problem });
-        try packs.append(p);
+        try all.appendSlice(packs);
+        try staged_builds.append(.{ .compiler = b.compiler, .build = try std.fmt.allocPrint(arena, "mojo{s}_0", .{b.compiler}), .packs = packs });
     }
-    if (packs.items.len == 0) {
-        return bad(T, arena, "{s} has no build artifact: expected {s}/<subdir>/{s}/{s}.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{ m.name, artifacts, m.m.package.namespace, m.import });
+    if (all.items.len > plan_mod.max_files_per_member) {
+        return bad(T, arena, "{s} would be {d} files for {d} compilers; a version has at most {d} files", .{ m.name, all.items.len, builds.len, plan_mod.max_files_per_member });
     }
-    var staged = Staged{ .member = m, .packs = packs.items };
+    var staged = Staged{ .member = m, .packs = all.items, .builds = staged_builds.items, .note = note };
 
     var explicit = true;
     const readme_rel = m.m.package.readme orelse blk: {
@@ -440,9 +512,68 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
     return .{ .ok = staged };
 }
 
+/// What `packMember` has worked out of a member before it packs it for a compiler.
+const Packer = struct {
+    m: Member,
+    deps: []const conda.Dep,
+    native_deps: []const conda.Dep,
+    bins: []const conda.Bin,
+    source_sha256: []const u8,
+    paths: []const []const u8,
+
+    /// The member's files for one compiler: one for each subdir that has its artifact below `artifacts`, none when no subdir has.
+    fn pack(self: Packer, arena: Allocator, artifacts: []const u8, compiler: []const u8) !Result([]const conda.Packed) {
+        const T = []const conda.Packed;
+        const m = self.m;
+        var packs = std.ArrayList(conda.Packed).init(arena);
+        for (conda.subdirs) |subdir| {
+            const file = try std.fmt.allocPrint(arena, "{s}/{s}/{s}/{s}.mojoc", .{ artifacts, subdir, m.m.package.namespace, m.import });
+            const bytes = std.fs.cwd().readFileAlloc(arena, file, 1 << 30) catch |e| switch (e) {
+                error.FileNotFound => continue,
+                else => return bad(T, arena, "{s}: {s}", .{ file, @errorName(e) }),
+            };
+            if (bytes.len == 0) return bad(T, arena, "{s} is empty", .{file});
+            // The static archives of the member's `[native.<id>]`, as `mopm pack --native` would be given them.
+            var natives = std.ArrayList(conda.Native).init(arena);
+            if (m.m.native.len > 0) {
+                if (std.mem.eql(u8, subdir, "noarch")) {
+                    return bad(T, arena, "{s} declares native libraries, which are built for one platform; its artifact must be under linux-64 (or another subdir), not noarch ({s})", .{ m.name, file });
+                }
+                for (m.m.native) |n| {
+                    const archive_name = try n.archiveName(arena);
+                    const nfile = try std.fmt.allocPrint(arena, "{s}/{s}/{s}/{s}{s}/{s}", .{ artifacts, subdir, m.m.package.namespace, m.import, native_dir_suffix, archive_name });
+                    const nbytes = std.fs.cwd().readFileAlloc(arena, nfile, 1 << 30) catch |e| switch (e) {
+                        error.FileNotFound => return bad(T, arena, "{s}: native library '{s}' has no archive for {s}: expected {s}", .{ m.name, n.id, subdir, nfile }),
+                        else => return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, @errorName(e) }),
+                    };
+                    const native = conda.Native{ .id = n.id, .soname = archive_name, .needs = n.needs, .exclusive = n.exclusive, .link = n.link, .archive = nbytes };
+                    if (try conda.nativeProblem(arena, native)) |why_not| return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, why_not });
+                    try natives.append(native);
+                }
+            }
+            const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = self.deps, .native_deps = self.native_deps, .mojoc = bytes, .natives = natives.items, .bins = self.bins, .source_sha256 = self.source_sha256 };
+            const p = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
+            const again = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
+            if (!std.mem.eql(u8, p.bytes, again.bytes)) return bad(T, arena, "{s}: packing {s} twice gave different bytes", .{ m.name, file });
+            if (p.bytes.len > plan_mod.max_file_bytes) return bad(T, arena, "{s} is {d} bytes; a package file is at most {d} bytes", .{ p.file_name, p.bytes.len, plan_mod.max_file_bytes });
+            if (try metadataProblem(arena, in, self.paths)) |problem| return bad(T, arena, "{s}: {s}", .{ m.name, problem });
+            try packs.append(p);
+        }
+        return .{ .ok = packs.items };
+    }
+};
+
 // ---------------------------------------------------------------- registry
 
-pub const Verdict = union(enum) { upload, skip, refuse: []const u8 };
+pub const Verdict = union(enum) {
+    /// The registry does not have the version: every staged build is uploaded.
+    upload,
+    /// The registry has the version but not this build of it (an index into the member's staged builds): only that build is
+    /// uploaded.
+    add: usize,
+    skip,
+    refuse: []const u8,
+};
 
 /// The `state` of a version answer as the registry wrote it, for the one state this mopm does not know; "" when there is none.
 fn rawState(arena: Allocator, body: []const u8) []const u8 {
@@ -457,8 +588,9 @@ fn rawState(arena: Allocator, body: []const u8) []const u8 {
     };
 }
 
-/// What the registry says about the package `name` (a full name) at `version` against the files `packs`, or why it could not be asked.
-pub fn check(arena: Allocator, net: Net, api_v2_url: []const u8, name: []const u8, version: []const u8, packs: []const conda.Packed) !Result(Verdict) {
+/// What the registry says about the package `name` (a full name) at `version` against the staged `builds` (the member's files, one
+/// build per compiler) and the `manifest_sha256` they carry, or why it could not be asked.
+pub fn check(arena: Allocator, net: Net, api_v2_url: []const u8, name: []const u8, version: []const u8, builds: []const StagedBuild, manifest_sha256: []const u8) !Result(Verdict) {
     const full = core.names.split(name) orelse return bad(Verdict, arena, "'{s}' is not a full name <namespace>/<name>", .{name});
     const answer = v2.sendOnce(v2.GetVersion, arena, net, api_v2_url, null, .{ .namespace = full.namespace, .name = full.name, .version = version }) catch |e| {
         return bad(Verdict, arena, "cannot ask the registry about {s} {s}: {s}", .{ name, version, @errorName(e) });
@@ -483,20 +615,54 @@ pub fn check(arena: Allocator, net: Net, api_v2_url: []const u8, name: []const u
     if (v.state != .published) {
         return bad(Verdict, arena, "the registry reports the state '{s}' for {s} {s}, which this mopm does not know", .{ rawState(arena, answer.body), name, version });
     }
-    // Published: the same files, byte for byte, or another version's worth of bytes under this number.
-    for (packs) |p| {
-        var same = false;
-        for (v.files) |f| {
-            if (std.mem.eql(u8, @tagName(f.subdir), p.subdir) and std.mem.eql(u8, f.filename, p.file_name) and std.mem.eql(u8, f.sha256, &p.sha256)) same = true;
+    // Published: a build the version has must be the same files, byte for byte; a build it lacks is an add.
+    const have = try versionBuilds(arena, v);
+    var fresh = std.ArrayList(usize).init(arena);
+    for (builds, 0..) |s, i| {
+        const held = for (have) |h| {
+            if (std.mem.eql(u8, h.build, s.build)) break h;
+        } else {
+            try fresh.append(i);
+            continue;
+        };
+        for (s.packs) |p| {
+            var same = false;
+            for (held.files) |f| {
+                if (std.mem.eql(u8, @tagName(f.subdir), p.subdir) and std.mem.eql(u8, f.filename, p.file_name) and std.mem.eql(u8, f.sha256, &p.sha256)) same = true;
+            }
+            if (!same) {
+                return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published with different bytes ({s}/{s} is not what the registry holds); a published file is never replaced, so bump the version", .{ name, version, p.subdir, p.file_name }) } };
+            }
         }
-        if (!same) {
-            return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published with different bytes ({s}/{s} is not what the registry holds); versions are immutable, so bump the version", .{ name, version, p.subdir, p.file_name }) } };
+        if (held.files.len != s.packs.len) {
+            return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published with {d} files and this stages {d} for {s}; a published file is never replaced, so bump the version", .{ name, version, held.files.len, s.packs.len, s.build }) } };
         }
     }
-    if (v.files.len != packs.len) {
-        return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published with {d} files and this stages {d}; versions are immutable, so bump the version", .{ name, version, v.files.len, packs.len }) } };
+    if (fresh.items.len == 0) return .{ .ok = .skip };
+    if (fresh.items.len > 1) {
+        var list = std.ArrayList(u8).init(arena);
+        for (fresh.items, 0..) |i, k| try list.writer().print("{s}{s}", .{ if (k > 0) ", " else "", builds[i].build });
+        return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published and this stages {d} builds it does not have ({s}); the registry takes one Mojo build per publish, so stage one of them", .{ name, version, fresh.items.len, list.items }) } };
     }
-    return .{ .ok = .skip };
+    if (!std.mem.eql(u8, v.manifest_sha256, manifest_sha256)) {
+        return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published, and the build {s} was built from other sources than the published version (the metadata differs: the registry's manifest_sha256 is {s}, this stages {s}); a build for another Mojo is added only to the same sources, so bump the version", .{ name, version, builds[fresh.items[0]].build, v.manifest_sha256, manifest_sha256 }) } };
+    }
+    return .{ .ok = .{ .add = fresh.items[0] } };
+}
+
+/// The builds of a version: `builds` of the registry's answer, or, from a registry that does not list them, its files as the one build
+/// (named by the build string at the end of a file name, `mojo<compiler>_0`).
+fn versionBuilds(arena: Allocator, v: v2.VersionDetail) Allocator.Error![]const v2.VersionBuild {
+    if (v.builds) |b| return b;
+    var name: []const u8 = "";
+    if (v.files.len > 0) {
+        const file = v.files[0].filename;
+        const stem = if (std.mem.endsWith(u8, file, ".conda")) file[0 .. file.len - ".conda".len] else file;
+        name = if (std.mem.lastIndexOfScalar(u8, stem, '-')) |dash| stem[dash + 1 ..] else stem;
+    }
+    const one = try arena.alloc(v2.VersionBuild, 1);
+    one[0] = .{ .build = name, .requires_mojo = v.requires_mojo, .files = v.files };
+    return one;
 }
 
 // ------------------------------------------------------------------- write
@@ -567,10 +733,14 @@ pub fn run(r: Run) !u8 {
         return 1;
     }
 
+    const builds = try buildsOf(arena, r.flags);
     var staged = std.ArrayList(Staged).init(arena);
     for (sequence) |i| {
-        switch (try packMember(arena, members, members[i], r.flags.artifacts, r.flags.compiler)) {
-            .ok => |s| try staged.append(s),
+        switch (try packMember(arena, members, members[i], builds)) {
+            .ok => |s| {
+                if (s.note) |n| c.fail("{s}\n", .{n});
+                try staged.append(s);
+            },
             .bad => |why| {
                 c.fail("{s}\n", .{why});
                 return 1;
@@ -580,7 +750,7 @@ pub fn run(r: Run) !u8 {
 
     var verdicts = std.ArrayList(Verdict).init(arena);
     for (staged.items) |s| {
-        switch (try check(arena, r.net, r.api_v2_url, s.member.name, s.member.version, s.packs)) {
+        switch (try check(arena, r.net, r.api_v2_url, s.member.name, s.member.version, s.builds, &s.packs[0].manifest_sha256)) {
             .ok => |v| try verdicts.append(v),
             .bad => |why| {
                 c.fail("{s}\n", .{why});
@@ -593,8 +763,8 @@ pub fn run(r: Run) !u8 {
     // before anything is written (the registry was asked only about the members, as above).
     var entries = std.ArrayList(plan_mod.CommitEntry).init(arena);
     for (staged.items, verdicts.items) |s, v| {
-        if (v != .upload) continue;
-        try entries.append(.{ .name = s.member.name, .manifest_sha256 = &s.packs[0].manifest_sha256, .readme = s.readme });
+        if (v != .upload and v != .add) continue;
+        try entries.append(.{ .name = s.member.name, .manifest_sha256 = &s.packs[0].manifest_sha256, .readme = if (v == .add) null else s.readme });
     }
     // A registry that takes the readmes as objects holds the commit request small, so it is asked only when the readmes are too
     // large to go inline.
@@ -641,27 +811,36 @@ pub fn run(r: Run) !u8 {
                 try members_out.append(.{ .name = m.name, .version = m.version, .action = "refuse", .reason = why });
                 c.fail("refused: {s}\n", .{why});
             },
-            .upload => {
+            .upload, .add => {
                 uploads += 1;
+                // A new version goes up with every build; an add, with the one build the version lacks and no readme.
+                const only: ?StagedBuild = if (v == .add) s.builds[v.add] else null;
+                const packs = if (only) |b| b.packs else s.packs;
                 var files = std.ArrayList(PlanFile).init(arena);
-                for (s.packs) |p| {
+                for (packs) |p| {
                     try writes.append(.{ .path = try std.fmt.allocPrint(arena, "{s}/{s}", .{ p.subdir, p.file_name }), .bytes = p.bytes });
                     try files.append(.{ .subdir = p.subdir, .filename = p.file_name, .sha256 = try arena.dupe(u8, &p.sha256), .size = p.bytes.len });
                 }
                 var readme: ?[]const u8 = null;
-                if (s.readme) |text| {
+                if (only == null) if (s.readme) |text| {
                     readme = try std.fmt.allocPrint(arena, "{s}/README.md", .{m.name});
                     try writes.append(.{ .path = readme.?, .bytes = text });
-                }
+                };
                 try members_out.append(.{
                     .name = m.name,
                     .version = m.version,
                     .action = "upload",
-                    .manifest_sha256 = try arena.dupe(u8, &s.packs[0].manifest_sha256),
+                    .manifest_sha256 = try arena.dupe(u8, &packs[0].manifest_sha256),
                     .files = files.items,
                     .readme = readme,
                 });
-                c.say("upload {s} {s} ({d} files)\n", .{ m.name, m.version, files.items.len });
+                if (only) |b| {
+                    var subdirs = std.ArrayList(u8).init(arena);
+                    for (b.packs, 0..) |p, k| try subdirs.writer().print("{s}{s}", .{ if (k > 0) ", " else "", p.subdir });
+                    c.say("add    {s} {s}: build {s} ({s})\n", .{ m.name, m.version, b.build, subdirs.items });
+                } else {
+                    c.say("upload {s} {s} ({d} files)\n", .{ m.name, m.version, files.items.len });
+                }
             },
         }
     }

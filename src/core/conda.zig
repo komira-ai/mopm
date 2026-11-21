@@ -55,6 +55,9 @@ pub const Input = struct {
     /// The programs of this package (`[targets] bins`), as source: each one goes to `lib/mojo/<name>.bins/<bin>.mojo`,
     /// to be built on the machine that installs the package (src/core/bins.zig).
     bins: []const Bin = &.{},
+    /// The digest of the package's sources (`source_digest.compute`), lowercase hex, written to `lib/mojo/<import>.mopm.json` as
+    /// `source_sha256`; "" for a package packed without one (its library directory was not there), which has no such key.
+    source_sha256: []const u8 = "",
 };
 
 /// A program a package ships as source.
@@ -165,6 +168,29 @@ pub fn validCompiler(v: []const u8) bool {
         }
     }
     return true;
+}
+
+/// The order of two compiler versions as the registry lists builds: part by part as numbers (`1.9.0` before `1.10.0`), a missing
+/// part counting as 0, and the shorter text first when all parts are equal (`1.0` before `1.0.0`).
+pub fn compilerOrder(a: []const u8, b: []const u8) std.math.Order {
+    var x = std.mem.splitScalar(u8, a, '.');
+    var y = std.mem.splitScalar(u8, b, '.');
+    while (true) {
+        const p = x.next();
+        const q = y.next();
+        if (p == null and q == null) break;
+        const o = numberOrder(p orelse "0", q orelse "0");
+        if (o != .eq) return o;
+    }
+    return std.math.order(a.len, b.len);
+}
+
+/// Digit strings as numbers, whatever their length: leading zeros dropped, then the longer is the larger.
+fn numberOrder(a: []const u8, b: []const u8) std.math.Order {
+    const x = std.mem.trimLeft(u8, a, "0");
+    const y = std.mem.trimLeft(u8, b, "0");
+    if (x.len != y.len) return std.math.order(x.len, y.len);
+    return std.mem.order(u8, x, y);
 }
 
 fn put(out: *std.ArrayList(u8), comptime T: type, v: T) Allocator.Error!void {
@@ -428,7 +454,12 @@ pub fn mopmJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
         }
         try w.writeByte(']');
     }
-    try w.writeAll(",\"schema\":2,\"version\":");
+    try w.writeAll(",\"schema\":2");
+    if (in.source_sha256.len > 0) {
+        try w.writeAll(",\"source_sha256\":");
+        try jsonStr(w, in.source_sha256);
+    }
+    try w.writeAll(",\"version\":");
     try jsonStr(w, in.version);
     try w.writeByte('}');
     return out.items;
@@ -1544,4 +1575,56 @@ test "a native's link names are in the published metadata, in order, and read ba
     const why = (try nativeProblem(a, bad)) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("native 'snappy': link: 'stdc++' is not a system library a native may link; the allowed ones are c++, dl, m and pthread", why);
     try std.testing.expectError(error.BadNative, pack(a, .{ .name = input.name, .version = input.version, .compiler = input.compiler, .subdir = "linux-64", .mojoc = "MOJOC", .natives = try a.dupe(Native, &.{bad}) }));
+}
+
+test "compiler versions are ordered as numbers, part by part" {
+    const o = std.math.Order;
+    try std.testing.expectEqual(o.lt, compilerOrder("1.0.0", "1.1.0"));
+    try std.testing.expectEqual(o.lt, compilerOrder("1.9.0", "1.10.0"));
+    try std.testing.expectEqual(o.gt, compilerOrder("2.0.0", "1.99.99"));
+    try std.testing.expectEqual(o.eq, compilerOrder("1.2.3", "1.2.3"));
+    // A leading zero does not change a number; only the longer text comes after.
+    try std.testing.expectEqual(o.gt, compilerOrder("1.02.3", "1.2.3"));
+    // A missing part is 0, and a text that is only longer comes after.
+    try std.testing.expectEqual(o.lt, compilerOrder("1.0", "1.0.0"));
+    try std.testing.expectEqual(o.lt, compilerOrder("1", "1.0.1"));
+    try std.testing.expectEqual(o.gt, compilerOrder("1.0.1", "1.0"));
+    // Parts longer than any integer type still compare as numbers.
+    try std.testing.expectEqual(o.lt, compilerOrder("1.99999999999999999999999999", "1.100000000000000000000000000"));
+}
+
+test "the source digest is written to the metadata between schema and version, and only when there is one" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const digest = "0123456789abcdef" ** 4;
+    const base = Input{ .name = "example/demo", .version = "1.2.3", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC" };
+    var with = base;
+    with.source_sha256 = digest;
+
+    // Unset: the bytes are what they were before the key existed.
+    try std.testing.expectEqualStrings("{\"deps\":[],\"name\":\"example/demo\",\"schema\":2,\"version\":\"1.2.3\"}", try mopmJson(a, base));
+    try std.testing.expectEqualStrings("{\"deps\":[],\"name\":\"example/demo\",\"schema\":2,\"source_sha256\":\"" ++ digest ++ "\",\"version\":\"1.2.3\"}", try mopmJson(a, with));
+
+    // With natives the key still follows "schema".
+    with.natives = try a.dupe(Native, &.{.{ .id = "shim", .soname = "libshim.a", .archive = ar_x }});
+    try std.testing.expect(std.mem.indexOf(u8, try mopmJson(a, with), "],\"schema\":2,\"source_sha256\":\"" ++ digest ++ "\",\"version\":\"1.2.3\"}") != null);
+}
+
+test "a package packed with a source digest carries it in its metadata for every compiler, and the metadata hash follows it" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const digest = "ab" ** 32;
+    const without = try pack(a, .{ .name = "example/demo", .version = "1.2.3", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "MOJOC" });
+    const one = try pack(a, .{ .name = "example/demo", .version = "1.2.3", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "MOJOC", .source_sha256 = digest });
+    const two = try pack(a, .{ .name = "example/demo", .version = "1.2.3", .compiler = "1.1.0", .subdir = "noarch", .mojoc = "OTHER MOJOC", .source_sha256 = digest });
+    // The metadata, and so what the registry compares, is the same for two compilers; it differs from a package with no digest.
+    try std.testing.expectEqualSlices(u8, &one.manifest_sha256, &two.manifest_sha256);
+    try std.testing.expect(!std.mem.eql(u8, &one.manifest_sha256, &without.manifest_sha256));
+    const entries = try readZip(a, one.bytes);
+    const pkg = try readTar(a, try unzstd(a, entries[2].data));
+    try std.testing.expectEqualStrings("lib/mojo/demo.mopm.json", pkg[1].path);
+    try std.testing.expect(std.mem.indexOf(u8, pkg[1].data, "\"source_sha256\":\"" ++ digest ++ "\"") != null);
+    try std.testing.expectEqualSlices(u8, &one.manifest_sha256, &hex(pkg[1].data));
 }
