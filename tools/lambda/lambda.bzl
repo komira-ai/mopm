@@ -14,6 +14,16 @@ The package is built by `zip_pack` and read back by `zip_check`, a validation of
 target: a build that holds the zip fails unless its only entry is named exactly
 `bootstrap`, stored, mode 0755 with host byte Unix, at the fixed time (tools/lambda/README.md).
 Neither tool runs a shell.
+
+lambda_bundle: several of those zips in one directory, for one deploy.
+
+    lambda_bundle(
+        name = "function_zips",
+        zips = {"web-login": "//service/lambda/fn_web_login:zip"},  # function name -> lambda_zip
+    )
+
+The default output is the directory `<name>`: `<function name>.zip` for each entry, byte for byte, and `sums`
+(`sha256sum` lines of those zips, sorted by file name), built by `zip_bundle`.
 """
 
 def _lambda_zip_impl(ctx):
@@ -58,6 +68,28 @@ lambda_zip = rule(
         "welded_tests": attrs.list(attrs.dep(), default = []),
         "_check": attrs.exec_dep(default = "mopm//tools/lambda:zip_check"),
         "_pack": attrs.exec_dep(default = "mopm//tools/lambda:zip_pack"),
+    },
+)
+
+def _lambda_bundle_impl(ctx):
+    names = sorted(ctx.attrs.zips.keys())
+    out = ctx.actions.declare_output(ctx.label.name, dir = True)
+    ctx.actions.run(
+        cmd_args(
+            ctx.attrs._bundle[RunInfo],
+            out.as_output(),
+            [cmd_args(n, "=", ctx.attrs.zips[n][DefaultInfo].default_outputs[0], delimiter = "") for n in names],
+        ),
+        category = "lambda_bundle",
+    )
+    return [DefaultInfo(default_output = out)]
+
+lambda_bundle = rule(
+    impl = _lambda_bundle_impl,
+    attrs = {
+        # Function name -> lambda_zip target. The name is the one the stack gives the function (lower-case words joined by `-`).
+        "zips": attrs.dict(attrs.string(), attrs.dep()),
+        "_bundle": attrs.exec_dep(default = "mopm//tools/lambda:zip_bundle"),
     },
 )
 

@@ -1476,6 +1476,8 @@ zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in f
     imports = _LINT_LIBS + [
         "tests/drivers/shell_syntax.zig",
         "tests/drivers/release_lint.zig",
+        "tests/drivers/function_zips_lint.zig",
+        "tests/drivers/function_zips_lint_test.zig",  # the tests of function_zips_lint.zig, pulled in by workflow_lint_test.zig
         "tests/drivers/workflow_lint.zig",
     ],
     data = dict({f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])}, **{"tools/install_osv_scanner.zig": "tools/install_osv_scanner.zig"}),  # the installer: the pinned version, the sha256 and the refusal
@@ -1505,6 +1507,7 @@ zig_test(  # buck-only: both lints over the fixtures, against the table in the t
         "tests/drivers/hygiene.zig",
         "tests/drivers/shell_syntax.zig",
         "tests/drivers/release_lint.zig",
+        "tests/drivers/function_zips_lint.zig",
         "tests/drivers/workflow_lint.zig",
     ],
     data = {f: f for f in glob(["tests/lint/fixtures/*"])},
@@ -1747,6 +1750,7 @@ zig_coverage(
         "tests/drivers/autopin_lint.zig",
         "tests/drivers/contract.zig",
         "tests/drivers/errors_gen.zig",
+        "tests/drivers/function_zips_lint.zig",
         "tests/drivers/hygiene.zig",
         "tests/drivers/jsonschema.zig",
         "tests/drivers/lint_common.zig",

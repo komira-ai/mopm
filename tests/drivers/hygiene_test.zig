@@ -617,6 +617,50 @@ test "farm-macos.yml: a push to main or a call from release.yml, a Linux x86_64 
     try expectStructure("farm-mac.yml", header ++ on_ok ++ jobs_ok, &.{"an id-token permission is only allowed in deploy.yml, e2e.yml, promote.yml"});
 }
 
+test "function-zips.yml: a call from promote.yml alone, a Linux x86_64 runner, no secret, no environment" {
+    const jobs_ok =
+        \\jobs:
+        \\  build:
+        \\    runs-on: ubuntu-24.04
+        \\    permissions:
+        \\      id-token: write
+        \\
+    ;
+    try expectStructure("function-zips.yml", header ++ "on:\n  workflow_call:\n" ++ jobs_ok, &.{});
+    // Any other trigger, alone or beside the call (a pull request above all: the farm login must not be reachable from one), is refused.
+    inline for ([_][]const u8{
+        "on:\n  pull_request:\n  workflow_call:\n",
+        "on:\n  pull_request:\n    branches: [main]\n",
+        "on:\n  push:\n    branches: [main]\n  workflow_call:\n",
+        "on:\n  workflow_call:\n  workflow_dispatch:\n",
+        "on:\n  workflow_dispatch:\n",
+        "on: [push]\n",
+    }) |on| {
+        try expectStructure("function-zips.yml", header ++ on ++ jobs_ok, &.{"triggers must be exactly workflow_call"});
+    }
+    try expectStructure("function-zips.yml", header ++ "on:\n  workflow_call:\n" ++
+        \\jobs:
+        \\  build:
+        \\    environment: beta
+        \\    runs-on: ubuntu-24.04
+        \\
+    , &.{"must not use secrets or an environment"});
+    try expectStructure("function-zips.yml", header ++ "on:\n  workflow_call:\n" ++
+        \\jobs:
+        \\  build:
+        \\    runs-on: ubuntu-24.04
+        \\    steps:
+        \\      - run: echo ${{ secrets.X }}
+        \\
+    , &.{"must not use secrets or an environment"});
+    inline for ([_][]const u8{ "macos-15", "ubuntu-24.04-arm", "windows-2022", "self-hosted" }) |runner| {
+        try expectStructure("function-zips.yml", header ++ "on:\n  workflow_call:\n" ++ "jobs:\n  build:\n    runs-on: " ++ runner ++ "\n", &.{"job build runs on " ++ runner ++ "; it must run on a hosted Linux x86_64 runner"});
+    }
+    try expectStructure("function-zips.yml", header ++ "on:\n  workflow_call:\n" ++ "jobs:\n  build:\n    uses: ./.github/workflows/x.yml\n", &.{"job build runs on no runner it names"});
+    // The same file under another name gets the rules of any workflow: no id-token outside the files allowed one.
+    try expectStructure("function-zip.yml", header ++ "on:\n  workflow_call:\n" ++ jobs_ok, &.{"an id-token permission is only allowed in deploy.yml, e2e.yml, promote.yml"});
+}
+
 test "release.yml: only the job that calls farm-macos.yml may call a workflow with an id-token grant" {
     const release = header ++
         \\on:
