@@ -11,8 +11,12 @@ const Allocator = std.mem.Allocator;
 const closure = @import("closure.zig");
 const conda_unpack = @import("conda_unpack.zig");
 
-/// The prefix of a source path of the standard library, as `std.mojoc` records it.
+/// The prefix of a source path of the standard library, as `std.mojoc` records it: 1.0.0 writes
+/// `oss/modular/mojo/stdlib/std/`, 1.1.0 and 1.2.0 write `Mojo/stdlib/std/`, so the `mojo` component is matched in
+/// any case (`stdlib_std` after `mojo_dir`).
 const source_prefix = "mojo/stdlib/std/";
+const mojo_dir = "mojo/";
+const stdlib_std = "stdlib/std/";
 const zstd_magic = [_]u8{ 0x28, 0xb5, 0x2f, 0xfd };
 /// The most a `std.mojoc`'s frame may decompress to (1.0.0's is under 8 MiB).
 const max_content: usize = 256 << 20;
@@ -20,7 +24,7 @@ const max_content: usize = 256 << 20;
 pub const Error = error{ NotMojoc, NoModules } || Allocator.Error;
 
 /// The top-level modules recorded in the `std.mojoc` `bytes`, sorted, without repeats: the `<module>` of every source
-/// path `mojo/stdlib/std/<module>/...` or `mojo/stdlib/std/<module>.mojo`, except names starting with `_` (outside
+/// path `mojo/stdlib/std/<module>/...` or `mojo/stdlib/std/<module>.mojo` (`mojo` in any case), except names starting with `_` (outside
 /// the name grammar). The file is `MPKG`, a header, and one zstd frame; `window` is a zstd window buffer
 /// (`conda_unpack.window_size` bytes). `why` says what is wrong on an error.
 pub fn fromMojoc(arena: Allocator, bytes: []const u8, window: []u8, why: *[]const u8) Error![]const []const u8 {
@@ -53,11 +57,12 @@ pub fn fromMojoc(arena: Allocator, bytes: []const u8, window: []u8, why: *[]cons
 pub fn modulesOf(arena: Allocator, content: []const u8) Allocator.Error![]const []const u8 {
     var found = std.ArrayList([]const u8).init(arena);
     var from: usize = 0;
-    while (std.mem.indexOfPos(u8, content, from, source_prefix)) |i| {
-        const start = i + source_prefix.len;
+    while (std.mem.indexOfPos(u8, content, from, stdlib_std)) |i| {
+        const start = i + stdlib_std.len;
         var end = start;
         while (end < content.len and (std.ascii.isAlphanumeric(content[end]) or content[end] == '_')) end += 1;
         from = end;
+        if (i < mojo_dir.len or !std.ascii.eqlIgnoreCase(content[i - mojo_dir.len .. i], mojo_dir)) continue;
         if (end == start or content[start] == '_') continue;
         const rest = content[end..];
         const is_dir = std.mem.startsWith(u8, rest, "/");
@@ -211,6 +216,23 @@ test "the modules of a std.mojoc are the first component of its std source paths
     try testing.expectEqualStrings("origin", got[1]);
     try testing.expectEqualStrings("os", got[2]);
     try testing.expectEqualStrings("collections\norigin\nos\n", try renderVersion(a, got));
+}
+
+test "the std source paths of Mojo 1.1.0 and 1.2.0, under Mojo/stdlib/std/, name modules too; other parents do not" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const window = try a.alloc(u8, conda_unpack.window_size);
+    // The paths as 1.1.0's and 1.2.0's std.mojoc write them, one at the very start of the content.
+    const content = "Mojo/stdlib/std/hash/hasher.mojo\x00Mojo/stdlib/std/os/path/path.mojo\x01" ++
+        "Mojo/stdlib/std/origin.mojo\x00Mojo/stdlib/std/_gpu/x.mojo\x00" ++
+        // `stdlib/std/` with no parent, or a parent other than `mojo`: no module.
+        "stdlib/std/alone.mojo\x00other/stdlib/std/elsewhere.mojo\x00xmojo/stdlib/std/kept/y.mojo\x00";
+    var why: []const u8 = "";
+    const got = try fromMojoc(a, try fakeMojoc(a, content), window, &why);
+    try testing.expectEqualStrings("hash\nkept\norigin\nos\n", try renderVersion(a, got));
+    try testing.expectError(error.NoModules, fromMojoc(a, try fakeMojoc(a, "stdlib/std/os.mojo\x00Other/stdlib/std/sys/x.mojo"), window, &why));
+    try testing.expectEqualStrings("the .mojoc records no source path mojo/stdlib/std/<module>", why);
 }
 
 test "a file that is not a .mojoc, has no frame, a broken frame, or no std source path is refused, saying why" {

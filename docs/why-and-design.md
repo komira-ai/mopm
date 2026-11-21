@@ -160,7 +160,8 @@ it never copies metadata out of the uploaded archive.
 
 Today the `.mojoc` is an input: you run `mojo precompile` (or a build system does) and pass the result
 with `--mojoc`. The spec describes `publish` building one `.mojoc` per listed Mojo version itself; that
-is **planned** in the CLI. A buildrules integration (section 8) builds the `.mojoc` files as cached
+is **planned** in the CLI. Today a package version is built for one Mojo (the registry accepts one build
+per version), and supporting another Mojo means publishing a new version. A buildrules integration (section 8) builds the `.mojoc` files as cached
 actions.
 
 ## 6. Natives and autolink
@@ -290,9 +291,10 @@ Not built today (all **planned** unless stated):
 - Commands: `cov`, `check`, `export`, `launch`. There is no `mopm search`, `info`, `doc` or `mcp`.
 - A search, package pages, API reference pages and agent-facing endpoints on mopm.dev are designed
   (`docs/design/mopm-dev.md`) and not shipped.
-- `publish` building the `.mojoc` per Mojo version; the CLI exchanging an OIDC token.
+- `publish` building the `.mojoc` per Mojo version (today a package version is built for one Mojo, and
+  supporting another Mojo means publishing a new version); the CLI exchanging an OIDC token.
 - Name normalisation beyond the current pattern; download counts.
 - Sharded repodata; signed package snapshots; Apple signing and notarization.
 - Test parallelism, flake history, `--failed`, `--shuffle`, result cache.
 - Homebrew and apt packages (only the install script and the GitHub release exist).
-- Mojo versions other than 1.0.0 in the pinned toolchain; Windows.
+- Mojo versions other than 1.0.0, 1.1.0 and 1.2.0 in the pinned toolchain; Windows.

@@ -494,9 +494,9 @@ fn unitGraph(cx: *Cx) !void {
     cx.ok("no .mojoc for the project's Mojo: lock gives the specified error and writes no lock", r.code == 1 and has(r.stderr, "error: example/http_client 0.4.1 has no .mojoc for Mojo 1.0.0 (published for: 1.1.0). Build with mojo 1.1.0, ask the publisher for a 1.0.0 build, or pin a version that has one.\n") and (try cx.lockOf(nomojoc)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 
     // Listing a Mojo version mopm pins no toolchain for.
-    const unpinned = try unitProject(cx, "unit_unpinned", "[\"1.0.0\", \"1.1.0\"]", "\"example/legacy\" = \"1\"");
+    const unpinned = try unitProject(cx, "unit_unpinned", "[\"1.0.0\", \"1.3.0\"]", "\"example/legacy\" = \"1\"");
     r = try cx.runReg(unpinned, &.{"lock"});
-    cx.ok("a Mojo version without a pinned toolchain is refused at lock", r.code == 1 and has(r.stderr, "mopm has no pinned toolchain for mojo 1.1.0") and (try cx.lockOf(unpinned)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    cx.ok("a Mojo version without a pinned toolchain is refused at lock", r.code == 1 and has(r.stderr, "mopm has no pinned toolchain for mojo 1.3.0") and (try cx.lockOf(unpinned)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 }
 
 // ------------------------------------------- mopm lock with no registry dependency

@@ -79,7 +79,7 @@ A Homebrew tap is planned. It does not exist yet; use the script or the tarball.
 ### A Mojo environment
 
 `mopm build`, `run`, `repl` and `test` run the `mojo` of an environment. You need nothing else installed:
-`mopm sync` (section 3) installs the Mojo toolchain your `mopm.toml` names (Mojo 1.0.0 today), with
+`mopm sync` (section 3) installs the Mojo toolchain your `mopm.toml` names (Mojo 1.0.0, 1.1.0 or 1.2.0 today), with
 everything it needs, into the project's `.mopm/env`, next to your dependencies. It does not use pixi or
 conda: every file comes from a list pinned in mopm (`mojo`, `mojo-compiler` and their dependencies, each
 with its sha256 and size), is checked against it, and is unpacked by mopm.

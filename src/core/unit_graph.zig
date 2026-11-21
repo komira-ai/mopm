@@ -162,22 +162,37 @@ fn visitDeps(g: Graph, at: usize, seen: []bool, out: *std.ArrayList(usize)) erro
 
 // ------------------------------------------------------------------ toolchain
 
-/// A platform mopm pins a toolchain for: its closure, and the packages of it that
-/// a unit graph lists as components (the linker's C runtime libraries exist in
-/// the Linux closures only; macOS has none).
+/// A platform mopm pins a toolchain for, and the packages of its closure that a
+/// unit graph lists as components (the linker's C runtime libraries exist in the
+/// Linux closures only; macOS has none).
 pub const Target = struct {
     subdir: []const u8,
-    closure: []const u8,
     components: []const []const u8,
 };
 
 pub const targets = [_]Target{
-    .{ .subdir = "linux-64", .closure = @embedFile("toolchain/mojo-1.0.0-linux-64.json"), .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
-    .{ .subdir = "linux-aarch64", .closure = @embedFile("toolchain/mojo-1.0.0-linux-aarch64.json"), .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
-    .{ .subdir = "osx-arm64", .closure = @embedFile("toolchain/mojo-1.0.0-osx-arm64.json"), .components = &.{"mojo-compiler"} },
+    .{ .subdir = "linux-64", .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
+    .{ .subdir = "linux-aarch64", .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
+    .{ .subdir = "osx-arm64", .components = &.{"mojo-compiler"} },
 };
 
-const zig_pins_1_0_0 = @embedFile("toolchain/zig-for-mojo-1.0.0.json");
+/// The toolchain mopm pins for one Mojo version: the closure of each of `targets`, in the same order
+/// (src/core/toolchain/mojo-<version>-<subdir>.json), and the Zig that links for it (zig-for-mojo-<version>.json).
+pub const Pin = struct {
+    mojo: []const u8,
+    closures: [targets.len][]const u8,
+    zig_pins: []const u8,
+};
+
+fn pinOf(comptime mojo: []const u8) Pin {
+    var closures: [targets.len][]const u8 = undefined;
+    for (targets, 0..) |t, i| closures[i] = @embedFile("toolchain/mojo-" ++ mojo ++ "-" ++ t.subdir ++ ".json");
+    return .{ .mojo = mojo, .closures = closures, .zig_pins = @embedFile("toolchain/zig-for-mojo-" ++ mojo ++ ".json") };
+}
+
+/// The Mojo versions mopm pins a toolchain for, oldest first: those of toolchain/versions.txt (a unit test holds the
+/// two to the same list).
+pub const pins = [_]Pin{ pinOf("1.0.0"), pinOf("1.1.0"), pinOf("1.2.0") };
 
 const ZigFile = struct {
     format: u32,
@@ -196,35 +211,68 @@ fn refuse(arena: Allocator, why: *[]const u8, comptime fmt: []const u8, args: an
 pub const lock_subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64" };
 
 /// The Mojo versions and subdirs a unit graph can be made for.
-pub const supported = "mojo 1.0.0 on linux-64, linux-aarch64 and osx-arm64";
+pub const supported = blk: {
+    var text: []const u8 = "mojo ";
+    for (pins, 0..) |p, i| text = text ++ (if (i == 0) "" else ", ") ++ p.mojo;
+    break :blk text ++ " on linux-64, linux-aarch64 and osx-arm64";
+};
+
+/// The pin for `mojo` and the index of `subdir` in `targets`, or null when mopm pins no toolchain for the pair.
+fn pinFor(mojo: []const u8, subdir: []const u8) ?struct { pin: Pin, at: usize } {
+    for (pins) |p| {
+        if (!std.mem.eql(u8, p.mojo, mojo)) continue;
+        for (targets, 0..) |t, i| {
+            if (std.mem.eql(u8, t.subdir, subdir)) return .{ .pin = p, .at = i };
+        }
+    }
+    return null;
+}
+
+fn noPin(arena: Allocator, mojo: []const u8, subdir: []const u8, why: *[]const u8) (Refused || Allocator.Error) {
+    return refuse(arena, why, "mopm has no pinned toolchain for mojo {s} on {s} (it pins {s})", .{ mojo, subdir, supported });
+}
+
+/// The pin `p` holds for `subdir`'s closure, parsed and checked to be for `p.mojo` on `subdir`.
+fn parsePinned(arena: Allocator, p: Pin, at: usize) !closure.Closure {
+    const c = closure.parse(arena, p.closures[at]) catch return error.BadPins;
+    if (!std.mem.eql(u8, c.subdir, targets[at].subdir) or !std.mem.eql(u8, c.mojo, p.mojo)) return error.BadPins;
+    return c;
+}
 
 /// The closure of mopm's pinned toolchain for `mojo` on `subdir`: every package `mopm sync` installs for it, or a
 /// refusal (the one `toolchainFor` gives).
 pub fn pinnedClosure(arena: Allocator, mojo: []const u8, subdir: []const u8, why: *[]const u8) anyerror!closure.Closure {
-    for (targets) |t| {
-        if (std.mem.eql(u8, mojo, "1.0.0") and std.mem.eql(u8, t.subdir, subdir)) {
-            const c = closure.parse(arena, t.closure) catch return error.BadPins;
-            if (!std.mem.eql(u8, c.subdir, subdir) or !std.mem.eql(u8, c.mojo, mojo)) return error.BadPins;
-            return c;
-        }
+    const f = pinFor(mojo, subdir) orelse return noPin(arena, mojo, subdir, why);
+    return parsePinned(arena, f.pin, f.at);
+}
+
+const ZigFor = struct { zig: ZigPin, cc_target: []const u8 };
+
+/// The Zig pin and C target mopm pins for `c.mojo` on `c.subdir`; error.BadPins when it pins none.
+fn zigFor(arena: Allocator, c: closure.Closure) !ZigFor {
+    var file: ?[]const u8 = null;
+    for (pins) |p| {
+        if (std.mem.eql(u8, p.mojo, c.mojo)) file = p.zig_pins;
     }
-    return refuse(arena, why, "mopm has no pinned toolchain for mojo {s} on {s} (it pins {s})", .{ mojo, subdir, supported });
+    return zigIn(arena, file orelse return error.BadPins, c);
+}
+
+/// The pin for `c.subdir` in the Zig pin file `file`; error.BadPins when the file is not one, is for another Mojo
+/// than `c.mojo`, or pins nothing for the subdir.
+fn zigIn(arena: Allocator, file: []const u8, c: closure.Closure) !ZigFor {
+    const zf = std.json.parseFromSliceLeaky(ZigFile, arena, file, .{}) catch return error.BadPins;
+    if (!std.mem.eql(u8, zf.mojo, c.mojo)) return error.BadPins;
+    for (zf.pins) |p| {
+        if (std.mem.eql(u8, p.subdir, c.subdir)) return .{ .zig = p.zig, .cc_target = p.cc_target };
+    }
+    return error.BadPins;
 }
 
 /// The hash of the toolchain `c` (what a lock records and `Toolchain.closure_sha256` is): its
 /// Mojo version, subdir and every package's name, version, build and sha256, then the Zig pin and C target
-/// mopm pins for the subdir. Only pins enter it, so a mirror of the same files has the same hash.
+/// mopm pins for the Mojo version and subdir. Only pins enter it, so a mirror of the same files has the same hash.
 pub fn closureSha256(arena: Allocator, c: closure.Closure) ![]const u8 {
-    const zf = std.json.parseFromSliceLeaky(ZigFile, arena, zig_pins_1_0_0, .{}) catch return error.BadPins;
-    var zig_pin: ?ZigPin = null;
-    var cc_target: []const u8 = "";
-    for (zf.pins) |p| {
-        if (std.mem.eql(u8, p.subdir, c.subdir)) {
-            zig_pin = p.zig;
-            cc_target = p.cc_target;
-        }
-    }
-    const zig = zig_pin orelse return error.BadPins;
+    const z = try zigFor(arena, c);
     var h = Sha256.init(.{});
     var line = std.ArrayList(u8).init(arena);
     try line.writer().print("mopm-toolchain 1\nmojo {s}\nsubdir {s}\n", .{ c.mojo, c.subdir });
@@ -235,7 +283,7 @@ pub fn closureSha256(arena: Allocator, c: closure.Closure) ![]const u8 {
         h.update(line.items);
     }
     line.clearRetainingCapacity();
-    try line.writer().print("zig {s} {s}\ncc_target {s}\n", .{ zig.version, zig.sha256, cc_target });
+    try line.writer().print("zig {s} {s}\ncc_target {s}\n", .{ z.zig.version, z.zig.sha256, z.cc_target });
     h.update(line.items);
     var d: [32]u8 = undefined;
     h.final(&d);
@@ -244,41 +292,26 @@ pub fn closureSha256(arena: Allocator, c: closure.Closure) ![]const u8 {
 
 /// mopm's pinned toolchain for `mojo` on `subdir`, or a refusal.
 pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why: *[]const u8) anyerror!Toolchain {
-    var target: ?Target = null;
-    for (targets) |t| {
-        if (std.mem.eql(u8, t.subdir, subdir)) target = t;
-    }
-    if (!std.mem.eql(u8, mojo, "1.0.0") or target == null) {
-        return refuse(arena, why, "mopm has no pinned toolchain for mojo {s} on {s} (it pins {s})", .{ mojo, subdir, supported });
-    }
-    const c = closure.parse(arena, target.?.closure) catch return error.BadPins;
-    if (!std.mem.eql(u8, c.subdir, subdir)) return error.BadPins;
-    const zf = std.json.parseFromSliceLeaky(ZigFile, arena, zig_pins_1_0_0, .{}) catch return error.BadPins;
-    var zig_pin: ?ZigPin = null;
-    var cc_target: []const u8 = "";
-    for (zf.pins) |p| {
-        if (std.mem.eql(u8, p.subdir, subdir)) {
-            zig_pin = p.zig;
-            cc_target = p.cc_target;
-        }
-    }
-    const zig = zig_pin orelse return error.BadPins;
+    const f = pinFor(mojo, subdir) orelse return noPin(arena, mojo, subdir, why);
+    const target = targets[f.at];
+    const c = try parsePinned(arena, f.pin, f.at);
+    const z = try zigFor(arena, c);
 
     var comps = std.ArrayList(Component).init(arena);
     for (c.packages) |p| {
         var wanted = false;
-        for (target.?.components) |n| wanted = wanted or std.mem.eql(u8, p.name, n);
+        for (target.components) |n| wanted = wanted or std.mem.eql(u8, p.name, n);
         if (wanted) {
             try comps.append(.{ .name = p.name, .version = p.version, .url = try closure.urlOf(arena, c, p), .sha256 = p.sha256, .size = p.size });
         }
     }
-    if (comps.items.len != target.?.components.len) return error.BadPins;
+    if (comps.items.len != target.components.len) return error.BadPins;
     return .{
         .mojo = c.mojo,
         .subdir = c.subdir,
-        .cc_target = cc_target,
+        .cc_target = z.cc_target,
         .closure_sha256 = try closureSha256(arena, c),
-        .zig = zig,
+        .zig = z.zig,
         .components = comps.items,
     };
 }
@@ -1591,8 +1624,8 @@ test "mopm pins the toolchain of the Mojo it names, and refuses another" {
     try std.testing.expectEqualStrings("0.12.0", tc.zig.version);
     // The same pins, the same hash.
     try std.testing.expectEqualStrings(tc.closure_sha256, (try toolchainFor(a, "1.0.0", "linux-64", &why)).closure_sha256);
-    try std.testing.expectError(error.Refused, toolchainFor(a, "1.1.0", "linux-64", &why));
-    try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins mojo 1.0.0 on linux-64, linux-aarch64 and osx-arm64)", why);
+    try std.testing.expectError(error.Refused, toolchainFor(a, "1.3.0", "linux-64", &why));
+    try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.3.0 on linux-64 (it pins mojo 1.0.0, 1.1.0, 1.2.0 on linux-64, linux-aarch64 and osx-arm64)", why);
     // The closure sync installs is the one the toolchain's hash is made of.
     for (lock_subdirs) |subdir| {
         const c = try pinnedClosure(a, "1.0.0", subdir, &why);
@@ -1603,8 +1636,8 @@ test "mopm pins the toolchain of the Mojo it names, and refuses another" {
         for (c.packages) |p| has_mojo = has_mojo or std.mem.eql(u8, p.name, "mojo-compiler");
         try std.testing.expect(has_mojo);
     }
-    try std.testing.expectError(error.Refused, pinnedClosure(a, "1.1.0", "linux-64", &why));
-    try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins " ++ supported ++ ")", why);
+    try std.testing.expectError(error.Refused, pinnedClosure(a, "1.3.0", "linux-64", &why));
+    try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.3.0 on linux-64 (it pins " ++ supported ++ ")", why);
     try std.testing.expectError(error.Refused, pinnedClosure(a, "1.0.0", "win-64", &why));
 }
 
@@ -1635,6 +1668,57 @@ test "closureSha256: the hash toolchainFor reports; pins change it, URLs do not"
     var other = try pinnedClosure(a, "1.0.0", "linux-64", &why);
     other.subdir = "win-64";
     try std.testing.expectError(error.BadPins, closureSha256(a, other));
+}
+
+test "the pins are the versions of toolchain/versions.txt, and a closure or Zig pin file for another Mojo or platform is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const testroot = @import("testroot.zig");
+    const text = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, "toolchain/versions.txt"), 1 << 16);
+    var listed = std.ArrayList([]const u8).init(a);
+    var lines = std.mem.tokenizeScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len > 0 and line[0] != '#') try listed.append(line);
+    }
+    try std.testing.expectEqual(listed.items.len, pins.len);
+    for (pins, listed.items) |p, v| try std.testing.expectEqualStrings(v, p.mojo);
+    try std.testing.expectEqualStrings("mojo 1.0.0, 1.1.0, 1.2.0 on linux-64, linux-aarch64 and osx-arm64", supported);
+
+    // Every pin's closures are for its Mojo on their platform, and its Zig pin file names its Mojo and every platform.
+    for (pins) |p| {
+        for (targets, 0..) |t, i| {
+            const c = try parsePinned(a, p, i);
+            try std.testing.expectEqualStrings(p.mojo, c.mojo);
+            try std.testing.expectEqualStrings(t.subdir, c.subdir);
+            _ = try zigIn(a, p.zig_pins, c);
+        }
+    }
+
+    const c10 = try parsePinned(a, pins[0], 0);
+    const c11 = try parsePinned(a, pins[1], 0);
+    // A Zig pin file for another Mojo, one that is not JSON, and one without the platform.
+    try std.testing.expectError(error.BadPins, zigIn(a, pins[0].zig_pins, c11));
+    try std.testing.expectError(error.BadPins, zigIn(a, "not json", c10));
+    var win = c10;
+    win.subdir = "win-64";
+    try std.testing.expectError(error.BadPins, zigIn(a, pins[0].zig_pins, win));
+    // A closure of a Mojo mopm pins nothing for has no Zig pin, so no hash.
+    var unpinned = c10;
+    unpinned.mojo = "1.3.0";
+    try std.testing.expectError(error.BadPins, closureSha256(a, unpinned));
+
+    // A table entry holding another version's closures, or another platform's, or no closure at all.
+    var swapped = pins[1];
+    swapped.closures = pins[0].closures;
+    try std.testing.expectError(error.BadPins, parsePinned(a, swapped, 0));
+    var rotated = pins[0];
+    rotated.closures = .{ pins[0].closures[1], pins[0].closures[2], pins[0].closures[0] };
+    try std.testing.expectError(error.BadPins, parsePinned(a, rotated, 0));
+    var junk = pins[0];
+    junk.closures = .{ "{", "{", "{" };
+    try std.testing.expectError(error.BadPins, parsePinned(a, junk, 0));
 }
 
 /// tls_sys (a static library) over crypto_sys (another, in the exclusivity group libcrypto): the lock of a project
