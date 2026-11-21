@@ -6,7 +6,6 @@ import { MemoryObjectStore, MemoryPresigner } from '../../src/publish/memory';
 import { PublishService } from '../../src/publish/service';
 import { DEFAULT_PUBLISH_CONFIG } from '../../src/publish/config';
 import { memoryRig } from '../group-rig';
-import { audit, rec } from '../helpers';
 import { errorCode, GroupEnv, json } from './group-env';
 
 /**
@@ -84,8 +83,10 @@ describe('the group service, at its edges', () => {
 
   test('a create that fails gives its place back; a failure to give it back does not hide the first error', async () => {
     const me = await env.account(1, 'octocat', ['alpha', 'beta']);
-    await store().createVersion(rec({ name: 'alpha', version: '1.0.0' }), audit('alpha', 'seed', '1.0.0'));
-    expect(errorCode(await env.create(me, [env.member('alpha')]))).toBe('version_exists');
+    // Another account's open group holds alpha 1.0.0: the preflight refuses, after the place was taken.
+    const other = await env.account(2, 'hubot', ['alpha']);
+    expect((await env.create(other, [env.member('alpha')])).statusCode).toBe(201);
+    expect(errorCode(await env.create(me, [env.member('alpha')]))).toBe('group_conflict');
     expect((await env.publishes.getActorGroups('u:1'))!.groups).toEqual([]);
 
     const real = env.publishes.getActorGroups.bind(env.publishes);
@@ -95,7 +96,7 @@ describe('the group service, at its edges', () => {
       return real(a);
     });
     const again = await env.create(me, [env.member('alpha'), env.member('beta')]);
-    expect(errorCode(again)).toBe('version_exists');
+    expect(errorCode(again)).toBe('group_conflict');
   });
 
   test('a store that throws while the group reserves its rows surfaces the error and leaves the group open, with the members reserved so far checkpointed', async () => {

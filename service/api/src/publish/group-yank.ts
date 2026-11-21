@@ -1,3 +1,4 @@
+import { isBuildRow } from '../builds';
 import type { GroupMembers } from '../group';
 import { bitmapHas, bitmapIndexes, bitmapSet, memberAuditId, type GroupRecord, type GroupYank } from '../group-store';
 import { progressed, requireMembers, stale, touchedDirs, writeOrderOf, type ChainQueues, type HopDeps } from './group-chain';
@@ -23,6 +24,11 @@ import type { GroupHop, IndexMessage, IndexPkgMessage, YankGroupMessage } from '
  *            repodata fails closed. What the gates here do is the order of the chain's own hops (an index hop that arrives before the
  *            repodata hops, or before the hop of a member it follows, releases nothing and sends the step that is missing); they do
  *            not hide a restored row from a build, as the commit's gates hide a member that is not yet flipped.
+ *
+ * A member that adds a build to a published version (its `canonical` is a build row's key, src/builds.ts) has no state of its own: a build
+ * is yanked and restored with its version, and the version is the member of whichever group published it. A yank therefore skips such a
+ * member, so it is never in `yanked_set`, has no repodata or index hop of the yank's, and its row stays as it is; the group's status
+ * has no state to say that for it and shows it as `published`, as it was when the group became visible.
  *
  * Every step is idempotent and the header, not the message, says which is next (as in src/publish/group-chain.ts); the sweeper
  * resends the next step of a group whose yank or unyank stops moving, with the header's `resend` counter in the dedup id.
@@ -151,7 +157,7 @@ export async function yankRows(d: YankDeps, msg: YankGroupMessage): Promise<Yank
   const members = await requireMembers(d.groups, gid);
   const y = h.yank;
   const by = op === 'yank' ? y.by : (y.unyank_by ?? y.by);
-  const todo = op === 'yank' ? members.members.map((_m, i) => i).filter((i) => !bitmapHas(y.yanked_set, i)) : yankedIndexes(y, members);
+  const todo = op === 'yank' ? members.members.map((_m, i) => i).filter((i) => !bitmapHas(y.yanked_set, i) && !isBuildRow(members.members[i]!)) : yankedIndexes(y, members);
 
   for (let k = 0; k < todo.length; k += BATCH) {
     const batch = todo.slice(k, k + BATCH);
@@ -161,7 +167,7 @@ export async function yankRows(d: YankDeps, msg: YankGroupMessage): Promise<Yank
         const m = members.members[i]!;
         return d.groups.applyGroupEvent(
           m.name,
-          m.version,
+          m.canonical,
           op === 'yank' ? { type: 'group_yank', group_id: gid, seq, reason: y.reason } : { type: 'group_unyank', group_id: gid, seq },
           { name: m.name, ts: at, id: `${memberAuditId(gid, i)}_group_${op}_${seq}`, actor: by, action: `group_${op}`, version: m.version, detail: { group_id: gid, ...(op === 'yank' ? { reason: y.reason } : {}) } },
         );
