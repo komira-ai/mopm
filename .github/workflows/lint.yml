@@ -52,6 +52,9 @@ jobs:
       - name: AGENTS.md (its shared core is the hashed canonical copy; CLAUDE.md imports it)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/agents_check_test.zig
+      - name: buck2 pin (tools/buck2 names a release whose RE client reports a TTL, not 0)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/buck2_pin_test.zig
       - name: registry API outputs (openapi-v2.yaml, the service's types and the CLI's client are what the v2 protos make)
         if: ${{ !cancelled() }}
         run: zig test tools/api_gen_test.zig

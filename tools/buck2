@@ -1,28 +1,28 @@
 #!/usr/bin/env dotslash
 
-// The pinned buck2 release (2026-09-15). The bundled prelude is part of the
+// The pinned buck2 release (2026-11-15). The bundled prelude is part of the
 // binary, so this pin also pins the prelude.
 {
   "name": "buck2",
   "platforms": {
     "linux-x86_64": {
-      "size": 39587698,
+      "size": 41561798,
       "hash": "sha256",
-      "digest": "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89",
+      "digest": "51d209f834c3509bc83024bf4ede62cd907135e7b289b29ed69d763dcde67b04",
       "format": "zst",
       "path": "buck2",
       "providers": [
-        {"url": "https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst"}
+        {"url": "https://github.com/facebook/buck2/releases/download/2026-11-15/buck2-x86_64-unknown-linux-gnu.zst"}
       ]
     },
     "macos-aarch64": {
-      "size": 34806620,
+      "size": 35506329,
       "hash": "sha256",
-      "digest": "aacdf7cabe34b9b5dc74866b8dcf7410cdbae3ad2dccef45b7ee9851cb781528",
+      "digest": "3464db0c4514fb3ff7a3f37050c737bd5dd100a2e210886530e95ac767d3a109",
       "format": "zst",
       "path": "buck2",
       "providers": [
-        {"url": "https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-aarch64-apple-darwin.zst"}
+        {"url": "https://github.com/facebook/buck2/releases/download/2026-11-15/buck2-aarch64-apple-darwin.zst"}
       ]
     }
   }
