@@ -116,13 +116,20 @@ const hand_usage =
     \\                          the actor's place
     \\  stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version>
     \\        --out <dir> --registry <prod|gamma|beta|url>
+    \\  stage --workspace-root <dir> [<package>...] --artifacts <mojo version>=<dir>...
+    \\        --out <dir> --registry <prod|gamma|beta|url>
     \\                          pack the workspace's members (the named ones and
     \\                          what they depend on, or all) in dependency order
-    \\                          from <artifacts>/<subdir>/<name>.mojoc, with path
+    \\                          from <artifacts>/<subdir>/<namespace>/<name>.mojoc,
+    \\                          for one Mojo version (--artifacts <dir> --compiler)
+    \\                          or for several (--artifacts <mojo version>=<dir>,
+    \\                          once per version, with no --compiler), with path
     \\                          dependencies dropped and versions kept; check each
     \\                          version against the registry (yanked, burned or
-    \\                          other bytes: refused; same bytes: skipped); write
-    \\                          the staged set for 'publish --staged'. Reads no
+    \\                          other bytes: refused; same bytes: skipped; a
+    \\                          published version gets an added build for a Mojo
+    \\                          version it lacks, one per publish); write the
+    \\                          staged set for 'publish --staged'. Reads no
     \\                          token; --registry is required
     \\  lock [--registry <prod|gamma|beta|url>] [--overlay <staged set>]
     \\                          resolve mopm.toml's dependencies against the
@@ -567,6 +574,8 @@ test {
     _ = @import("group_stage_token.zig");
     _ = stage_cmd;
     _ = @import("stage_test.zig");
+    _ = @import("stage_builds_test.zig");
+    _ = @import("publish_digest_test.zig");
     _ = @import("plan_v2_test.zig");
     _ = @import("publish_false_test.zig");
     _ = @import("bin_run.zig");

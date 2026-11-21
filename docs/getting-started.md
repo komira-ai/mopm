@@ -324,8 +324,12 @@ any other answer is printed and the run ends with exit status 1. `--dry-run` sen
 `--mojoc` takes `[<subdir>=]<file>`, repeatable; the subdir is `noarch` (the default), `linux-64`,
 `linux-aarch64` or `osx-arm64`. In CI set `MOPM_TOKEN` instead of logging in, or, inside a GitHub Actions job
 with `id-token: write`, pass `--oidc` to publish with the job's identity and no stored token (see
-[publishing a workspace](publishing-a-workspace.md)). A published version is
-immutable and its number can never be reused; fix a bad release by publishing a new version. The registry
+[publishing a workspace](publishing-a-workspace.md)). A published file is
+never replaced and a version number can never be reused; fix a bad release by publishing a new version. The one change a
+published version takes is a build for another Mojo version, added when it is built from the same source, one build for each run:
+by `mopm publish --compiler <mojo version>` to a version that a single `mopm publish` made, or by `mopm stage` and
+`mopm publish --staged` to any published version (a version made by `publish --staged` takes added builds only that way; see
+[publishing a workspace](publishing-a-workspace.md)). The registry
 refuses a package that breaks the layout rules, limits (100 MB per package file, 128 MiB per unpacked file), or the manifest rules, and says
 which in `rejection_code`.
 

@@ -19,8 +19,9 @@
 //! - a staged version the registry already holds with other bytes is refused, with both files unchanged, and the same
 //!   command succeeds where the registry holds the same bytes;
 //! - a closure the set holds entirely asks the registry for its configuration (the lock names the registry's channel)
-//!   and for nothing else, and the same request without the set asks for the index file (so the recording can see one);
-//!   against the production registry it asks for nothing at all;
+//!   and for the index file of each staged package (to see whether the set adds a build to a version the registry
+//!   holds), and for nothing else: no repodata and no package file; the same request without the set asks for the index
+//!   file too and fails; against the production registry with no network it still locks from the set alone;
 //! - `sync --locked --overlay` installs the staged files from the set while the registry holds none of them, and the
 //!   same sync without the set fails, the registry answering HTTP 404 for the locked urls;
 //! - a missing set, and a staged file changed after the plan was made, are refused and write nothing.
@@ -45,6 +46,17 @@ fn sha256Hex(a: Allocator, bytes: []const u8) ![]u8 {
 
 fn has(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
+}
+
+/// `asked` (one path per line) is `/index/config.json` first, then `index` at least once, and nothing else.
+fn onlyConfigAndIndex(asked: []const u8, index: []const u8) bool {
+    var it = std.mem.splitScalar(u8, asked, '\n');
+    if (!std.mem.eql(u8, it.next() orelse return false, "/index/config.json")) return false;
+    var n: usize = 0;
+    while (it.next()) |p| : (n += 1) {
+        if (!std.mem.eql(u8, p, index)) return false;
+    }
+    return n > 0;
 }
 
 fn lessStr(_: void, a: []const u8, b: []const u8) bool {
@@ -464,7 +476,7 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     r = try cx.run(app8, &.{ "add", "example/libbase@=0.1.0", "--overlay", set, "--registry", stub_base });
     const asked = try stub.asked(a);
     const lock8 = cx.read(app8, "mopm.lock") orelse "";
-    cx.ok("a closure the set holds is locked, asking the registry for its configuration only", r.code == 0 and std.mem.eql(u8, asked, "/index/config.json") and
+    cx.ok("a closure the set holds is locked, asking the registry for its configuration and the staged package's index file only", r.code == 0 and onlyConfigAndIndex(asked, "/index/v2/ex/am/example/libbase") and
         has(lock8, try cx.fmt("{s}/channel/example/linux-64/mojo-example.libbase-0.1.0-mojo1.0.0_0.conda", .{stub_base})) and has(lock8, try sha256Hex(a, archive)), try cx.fmt("exit {d}, asked [{s}]: {s}{s}", .{ r.code, asked, r.stdout, r.stderr }));
     const app9 = try cx.project("app9", "");
     r = try cx.run(app9, &.{ "add", "example/libbase@=0.1.0", "--registry", stub_base });

@@ -139,6 +139,8 @@ A native library that the package builds and ships. The id is a lowercase identi
 
 `mopm pack` and `mopm publish` pack a library with `kind = "static"` and `mode = "link"`: the archive is not built by mopm (`build` and `outputs` are descriptive), it is the file named for each subdir with `--native <id>=<subdir>:<file>`, and its file name, `lib<name>.a`, is the library's soname. A package that declares a native library has no `noarch` file, and every subdir it packs needs an archive for every library it declares. The `.mopm.json` that `pack` writes is the same bytes in every subdir's file; what differs between platforms (the archive's sha256 and size) is in `info/about.json` of each file, under `mopm_native`, which nothing reads back.
 
+`mopm pack`, `mopm publish` and `mopm stage` also write `source_sha256` into the `.mopm.json` whenever the library directory exists: the sha256 of a text with one line `<sha256 of the file> <path>` and a newline for each of the package's `mopm.toml`, every file under its library directory (`[targets] lib`) and the source of each program in `[targets] bins`, sorted by path (as bytes), the paths relative to the package directory and written with `/`. Because the file is the same bytes for every compiler, the files of all the builds of a version carry the same `source_sha256`; the registry compares the metadata of a build to the version's to decide whether a build for another Mojo may be added to a published version (see [publishing a workspace](publishing-a-workspace.md)).
+
 ### `[targets]`
 
 | key | type | default | allowed | example |

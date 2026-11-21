@@ -1,3 +1,4 @@
+import { foldBuilds } from './builds';
 import { RegistryError } from './errors';
 import { Metrics, type Metric } from './metrics';
 import type { RawVersionPort } from './raw-port';
@@ -97,9 +98,13 @@ export interface GroupReader {
  * Who is reading. `api`: the routes, quota, yank, the single paths. `build`: the builders of the channel's files,
  * which also wait for the release gates the group's chain sets on its header, so that a file never runs ahead of
  * what it depends on.
+ *
+ * A view shows each version as one record whose files are those of every build (`foldBuilds`, src/builds.ts), except
+ * an `api` view with `rows: true`, which shows the stored rows: a build added to a version after it was published is
+ * then a row of its own (key `<version>+<build>`), as a writer needs to see it.
  */
 export type View =
-  | { kind: 'api' }
+  | { kind: 'api'; rows?: true }
   /** The repodata of one repodata directory (src/channel-paths.ts), built over that channel's packages. */
   | { kind: 'build'; gate: 'repodata'; subdir: string }
   /** One package's sparse-index file. */
@@ -108,6 +113,8 @@ export type View =
   | { kind: 'build'; gate: 'takedowns' };
 
 export const API_VIEW: View = { kind: 'api' };
+/** The `api` view that shows the rows as stored, build rows included, instead of one folded record per version. */
+export const API_ROWS_VIEW: View = { kind: 'api', rows: true };
 /** The repodata build of one repodata directory: `<subdir>` (the root) or `<namespace>/<subdir>`; `subdir` holds that directory. */
 export const repodataView = (subdir: string): View => ({ kind: 'build', gate: 'repodata', subdir });
 export const INDEX_VIEW: View = { kind: 'build', gate: 'index' };
@@ -214,7 +221,11 @@ export class VersionFunnel {
     this.settledCacheSize = opts.settledCacheSize ?? 4096;
   }
 
-  /** One version as the API shows it. A row without a group costs no more than the raw read. */
+  /**
+   * One row as the API shows it, by its key: a version or a build row's key (`1.0.0+mojo1.1.0_0`). It is that one row,
+   * not folded (`versionsOf` folds): a writer reads the row it is about to change. A row without a group costs no
+   * more than the raw read.
+   */
   async getOne(name: string, version: string): Promise<VersionRecord | undefined> {
     let row = await this.raw.rawGet(name, version);
     // A row that is not pending ignores its group, and one without a group has none: no header is read for either.
@@ -254,8 +265,9 @@ export class VersionFunnel {
   }
 
   /**
-   * The rows of every named package as `view` shows them, each package's oldest to newest by conda ordering. The
-   * result has an entry for each name asked for, and for builders of repodata also one for the package of every
+   * The records of every named package as `view` shows them, each package's oldest to newest by conda ordering, one
+   * per version: the version's row with the rows of the builds added to it folded in (`foldBuilds`), unless the view
+   * asks for rows (`API_ROWS_VIEW`). The result has an entry for each name asked for, and for builders of repodata also one for the package of every
    * member of a committed group (a package claimed after the caller listed the names).
    *
    *  1. Read the packages' rows.
@@ -348,17 +360,16 @@ export class VersionFunnel {
       hidden.add(gid);
     }
 
+    const asRows = view.kind === 'api' && view.rows === true;
     const out = new Map<string, VersionRecord[]>();
     for (const [name, rs] of rows) {
-      out.set(
-        name,
-        rs
-          .map((r) => {
-            const g = r.group_id === undefined ? undefined : groups.get(r.group_id);
-            return g === undefined || !g.live || hidden.has(r.group_id!) ? r : project(r, g.header, view, g.members);
-          })
-          .sort(byVersion),
-      );
+      const shown = rs
+        .map((r) => {
+          const g = r.group_id === undefined ? undefined : groups.get(r.group_id);
+          return g === undefined || !g.live || hidden.has(r.group_id!) ? r : project(r, g.header, view, g.members);
+        })
+        .sort(byVersion);
+      out.set(name, asRows ? shown : foldBuilds(shown));
     }
     return out;
   }

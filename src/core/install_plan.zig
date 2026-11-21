@@ -1,8 +1,8 @@
 //! From a resolution to a lock, and the views of a lock that `mopm lock`,
 //! `mopm update` and `mopm tree` print.
 //!
-//! `buildLock` makes one lock entry per file of every picked version (one per
-//! subdir), taking `sha256` and `size` from the channel's
+//! `buildLock` makes one lock entry per file of every picked version's build for the
+//! lock's Mojo (one per subdir), taking `sha256` and `size` from the channel's
 //! `<subdir>/repodata.json` (spec/channel.md). A package is named by its full name
 //! `<namespace>/<name>`; its entry's `channel` is the namespace's channel under the root
 //! (`<root><namespace>/`), its file is `mojo-<namespace>.<name>-<version>-<build>.conda`,
@@ -86,12 +86,16 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
         const rec = p.record;
         const namespace = names.namespaceOf(rec.name);
         const entry_channel = try registry.namespaceChannel(arena, channel_url, rec.name);
-        for (rec.files) |f| {
+        // The files of the version's build for this Mojo; a record the resolver picked has one.
+        const build = rec.buildFor(res.mojo) orelse {
+            return resolve.fail(arena, diag, .compiler_mismatch, "{s} {s} has no build for Mojo {s}", .{ rec.name, rec.version, res.mojo });
+        };
+        for (build.files) |f| {
             // Where the file's channel is under the root, for messages.
             const at = try std.fmt.allocPrint(arena, "{s}/{s}", .{ namespace, f.subdir });
-            const want_name = try std.fmt.allocPrint(arena, "{s}-{s}-{s}.conda", .{ try names.condaName(arena, rec.name), rec.version, rec.build });
+            const want_name = try std.fmt.allocPrint(arena, "{s}-{s}-{s}.conda", .{ try names.condaName(arena, rec.name), rec.version, build.build });
             if (!std.mem.eql(u8, want_name, f.filename)) {
-                return bad(arena, diag, "the index lists {s} for {s} {s} (build {s}); the channel name is {s}", .{ f.filename, rec.name, rec.version, rec.build, want_name });
+                return bad(arena, diag, "the index lists {s} for {s} {s} (build {s}); the channel name is {s}", .{ f.filename, rec.name, rec.version, build.build, want_name });
             }
             const rd = repodata.get(at) orelse blk: {
                 const text = try channel.fetch(arena, namespace, f.subdir, diag);
@@ -137,10 +141,10 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
             try packages.append(.{
                 .name = rec.name,
                 .version = rec.version,
-                .build = rec.build,
+                .build = build.build,
                 .subdir = f.subdir,
                 .channel = entry_channel,
-                .url = try lock.fileUrl(arena, entry_channel, f.subdir, rec.name, rec.version, rec.build),
+                .url = try lock.fileUrl(arena, entry_channel, f.subdir, rec.name, rec.version, build.build),
                 .sha256 = f.sha256,
                 .size = f.size,
                 .mojo = res.mojo,

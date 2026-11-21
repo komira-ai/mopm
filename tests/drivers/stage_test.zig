@@ -270,6 +270,12 @@ fn aBinsMember(w: World) !void {
 }
 
 fn usageErrors(w: World) !void {
+    const help = try w.m.run(&.{"--help"}, null);
+    const help_text = try std.mem.concat(w.a, u8, &.{ help.stdout, help.stderr });
+    w.rep.check("mopm --help gives both forms of stage's --artifacts and says a published version gets an added build", help.code == 0 and
+        h.contains(help_text, "stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version>") and
+        h.contains(help_text, "stage --workspace-root <dir> [<package>...] --artifacts <mojo version>=<dir>...") and
+        h.contains(help_text, "published version gets an added build for a Mojo"), help_text);
     var r = try w.m.run(&.{ "stage", "--workspace-root", "x", "--artifacts", "y", "--compiler", "1.0.0", "--out", "z" }, null);
     w.rep.check("stage without --registry is a usage error: there is no default", r.code == 2 and h.contains(r.stderr, "--registry is required"), r.stderr);
     r = try w.m.run(&.{ "stage", "--frob" }, null);

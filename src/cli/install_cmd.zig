@@ -26,12 +26,14 @@
 //!
 //! `--overlay <dir>` (`add`, `lock`, `sync`) reads a staged set (core/overlay.zig) as a read-only local channel
 //! ahead of the registry: a package the set holds is resolved and locked from the set, one it lacks from the
-//! registry, and a closure the set holds entirely needs no request for its index files, repodata or packages (the
-//! production registry's channel is known; any other registry is asked for its index/config.json, once, for the
-//! channel the lock names). The set is never written, and nothing about it reaches mopm.lock or mopm.toml: the lock
-//! names the registry's channel and file URLs with the files' sha256, so it is the lock the registry gives once the
-//! versions are published. When the registry is asked anyway, a staged version it already holds with other bytes is
-//! refused. `sync` installs a locked file from the set when the set holds exactly the bytes the lock pins.
+//! registry. The registry is asked for the index file of a staged package too: a staged version it does not hold is
+//! the staged line alone, and one it holds gets the staged builds added to the registry's record, with the registry's
+//! other versions of the package (core/overlay.zig, `mergedIndexText`). A closure the set holds entirely, of versions
+//! the registry does not hold, needs no request for repodata or packages (the production registry's channel is known;
+//! any other registry is asked for its index/config.json, once, for the channel the lock names). The set is never
+//! written, and nothing about it reaches mopm.lock or mopm.toml: the lock names the registry's channel and file URLs
+//! with the files' sha256, so it is the lock the registry gives once the versions are published. A staged build the
+//! registry already holds with other bytes is refused. `sync` installs a locked file from the set when the set holds exactly the bytes the lock pins.
 //!
 //! A path dependency (`"<namespace>/<name>" = { path = "..." }`, in [dependencies] or
 //! [dev-dependencies], and in a path dependency's own [dependencies]) is
@@ -464,7 +466,7 @@ fn knownChannel(base: []const u8) ?[]const u8 {
 const Layer = struct {
     reg: *Registry,
     staged: ?*const overlay.Overlay,
-    /// A package the set does not hold was asked of the registry.
+    /// The registry was asked for an index file.
     asked: bool = false,
 
     /// The versions `input` picks.

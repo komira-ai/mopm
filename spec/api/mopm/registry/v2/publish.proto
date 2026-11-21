@@ -29,7 +29,9 @@ message CommitPublishRequest {
   // to something else is rejected `sha256_mismatch`. When absent, nothing is checked and the version holds the hash the
   // registry computes from the archives; then every file of the version must carry the same manifest bytes, or the publish is
   // rejected `manifest_invalid`. When given, a file whose manifest hashes to something else is `sha256_mismatch`, so at
-  // most the files that carry the given manifest bytes pass.
+  // most the files that carry the given manifest bytes pass. For a build added to a published version the value is the version's
+  // `manifest_sha256` or nothing: another value is `version_exists`, before the build is claimed; when absent, the archives' manifest
+  // is compared with the version's when they are validated, and another one is rejected `manifest_invalid`.
   Sha256 manifest_sha256 = 2;
   // Optional. The git commit the version was built from (see `SourceCommit`). Stored once with the version and served by
   // `getVersion`; the registry does not verify it. Committing the same upload ids again must repeat it (or its absence): a

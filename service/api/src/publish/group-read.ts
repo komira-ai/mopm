@@ -1,4 +1,4 @@
-import { API_VIEW, type GroupMembers } from '../group';
+import { API_ROWS_VIEW, type GroupMembers } from '../group';
 import type { GroupRecord, GroupStore } from '../group-store';
 import type { Store } from '../store';
 import type { VersionRecord } from '../types';
@@ -8,8 +8,9 @@ import type { ObjectStore } from './ports';
 /**
  * The files of each member of a group, for GET /groups/{group_id} (spec/api/openapi.yaml: getGroup, `Group.members[].files`).
  *
- * The declared facts (subdir, filename, sha256, size) are those of the member's version row while the row is the group's
- * (`group_id` is the group, whatever its state): the row the create reserved holds exactly what the caller declared. A member
+ * The declared facts (subdir, filename, sha256, size) are those of the member's row while the row is the group's
+ * (`group_id` is the group, whatever its state): the row the create reserved holds exactly what the caller declared. A member that
+ * adds a build to a published version has a row of its own (key `<version>+<build>`), which this reads as a stored row. A member
  * whose row is no longer the group's, because the group ended and another group or publish took the number, or whose row
  * does not exist yet, has no files here; its list is empty.
  *
@@ -46,7 +47,7 @@ export async function readMemberFiles(d: GroupReadDeps, header: GroupRecord, mem
   const capped = members.members.slice(0, limits.members);
   const rows = await d.registry.versionsOf(
     capped.map((m) => m.name),
-    API_VIEW,
+    API_ROWS_VIEW,
   );
   const open = header.status === 'open';
   const facts = capped.map((m) => {

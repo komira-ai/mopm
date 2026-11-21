@@ -1,6 +1,7 @@
 import type { HttpResponse } from '../../src/http/router';
 import { groupIdFor } from '../../src/publish/group-service';
 import { RIGS, reserved, type Rig } from '../group-rig';
+import { rec } from '../helpers';
 import { errorCode, GroupEnv, json } from './group-env';
 
 /**
@@ -99,7 +100,8 @@ describe.each(RIGS)('group_conflict reasons and on_overlap over the registry: %s
 
     test('a conflict that is not a group_conflict carries no reason (version_exists)', async () => {
       const me = await env.account(1, 'octocat', ['alpha']);
-      rig.writeRow({ ...reserved('alpha', 'gh'), state: 'published' });
+      // A published version: its file is the build the member would add, so the version already has it.
+      rig.writeRow(rec({ name: 'alpha', version: '1.0.0', group_id: 'gh' }));
       const r = await env.create(me, [env.member('alpha')]);
       expect(errorCode(r)).toBe('version_exists');
       expect(json(r).error.reason).toBeUndefined();

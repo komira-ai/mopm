@@ -396,6 +396,19 @@ export const RECIPES: Record<string, Recipe> = {
   'create a package that exists': { bearer: apiToken(ALICE, ['komira-ai/json']), setup: async (w) => void (await w.makePackage('komira-ai/json')) },
   'list versions': { setup: catalogue },
   'version detail': { setup: catalogue },
+  // A build added to the published 1.1.0 later is a row of its own, which the answer folds into the version.
+  'version detail with two builds': {
+    setup: async (w) => {
+      await catalogue(w);
+      const f = fileFacts('komira-ai/json', '1.1.0', { filename: 'mojo-komira-ai.json-1.1.0-mojo1.2.0_0.conda', sha256: '1d2c8f0a4e7b93c5d6a1f2e3b4c5d60718293a4b5c6d7e8f90a1b2c3d4e5f607', size: 4100 });
+      await addVersion(w, 'komira-ai/json', '1.1.0', {
+        canonical: '1.1.0+mojo1.2.0_0',
+        build: 'mojo1.2.0_0',
+        requires_mojo: '==1.2.0',
+        files: [{ subdir: f.subdir, filename: f.filename, sha256: f.sha256, size: f.size, url: `https://conda.mopm.dev/komira-ai/noarch/${f.filename}` }],
+      });
+    },
+  },
   'version detail with the mopm.toml display fields': {
     setup: async (w) => {
       await addVersion(w, 'komira-ai/json', '1.1.0', {

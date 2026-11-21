@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { buildsOf, compareBuilds, isBuildRow, splitRowKey } from '../builds';
 import { channelFileKey, channelFileUrl, repodataDirsOf } from '../channel-paths';
 import type { PublishFill } from '../state';
 import type { Store } from '../store';
-import type { AuditEntry, Dep, FileRef, NativeRef } from '../types';
+import type { AuditEntry, Dep, FileRef, NativeRef, VersionRecord } from '../types';
 import { validatePackage } from '../validate';
 import type { PackageFacts, RejectionCode, ValidatorOptions } from '../validate';
 import type { NativeMirror } from '../validate/native-mirror';
@@ -69,7 +70,9 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
   }
   rec = (await d.publishes.updatePublish(publishId, (c) => (c.status === 'pending' ? touch(d, { ...c, status: 'validating' }) : undefined)))!;
 
-  const version = await d.registry.getVersion(rec.name, rec.version);
+  // The row the publish fills: the version's, or `<version>+<build>` for a build added to a published version.
+  const version = await d.registry.getVersion(rec.name, rec.canonical);
+  const added = isBuildRow(rec);
   if (version?.group_id !== undefined) {
     // Not a verdict on the archives and not ours to settle: the number belongs to a group, and only the group's own
     // job fills, publishes or burns its rows. Thrown so the message is retried and then dead-lettered with its alarm.
@@ -90,25 +93,47 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
   try {
     const facts = await validateAll(d, rec);
     await recordWarnings(d, rec, warningsOf(facts));
+    if (added) await checkBase(d, rec, facts);
     await checkTotal(d, rec);
     await copyToChannel(d, rec);
     const fill = buildFill(d, rec, facts);
-    await d.registry.updateVersion(rec.name, rec.version, { type: 'publish', fill }, audit(d, rec, 'publish', { files: String(rec.files.length) }));
+    await d.registry.updateVersion(rec.name, rec.canonical, { type: 'publish', fill }, audit(d, rec, 'publish', { files: String(rec.files.length), ...addedDetail(rec) }));
     await moveToIndexing(d, rec);
     return 'processed';
   } catch (err) {
     if (!(err instanceof Rejected)) throw err;
     const msg = err.message.slice(0, MAX_MESSAGE);
+    // A rejected add burns the row of its build and never the version.
     await d.registry.updateVersion(
       rec.name,
-      rec.version,
+      rec.canonical,
       { type: 'tombstone', reason_code: err.code, date: today(d), unpublished: true },
-      audit(d, rec, 'reject', { rejection_code: err.code }),
+      audit(d, rec, 'reject', { rejection_code: err.code, ...addedDetail(rec) }),
     );
     await markRejected(d, rec, err.code, msg);
     return 'processed';
   }
 }
+
+/**
+ * A build added to a version needs the version: still published (a yank or a takedown since the commit ends the add), and
+ * with the archives of the same source and system libraries (`checkAddedBuild`). The version is read as a reader sees it,
+ * every build folded in, so a build another publish added meanwhile counts. Throws `Rejected`.
+ */
+async function checkBase(d: ValidatorDeps, rec: PublishRecord, facts: PackageFacts[]): Promise<void> {
+  const { canonical } = splitRowKey(rec.canonical);
+  const base = (await d.registry.listVersions(rec.name)).find((v) => v.canonical === canonical);
+  if (base?.state !== 'published') {
+    throw new Rejected('manifest_invalid', `${rec.name} ${rec.version} is ${base?.state ?? 'missing'}, so no build can be added to it: only a published version takes one`);
+  }
+  checkAddedBuild(base, facts);
+}
+
+/** The build an add fills, for the audit entry; nothing for a version's own row. */
+const addedDetail = (rec: PublishRecord): { build?: string } => {
+  const { build } = splitRowKey(rec.canonical);
+  return build === undefined ? {} : { build };
+};
 
 async function validateAll(d: ValidatorDeps, rec: PublishRecord): Promise<PackageFacts[]> {
   return validateArchives(d.objects, await optionsFor(d), rec, rec.files);
@@ -139,8 +164,10 @@ async function recordWarnings(d: ValidatorDeps, rec: PublishRecord, warnings: st
 
 /**
  * Validate every archive of one version, each on its own pass (the bytes are dropped after each, so memory stays at one
- * archive), and check that they agree on build, dependencies and native libraries. The single publish and the group's
- * validator both run exactly this. Throws `Rejected` for a verdict on the archives.
+ * archive), and check that they agree on dependencies, native libraries, system libraries and manifest. They need not
+ * agree on the build: a version may come with one build per Mojo compiler, and no two files may be the same build for one
+ * platform. The single publish and the group's validator both run exactly this. Throws `Rejected` for a verdict on the
+ * archives.
  */
 export async function validateArchives(
   objects: Pick<ObjectStore, 'get'>,
@@ -160,11 +187,16 @@ export async function validateArchives(
     if (!verdict.ok) throw new Rejected(verdict.rejection_code, `${f.filename}: ${verdict.message}`);
     out.push(verdict.facts);
   }
-  // One version, one build and one set of dependencies, whatever the platform.
+  // One set of dependencies for the version, whatever the platform and the build.
   const first = out[0]!;
+  const taken = new Map<string, number>();
   for (const [i, facts] of out.entries()) {
-    const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first)) && JSON.stringify(facts.nativeDepends) === JSON.stringify(first.nativeDepends) && facts.manifestSha256 === first.manifestSha256;
-    if (!same) throw new Rejected('manifest_invalid', `${files[i]!.filename} disagrees with ${files[0]!.filename} on build, dependencies, native libraries or manifest`);
+    const same = JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first)) && JSON.stringify(facts.nativeDepends) === JSON.stringify(first.nativeDepends) && facts.manifestSha256 === first.manifestSha256;
+    if (!same) throw new Rejected('manifest_invalid', `${files[i]!.filename} disagrees with ${files[0]!.filename} on dependencies, native libraries or manifest`);
+    const slot = `${facts.subdir}\0${facts.build}`;
+    const other = taken.get(slot);
+    if (other !== undefined) throw new Rejected('manifest_invalid', `${files[i]!.filename} and ${files[other]!.filename} are both the ${facts.build} build for ${facts.subdir}`);
+    taken.set(slot, i);
   }
   return out;
 }
@@ -196,7 +228,9 @@ const depsOf = (f: PackageFacts): Dep[] => f.metadata.deps.map((x) => (x.range =
 const nativeOf = (f: PackageFacts): NativeRef[] => f.metadata.native.map((n) => ({ id: n.id, soname: n.soname }));
 
 function buildFill(d: ValidatorDeps, rec: PublishRecord, facts: PackageFacts[]): PublishFill {
-  return fillFrom(d.channelUrl, (d.now ?? (() => new Date()))(), rec.name, rec, rec.files, facts);
+  // A version's display fields and source commit are written once, with the version: an added build carries none.
+  const owner = isBuildRow(rec) ? { version: rec.version, published_by: rec.published_by } : rec;
+  return fillFrom(d.channelUrl, (d.now ?? (() => new Date()))(), rec.name, owner, rec.files, facts);
 }
 
 /**
@@ -213,6 +247,8 @@ export function fillFrom(
   facts: PackageFacts[],
 ): PublishFill {
   const first = facts[0]!;
+  // The primary build, the one a reader that predates builds understands: the lowest compiler (the first of equals).
+  const primary = facts.reduce((a, b) => (compareBuilds(b.build, a.build) < 0 ? b : a));
   const files: FileRef[] = declared.map((f) => ({
     subdir: f.subdir,
     filename: f.filename,
@@ -222,8 +258,8 @@ export function fillFrom(
   }));
   return {
     version: version.version,
-    build: first.build,
-    requires_mojo: `==${first.compiler}`,
+    build: primary.build,
+    requires_mojo: `==${primary.compiler}`,
     deps: depsOf(first),
     native: nativeOf(first),
     native_depends: first.nativeDepends,
@@ -234,6 +270,39 @@ export function fillFrom(
     published_at: now.toISOString(),
     published_by: version.published_by,
   };
+}
+
+/**
+ * Check the archives of a build added to a published version (`base`: the version's record, builds folded in) against
+ * the version. They must all be one build the version does not have yet, built from the same source (the same
+ * `<import>.mopm.json`, which carries the digest of the sources), with the same system libraries. Throws `Rejected`.
+ */
+export function checkAddedBuild(base: VersionRecord, facts: PackageFacts[]): void {
+  const builds = [...new Set(facts.map((f) => f.build))];
+  if (builds.length > 1) {
+    throw new Rejected('manifest_invalid', `a build added to a version is one build per publish, and these files are of ${builds.join(', ')}`);
+  }
+  const have = buildsOf(base).map((b) => b.build);
+  for (const f of facts) {
+    if (have.includes(f.build)) {
+      throw new Rejected('manifest_invalid', `${base.name} ${base.version} already has the ${f.build} build; a published file is never replaced`);
+    }
+    if (f.manifestSha256 !== base.manifest_sha256) {
+      throw new Rejected(
+        'manifest_invalid',
+        `the ${f.subdir} file has manifest ${f.manifestSha256} but ${base.name} ${base.version} has ${base.manifest_sha256}: a build added to a version must come from the same source: the same <import>.mopm.json, including source_sha256`,
+      );
+    }
+    if (f.metadata.sourceSha256 === undefined) {
+      throw new Rejected('manifest_invalid', `${base.name} ${base.version} carries no source digest, so no build can be added to it: publish a new version`);
+    }
+    if (JSON.stringify(f.nativeDepends) !== JSON.stringify(base.native_depends ?? [])) {
+      throw new Rejected(
+        'manifest_invalid',
+        `the ${f.subdir} file requires the system libraries [${f.nativeDepends.join(', ')}] but ${base.name} ${base.version} requires [${(base.native_depends ?? []).join(', ')}]`,
+      );
+    }
+  }
 }
 
 /** The version is published: record which repodata directories still have to list it, and ask for each to be rewritten. */

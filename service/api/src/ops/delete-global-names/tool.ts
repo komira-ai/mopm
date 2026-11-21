@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { AuthStore } from '../../auth/types';
 import { canonicalJson } from '../../canonical-json';
+import { API_ROWS_VIEW } from '../../group';
 import { indexKey } from '../../index-files';
 import type { Invalidator, ListableObjectStore } from '../../publish/ports';
 import type { RowDeleter, Store } from '../../store';
-import { SUBDIRS_V1 } from '../../types';
+import { SUBDIRS_V1, type VersionRecord } from '../../types';
 import { zstdFrame } from '../../zstd';
 
 /**
@@ -100,7 +101,7 @@ export interface StageChecks {
 }
 
 export interface DeleteDeps {
-  registry: Pick<Store, 'listPackageNames' | 'listVersions' | 'listOwners' | 'removeOwner' | 'appendAudit'> & RowDeleter;
+  registry: Pick<Store, 'listPackageNames' | 'versionsOf' | 'listOwners' | 'removeOwner' | 'appendAudit'> & RowDeleter;
   publishers: Pick<AuthStore, 'listTrustedPublishers' | 'removeTrustedPublisher'>;
   bucket: ListableObjectStore;
   invalidator: Invalidator;
@@ -177,8 +178,11 @@ export async function listStage(stage: Stage, d: DeleteDeps): Promise<Listing> {
   return { stage, names, kept };
 }
 
+const rowsOf = async (d: DeleteDeps, name: string): Promise<VersionRecord[]> => (await d.registry.versionsOf([name], API_ROWS_VIEW)).get(name)!;
+
 async function versionsOf(d: DeleteDeps, name: string): Promise<NameListing['versions']> {
-  return (await d.registry.listVersions(name)).map((r) => ({
+  // The rows as stored: a build added to a version is a row of its own, and each row is deleted by its key.
+  return (await rowsOf(d, name)).map((r) => ({
     version: r.version,
     canonical: r.canonical,
     state: r.state,
@@ -329,7 +333,7 @@ async function deleteName(n: NameListing, stage: Stage, digest: string, at: stri
   for (const o of n.owners) await d.registry.removeOwner(n.name, o.github_id);
   for (const p of n.publishers) await d.publishers.removeTrustedPublisher(n.name, p.id);
   step('rows', { versions: n.versions.length, owners: n.owners.length, publishers: n.publishers.length });
-  const left = await d.registry.listVersions(n.name);
+  const left = await rowsOf(d, n.name);
   if (left.length) {
     d.out({ kind: 'refused', name: n.name, reason: 'versions appeared after the listing; the package row is kept: run the dry run again', versions: left.map((r) => r.version) });
     return 2;

@@ -1,7 +1,7 @@
 import { bitmapHas, type GroupRecord, type GroupStatus } from '../../src/group-store';
 import { expireIfDue } from '../../src/publish/group-lifecycle';
 import { groupIdFor } from '../../src/publish/group-service';
-import { rec } from '../helpers';
+import { buildRow, rec } from '../helpers';
 import { RIGS, reserved, type Rig } from '../group-rig';
 import type { PublishFill } from '../../src/state';
 import { errorCode, GroupEnv, json } from './group-env';
@@ -674,6 +674,21 @@ describe.each(RIGS)('groups over the registry: %s', (_label, make) => {
       expect(errorCode(r)).toBe('limit_exceeded');
       expect(json(r).error.message).toContain("'alpha'");
       expect(await rig.store.raw.rawGet('beta', '1.0.0')).toBeUndefined();
+    });
+
+    test('the bytes a package holds are those a reader sees: a build added to a version counts with it, and goes with it when the version is taken down', async () => {
+      env = new GroupEnv(rig, { projectQuotaBytes: 1500 });
+      const me = await env.account(1, 'octocat', ['alpha']);
+      rig.writeRow(rec({ name: 'alpha', version: '0.9.0' }));
+      rig.writeRow(buildRow('alpha', '0.9.0', 'mojo1.1.0_0'));
+      // 1000 bytes of the version and 1000 of its added build are on the channel: a third 1000 does not fit in 1500.
+      const full = await env.create(me, [env.member('alpha')]);
+      expect(errorCode(full)).toBe('limit_exceeded');
+      expect(json(full).error.message).toBe("Adding this file would put 'alpha' over its storage limit of 1500 bytes; 0 bytes are left.");
+
+      // Taken down, both are gone, as the single publish counts them.
+      rig.writeRow(rec({ name: 'alpha', version: '0.9.0', state: 'tombstoned' }));
+      expect((await env.create(me, [env.member('alpha')])).statusCode).toBe(201);
     });
 
     dynamoOnly('a group that loses the race for a dead group\'s row loses cleanly: group_conflict, the row as the winner left it, and the group ended', async () => {

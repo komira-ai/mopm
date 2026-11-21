@@ -8,8 +8,8 @@ import type { VersionRecord } from './types';
  * (test/group-guards.test.ts scans for a file that does not).
  */
 export interface RawVersionPort {
-  /** One row by name and version (any spelling of the version), or undefined. A consistent read. */
+  /** One row by name and key: a version (any spelling of it) or a build row's key (`<version>+<build>`, src/builds.ts), or undefined. A consistent read. */
   rawGet(name: string, version: string): Promise<VersionRecord | undefined>;
-  /** Every row of one package, in no particular order. A consistent read. */
+  /** Every row of one package, build rows included, in no particular order. A consistent read. */
   rawQuery(name: string): Promise<VersionRecord[]>;
 }

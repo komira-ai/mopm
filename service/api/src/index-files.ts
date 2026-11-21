@@ -1,3 +1,4 @@
+import { buildsOf, type Build } from './builds';
 import { canonicalJson } from './canonical-json';
 import { splitFullName } from './names';
 import { compareVersions } from './version';
@@ -71,22 +72,38 @@ function fileOf(r: VersionRecord, f: FileRef) {
   };
 }
 
+/** A build as a line of the index shows it: its files in the order of a line's `files`. */
+const buildEntry = (r: VersionRecord, b: Build) => ({
+  build: b.build,
+  requires_mojo: b.requires_mojo,
+  files: b.files.map((f) => fileOf(r, f)),
+});
+
+/**
+ * One record. `build`, `requires_mojo` and `files` are the primary build's (the lowest compiler), which a reader that
+ * predates `builds` understands; a line of a full name (`v` 2) also lists every build in `builds`, sorted by compiler,
+ * whatever their number. The rest is the version's, shared by every build. A flat name (`v` 1) has no `builds`.
+ */
 function recordOf(r: VersionRecord) {
   if (r.state === 'yanked' && !r.yank_reason) throw new Error(`index: ${r.name} ${r.version}: yanked without a reason`);
   if (r.state === 'tombstoned' && !r.tombstone) throw new Error(`index: ${r.name} ${r.version}: tombstoned without a tombstone`);
+  const v = indexVersionOf(r.name);
+  const builds = buildsOf(r);
+  const primary = builds[0]!; // only an indexed row (one with files) is written, so it has a build
   return {
-    v: indexVersionOf(r.name),
+    v,
     name: r.name,
     version: r.version,
-    build: r.build,
+    build: primary.build,
     state: r.state,
     ...(r.state === 'yanked' ? { yank_reason: r.yank_reason } : {}),
     ...(r.state === 'tombstoned' ? { tombstone: { reason_code: r.tombstone!.reason_code, date: r.tombstone!.date } } : {}),
     published_at: r.published_at,
-    requires_mojo: r.requires_mojo,
+    requires_mojo: primary.requires_mojo,
     deps: r.deps.map((d) => (d.range === undefined ? { name: d.name } : { name: d.name, range: d.range })),
     native: r.native.map((n) => ({ id: n.id, soname: n.soname })),
-    files: [...r.files].sort(BY_FILE).map((f) => fileOf(r, f)),
+    files: primary.files.map((f) => fileOf(r, f)),
+    ...(v === INDEX_VERSION_V2 ? { builds: builds.map((b) => buildEntry(r, b)) } : {}),
     manifest_sha256: r.manifest_sha256,
     provenance: r.provenance ?? { kind: 'none' },
   };
@@ -107,7 +124,7 @@ export const isIndexed = (r: VersionRecord): boolean => r.state !== 'pending' &&
 export const packageRev = (rows: readonly VersionRecord[]): number => rows.reduce((n, r) => n + r.rev, 0);
 
 /**
- * The NDJSON file of one package, from all its version rows: one line per indexed version, oldest first
+ * The NDJSON file of one package, from all its version records (one per version, builds folded in, as the store lists them): one line per indexed version, oldest first
  * (numeric), each line compact JSON with sorted keys, the whole ending in a newline. A version's files in
  * every subdir are listed in that one line. Returns undefined when no version is indexed: the service
  * answers 404 for such a package, and no file is written.
@@ -128,12 +145,13 @@ export function buildPackageIndex(name: string, rows: readonly VersionRecord[]):
 }
 
 /**
- * A takedown log from every row of the registry: one entry per tombstoned version that still has its files (the sha256
+ * A takedown log from every record of the registry: one entry per tombstoned version that still has its files (the sha256
  * values a lock can be explained by), sorted by date, then name, then numeric version. Ends in a newline. With no takedown
  * it is the empty log, which is also the seed of a fresh stage.
  *
  * `version` picks the log: 1 (`index/takedowns.json`) lists the flat names, 2 (`index/v2/takedowns.json`) the full names;
- * each log holds only its own version's names, so each reader sees the names it can resolve.
+ * each log holds only its own version's names, so each reader sees the names it can resolve. A record lists the sha256 of
+ * every file of the version, whatever its build.
  */
 export function buildTakedowns(rows: readonly VersionRecord[], version: number = INDEX_VERSION): string {
   if (version !== INDEX_VERSION && version !== INDEX_VERSION_V2) throw new Error(`index: no takedown log of version ${version}`);

@@ -108,9 +108,13 @@ A package's name is a full name, `<namespace>/<name>`, such as `komira-ai/json`.
   link and load flags, load means the package opens the library itself.
 - `[dev-dependencies]`: not installed for consumers.
 - `mojo` (in `[package]`): the exact Mojo compiler versions the package builds
-  for, a string or an array of strings, none repeated. `mopm publish` builds
-  one `.mojoc` per version and uploads all of them under the one package
-  version; a lock covers every version listed (`lock.md`, "Version 2"), and a
+  for, a string or an array of strings, none repeated. A published package
+  version carries one build per Mojo version (`channel.md`, "Package naming"):
+  `mopm stage` takes one `.mojoc` per version listed and stages them as the
+  builds of one package version, and `mopm publish` of one compiler adds that
+  build to a version that a single publish made, when it is built from the same
+  source (a version made by `mopm publish --staged` takes added builds through
+  `mopm stage` and `mopm publish --staged` only). A lock covers every version listed (`lock.md`, "Version 2"), and a
   build system makes one unit per version (`unit-graph.md`). Tools normalise it
   to an array.
 - `[toolchain]` (older form): `mojo = <version or array>` read as
