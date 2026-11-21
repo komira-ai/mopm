@@ -51,6 +51,9 @@ export function parseJsonObject(buf: Buffer, what: string, rule: 'manifest_json'
 const isStr = (v: unknown): v is string => typeof v === 'string';
 const bad = (m: string): never => fail('manifest_schema', `<name>.mopm.json: ${m}`);
 
+/** `source_sha256` of `<name>.mopm.json` (spec/package-metadata.schema.json): the digest of the package's sources. */
+export const SOURCE_SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
 /** Validate `<name>.mopm.json` against spec/package-metadata.schema.json (hand-written; the schema is small). */
 export function checkMopm(o: Record<string, unknown>, schema: 1 | 2 = METADATA_SCHEMA_VERSION): Mopm {
   if (o.schema !== schema) return bad(`'schema' must be ${schema}`);
@@ -59,7 +62,7 @@ export function checkMopm(o: Record<string, unknown>, schema: 1 | 2 = METADATA_S
   if (o.version !== undefined && !isValidVersion(o.version as string)) {
     return bad(`'version' '${String(o.version)}' is not MAJOR.MINOR.PATCH (three numbers, no suffix)`);
   }
-  if (o.source_sha256 !== undefined && !(isStr(o.source_sha256) && /^[0-9a-f]{64}$/.test(o.source_sha256))) {
+  if (o.source_sha256 !== undefined && !(isStr(o.source_sha256) && SOURCE_SHA256_PATTERN.test(o.source_sha256))) {
     return bad("'source_sha256' must be 64 lowercase hex digits");
   }
   const deps: Mopm['deps'] = [];
