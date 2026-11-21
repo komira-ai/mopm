@@ -1,12 +1,11 @@
 //! End-to-end test of one package version carrying one build per Mojo compiler, against the fake registry: `mopm stage` and
-//! `mopm publish --staged` publish a version, then add a build for another compiler to it; `mopm lock` and the resolver of
-//! mopm_core read it back, one file per Mojo.
+//! `mopm publish --staged` publish a version, then add a build for another compiler to it; `mopm lock` reads it back, one
+//! file per Mojo.
 //!
 //! Run by Buck2 (//:multi_build): MOPM and MOPM_FAKE_REGISTRY are the built programs, and the working directory is the
 //! repository root, where the fixture tests/e2e/multibuild is. Outside Buck2, after `zig build`:
 //!
-//!     MOPM=$PWD/zig-out/bin/mopm MOPM_FAKE_REGISTRY=$PWD/zig-out/bin/mopm-fake-registry \
-//!         zig test --dep mopm_core -Mroot=tests/drivers/multi_build_test.zig -Mmopm_core=src/core/mopm_core.zig
+//!     MOPM=$PWD/zig-out/bin/mopm MOPM_FAKE_REGISTRY=$PWD/zig-out/bin/mopm-fake-registry zig test tests/drivers/multi_build_test.zig
 //!
 //! The fixture holds one workspace member, example/mbd (mopm.toml, a readme and a library directory), and a stand-in
 //! `.mojoc` of it per compiler (1.0.0, 1.1.0, 1.2.0) in the layout `mopm stage --artifacts` reads. Each check prints `ok`
@@ -17,19 +16,20 @@
 //! - the same sources staged for Mojo 1.1.0 must be an upload of that build's files alone, and publishing it must add the
 //!   build: the index line then lists mojo1.0.0_0 and mojo1.1.0_0, its top-level build, requires_mojo and files stay the
 //!   primary (lowest compiler) build's, and each file is served with the sha256 the index gives;
-//! - a project on Mojo 1.0.0 must lock the 1.0.0 file of that version. mopm pins only the Mojo 1.0.0 toolchain, so `mopm lock`
-//!   refuses a project on 1.1.0 before it resolves; the resolver and the lock builder of mopm_core, run on the index and the
-//!   repodata the fake serves, must give a project on 1.1.0 the 1.1.0 file of the same version;
+//! - `mopm lock` of a project on Mojo 1.0.0 must pin the 1.0.0 file of that version, and of a project on Mojo 1.1.0 (a
+//!   toolchain mopm pins) the 1.1.0 file of the same version, each with its own sha256 and url; a project that lists both
+//!   Mojo versions gets one lock entry for the version with a file for each; a project on 1.2.0, for which the version has no
+//!   build, is refused with the Mojo versions it has;
 //! - sources that differ (a changed library file) are refused by `mopm stage` as built from other sources, and the same
 //!   build published anyway is refused by the registry (version_exists), leaving the index line as it was; a changed file
 //!   under a published build is refused as a file that is never replaced;
 //! - a version published for Mojo 1.1.0 only is skipped by a project on 1.0.0 that asks for any version of the package, and
-//!   named by the exact pin it gives the error that lists what exists;
-//! - an index line written before `builds` existed (one build, no `builds` key) resolves for Mojo 1.0.0 as before.
+//!   taken by a project on 1.1.0; named by an exact pin from a project on 1.0.0 it gives the error that lists what exists;
+//! - an index line written before `builds` existed (one build, no `builds` key) locks for Mojo 1.0.0 as before, and for 1.1.0
+//!   gives the error that names its one Mojo.
 
 const std = @import("std");
 const h = @import("harness.zig");
-const core = @import("mopm_core");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
@@ -178,16 +178,28 @@ const Cx = struct {
         return cx.sha256Of(h.readFile(cx.a, try cx.path(&.{ cx.work, set, "noarch", filename })) catch return "(no such file)");
     }
 
-    /// A project on `mojo` that depends on `name` at `requirement`, in the directory `dir` below the work directory.
-    fn project(cx: Cx, dir: []const u8, mojo: []const u8, name: []const u8, requirement: []const u8) ![]const u8 {
+    /// A project on the Mojo versions `mojos` that depends on `name` at `requirement`, in the directory `dir` below the work directory.
+    fn project(cx: Cx, dir: []const u8, mojos: []const []const u8, name: []const u8, requirement: []const u8) ![]const u8 {
         const d = try cx.path(&.{ cx.work, dir });
-        try h.writeFile(try cx.path(&.{ d, "mopm.toml" }), try std.fmt.allocPrint(cx.a, "[package]\nname = \"example/app\"\nversion = \"0.1.0\"\nmojo = [\"{s}\"]\n\n[dependencies]\n\"{s}\" = \"{s}\"\n", .{ mojo, name, requirement }));
+        const list = try std.mem.join(cx.a, "\", \"", mojos);
+        try h.writeFile(try cx.path(&.{ d, "mopm.toml" }), try std.fmt.allocPrint(cx.a, "[package]\nname = \"example/app\"\nversion = \"0.1.0\"\nmojo = [\"{s}\"]\n\n[dependencies]\n\"{s}\" = \"{s}\"\n", .{ list, name, requirement }));
         try h.writeFile(try cx.path(&.{ d, "src", "app", "__init__.mojo" }), "def run():\n    pass\n");
         return d;
     }
 
     fn lock(cx: Cx, dir: []const u8) !Out {
         return cx.m.run(&.{ "lock", "--registry", cx.fake.base }, dir, null);
+    }
+
+    /// How many entries the lock written in `dir` has for `name`.
+    fn lockEntries(cx: Cx, dir: []const u8, name: []const u8) !usize {
+        const bytes = h.readFile(cx.a, try cx.path(&.{ dir, "mopm.lock" })) catch return 0;
+        const doc = try h.parseJson(cx.a, bytes);
+        var n: usize = 0;
+        for (doc.object.get("packages").?.array.items) |p| {
+            if (std.mem.eql(u8, h.jsonString(p, "name") orelse "", name)) n += 1;
+        }
+        return n;
     }
 
     /// What the lock written in `dir` holds for `name` at `mojo`, or null.
@@ -202,70 +214,6 @@ const Cx = struct {
         return null;
     }
 };
-
-// ------------------------------------------------- mopm_core's resolver on what the fake serves
-
-/// The sparse index of the fake registry, read over HTTP as `mopm lock` reads it.
-const HttpIndex = struct {
-    config: core.registry.Config,
-
-    pub fn fetch(self: HttpIndex, arena: Allocator, name: []const u8, diag: *core.resolve.Diagnostic) core.resolve.Error!?[]const u8 {
-        const url = try core.registry.indexUrl(arena, self.config, name);
-        const answer = core.http.request(arena, .GET, url, .{}) catch |e| {
-            return core.resolve.fail(arena, diag, .unreachable_index, "cannot read {s}: {s}", .{ url, @errorName(e) });
-        };
-        if (answer.status == 404) return null;
-        if (!answer.ok()) return core.resolve.fail(arena, diag, .unreachable_index, "{s} answered HTTP {d}", .{ url, answer.status });
-        return answer.body;
-    }
-};
-
-/// The repodata of the fake registry's channel, read over HTTP. No package file is asked for: no package here has natives.
-const HttpChannel = struct {
-    root: []const u8,
-
-    pub fn fetch(self: HttpChannel, arena: Allocator, namespace: []const u8, subdir: []const u8, diag: *core.resolve.Diagnostic) core.resolve.Error![]const u8 {
-        const url = try std.fmt.allocPrint(arena, "{s}{s}/{s}/repodata.json", .{ self.root, namespace, subdir });
-        const answer = core.http.request(arena, .GET, url, .{}) catch |e| {
-            return core.resolve.fail(arena, diag, .bad_channel, "cannot read {s}: {s}", .{ url, @errorName(e) });
-        };
-        if (!answer.ok()) return core.resolve.fail(arena, diag, .bad_channel, "{s} answered HTTP {d}", .{ url, answer.status });
-        return answer.body;
-    }
-
-    pub fn fetchConda(_: HttpChannel, arena: Allocator, _: []const u8, _: []const u8, filename: []const u8, diag: *core.resolve.Diagnostic) core.resolve.Error![]const u8 {
-        return core.resolve.fail(arena, diag, .bad_channel, "unexpected request for the package file {s}", .{filename});
-    }
-};
-
-const Resolved = union(enum) { ok: core.lock.Lock, failed: []const u8 };
-
-/// Resolves `name` at `requirement` for Mojo `mojo` on the fake registry's served index and repodata, and builds the lock.
-fn resolveFor(cx: Cx, mojo: []const u8, name: []const u8, requirement: []const u8) !Resolved {
-    const channel_root = try std.fmt.allocPrint(cx.a, "{s}/channel/", .{cx.fake.base});
-    const config = core.registry.Config{ .base = cx.fake.base, .stage = "", .api_url = "", .channel_url = channel_root, .min_cli_version = "", .read_only = false };
-    var diag: core.resolve.Diagnostic = .{};
-    const res = core.resolve.resolve(cx.a, HttpIndex{ .config = config }, .{
-        .mojo = mojo,
-        .roots = &.{.{ .name = name, .requirement = requirement }},
-        .mojoc_message = true,
-    }, &diag) catch |e| switch (e) {
-        error.ResolveFailed => return .{ .failed = diag.message },
-        error.OutOfMemory => return e,
-    };
-    const l = core.install_plan.buildLock(cx.a, res, channel_root, HttpChannel{ .root = channel_root }, null, &diag) catch |e| switch (e) {
-        error.ResolveFailed => return .{ .failed = diag.message },
-        error.OutOfMemory => return e,
-    };
-    return .{ .ok = l };
-}
-
-fn firstPackage(r: Resolved) ?core.lock.Package {
-    return switch (r) {
-        .ok => |l| if (l.packages.len == 1) l.packages[0] else null,
-        .failed => null,
-    };
-}
 
 // ------------------------------------------------------------------------------------ the scenario
 
@@ -326,39 +274,34 @@ fn eachMojoItsFile(cx: Cx) !void {
     const sha_1_1 = try cx.stagedSha("set_b", try cx.condaName(v1, "1.1.0"));
     cx.ok("the two builds are different bytes", !std.mem.eql(u8, sha_1_0, sha_1_1), sha_1_0);
 
-    const p10 = try cx.project("proj_10", "1.0.0", "example/mbd", "1");
+    const p10 = try cx.project("proj_10", &.{"1.0.0"}, "example/mbd", "1");
     const r10 = try cx.lock(p10);
     const e10 = try cx.lockEntry(p10, "example/mbd", "1.0.0");
     cx.ok("a project on Mojo 1.0.0 locks the version with its 1.0.0 file", r10.code == 0 and e10 != null and std.mem.eql(u8, e10.?.version, v1) and
         std.mem.eql(u8, e10.?.build, "mojo1.0.0_0") and std.mem.eql(u8, e10.?.sha256, sha_1_0) and h.contains(e10.?.url, "mojo-example.mbd-1.0.0-mojo1.0.0_0.conda"), try cx.text(r10));
 
-    // mopm pins the Mojo 1.0.0 toolchain only: a project on 1.1.0 is refused before anything is resolved.
-    const p11 = try cx.project("proj_11", "1.1.0", "example/mbd", "1");
+    const p11 = try cx.project("proj_11", &.{"1.1.0"}, "example/mbd", "1");
     const r11 = try cx.lock(p11);
-    cx.ok("mopm lock refuses a project on Mojo 1.1.0 for want of a pinned toolchain, and writes no lock", r11.code == 1 and
-        h.contains(r11.stderr, "mopm has no pinned toolchain for mojo 1.1.0") and !cx.exists(&.{ p11, "mopm.lock" }), try cx.text(r11));
+    const e11 = try cx.lockEntry(p11, "example/mbd", "1.1.0");
+    cx.ok("a project on Mojo 1.1.0 locks the same version with its 1.1.0 file: its sha256 and url", r11.code == 0 and e11 != null and
+        std.mem.eql(u8, e11.?.version, v1) and std.mem.eql(u8, e11.?.build, "mojo1.1.0_0") and std.mem.eql(u8, e11.?.sha256, sha_1_1) and
+        std.mem.endsWith(u8, e11.?.url, "/mojo-example.mbd-1.0.0-mojo1.1.0_0.conda"), try cx.text(r11));
 
-    // The resolver and the lock builder of mopm_core, on the index and the repodata the fake serves.
-    const lib = try resolveFor(cx, "1.1.0", "example/mbd", "1");
-    const pkg = firstPackage(lib);
-    cx.ok("the resolver, run for Mojo 1.1.0 on the served index, picks the same version with its 1.1.0 file", pkg != null and std.mem.eql(u8, pkg.?.version, v1) and
-        std.mem.eql(u8, pkg.?.build, "mojo1.1.0_0") and std.mem.eql(u8, pkg.?.sha256, sha_1_1) and std.mem.eql(u8, pkg.?.mojo, "1.1.0") and
-        std.mem.endsWith(u8, pkg.?.url, "mojo-example.mbd-1.0.0-mojo1.1.0_0.conda"), switch (lib) {
-        .ok => "resolved, but not as expected",
-        .failed => |m| m,
-    });
-    const lib10 = try resolveFor(cx, "1.0.0", "example/mbd", "1");
-    const pkg10 = firstPackage(lib10);
-    cx.ok("and for Mojo 1.0.0 it picks the same version with the 1.0.0 file", pkg10 != null and std.mem.eql(u8, pkg10.?.version, v1) and
-        std.mem.eql(u8, pkg10.?.build, "mojo1.0.0_0") and std.mem.eql(u8, pkg10.?.sha256, sha_1_0), "the 1.0.0 file was not picked");
-    const lib12 = try resolveFor(cx, "1.2.0", "example/mbd", "1");
-    cx.ok("and for Mojo 1.2.0 it fails, listing the builds that exist", switch (lib12) {
-        .ok => false,
-        .failed => |m| std.mem.eql(u8, m, "example/mbd 1.0.0 has no .mojoc for Mojo 1.2.0 (published for: 1.0.0, 1.1.0). Build with mojo 1.0.0, ask the publisher for a 1.2.0 build, or pin a version that has one."),
-    }, switch (lib12) {
-        .ok => "resolved",
-        .failed => |m| m,
-    });
+    const both = try cx.project("proj_both", &.{ "1.0.0", "1.1.0" }, "example/mbd", "1");
+    const rb = try cx.lock(both);
+    const b10 = try cx.lockEntry(both, "example/mbd", "1.0.0");
+    const b11 = try cx.lockEntry(both, "example/mbd", "1.1.0");
+    cx.ok("a project that lists Mojo 1.0.0 and 1.1.0 has one lock entry for the version, with a file for each Mojo", rb.code == 0 and
+        (try cx.lockEntries(both, "example/mbd")) == 1 and b10 != null and b11 != null and std.mem.eql(u8, b10.?.version, v1) and std.mem.eql(u8, b11.?.version, v1) and
+        std.mem.eql(u8, b10.?.sha256, sha_1_0) and std.mem.eql(u8, b11.?.sha256, sha_1_1) and
+        std.mem.eql(u8, b10.?.build, "mojo1.0.0_0") and std.mem.eql(u8, b11.?.build, "mojo1.1.0_0"), try cx.text(rb));
+
+    // The version has no 1.2.0 build: the error lists the ones it has, and no lock is written.
+    const p12 = try cx.project("proj_12", &.{"1.2.0"}, "example/mbd", "1");
+    const r12 = try cx.lock(p12);
+    cx.ok("a project on Mojo 1.2.0, for which the version has no build, is refused with the Mojo versions it has", r12.code == 1 and
+        h.contains(r12.stderr, "error: example/mbd 1.0.0 has no .mojoc for Mojo 1.2.0 (published for: 1.0.0, 1.1.0). Build with mojo 1.0.0, ask the publisher for a 1.2.0 build, or pin a version that has one.\n") and
+        !cx.exists(&.{ p12, "mopm.lock" }), try cx.text(r12));
 }
 
 /// 4. A build from other sources, and 5. a replaced file.
@@ -418,22 +361,23 @@ fn noBuild(cx: Cx) !void {
     const rec = (try cx.line("mbd", "1.1.0")) orelse return cx.ok("the index has a line for 1.1.0", false, "no line");
     cx.ok("its index line lists the one build, mojo1.1.0_0", std.mem.eql(u8, try cx.builds(rec), "mojo1.1.0_0"), try cx.builds(rec));
 
-    const pinned = try cx.project("proj_pinned", "1.0.0", "example/mbd", "=1.1.0");
+    const pinned = try cx.project("proj_pinned", &.{"1.0.0"}, "example/mbd", "=1.1.0");
     const r = try cx.lock(pinned);
     cx.ok("a project on Mojo 1.0.0 pinned to 1.1.0 is refused with the Mojo versions the version is published for", r.code == 1 and
         h.contains(r.stderr, "error: example/mbd 1.1.0 has no .mojoc for Mojo 1.0.0 (published for: 1.1.0). Build with mojo 1.1.0, ask the publisher for a 1.0.0 build, or pin a version that has one.\n") and
         !cx.exists(&.{ pinned, "mopm.lock" }), try cx.text(r));
 
     // The newest version that has a build for the project's Mojo is taken, not the newest version.
-    const open = try cx.project("proj_open", "1.0.0", "example/mbd", "1");
+    const open = try cx.project("proj_open", &.{"1.0.0"}, "example/mbd", "1");
     const ro = try cx.lock(open);
     const eo = try cx.lockEntry(open, "example/mbd", "1.0.0");
     cx.ok("a project on Mojo 1.0.0 that asks for any 1.x gets 1.0.0, the newest version with a 1.0.0 build", ro.code == 0 and eo != null and
         std.mem.eql(u8, eo.?.version, v1) and std.mem.eql(u8, eo.?.build, "mojo1.0.0_0"), try cx.text(ro));
-    const lib = try resolveFor(cx, "1.1.0", "example/mbd", "1");
-    const pkg = firstPackage(lib);
-    cx.ok("and the resolver for Mojo 1.1.0 gets 1.1.0, the newest version, with its 1.1.0 file", pkg != null and std.mem.eql(u8, pkg.?.version, "1.1.0") and
-        std.mem.eql(u8, pkg.?.build, "mojo1.1.0_0"), "the newest version was not picked");
+    const newest = try cx.project("proj_newest", &.{"1.1.0"}, "example/mbd", "1");
+    const rn = try cx.lock(newest);
+    const en = try cx.lockEntry(newest, "example/mbd", "1.1.0");
+    cx.ok("and a project on Mojo 1.1.0 gets 1.1.0, the newest version, with its 1.1.0 file", rn.code == 0 and en != null and
+        std.mem.eql(u8, en.?.version, "1.1.0") and std.mem.eql(u8, en.?.build, "mojo1.1.0_0"), try cx.text(rn));
 }
 
 /// 7. An index line from before `builds`: one build, no `builds` key, in a namespace of its own.
@@ -452,19 +396,16 @@ fn oldShape(cx: Cx) !void {
     , .{ file, sha, size });
     try h.writeFile(try cx.path(&.{ cx.fake_dir, "channel", "oldrec", "noarch", "repodata.json" }), repodata);
 
-    const p = try cx.project("proj_old", "1.0.0", "oldrec/lines", "0.1");
+    const p = try cx.project("proj_old", &.{"1.0.0"}, "oldrec/lines", "0.1");
     const r = try cx.lock(p);
     const e = try cx.lockEntry(p, "oldrec/lines", "1.0.0");
     cx.ok("a project on Mojo 1.0.0 locks an index line that has no builds key, as before", r.code == 0 and e != null and std.mem.eql(u8, e.?.version, "0.1.0") and
         std.mem.eql(u8, e.?.build, "mojo1.0.0_0") and std.mem.eql(u8, e.?.sha256, sha), try cx.text(r));
-    const lib = try resolveFor(cx, "1.1.0", "oldrec/lines", "0.1");
-    cx.ok("for Mojo 1.1.0 that line is one build, and the error names its Mojo", switch (lib) {
-        .ok => false,
-        .failed => |m| std.mem.eql(u8, m, "oldrec/lines 0.1.0 has no .mojoc for Mojo 1.1.0 (published for: 1.0.0). Build with mojo 1.0.0, ask the publisher for a 1.1.0 build, or pin a version that has one."),
-    }, switch (lib) {
-        .ok => "resolved",
-        .failed => |m| m,
-    });
+    const p11 = try cx.project("proj_old_11", &.{"1.1.0"}, "oldrec/lines", "0.1");
+    const r11 = try cx.lock(p11);
+    cx.ok("for Mojo 1.1.0 that line is one build, and the error names its Mojo", r11.code == 1 and
+        h.contains(r11.stderr, "error: oldrec/lines 0.1.0 has no .mojoc for Mojo 1.1.0 (published for: 1.0.0). Build with mojo 1.0.0, ask the publisher for a 1.1.0 build, or pin a version that has one.\n") and
+        !cx.exists(&.{ p11, "mopm.lock" }), try cx.text(r11));
 }
 
 test "one package version, one build per Mojo compiler, against the fake registry" {

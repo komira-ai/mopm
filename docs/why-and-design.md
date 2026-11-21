@@ -164,14 +164,15 @@ to the API, as a bearer token; the storage PUT carries none. The registry valida
 limits, manifest, filename, sha256) and generates the repodata entry itself from the validated manifest;
 it never copies metadata out of the uploaded archive.
 
-`mopm publish` takes one `--compiler` for each run; to a version that is already published it adds the build for that
-compiler, and `mopm stage` takes several (`--artifacts <mojo>=<dir>`, repeated) and stages them as the builds of one
-version (see [publishing a workspace](publishing-a-workspace.md)).
+`mopm publish` takes one `--compiler` for each run. To a version that a single publish made it adds the build for that
+compiler; a version that a group published (every version `mopm publish --staged` makes) takes added builds only through
+`mopm stage` and `mopm publish --staged`. `mopm stage` takes several compilers (`--artifacts <mojo>=<dir>`, repeated) and
+stages them as the builds of one version, and a build for another compiler can be staged and added later (see
+[publishing a workspace](publishing-a-workspace.md)).
 
-Today the `.mojoc` is an input: you run `mojo precompile` (or a build system does) and pass the result
-with `--mojoc`. The spec describes `publish` building one `.mojoc` per listed Mojo version itself; that
-is **planned** in the CLI. A buildrules integration (section 8) builds the `.mojoc` files as cached
-actions.
+The `.mojoc` is an input: you run `mojo precompile` (or a build system does) once for each Mojo version and pass
+the result with `--mojoc` (`publish`) or `--artifacts` (`stage`); mopm does not build it for you. A buildrules integration
+(section 8) builds the `.mojoc` files as cached actions.
 
 ## 6. Natives and autolink
 

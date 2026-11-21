@@ -109,10 +109,14 @@ conda channel (`channel.md`). Other files in the directory are ignored.
     build it staged:
     - a build the version has, with the same files byte for byte, is nothing new;
     - a build the version has, with a file that differs, is `refuse`: a published file is never replaced;
-    - a build the version lacks is an add, `upload` with only that build's files, when the member's
-      `manifest_sha256` equals the version's; with another `manifest_sha256` it is `refuse`: built from other sources;
+    - a build the version lacks is an add, `upload` with only that build's files, when the member has a source digest
+      (`source_sha256`, `channel.md` "Inside a package") and its `manifest_sha256` equals the version's; with another
+      `manifest_sha256` it is `refuse`: built from other sources; a member with no source digest is `refuse` too, since the
+      registry would reject the add and the rejection burns that build of that version;
     - more than one new build of a published version is `refuse`: one Mojo build per publish; stage the builds in
       separate runs, one `--compiler` each;
+    - a version published before `source_sha256` existed (its files carry no digest), staged again from the same
+      sources, is nothing new, though the files packed now are not the bytes the registry holds; it is not `refuse`;
     - nothing new is `skip`.
 - A package appears once. A group has at most 500 members to upload.
 - `version` is exactly `MAJOR.MINOR.PATCH`.

@@ -24,7 +24,9 @@ So the Mojo version is part of what a unit is.
   "Package naming"): `mopm stage` takes one `.mojoc` for each compiler and
   stages them as the builds of one version (`staged-set.md`), and a build for
   another Mojo can be added later to a published version, from the same
-  source. `mopm publish` takes one `--compiler` for each run.
+  source (a version that a group published takes it through `mopm stage`;
+  `mopm publish` takes one `--compiler` for each run and adds only to a version
+  that a single publish made).
   The older `[toolchain] mojo` is read too, as
   alternatives (a lock is made for the first that resolves); setting both is an
   error.

@@ -37,8 +37,8 @@ A dependency on another member (a path dependency, or a registry dependency whos
 | action | when |
 |---|---|
 | `upload` | the registry does not have the version, or has it published and the set holds one build of it that it lacks (see below) |
-| `skip` | the registry has the version with the same files |
-| `refuse` | the registry has the version with other bytes, or the version is yanked, or its number is burned, or the set adds a build built from other sources or more than one new build |
+| `skip` | the registry has the version with the same files, or a version published before `source_sha256` existed, restaged from the same workspace |
+| `refuse` | the registry has the version with other bytes, or the version is yanked, or its number is burned, or the set adds a build built from other sources, a build of a member with no source digest, or more than one new build |
 
 The run exits 0 when the set is staged, 1 when it refused or failed, and 2 for a usage error. A set with a `refuse` member is written all the same and `mopm stage` exits 1; `mopm publish --staged` will not send it.
 
@@ -46,7 +46,7 @@ A registry that lists `group_readme_objects` in the `features` of its `/health` 
 
 ### One version, several Mojo builds
 
-A package version has one build for each Mojo compiler it was built with (`mojo<compiler>_0` in the file name, `mojo-compiler ==<compiler>` in its dependencies). The registry creates each file once and never replaces it; a build for another compiler is a new file under the same version and can be added later, when it is built from the same source as the version: the same `mopm.toml` and the same library sources, which the registry compares by the `source_sha256` that `mopm pack`, `publish` and `stage` write into the package's metadata, and the same dependencies. A version published before `source_sha256` existed takes no added build; publish a new version. A yanked or taken-down version takes none either, and an added build has no state of its own: yanking the version yanks every build.
+A package version has one build for each Mojo compiler it was built with (`mojo<compiler>_0` in the file name, `mojo-compiler ==<compiler>` in its dependencies). The registry creates each file once and never replaces it; a build for another compiler is a new file under the same version and can be added later, when it is built from the same source as the version: the same `mopm.toml` and the same library sources, which the registry compares by the `source_sha256` that `mopm pack`, `publish` and `stage` write into the package's metadata, and the same dependencies. A version published before `source_sha256` existed takes no added build; publish a new version. `mopm stage` stages such a version again, unchanged, as a `skip`, whatever the digest it would write now, and refuses to stage an added build of a member that has no source digest (a package with no library directory, which `stage` says carries none): the registry would reject it and the rejection would burn that build of that version. A yanked or taken-down version takes none either, and an added build has no state of its own: yanking the version yanks every build, and so does a group yank of the group that published it (a group yank of a group whose member only added a build to a version someone else published leaves that version as it is).
 
 To publish version 0.4.0 of `example/util` with builds for Mojo 1.0.0, 1.1.0 and 1.2.0, one compiler to a run, build the library with each compiler into its own artifacts tree (`out-1.0.0`, `out-1.1.0`, `out-1.2.0`, each laid out as `--artifacts` above says) and run, once for each:
 
@@ -70,9 +70,9 @@ mopm publish --staged staged --registry beta
 
 A version has at most 20 files in all, so four platforms allow five builds in one publish.
 
-For a version that is already published, `mopm stage` refuses a staged build whose file differs from the published one ("a published file is never replaced"), a build whose sources differ from the version's ("built from other sources"), and more than one new build ("one Mojo build per publish": stage the builds in separate runs, as above). A build it has staged byte for byte is not sent again, and a set with nothing new is `skip`. A rejected add burns that build of that version, as a rejected publish burns a version number.
+For a version that is already published, `mopm stage` refuses a staged build whose file differs from the published one ("a published file is never replaced"), a build whose sources differ from the version's ("built from other sources"), and more than one new build ("one Mojo build per publish": stage the builds in separate runs, as above). A build it has staged byte for byte is not sent again, and a set with nothing new is `skip`. A rejected add burns that build of that version, as a rejected publish burns a version number: the build cannot be added to that version again, and the version itself is as it was.
 
-For one package, `mopm publish --compiler <mojo version> --mojoc <subdir>=<file>` to a version that is published adds that build the same way.
+For one package, `mopm publish --compiler <mojo version> --mojoc <subdir>=<file>` adds a build the same way, but only to a version that a single publish made. A version that a group published, which is every version `mopm publish --staged` makes, is refused by the registry with `version_exists` ("versions are immutable") when a single publish names it, even for a build it lacks. Add builds to such a version with `mopm stage` and `mopm publish --staged`, as above.
 
 ### mopm publish --staged
 
@@ -99,7 +99,7 @@ The token is `$MOPM_TOKEN`, else the login's. It is read after the plan has been
 
 Before it sends anything, mopm checks every file against `plan.json`, reads the readmes and builds the commit request; a set whose commit request is over the size `mopm stage` holds it to is refused here, but only when the registry does not take readmes as objects (a member with a readme makes the command read `GET /health` after the registry's `config.json`, with no token), naming the largest readmes ("...; this run created and uploaded nothing": only those two reads were sent), with `--dry-run` and `--no-commit` too (`--abort` reads no readme and is not refused). A run that resumes a group the registry already holds past `open` (its commit was accepted) is not refused: it waits for the group, and a `state.json` that says the commit was sent reads no `GET /health`. For a group found still `open` the refusal comes before any upload or commit, saying "nothing was uploaded or committed". The commit sends the readmes as this check read them. Then it asks for the group (one request, repeated while the registry is still reserving the members), uploads each file the registry does not hold, member by member in dependency order, commits the group, and waits. The command exits 0 only when the group is visible.
 
-A member the registry rejects ends the whole group, and none of its members is published. A rejected group frees its version numbers. A group that fails after the registry has begun to copy files burns them, and the next run needs new version numbers.
+A member the registry rejects ends the whole group, and none of its members is published. A rejected group frees its version numbers. A group that fails after the registry has begun to copy files burns them, and the next run needs new version numbers; for a member that only adds a build, what is burned is that build of that version, and the version is as it was.
 
 #### Timeouts and retries
 
@@ -187,7 +187,7 @@ mopm group status <group_id> [--registry <prod|gamma|beta|url>] [--config-dir <d
 
 These are generated commands: each makes one call of the registry's API (`PUT /groups/{group_id}/yank`, `GET /groups/{group_id}`), and `mopm group yank --help` prints the flags and the registry's description of the operation. The group id is the one `mopm publish --staged` printed and wrote into `report.json`. `--reason` says why the versions are yanked, and is shown to people who locked one of them. The registry is `prod` unless `--registry` names another.
 
-A group yank is not one flip, and it is not the inverse of a publish. The registry records the request and answers at once with the group; then it yanks the members one by one, and then it rebuilds the repodata and the index. `mopm group yank` and `mopm group unyank` print that answer and do not wait: `mopm group status <group_id>` shows the group's yank, which is `yanked` when it is done (or, after `mopm group unyank`, `restored`). While it runs, some members are yanked and others are not. An unyank restores only the versions that this group's yank changed: a version somebody yanked by hand before stays yanked.
+A group yank is not one flip, and it is not the inverse of a publish. The registry records the request and answers at once with the group; then it yanks the members one by one, and then it rebuilds the repodata and the index. `mopm group yank` and `mopm group unyank` print that answer and do not wait: `mopm group status <group_id>` shows the group's yank, which is `yanked` when it is done (or, after `mopm group unyank`, `restored`). A member that only added a build to a version published by another publish has no state of its own, so the group's yank leaves that version as it is: yank and unyank act on whole versions, and a version an add reached belongs to the publish that made it. While it runs, some members are yanked and others are not. An unyank restores only the versions that this group's yank changed: a version somebody yanked by hand before stays yanked.
 
 Only a group that is `visible` can be yanked. Before that the registry answers 409 with the code `group_not_settled`, and mopm prints its hint. A single version is yanked on its own with `mopm yank <namespace>/<name> <version>` and restored with `mopm unyank`.
 

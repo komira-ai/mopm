@@ -101,7 +101,11 @@ https://conda.<site>/<namespace>/
     an existing version that does not add a build.
   - A build for another Mojo can be **added** to a published version, one build for
     each publish (or group member), when it is built from the same source. A
-    yanked or taken-down version takes no added build.
+    yanked or taken-down version takes no added build. A single publish adds a
+    build only to a version that a single publish made: a version that a group
+    published (as `mopm publish --staged` makes them) is the group's, a single
+    publish naming it is refused `version_exists` whatever it adds, and a build
+    is added to it by a group member.
   - **The same source** means the same `<import name>.mopm.json` bytes (see
     "Inside a package"): its name, version, dependencies with their ranges and
     native libraries, and `source_sha256`, the digest of the package's sources.

@@ -47,7 +47,9 @@ the files of one or more builds, and its primary build is the one with the lowes
   among them, stay as they were. The same upload ids committed again resume the add, as they do for a new version.
 - `version_exists` refuses an add of a build the version already has (a published file is never replaced), of the files of
   more than one build, of a build another publish or a group that is validating holds, of a build whose own publish was
-  rejected (the build is burned, as a rejected version is), and of any version that is yanked, taken down or rejected. So does a
+  rejected (the build is burned, as a rejected version is), of any version that is yanked, taken down or rejected, and of any
+  single publish into a version a group published (`getVersion` shows its `group_id`), whatever it adds: a build is added to a
+  group's version by a group member. So does a
   commit whose `manifest_sha256` is not the one the version was committed with (the sources differ). The message is the
   catalogue's, the same for every refusal. A group is refused at create for everything but the manifest, which is compared at the
   commit (the group stays open); a refusal uses up no upload.
