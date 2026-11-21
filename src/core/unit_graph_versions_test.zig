@@ -1,6 +1,6 @@
 //! Tests of the unit graph for each Mojo version mopm pins a toolchain for (1.0.0, 1.1.0, 1.2.0): the toolchain
 //! section names that version's mojo-compiler on every platform, each version's closure hash is its own, a lock for
-//! two versions gives each its own toolchain, and a version mopm pins nothing for is refused naming the pinned ones.
+//! all three versions gives each its own toolchain, and a version mopm pins nothing for is refused naming the pinned ones.
 //! They are in a file of their own so unit_graph.zig stays under the size limit; mopm_core.zig runs them with the rest.
 
 const std = @import("std");
@@ -120,7 +120,7 @@ test "plan --unit-graph for a package of mojo 1.1.0 or 1.2.0 names that version'
     try std.testing.expectEqual(@as(usize, 9), seen.items.len);
 }
 
-test "a package of mojo 1.0.0 and 1.1.0 gets one toolchain per version from one lock, and a hash recorded under the other version is stale" {
+test "a package of mojo 1.0.0, 1.1.0 and 1.2.0 gets one toolchain per version from one lock, and a hash recorded under another version is stale" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -130,35 +130,40 @@ test "a package of mojo 1.0.0 and 1.1.0 gets one toolchain per version from one 
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
 
-    const c10 = try pinnedClosures(a, "1.0.0", &why);
-    const c11 = try pinnedClosures(a, "1.1.0", &why);
-    const l = try lockRecording(a, &.{ .{ .mojo = "1.0.0", .closures = c10 }, .{ .mojo = "1.1.0", .closures = c11 } }, &why);
-    try std.testing.expectEqual(@as(usize, 6), l.closures.len);
+    const versions = [_][]const u8{ "1.0.0", "1.1.0", "1.2.0" };
+    var recorded: [versions.len]Recorded = undefined;
+    for (versions, 0..) |v, k| recorded[k] = .{ .mojo = v, .closures = try pinnedClosures(a, v, &why) };
+    const l = try lockRecording(a, &recorded, &why);
+    try std.testing.expectEqual(@as(usize, 9), l.closures.len);
     // Written and read again, the lock is the same text.
     const text = try lock.render(a, l);
     try std.testing.expectEqualStrings(text, try lock.render(a, try lock.parse(a, text, &why)));
 
-    const listed = "[\"1.0.0\", \"1.1.0\"]";
+    const listed = "[\"1.0.0\", \"1.1.0\", \"1.2.0\"]";
     for (lock_subdirs, 0..) |subdir, i| {
-        const g0 = try graphFor(a, dir, listed, l, "1.0.0", subdir, &why);
-        const g1 = graphFor(a, dir, listed, l, "1.1.0", subdir, &why) catch |e| {
-            std.debug.print("mojo 1.1.0 on {s} refused: {s}\n", .{ subdir, why });
-            return e;
-        };
-        try std.testing.expectEqualStrings("1.0.0", g0.toolchain.mojo);
-        try std.testing.expectEqualStrings("1.1.0", g1.toolchain.mojo);
-        try std.testing.expectEqualStrings(c10[i][1], g0.toolchain.closure_sha256);
-        try std.testing.expectEqualStrings(c11[i][1], g1.toolchain.closure_sha256);
-        try std.testing.expect(!std.mem.eql(u8, g0.toolchain.closure_sha256, g1.toolchain.closure_sha256));
-        try std.testing.expect(g0.find("example/app@1.0.0#mojo1.0.0/lib") != null);
-        try std.testing.expect(g1.find("example/app@1.0.0#mojo1.1.0/lib") != null);
+        var hashes: [versions.len][]const u8 = undefined;
+        for (versions, 0..) |v, k| {
+            const g = graphFor(a, dir, listed, l, v, subdir, &why) catch |e| {
+                std.debug.print("mojo {s} on {s} refused: {s}\n", .{ v, subdir, why });
+                return e;
+            };
+            try std.testing.expectEqualStrings(v, g.toolchain.mojo);
+            try std.testing.expectEqualStrings(subdir, g.toolchain.subdir);
+            try std.testing.expectEqualStrings(recorded[k].closures[i][1], g.toolchain.closure_sha256);
+            try std.testing.expect(g.find(try std.fmt.allocPrint(a, "example/app@1.0.0#mojo{s}/lib", .{v})) != null);
+            for (hashes[0..k]) |h| try std.testing.expect(!std.mem.eql(u8, h, g.toolchain.closure_sha256));
+            hashes[k] = g.toolchain.closure_sha256;
+        }
     }
 
-    // A lock that records 1.0.0's closures under 1.1.0 too was not made by this mopm for 1.1.0.
-    const stale = try lockRecording(a, &.{ .{ .mojo = "1.0.0", .closures = c10 }, .{ .mojo = "1.1.0", .closures = c10 } }, &why);
+    // A lock that records 1.0.0's closures under 1.1.0 too was not made by this mopm for 1.1.0; 1.0.0 and 1.2.0 are not held to it.
+    var stale_rec = recorded;
+    stale_rec[1].closures = recorded[0].closures;
+    const stale = try lockRecording(a, &stale_rec, &why);
     try std.testing.expectError(error.Refused, graphFor(a, dir, listed, stale, "1.1.0", "linux-64", &why));
-    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "mopm.lock records toolchain closure {s} for mojo 1.1.0 on linux-64, but this mopm pins {s}; run 'mopm lock'", .{ c10[0][1], c11[0][1] }), why);
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "mopm.lock records toolchain closure {s} for mojo 1.1.0 on linux-64, but this mopm pins {s}; run 'mopm lock'", .{ recorded[0].closures[0][1], recorded[1].closures[0][1] }), why);
     _ = try graphFor(a, dir, listed, stale, "1.0.0", "linux-64", &why);
+    _ = try graphFor(a, dir, listed, stale, "1.2.0", "linux-64", &why);
 }
 
 test "a Mojo version mopm pins no toolchain for is refused on every platform, naming each version it pins" {

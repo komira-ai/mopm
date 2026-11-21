@@ -21,9 +21,7 @@ So the Mojo version is part of what a unit is.
 - `mopm.toml` lists the exact compiler versions a package builds for:
   `[package] mojo = ["1.0.0", "1.1.0"]` (a string is one version). `mopm
   publish` builds one `.mojoc` per listed version and uploads all of them under
-  one package version. Today the registry accepts one build per package
-  version: a package version is built for one Mojo, and supporting another
-  Mojo means publishing a new version. The older `[toolchain] mojo` is read too, as
+  one package version. The older `[toolchain] mojo` is read too, as
   alternatives (a lock is made for the first that resolves); setting both is an
   error.
 - A **unit id** is `<full name>@<version>#mojo<M>/<mode>[:<file>]`, for example
