@@ -103,7 +103,12 @@ pub struct RegistryError {
 
 impl RegistryError {
     pub fn new(code: ErrorCode, message: impl Into<String>, detail: Detail) -> Self {
-        RegistryError { code, message: message.into(), detail, retry_after: None }
+        RegistryError {
+            code,
+            message: message.into(),
+            detail,
+            retry_after: None,
+        }
     }
 
     /// The HTTP status of the code.
@@ -113,19 +118,34 @@ impl RegistryError {
 }
 
 fn detail<const N: usize>(pairs: [(&str, &str); N]) -> Detail {
-    pairs.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    pairs
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 pub fn invalid_request(why: &str) -> RegistryError {
-    RegistryError::new(ErrorCode::InvalidRequest, format!("The request is not valid: {why}."), detail([("detail", why)]))
+    RegistryError::new(
+        ErrorCode::InvalidRequest,
+        format!("The request is not valid: {why}."),
+        detail([("detail", why)]),
+    )
 }
 
 pub fn upload_invalid(why: &str) -> RegistryError {
-    RegistryError::new(ErrorCode::UploadInvalid, format!("The upload does not match what was declared: {why}."), detail([("detail", why)]))
+    RegistryError::new(
+        ErrorCode::UploadInvalid,
+        format!("The upload does not match what was declared: {why}."),
+        detail([("detail", why)]),
+    )
 }
 
 pub fn oidc_invalid(why: &str) -> RegistryError {
-    RegistryError::new(ErrorCode::OidcTokenInvalid, format!("The CI identity token was rejected: {why}."), detail([("detail", why)]))
+    RegistryError::new(
+        ErrorCode::OidcTokenInvalid,
+        format!("The CI identity token was rejected: {why}."),
+        detail([("detail", why)]),
+    )
 }
 
 pub fn version_exists(name: &str, version: &str, sha256: &str) -> RegistryError {
@@ -137,23 +157,43 @@ pub fn version_exists(name: &str, version: &str, sha256: &str) -> RegistryError 
 }
 
 pub fn name_taken(name: &str) -> RegistryError {
-    RegistryError::new(ErrorCode::NameTaken, format!("'{name}' is already taken."), detail([("name", name)]))
+    RegistryError::new(
+        ErrorCode::NameTaken,
+        format!("'{name}' is already taken."),
+        detail([("name", name)]),
+    )
 }
 
 pub fn version_not_found(name: &str, version: &str) -> RegistryError {
-    RegistryError::new(ErrorCode::VersionNotFound, format!("'{name}' has no version '{version}'."), detail([("name", name), ("version", version)]))
+    RegistryError::new(
+        ErrorCode::VersionNotFound,
+        format!("'{name}' has no version '{version}'."),
+        detail([("name", name), ("version", version)]),
+    )
 }
 
 pub fn already_owner(handle: &str, name: &str) -> RegistryError {
-    RegistryError::new(ErrorCode::AlreadyOwner, format!("'{handle}' already owns '{name}'."), detail([("name", name)]))
+    RegistryError::new(
+        ErrorCode::AlreadyOwner,
+        format!("'{handle}' already owns '{name}'."),
+        detail([("name", name)]),
+    )
 }
 
 pub fn owner_not_found(name: &str) -> RegistryError {
-    RegistryError::new(ErrorCode::OwnerNotFound, "That account is not an owner of the package.", detail([("name", name)]))
+    RegistryError::new(
+        ErrorCode::OwnerNotFound,
+        "That account is not an owner of the package.",
+        detail([("name", name)]),
+    )
 }
 
 pub(crate) fn invalid_version(input: &str) -> RegistryError {
-    RegistryError::new(ErrorCode::InvalidVersion, format!("'{input}' is not a valid version."), detail([("version", input)]))
+    RegistryError::new(
+        ErrorCode::InvalidVersion,
+        format!("'{input}' is not a valid version."),
+        detail([("version", input)]),
+    )
 }
 
 // ---- the template tables ------------------------------------------------------------
@@ -231,12 +271,48 @@ pub const PUBLISH_CATALOGUE: &[(ErrorCode, Template)] = &[
 /// `tutorial_unavailable` exist only in the v2 API, so they are in no other table. `route_not_found` is what a
 /// website function answers a path or method it does not serve (the v2 conventions: never a 400).
 pub const WEB_CATALOGUE: &[(ErrorCode, Template)] = &[
-    (ErrorCode::InvalidRequest, Template { message: "The request is not valid: {detail}.", hint: "Check the request against the API documentation; update mopm if it is old." }),
-    (ErrorCode::InternalError, Template { message: "Something went wrong on our side.", hint: "Try again; report the request id if it persists." }),
-    (ErrorCode::SessionRequired, Template { message: "You are not signed in to the website.", hint: "Sign in with GitHub, then try again." }),
-    (ErrorCode::CsrfFailed, Template { message: "The request did not come from a page of the website.", hint: "Reload the page and try again." }),
-    (ErrorCode::TutorialUnavailable, Template { message: "The sandbox service did not answer.", hint: "Wait {retry_after} seconds and try again; the Retry-After header says how long." }),
-    (ErrorCode::RouteNotFound, Template { message: "There is no such operation.", hint: "Check the request against the API documentation; update mopm if it is old." }),
+    (
+        ErrorCode::InvalidRequest,
+        Template {
+            message: "The request is not valid: {detail}.",
+            hint: "Check the request against the API documentation; update mopm if it is old.",
+        },
+    ),
+    (
+        ErrorCode::InternalError,
+        Template {
+            message: "Something went wrong on our side.",
+            hint: "Try again; report the request id if it persists.",
+        },
+    ),
+    (
+        ErrorCode::SessionRequired,
+        Template {
+            message: "You are not signed in to the website.",
+            hint: "Sign in with GitHub, then try again.",
+        },
+    ),
+    (
+        ErrorCode::CsrfFailed,
+        Template {
+            message: "The request did not come from a page of the website.",
+            hint: "Reload the page and try again.",
+        },
+    ),
+    (
+        ErrorCode::TutorialUnavailable,
+        Template {
+            message: "The sandbox service did not answer.",
+            hint: "Wait {retry_after} seconds and try again; the Retry-After header says how long.",
+        },
+    ),
+    (
+        ErrorCode::RouteNotFound,
+        Template {
+            message: "There is no such operation.",
+            hint: "Check the request against the API documentation; update mopm if it is old.",
+        },
+    ),
 ];
 
 fn lookup(table: &'static [(ErrorCode, Template)], code: ErrorCode) -> Option<Template> {
@@ -262,7 +338,10 @@ pub fn render(template: &str, detail: &Detail) -> String {
     while let Some(open) = rest.find('{') {
         out.push_str(&rest[..open]);
         let after = &rest[open + 1..];
-        let word_len = after.bytes().take_while(|b| b.is_ascii_alphanumeric() || *b == b'_').count();
+        let word_len = after
+            .bytes()
+            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+            .count();
         if word_len > 0 && after.as_bytes().get(word_len) == Some(&b'}') {
             if let Some(v) = detail.get(&after[..word_len]) {
                 out.push_str(v);
@@ -293,17 +372,28 @@ pub struct ErrorView {
     pub retry_after: Option<u64>,
 }
 
-fn view(code: ErrorCode, t: Template, status: u16, detail: &Detail, retry_after: Option<u64>) -> ErrorView {
+fn view(
+    code: ErrorCode,
+    t: Template,
+    status: u16,
+    detail: &Detail,
+    retry_after: Option<u64>,
+) -> ErrorView {
     ErrorView {
         status,
-        body: ErrorBody { code: code.as_str(), message: render(t.message, detail), hint: render(t.hint, detail) },
+        body: ErrorBody {
+            code: code.as_str(),
+            message: render(t.message, detail),
+            hint: render(t.hint, detail),
+        },
         retry_after,
     }
 }
 
 /// `internal_error` as the publish routes answer it (an error nobody classified).
 pub fn internal_error_view() -> ErrorView {
-    let t = publish_template(ErrorCode::InternalError).expect("the publish table holds internal_error");
+    let t =
+        publish_template(ErrorCode::InternalError).expect("the publish table holds internal_error");
     view(ErrorCode::InternalError, t, 500, &Detail::new(), None)
 }
 
@@ -323,7 +413,8 @@ pub fn read_auth_error_view(err: &RegistryError) -> ErrorView {
         Some(t) => view(err.code, t, err.status(), &err.detail, None),
         None => view(
             ErrorCode::InternalError,
-            read_auth_template(ErrorCode::InternalError).expect("the read table holds internal_error"),
+            read_auth_template(ErrorCode::InternalError)
+                .expect("the read table holds internal_error"),
             ErrorCode::InternalError.status(),
             &Detail::new(),
             None,

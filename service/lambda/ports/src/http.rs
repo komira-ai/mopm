@@ -97,9 +97,24 @@ mod tests {
 
     #[test]
     fn an_error_says_which_failure_and_the_detail() {
-        let e = |failure| HttpError { failure, detail: "api.example.test:443".to_string() }.to_string();
-        assert_eq!(e(HttpFailure::Connect), "HTTP request got no answer: no connection: api.example.test:443");
-        assert_eq!(e(HttpFailure::Timeout), "HTTP request got no answer: timed out: api.example.test:443");
-        assert_eq!(e(HttpFailure::Tls), "HTTP request got no answer: TLS failed: api.example.test:443");
+        let e = |failure| {
+            HttpError {
+                failure,
+                detail: "api.example.test:443".to_string(),
+            }
+            .to_string()
+        };
+        assert_eq!(
+            e(HttpFailure::Connect),
+            "HTTP request got no answer: no connection: api.example.test:443"
+        );
+        assert_eq!(
+            e(HttpFailure::Timeout),
+            "HTTP request got no answer: timed out: api.example.test:443"
+        );
+        assert_eq!(
+            e(HttpFailure::Tls),
+            "HTTP request got no answer: TLS failed: api.example.test:443"
+        );
     }
 }

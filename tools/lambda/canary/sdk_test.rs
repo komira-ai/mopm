@@ -43,7 +43,10 @@ fn fake_dynamodb(reply: &'static str) -> (String, thread::JoinHandle<Seen>) {
             buf.extend_from_slice(&chunk[..n]);
             if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
                 let head = String::from_utf8_lossy(&buf[..i]).to_string();
-                break (i + 4, header(&head, "content-length").map_or(0, |v| v.parse::<usize>().unwrap()));
+                break (
+                    i + 4,
+                    header(&head, "content-length").map_or(0, |v| v.parse::<usize>().unwrap()),
+                );
             }
         };
         while buf.len() < head_end + content_length {
@@ -65,7 +68,10 @@ fn fake_dynamodb(reply: &'static str) -> (String, thread::JoinHandle<Seen>) {
 }
 
 fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
 }
 
 fn credentials() -> Credentials {
@@ -84,14 +90,27 @@ fn dynamodb(endpoint: &str) -> aws_sdk_dynamodb::Client {
 }
 
 /// The `title` attribute of the item whose string key `id` is given, if the item exists.
-async fn get_title(client: &aws_sdk_dynamodb::Client, id: &str) -> Result<Option<String>, aws_sdk_dynamodb::Error> {
-    let out = client.get_item().table_name("canary").key("id", AttributeValue::S(id.to_string())).send().await?;
-    Ok(out.item().and_then(|item| item.get("title")).and_then(|v| v.as_s().ok()).cloned())
+async fn get_title(
+    client: &aws_sdk_dynamodb::Client,
+    id: &str,
+) -> Result<Option<String>, aws_sdk_dynamodb::Error> {
+    let out = client
+        .get_item()
+        .table_name("canary")
+        .key("id", AttributeValue::S(id.to_string()))
+        .send()
+        .await?;
+    Ok(out
+        .item()
+        .and_then(|item| item.get("title"))
+        .and_then(|v| v.as_s().ok())
+        .cloned())
 }
 
 #[test]
 fn get_item_is_serialized_signed_and_deserialized() {
-    let (url, server) = fake_dynamodb("200 OK\n{\"Item\":{\"id\":{\"S\":\"k1\"},\"title\":{\"S\":\"hello\"}}}");
+    let (url, server) =
+        fake_dynamodb("200 OK\n{\"Item\":{\"id\":{\"S\":\"k1\"},\"title\":{\"S\":\"hello\"}}}");
     let title = runtime().block_on(async { get_title(&dynamodb(&url), "k1").await });
     let seen = server.join().unwrap();
 
@@ -100,22 +119,51 @@ fn get_item_is_serialized_signed_and_deserialized() {
 
     // Serialization: operation, protocol, body.
     assert!(seen.head.starts_with("POST / HTTP/1.1"), "{}", seen.head);
-    assert_eq!(header(&seen.head, "x-amz-target"), Some("DynamoDB_20120810.GetItem"));
-    assert_eq!(header(&seen.head, "content-type"), Some("application/x-amz-json-1.0"));
+    assert_eq!(
+        header(&seen.head, "x-amz-target"),
+        Some("DynamoDB_20120810.GetItem")
+    );
+    assert_eq!(
+        header(&seen.head, "content-type"),
+        Some("application/x-amz-json-1.0")
+    );
     let body: serde_json::Value = serde_json::from_str(&seen.body).unwrap();
-    assert_eq!(body, serde_json::json!({"TableName": "canary", "Key": {"id": {"S": "k1"}}}));
+    assert_eq!(
+        body,
+        serde_json::json!({"TableName": "canary", "Key": {"id": {"S": "k1"}}})
+    );
 
     // Signing: SigV4 for the key, region and service we configured, over host and x-amz-date.
     let auth = header(&seen.head, "authorization").expect("a signed request");
-    assert!(auth.starts_with("AWS4-HMAC-SHA256 Credential=AKIDFAKE/"), "{auth}");
+    assert!(
+        auth.starts_with("AWS4-HMAC-SHA256 Credential=AKIDFAKE/"),
+        "{auth}"
+    );
     assert!(auth.contains("/us-east-1/dynamodb/aws4_request"), "{auth}");
-    let signed = auth.split("SignedHeaders=").nth(1).unwrap().split(',').next().unwrap();
-    assert!(signed.split(';').any(|h| h == "host") && signed.split(';').any(|h| h == "x-amz-date"), "{auth}");
+    let signed = auth
+        .split("SignedHeaders=")
+        .nth(1)
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap();
+    assert!(
+        signed.split(';').any(|h| h == "host") && signed.split(';').any(|h| h == "x-amz-date"),
+        "{auth}"
+    );
     let signature = auth.split("Signature=").nth(1).unwrap();
     assert_eq!(signature.len(), 64, "{auth}");
     assert!(signature.bytes().all(|b| b.is_ascii_hexdigit()), "{auth}");
-    assert!(header(&seen.head, "x-amz-date").is_some_and(|d| d.len() == 16 && d.ends_with('Z')), "{}", seen.head);
-    assert!(seen.head.to_lowercase().contains("aws-sdk-rust"), "{}", seen.head);
+    assert!(
+        header(&seen.head, "x-amz-date").is_some_and(|d| d.len() == 16 && d.ends_with('Z')),
+        "{}",
+        seen.head
+    );
+    assert!(
+        seen.head.to_lowercase().contains("aws-sdk-rust"),
+        "{}",
+        seen.head
+    );
 }
 
 #[test]
@@ -127,7 +175,8 @@ fn a_service_error_comes_back_as_an_error() {
     server.join().unwrap();
     let err = result.unwrap_err();
     assert!(
-        err.to_string().contains("ResourceNotFoundException") || format!("{err:?}").contains("ResourceNotFoundException"),
+        err.to_string().contains("ResourceNotFoundException")
+            || format!("{err:?}").contains("ResourceNotFoundException"),
         "{err:?}"
     );
 }

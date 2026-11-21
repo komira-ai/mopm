@@ -17,7 +17,10 @@ use mopm_testing::fake_dynamo::{FakeConfig, FakeDynamo, Grants};
 use mopm_testing::records::{audit, group_row, rec, with_state};
 use serde_json::{json, Value};
 
-use crate::dynamo::{AuthTables, DynamoAuthStore, DynamoPublishStore, DynamoStore, PublishTables, Tables, SEARCH_INDEX};
+use crate::dynamo::{
+    AuthTables, DynamoAuthStore, DynamoPublishStore, DynamoStore, PublishTables, Tables,
+    SEARCH_INDEX,
+};
 
 const LAMBDA_GRANTS: &str = include_str!("../../../api/test/fixtures/lambda-auth-grants.json");
 
@@ -26,14 +29,23 @@ fn client(endpoint: &str) -> Client {
         .behavior_version(BehaviorVersion::latest())
         .region(Region::new("us-east-1"))
         .endpoint_url(endpoint)
-        .credentials_provider(Credentials::new("AKIDFAKE", "fakesecret", None, None, "static"))
+        .credentials_provider(Credentials::new(
+            "AKIDFAKE",
+            "fakesecret",
+            None,
+            None,
+            "static",
+        ))
         .build();
     Client::from_conf(config)
 }
 
 fn rig() -> (DynamoStore, FakeDynamo) {
     let fake = FakeDynamo::start(FakeConfig::registry("t"));
-    (DynamoStore::new(client(&fake.endpoint()), Tables::for_stage("t")), fake)
+    (
+        DynamoStore::new(client(&fake.endpoint()), Tables::for_stage("t")),
+        fake,
+    )
 }
 
 fn clock() -> Arc<FixedClock> {
@@ -42,11 +54,27 @@ fn clock() -> Arc<FixedClock> {
 
 fn auth_rig(cfg: FakeConfig) -> (DynamoAuthStore, FakeDynamo) {
     let fake = FakeDynamo::start(cfg);
-    (DynamoAuthStore::new(client(&fake.endpoint()), AuthTables::for_stage("t"), clock()), fake)
+    (
+        DynamoAuthStore::new(
+            client(&fake.endpoint()),
+            AuthTables::for_stage("t"),
+            clock(),
+        ),
+        fake,
+    )
 }
 
 fn pkg(name: &str) -> PackageRecord {
-    PackageRecord { name: name.into(), state: PackageState::Active, created_at: "2026-10-13T12:00:00Z".into(), repository: None, license: None, description: None, homepage: None, keywords: None }
+    PackageRecord {
+        name: name.into(),
+        state: PackageState::Active,
+        created_at: "2026-10-13T12:00:00Z".into(),
+        repository: None,
+        license: None,
+        description: None,
+        homepage: None,
+        keywords: None,
+    }
 }
 
 fn hash(n: u32) -> String {
@@ -88,7 +116,11 @@ fn login() -> DeviceLoginRecord {
 
 /// The body of the requests of one operation, in order.
 fn bodies(fake: &FakeDynamo, op: &str) -> Vec<Value> {
-    fake.requests().into_iter().filter(|r| r.operation == op).map(|r| r.body).collect()
+    fake.requests()
+        .into_iter()
+        .filter(|r| r.operation == op)
+        .map(|r| r.body)
+        .collect()
 }
 
 // ---- rows: the wire form of the TypeScript adapters ----------------------------------------------
@@ -96,7 +128,9 @@ fn bodies(fake: &FakeDynamo, op: &str) -> Vec<Value> {
 #[tokio::test]
 async fn a_version_is_one_row_keyed_by_the_version_with_the_spelling_beside_it() {
     let (s, fake) = rig();
-    s.create_version(&rec("p", "1.0.0"), &audit("p", "publish", None)).await.unwrap();
+    s.create_version(&rec("p", "1.0.0"), &audit("p", "publish", None))
+        .await
+        .unwrap();
     let rows = fake.dump("mopm-t-versions");
     assert_eq!(rows.len(), 1);
     let url = "https://conda.example.invalid/linux-64/mojo-p-1.0.0-mojo1.0.0_0.conda";
@@ -130,7 +164,9 @@ async fn a_version_is_one_row_keyed_by_the_version_with_the_spelling_beside_it()
 async fn the_version_row_reads_back_to_the_record() {
     let (s, _fake) = rig();
     let r = rec("p", "1.2.3");
-    s.create_version(&r, &audit("p", "publish", None)).await.unwrap();
+    s.create_version(&r, &audit("p", "publish", None))
+        .await
+        .unwrap();
     assert_eq!(s.get_version("p", "1.2.3").await.unwrap(), Some(r));
 }
 
@@ -140,7 +176,10 @@ async fn an_audit_row_has_the_time_then_id_sort_key() {
     let a = audit("p", "claim", None);
     s.append_audit(&a).await.unwrap();
     let rows = fake.dump("mopm-t-audit");
-    assert_eq!(rows[0]["ts_seq"], json!({"S": format!("{}#{}", a.ts, a.id)}));
+    assert_eq!(
+        rows[0]["ts_seq"],
+        json!({"S": format!("{}#{}", a.ts, a.id)})
+    );
     assert_eq!(rows[0]["action"], json!({"S": "claim"}));
     assert_eq!(s.list_audit("p").await.unwrap(), vec![a]);
 }
@@ -160,14 +199,24 @@ async fn a_package_row_carries_the_index_attribute_and_reads_do_not_show_it() {
 async fn the_index_is_sparse_a_row_without_the_attribute_is_gettable_but_not_searchable() {
     let (s, fake) = rig();
     fake.seed("mopm-t-packages", json!({"name": {"S": "legacy"}, "state": {"S": "claimed"}, "created_at": {"S": "2026-10-13T12:00:00Z"}}));
-    assert_eq!(s.get_package("legacy").await.unwrap().map(|p| p.name), Some("legacy".to_string()));
+    assert_eq!(
+        s.get_package("legacy").await.unwrap().map(|p| p.name),
+        Some("legacy".to_string())
+    );
     assert!(s.search_packages("", None, 10).await.unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn an_owner_has_a_string_key_and_the_number_beside_it() {
     let (s, fake) = rig();
-    s.add_owner(&OwnerRecord { name: "p".into(), github_id: 4, handle: "u4".into(), added_at: "2026-10-13T12:00:00Z".into() }).await.unwrap();
+    s.add_owner(&OwnerRecord {
+        name: "p".into(),
+        github_id: 4,
+        handle: "u4".into(),
+        added_at: "2026-10-13T12:00:00Z".into(),
+    })
+    .await
+    .unwrap();
     assert_eq!(
         fake.dump("mopm-t-owners")[0],
         json!({"name": {"S": "p"}, "github_id": {"S": "4"}, "github_id_num": {"N": "4"}, "handle": {"S": "u4"}, "added_at": {"S": "2026-10-13T12:00:00Z"}})
@@ -177,11 +226,26 @@ async fn an_owner_has_a_string_key_and_the_number_beside_it() {
 #[test]
 fn the_search_index_constants_and_table_names_are_the_stacks() {
     // service/infra/stacks/lib/data-stack.ts defines the index; store.test.ts pins the adapter's constants.
-    assert_eq!((SEARCH_INDEX.name, SEARCH_INDEX.bucket_attribute, SEARCH_INDEX.bucket), ("by_search_bucket", "search_bucket", "all"));
-    assert_eq!(SEARCH_INDEX.projected, ["description", "state", "created_at"]);
+    assert_eq!(
+        (
+            SEARCH_INDEX.name,
+            SEARCH_INDEX.bucket_attribute,
+            SEARCH_INDEX.bucket
+        ),
+        ("by_search_bucket", "search_bucket", "all")
+    );
+    assert_eq!(
+        SEARCH_INDEX.projected,
+        ["description", "state", "created_at"]
+    );
     assert_eq!(
         Tables::for_stage("beta"),
-        Tables { packages: "mopm-beta-packages".into(), versions: "mopm-beta-versions".into(), owners: "mopm-beta-owners".into(), audit: "mopm-beta-audit".into() }
+        Tables {
+            packages: "mopm-beta-packages".into(),
+            versions: "mopm-beta-versions".into(),
+            owners: "mopm-beta-owners".into(),
+            audit: "mopm-beta-audit".into()
+        }
     );
 }
 
@@ -190,16 +254,32 @@ fn the_search_index_constants_and_table_names_are_the_stacks() {
 #[tokio::test]
 async fn creating_a_version_never_reads_first_the_condition_is_the_only_guard() {
     let (s, fake) = rig();
-    s.create_version(&rec("p", "1.0.0"), &audit("p", "publish", None)).await.unwrap();
+    s.create_version(&rec("p", "1.0.0"), &audit("p", "publish", None))
+        .await
+        .unwrap();
     assert_eq!(fake.operations(), ["TransactWriteItems"]);
-    assert!(fake.requests().iter().all(|r| r.signed), "every request is SigV4-signed");
+    assert!(
+        fake.requests().iter().all(|r| r.signed),
+        "every request is SigV4-signed"
+    );
 }
 
 #[tokio::test]
 async fn every_transaction_carries_a_client_request_token_and_the_conditions() {
     let (s, fake) = rig();
-    s.create_version(&rec("p", "1.0.0"), &audit("p", "publish", None)).await.unwrap();
-    s.update_version("p", "1.0.0", &VersionEvent::Yank { reason: "bad".into() }, &audit("p", "yank", None)).await.unwrap();
+    s.create_version(&rec("p", "1.0.0"), &audit("p", "publish", None))
+        .await
+        .unwrap();
+    s.update_version(
+        "p",
+        "1.0.0",
+        &VersionEvent::Yank {
+            reason: "bad".into(),
+        },
+        &audit("p", "yank", None),
+    )
+    .await
+    .unwrap();
     let txs = bodies(&fake, "TransactWriteItems");
     assert_eq!(txs.len(), 2);
     for t in &txs {
@@ -207,22 +287,43 @@ async fn every_transaction_carries_a_client_request_token_and_the_conditions() {
         assert!(!token.is_empty());
         assert_eq!(t["TransactItems"].as_array().unwrap().len(), 2);
     }
-    assert_ne!(txs[0]["ClientRequestToken"], txs[1]["ClientRequestToken"], "a token per transaction");
+    assert_ne!(
+        txs[0]["ClientRequestToken"], txs[1]["ClientRequestToken"],
+        "a token per transaction"
+    );
     let create = &txs[0]["TransactItems"];
     assert_eq!(create[0]["Put"]["TableName"], "mopm-t-versions");
-    assert_eq!(create[0]["Put"]["ConditionExpression"], "attribute_not_exists(#n)");
-    assert_eq!(create[0]["Put"]["ExpressionAttributeNames"], json!({"#n": "name"}));
+    assert_eq!(
+        create[0]["Put"]["ConditionExpression"],
+        "attribute_not_exists(#n)"
+    );
+    assert_eq!(
+        create[0]["Put"]["ExpressionAttributeNames"],
+        json!({"#n": "name"})
+    );
     assert_eq!(create[1]["Put"]["TableName"], "mopm-t-audit");
     let update = &txs[1]["TransactItems"];
     assert_eq!(update[0]["Put"]["ConditionExpression"], "#r = :r");
-    assert_eq!(update[0]["Put"]["ExpressionAttributeValues"], json!({":r": {"N": "0"}}));
+    assert_eq!(
+        update[0]["Put"]["ExpressionAttributeValues"],
+        json!({":r": {"N": "0"}})
+    );
 }
 
 #[tokio::test]
 async fn an_idempotent_update_reads_and_writes_nothing() {
     let (s, fake) = rig();
-    s.create_version(&rec("p", "1.0.0"), &audit("p", "publish", None)).await.unwrap();
-    s.update_version("p", "1.0.0", &VersionEvent::Publish(None), &audit("p", "publish-again", None)).await.unwrap();
+    s.create_version(&rec("p", "1.0.0"), &audit("p", "publish", None))
+        .await
+        .unwrap();
+    s.update_version(
+        "p",
+        "1.0.0",
+        &VersionEvent::Publish(None),
+        &audit("p", "publish-again", None),
+    )
+    .await
+    .unwrap();
     assert_eq!(fake.operations(), ["TransactWriteItems", "GetItem"]);
 }
 
@@ -268,26 +369,42 @@ async fn seeded() -> (DynamoStore, FakeDynamo) {
 async fn a_prefix_search_is_one_query_on_the_index_resumed_with_the_starting_key() {
     let (s, fake) = seeded().await; // the fake returns at most two items a page
     let got = s.search_packages("http_", Some("http_a"), 3).await.unwrap();
-    assert_eq!(got.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["http_b", "http_c"]);
+    assert_eq!(
+        got.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        ["http_b", "http_c"]
+    );
     // Starts after 'http_a'. Only 'http_b' and 'http_c' match after it, so the first page ends the search.
     let q = bodies(&fake, "Query");
     assert_eq!(q.len(), 1);
     let start = json!({"search_bucket": {"S": "all"}, "name": {"S": "http_a"}});
-    assert_eq!(q[0], with(search_base(Some("http_")), json!({"Limit": 3, "ExclusiveStartKey": start})));
+    assert_eq!(
+        q[0],
+        with(
+            search_base(Some("http_")),
+            json!({"Limit": 3, "ExclusiveStartKey": start})
+        )
+    );
 }
 
 #[tokio::test]
-async fn a_search_that_spans_index_pages_continues_from_the_last_evaluated_key_with_a_shrinking_limit() {
+async fn a_search_that_spans_index_pages_continues_from_the_last_evaluated_key_with_a_shrinking_limit(
+) {
     let (s, fake) = seeded().await;
     let got = s.search_packages("http", None, 3).await.unwrap();
-    assert_eq!(got.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["http_a", "http_b", "http_c"]);
+    assert_eq!(
+        got.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        ["http_a", "http_b", "http_c"]
+    );
     let q = bodies(&fake, "Query");
     assert_eq!(q.len(), 2, "pages of two: two queries for three names");
     assert_eq!(q[0], with(search_base(Some("http")), json!({"Limit": 3})));
     let next = &q[1];
     assert_eq!(next["Limit"], 1);
     assert_eq!(next["ExclusiveStartKey"]["name"], json!({"S": "http_b"}));
-    assert_eq!(next["ExclusiveStartKey"]["search_bucket"], json!({"S": "all"}));
+    assert_eq!(
+        next["ExclusiveStartKey"]["search_bucket"],
+        json!({"S": "all"})
+    );
 }
 
 #[tokio::test]
@@ -312,7 +429,10 @@ async fn search_never_scans_and_a_zero_limit_asks_nothing() {
 async fn the_search_index_returns_only_what_it_projects() {
     let (s, _fake) = seeded().await;
     let one = s.search_packages("zlib", None, 1).await.unwrap().remove(0);
-    assert_eq!(serde_json::to_value(&one).unwrap(), json!({"name": "zlib", "state": "active", "created_at": "2026-10-13T12:00:00Z", "description": "zlib"}));
+    assert_eq!(
+        serde_json::to_value(&one).unwrap(),
+        json!({"name": "zlib", "state": "active", "created_at": "2026-10-13T12:00:00Z", "description": "zlib"})
+    );
 }
 
 // ---- the fake is strict where DynamoDB is -------------------------------------------------------------
@@ -329,7 +449,12 @@ async fn the_fake_refuses_what_a_real_table_refuses() {
         let text = DisplayErrorContext(&e).to_string();
         assert!(text.contains(needle), "{needle} not in {text}");
     };
-    let base = || c.query().table_name("mopm-t-packages").index_name("by_search_bucket").limit(5);
+    let base = || {
+        c.query()
+            .table_name("mopm-t-packages")
+            .index_name("by_search_bucket")
+            .limit(5)
+    };
     // an empty begins_with operand
     refused(
         base()
@@ -343,7 +468,14 @@ async fn the_fake_refuses_what_a_real_table_refuses() {
         "begins_with",
     );
     // a reserved word used raw
-    refused(base().key_condition_expression("search_bucket = :b").expression_attribute_values(":b", S("all".into())).send().await, "placeholder");
+    refused(
+        base()
+            .key_condition_expression("search_bucket = :b")
+            .expression_attribute_values(":b", S("all".into()))
+            .send()
+            .await,
+        "placeholder",
+    );
     // a name nothing uses
     refused(
         base()
@@ -379,10 +511,25 @@ async fn a_token_row_has_the_hash_and_the_prefix_and_no_secret_and_numeric_ttl()
     assert_eq!(row["token_hash"], json!({"S": hash(1)}));
     assert!(row.get("hash").is_none());
     let keys: Vec<&String> = row.as_object().unwrap().keys().collect();
-    assert!(keys.iter().all(|k| !k.contains("secret") && k.as_str() != "token"), "{keys:?}");
-    assert_eq!(row["expires_at"], json!({"N": "1794571200"}), "epoch seconds of 2026-11-13T12:00:00.123Z, floored");
-    assert_eq!(row["expires_at_iso"], json!({"S": "2026-11-13T12:00:00.123Z"}));
-    assert_eq!(row["github_id"], json!({"S": "1"}), "index keys are strings");
+    assert!(
+        keys.iter()
+            .all(|k| !k.contains("secret") && k.as_str() != "token"),
+        "{keys:?}"
+    );
+    assert_eq!(
+        row["expires_at"],
+        json!({"N": "1794571200"}),
+        "epoch seconds of 2026-11-13T12:00:00.123Z, floored"
+    );
+    assert_eq!(
+        row["expires_at_iso"],
+        json!({"S": "2026-11-13T12:00:00.123Z"})
+    );
+    assert_eq!(
+        row["github_id"],
+        json!({"S": "1"}),
+        "index keys are strings"
+    );
     assert_eq!(row["github_id_num"], json!({"N": "1"}));
     assert_eq!(row["scopes"], json!({"L": [{"S": "publish"}]}));
     assert_eq!(row["all_current"], json!({"BOOL": false}));
@@ -398,7 +545,9 @@ async fn a_token_hash_is_never_overwritten() {
 #[tokio::test]
 async fn a_user_row_has_the_string_key_and_the_number() {
     let (s, fake) = auth_rig(FakeConfig::registry("t"));
-    s.upsert_user(7, "octocat", "2026-10-01T00:00:00.000Z", Some(true)).await.unwrap();
+    s.upsert_user(7, "octocat", "2026-10-01T00:00:00.000Z", Some(true))
+        .await
+        .unwrap();
     assert_eq!(
         fake.dump("mopm-t-users")[0],
         json!({"github_id": {"S": "7"}, "github_id_num": {"N": "7"}, "handle": {"S": "octocat"}, "created_at": {"S": "2026-10-01T00:00:00.000Z"}, "last_login_at": {"S": "2026-10-01T00:00:00.000Z"}, "two_factor": {"BOOL": true}})
@@ -412,16 +561,27 @@ fn lambda_grants() -> FakeConfig {
 #[tokio::test]
 async fn the_adapter_needs_no_permission_the_lambda_role_lacks() {
     let (s, fake) = auth_rig(lambda_grants());
-    s.upsert_user(7, "octocat", "2026-10-01T00:00:00.000Z", None).await.unwrap();
+    s.upsert_user(7, "octocat", "2026-10-01T00:00:00.000Z", None)
+        .await
+        .unwrap();
     s.put_token(&tok("tok_a", &hash(1))).await.unwrap();
-    s.revoke_token(&hash(1), "2026-10-14T13:00:00.000Z").await.unwrap();
-    s.touch_token(&hash(1), "2026-10-14T13:00:00.000Z").await.unwrap();
+    s.revoke_token(&hash(1), "2026-10-14T13:00:00.000Z")
+        .await
+        .unwrap();
+    s.touch_token(&hash(1), "2026-10-14T13:00:00.000Z")
+        .await
+        .unwrap();
     assert_eq!(s.list_tokens(1).await.unwrap().len(), 1);
     assert!(s.get_user_token(1, "tok_a").await.unwrap().is_some());
     s.put_device_login(&login()).await.unwrap();
-    s.set_device_polled(&login().id, "2026-10-14T12:00:07.000Z", 10).await.unwrap();
+    s.set_device_polled(&login().id, "2026-10-14T12:00:07.000Z", 10)
+        .await
+        .unwrap();
     s.delete_device_login(&login().id).await.unwrap();
-    assert!(!fake.operations().iter().any(|o| o == "DeleteItem"), "the role is never granted DeleteItem");
+    assert!(
+        !fake.operations().iter().any(|o| o == "DeleteItem"),
+        "the role is never granted DeleteItem"
+    );
 }
 
 #[tokio::test]
@@ -431,7 +591,15 @@ async fn trusted_publishers_can_be_read_and_not_written_with_the_lambda_grants()
         "mopm-t-trusted_publishers",
         json!({"name": {"S": "alpha"}, "publisher": {"S": "tp1"}, "id": {"S": "tp1"}, "repository_id": {"S": "111"}, "repository_owner_id": {"S": "222"}, "workflow": {"S": ".github/workflows/release.yml"}, "added_by": {"N": "1"}, "added_at": {"S": "2026-10-14T12:00:00.000Z"}}),
     );
-    assert_eq!(s.list_trusted_publishers("alpha").await.unwrap().iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["tp1"]);
+    assert_eq!(
+        s.list_trusted_publishers("alpha")
+            .await
+            .unwrap()
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect::<Vec<_>>(),
+        ["tp1"]
+    );
     let tp = TrustedPublisher {
         id: "tp9".into(),
         name: "alpha".into(),
@@ -447,16 +615,26 @@ async fn trusted_publishers_can_be_read_and_not_written_with_the_lambda_grants()
 }
 
 #[tokio::test]
-async fn no_row_is_ever_deleted_a_consumed_login_keeps_the_row_drops_githubs_code_and_keeps_the_ttl() {
+async fn no_row_is_ever_deleted_a_consumed_login_keeps_the_row_drops_githubs_code_and_keeps_the_ttl(
+) {
     let (s, fake) = auth_rig(lambda_grants());
     s.put_device_login(&login()).await.unwrap();
     s.delete_device_login(&login().id).await.unwrap();
     let rows = fake.dump("mopm-t-device_logins");
     assert_eq!(rows.len(), 1);
     assert!(rows[0].get("github_device_code").is_none());
-    assert!(!rows.iter().any(|r| r.to_string().contains("gh-device-code")));
-    assert_eq!(rows[0]["expires_at"], json!({"N": "1791979800"}), "the TTL attribute is a number");
-    assert_eq!(rows[0]["consumed_at"], json!({"S": "2025-10-13T12:00:00.000Z"}));
+    assert!(!rows
+        .iter()
+        .any(|r| r.to_string().contains("gh-device-code")));
+    assert_eq!(
+        rows[0]["expires_at"],
+        json!({"N": "1791979800"}),
+        "the TTL attribute is a number"
+    );
+    assert_eq!(
+        rows[0]["consumed_at"],
+        json!({"S": "2025-10-13T12:00:00.000Z"})
+    );
     assert!(!fake.operations().iter().any(|o| o == "DeleteItem"));
 }
 
@@ -467,7 +645,11 @@ async fn the_by_account_index_is_read_without_a_consistent_read() {
     s.list_tokens(1).await.unwrap();
     s.get_user_token(1, "tok_a").await.unwrap();
     for q in bodies(&fake, "Query") {
-        assert!(q.get("ConsistentRead").is_none_or(|c| c == &Value::Bool(false)), "{q}");
+        assert!(
+            q.get("ConsistentRead")
+                .is_none_or(|c| c == &Value::Bool(false)),
+            "{q}"
+        );
         assert_eq!(q["IndexName"], "by_github_id");
     }
 }
@@ -517,15 +699,40 @@ async fn publish_uses_only_get_item_and_put_item_which_is_what_the_role_is_grant
     s.use_upload("u1", "p").await.unwrap();
     s.claim_version("demo", "1", "p").await.unwrap();
     s.create_publish(&pr).await.unwrap();
-    s.update_publish("p", |c| Some(PublishRecord { status: PublishStatus::Validating, ..c.clone() })).await.unwrap();
-    s.hit("rl#t#tok#2026-10-14", 5, 1_792_000_000).await.unwrap();
+    s.update_publish("p", |c| {
+        Some(PublishRecord {
+            status: PublishStatus::Validating,
+            ..c.clone()
+        })
+    })
+    .await
+    .unwrap();
+    s.hit("rl#t#tok#2026-10-14", 5, 1_792_000_000)
+        .await
+        .unwrap();
     let ops: std::collections::BTreeSet<String> = fake.operations().into_iter().collect();
-    assert_eq!(ops, ["GetItem", "PutItem"].into_iter().map(String::from).collect());
+    assert_eq!(
+        ops,
+        ["GetItem", "PutItem"]
+            .into_iter()
+            .map(String::from)
+            .collect()
+    );
     // Locks and counters share the publishes table under prefixed keys; the TTL attribute of a counter is a number.
-    let keys: Vec<String> = fake.dump("mopm-t-publishes").iter().map(|r| r["publish_id"]["S"].as_str().unwrap().to_string()).collect();
+    let keys: Vec<String> = fake
+        .dump("mopm-t-publishes")
+        .iter()
+        .map(|r| r["publish_id"]["S"].as_str().unwrap().to_string())
+        .collect();
     assert_eq!(keys, ["p", "rl#t#tok#2026-10-14", "ver#demo#1"]);
-    assert_eq!(fake.dump("mopm-t-publishes")[1]["expires_at"], json!({"N": "1792000000"}));
-    assert_eq!(fake.dump("mopm-t-uploads")[0]["expires_at"], json!({"N": "1792000000"}));
+    assert_eq!(
+        fake.dump("mopm-t-publishes")[1]["expires_at"],
+        json!({"N": "1792000000"})
+    );
+    assert_eq!(
+        fake.dump("mopm-t-uploads")[0]["expires_at"],
+        json!({"N": "1792000000"})
+    );
     assert_eq!(fake.dump("mopm-t-uploads")[0]["used_by"], json!({"S": "p"}));
 }
 
@@ -538,11 +745,21 @@ async fn put_raw(c: &Client, table: &str, item: Value) -> Result<(), String> {
         .unwrap()
         .iter()
         .map(|(k, v)| {
-            let av = if let Some(x) = v.get("S") { AttributeValue::S(x.as_str().unwrap().into()) } else { AttributeValue::N(v["N"].as_str().unwrap().into()) };
+            let av = if let Some(x) = v.get("S") {
+                AttributeValue::S(x.as_str().unwrap().into())
+            } else {
+                AttributeValue::N(v["N"].as_str().unwrap().into())
+            };
             (k.clone(), av)
         })
         .collect();
-    c.put_item().table_name(table).set_item(Some(item)).send().await.map(|_| ()).map_err(|e| aws_sdk_dynamodb::error::DisplayErrorContext(&e).to_string())
+    c.put_item()
+        .table_name(table)
+        .set_item(Some(item))
+        .send()
+        .await
+        .map(|_| ())
+        .map_err(|e| aws_sdk_dynamodb::error::DisplayErrorContext(&e).to_string())
 }
 
 #[tokio::test]
@@ -550,18 +767,34 @@ async fn a_ttl_attribute_stored_as_the_iso_string_is_refused_as_dynamodb_would()
     let fake = FakeDynamo::start(FakeConfig::registry("t"));
     let c = client(&fake.endpoint());
     let row = |ttl: Value| json!({"token_hash": {"S": hash(1)}, "expires_at": ttl});
-    let e = put_raw(&c, "mopm-t-tokens", row(json!({"S": "2026-11-13T12:00:00.123Z"}))).await.unwrap_err();
+    let e = put_raw(
+        &c,
+        "mopm-t-tokens",
+        row(json!({"S": "2026-11-13T12:00:00.123Z"})),
+    )
+    .await
+    .unwrap_err();
     assert!(e.contains("TimeToLive"), "{e}");
-    put_raw(&c, "mopm-t-tokens", row(json!({"N": "1794571200"}))).await.unwrap();
+    put_raw(&c, "mopm-t-tokens", row(json!({"N": "1794571200"})))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn a_numeric_key_or_index_key_is_refused() {
     let fake = FakeDynamo::start(FakeConfig::registry("t"));
     let c = client(&fake.endpoint());
-    let e = put_raw(&c, "mopm-t-users", json!({"github_id": {"N": "7"}})).await.unwrap_err();
+    let e = put_raw(&c, "mopm-t-users", json!({"github_id": {"N": "7"}}))
+        .await
+        .unwrap_err();
     assert!(e.contains("Type mismatch for key"), "{e}");
-    let e = put_raw(&c, "mopm-t-tokens", json!({"token_hash": {"S": hash(2)}, "github_id": {"N": "1"}, "id": {"S": "t"}})).await.unwrap_err();
+    let e = put_raw(
+        &c,
+        "mopm-t-tokens",
+        json!({"token_hash": {"S": hash(2)}, "github_id": {"N": "1"}, "id": {"S": "t"}}),
+    )
+    .await
+    .unwrap_err();
     assert!(e.contains("Type mismatch for Index Key"), "{e}");
 }
 
@@ -587,44 +820,152 @@ async fn a_consistent_read_of_an_index_is_refused() {
 // ---- rows that belong to a group publish ---------------------------------------------------------------
 
 #[tokio::test]
-async fn a_group_member_row_carries_its_group_and_stamp_as_attributes_and_a_reserved_one_has_no_stamp() {
+async fn a_group_member_row_carries_its_group_and_stamp_as_attributes_and_a_reserved_one_has_no_stamp(
+) {
     let (s, fake) = rig();
-    s.create_version(&group_row(rec("p", "1.0.0"), "g1", Some(2)), &audit("p", "stage", None)).await.unwrap();
-    s.create_version(&group_row(rec("p", "1.1.0"), "g1", None), &audit("p", "reserve", None)).await.unwrap();
+    s.create_version(
+        &group_row(rec("p", "1.0.0"), "g1", Some(2)),
+        &audit("p", "stage", None),
+    )
+    .await
+    .unwrap();
+    s.create_version(
+        &group_row(rec("p", "1.1.0"), "g1", None),
+        &audit("p", "reserve", None),
+    )
+    .await
+    .unwrap();
     let rows = fake.dump("mopm-t-versions");
-    let row = |spelling: &str| rows.iter().find(|r| r["version_spelling"] == json!({"S": spelling})).unwrap().clone();
+    let row = |spelling: &str| {
+        rows.iter()
+            .find(|r| r["version_spelling"] == json!({"S": spelling}))
+            .unwrap()
+            .clone()
+    };
     let (staged, reserved) = (row("1.0.0"), row("1.1.0"));
-    assert_eq!((&staged["state"], &staged["group_id"], &staged["staged_attempt"]), (&json!({"S": "pending"}), &json!({"S": "g1"}), &json!({"N": "2"})));
-    assert_eq!((&reserved["state"], &reserved["group_id"]), (&json!({"S": "pending"}), &json!({"S": "g1"})));
+    assert_eq!(
+        (
+            &staged["state"],
+            &staged["group_id"],
+            &staged["staged_attempt"]
+        ),
+        (
+            &json!({"S": "pending"}),
+            &json!({"S": "g1"}),
+            &json!({"N": "2"})
+        )
+    );
+    assert_eq!(
+        (&reserved["state"], &reserved["group_id"]),
+        (&json!({"S": "pending"}), &json!({"S": "g1"}))
+    );
     assert!(reserved.get("staged_attempt").is_none(), "absent, not null");
-    assert_eq!(s.get_version("p", "1.0.0").await.unwrap().unwrap().staged_attempt, Some(2));
-    assert_eq!(s.get_version("p", "1.1.0").await.unwrap().unwrap().staged_attempt, None);
+    assert_eq!(
+        s.get_version("p", "1.0.0")
+            .await
+            .unwrap()
+            .unwrap()
+            .staged_attempt,
+        Some(2)
+    );
+    assert_eq!(
+        s.get_version("p", "1.1.0")
+            .await
+            .unwrap()
+            .unwrap()
+            .staged_attempt,
+        None
+    );
 }
 
 #[tokio::test]
-async fn a_row_with_no_group_is_written_with_no_group_attribute_and_a_single_publish_of_a_group_row_writes_nothing() {
+async fn a_row_with_no_group_is_written_with_no_group_attribute_and_a_single_publish_of_a_group_row_writes_nothing(
+) {
     let (s, fake) = rig();
-    s.create_version(&with_state(rec("p", "1.0.0"), VersionState::Pending), &audit("p", "begin", None)).await.unwrap();
-    s.create_version(&group_row(rec("p", "2.0.0"), "g1", Some(1)), &audit("p", "stage", None)).await.unwrap();
-    s.update_version("p", "1.0.0", &VersionEvent::Publish(None), &audit("p", "publish", None)).await.unwrap();
+    s.create_version(
+        &with_state(rec("p", "1.0.0"), VersionState::Pending),
+        &audit("p", "begin", None),
+    )
+    .await
+    .unwrap();
+    s.create_version(
+        &group_row(rec("p", "2.0.0"), "g1", Some(1)),
+        &audit("p", "stage", None),
+    )
+    .await
+    .unwrap();
+    s.update_version(
+        "p",
+        "1.0.0",
+        &VersionEvent::Publish(None),
+        &audit("p", "publish", None),
+    )
+    .await
+    .unwrap();
     let writes = bodies(&fake, "TransactWriteItems").len();
     assert_eq!(writes, 3, "two creates and one publish");
-    assert!(s.update_version("p", "2.0.0", &VersionEvent::Publish(None), &audit("p", "publish", None)).await.is_err());
-    assert_eq!(bodies(&fake, "TransactWriteItems").len(), writes, "the refusal happened before any write");
+    assert!(s
+        .update_version(
+            "p",
+            "2.0.0",
+            &VersionEvent::Publish(None),
+            &audit("p", "publish", None)
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        bodies(&fake, "TransactWriteItems").len(),
+        writes,
+        "the refusal happened before any write"
+    );
     for r in fake.dump("mopm-t-versions") {
         let own_group = r["version_spelling"] == json!({"S": "2.0.0"});
-        assert_eq!((r.get("group_id").is_some(), r.get("staged_attempt").is_some()), (own_group, own_group), "{r}");
+        assert_eq!(
+            (
+                r.get("group_id").is_some(),
+                r.get("staged_attempt").is_some()
+            ),
+            (own_group, own_group),
+            "{r}"
+        );
     }
 }
 
 #[tokio::test]
 async fn a_yank_by_the_rust_port_keeps_the_group_attributes_of_a_flipped_row() {
     let (s, fake) = rig();
-    let flipped = VersionRecord { state: VersionState::Published, ..group_row(rec("p", "1.0.0"), "g1", Some(3)) };
-    s.create_version(&flipped, &audit("p", "flip", None)).await.unwrap();
-    s.update_version("p", "1.0.0", &VersionEvent::Yank { reason: "bad".into() }, &audit("p", "yank", None)).await.unwrap();
+    let flipped = VersionRecord {
+        state: VersionState::Published,
+        ..group_row(rec("p", "1.0.0"), "g1", Some(3))
+    };
+    s.create_version(&flipped, &audit("p", "flip", None))
+        .await
+        .unwrap();
+    s.update_version(
+        "p",
+        "1.0.0",
+        &VersionEvent::Yank {
+            reason: "bad".into(),
+        },
+        &audit("p", "yank", None),
+    )
+    .await
+    .unwrap();
     let rows = fake.dump("mopm-t-versions");
-    assert_eq!((&rows[0]["state"], &rows[0]["group_id"], &rows[0]["staged_attempt"], &rows[0]["rev"]), (&json!({"S": "yanked"}), &json!({"S": "g1"}), &json!({"N": "3"}), &json!({"N": "1"})));
+    assert_eq!(
+        (
+            &rows[0]["state"],
+            &rows[0]["group_id"],
+            &rows[0]["staged_attempt"],
+            &rows[0]["rev"]
+        ),
+        (
+            &json!({"S": "yanked"}),
+            &json!({"S": "g1"}),
+            &json!({"N": "3"}),
+            &json!({"N": "1"})
+        )
+    );
 }
 
 #[tokio::test]
@@ -634,7 +975,10 @@ async fn a_condition_the_fake_does_not_know_fails_loudly() {
     let r = c
         .put_item()
         .table_name("mopm-t-users")
-        .item("github_id", aws_sdk_dynamodb::types::AttributeValue::S("7".into()))
+        .item(
+            "github_id",
+            aws_sdk_dynamodb::types::AttributeValue::S("7".into()),
+        )
         .condition_expression("size(#a) > :v")
         .expression_attribute_names("#a", "github_id")
         .expression_attribute_values(":v", aws_sdk_dynamodb::types::AttributeValue::N("1".into()))

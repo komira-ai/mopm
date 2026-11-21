@@ -992,8 +992,18 @@ async fn the_web_session_grants_serve_its_calls_and_deny_the_rest() {
         "ExpressionAttributeValues": {":at": {"S": "x"}}
     });
     assert_eq!(call(&fake, "UpdateItem", &touch).await.status, 200);
-    let put = call(&fake, "PutItem", &json!({"TableName": "mopm-t-tokens", "Item": {"token_hash": {"S": "h"}}})).await;
+    let put = call(
+        &fake,
+        "PutItem",
+        &json!({"TableName": "mopm-t-tokens", "Item": {"token_hash": {"S": "h"}}}),
+    )
+    .await;
     assert_refused_denied(&put, "dynamodb:PutItem", "mopm-t-tokens");
-    let other = call(&fake, "GetItem", &json!({"TableName": "mopm-t-namespaces", "Key": {"namespace": {"S": "a"}}})).await;
+    let other = call(
+        &fake,
+        "GetItem",
+        &json!({"TableName": "mopm-t-namespaces", "Key": {"namespace": {"S": "a"}}}),
+    )
+    .await;
     assert_refused_denied(&other, "dynamodb:GetItem", "mopm-t-namespaces");
 }

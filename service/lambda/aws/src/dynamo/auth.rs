@@ -54,15 +54,21 @@ pub struct DynamoAuthStore {
 }
 
 fn update_condition_failed(e: &SdkError<UpdateItemError>) -> bool {
-    e.as_service_error().is_some_and(UpdateItemError::is_conditional_check_failed_exception)
+    e.as_service_error()
+        .is_some_and(UpdateItemError::is_conditional_check_failed_exception)
 }
 
 fn token_item(r: &TokenRecord) -> PortResult<Item> {
     let mut m = object(r)?;
-    let hash = m.remove("hash").ok_or_else(|| PortError::fault("a token without a hash"))?;
+    let hash = m
+        .remove("hash")
+        .ok_or_else(|| PortError::fault("a token without a hash"))?;
     m.insert("token_hash".into(), hash);
     m.remove("expires_at");
-    m.insert("expires_at".into(), Value::from(epoch_seconds(&r.expires_at)?));
+    m.insert(
+        "expires_at".into(),
+        Value::from(epoch_seconds(&r.expires_at)?),
+    );
     m.insert("expires_at_iso".into(), Value::String(r.expires_at.clone()));
     if let Some(id) = r.github_id {
         // Index keys are strings (like the owners table); the number is kept for reading back.
@@ -74,10 +80,14 @@ fn token_item(r: &TokenRecord) -> PortResult<Item> {
 
 fn token_from_item(i: Item) -> PortResult<TokenRecord> {
     let mut m = from_item(i)?;
-    let hash = m.remove("token_hash").ok_or_else(|| PortError::fault("a token row without token_hash"))?;
+    let hash = m
+        .remove("token_hash")
+        .ok_or_else(|| PortError::fault("a token row without token_hash"))?;
     m.insert("hash".into(), hash);
     m.remove("expires_at");
-    let iso = m.remove("expires_at_iso").ok_or_else(|| PortError::fault("a token row without expires_at_iso"))?;
+    let iso = m
+        .remove("expires_at_iso")
+        .ok_or_else(|| PortError::fault("a token row without expires_at_iso"))?;
     m.insert("expires_at".into(), iso);
     m.remove("github_id");
     if let Some(id) = m.remove("github_id_num") {
@@ -88,9 +98,16 @@ fn token_from_item(i: Item) -> PortResult<TokenRecord> {
 
 impl DynamoAuthStore {
     pub fn new(client: Client, tables: AuthTables, clock: Arc<dyn Clock>) -> Self {
-        DynamoAuthStore { client, tables, clock }
+        DynamoAuthStore {
+            client,
+            tables,
+            clock,
+        }
     }
 
+    // One DynamoDB UpdateItem, called from four methods: the arguments are that request's own fields, each set once below. A
+    // struct holding them would only be built at each call and taken apart here.
+    #[allow(clippy::too_many_arguments)]
     async fn update(
         &self,
         table: &str,
@@ -122,7 +139,13 @@ impl DynamoAuthStore {
 }
 
 impl AuthStore for DynamoAuthStore {
-    async fn upsert_user(&self, github_id: u64, handle: &str, now: &str, two_factor: Option<bool>) -> PortResult<UserRecord> {
+    async fn upsert_user(
+        &self,
+        github_id: u64,
+        handle: &str,
+        now: &str,
+        two_factor: Option<bool>,
+    ) -> PortResult<UserRecord> {
         let old = self.get_user(github_id).await?;
         let rec = UserRecord {
             github_id,
@@ -197,11 +220,19 @@ impl AuthStore for DynamoAuthStore {
             .index_name(TOKENS_BY_GITHUB_ID)
             .key_condition_expression("#g = :g AND #i = :i")
             .set_expression_attribute_names(Some(names([("#g", "github_id"), ("#i", "id")])))
-            .set_expression_attribute_values(Some(values([(":g", s(github_id.to_string())), (":i", s(id))])))
+            .set_expression_attribute_values(Some(values([
+                (":g", s(github_id.to_string())),
+                (":i", s(id)),
+            ])))
             .send()
             .await
             .map_err(|e| fault("query tokens", e))?;
-        r.items.unwrap_or_default().into_iter().next().map(token_from_item).transpose()
+        r.items
+            .unwrap_or_default()
+            .into_iter()
+            .next()
+            .map(token_from_item)
+            .transpose()
     }
 
     async fn list_tokens(&self, github_id: u64) -> PortResult<Vec<TokenRecord>> {
@@ -260,8 +291,14 @@ impl AuthStore for DynamoAuthStore {
     async fn put_device_login(&self, rec: &DeviceLoginRecord) -> PortResult<()> {
         let mut m = object(rec)?;
         m.remove("expires_at");
-        m.insert("expires_at".into(), Value::from(epoch_seconds(&rec.expires_at)?));
-        m.insert("expires_at_iso".into(), Value::String(rec.expires_at.clone()));
+        m.insert(
+            "expires_at".into(),
+            Value::from(epoch_seconds(&rec.expires_at)?),
+        );
+        m.insert(
+            "expires_at_iso".into(),
+            Value::String(rec.expires_at.clone()),
+        );
         self.client
             .put_item()
             .table_name(&self.tables.device_logins)
@@ -302,7 +339,12 @@ impl AuthStore for DynamoAuthStore {
             values([("id", s(id))]),
             "SET #p = :at, #n = :n",
             "attribute_exists(#id) AND attribute_not_exists(#c)",
-            names([("#p", "last_polled_at"), ("#n", "interval"), ("#id", "id"), ("#c", "consumed_at")]),
+            names([
+                ("#p", "last_polled_at"),
+                ("#n", "interval"),
+                ("#id", "id"),
+                ("#c", "consumed_at"),
+            ]),
             values([(":at", s(at)), (":n", n(interval))]),
             "set device polled",
         )
@@ -316,7 +358,11 @@ impl AuthStore for DynamoAuthStore {
             // Consumed: no longer pollable, and GitHub's device code leaves the row now. TTL removes the row.
             "SET #c = :t REMOVE #g",
             "attribute_exists(#id)",
-            names([("#c", "consumed_at"), ("#g", "github_device_code"), ("#id", "id")]),
+            names([
+                ("#c", "consumed_at"),
+                ("#g", "github_device_code"),
+                ("#id", "id"),
+            ]),
             values([(":t", s(iso_millis(self.clock.now())))]),
             "consume device login",
         )

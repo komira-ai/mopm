@@ -5,7 +5,8 @@
 #   :release   the function's executable
 #   :test      the unit tests of the library, and the integration tests (the process entry against fake Lambda runtime API,
 #              DynamoDB and Secrets Manager on loopback; the executable run as a process), one marker each
-#   :lint      clippy
+#   :lint      clippy, -D warnings
+#   :fmt       rustfmt
 #
 # The cold-start test reads the stage_settings item as the API stack writes it (service/lambda/web/tests/fixtures/
 # stage_settings_item.json, which the stack's own test is held to) with `include_str!`; the tests read this package's token

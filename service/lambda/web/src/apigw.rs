@@ -26,9 +26,21 @@ pub fn from_apigw(event: ApiGatewayV2httpRequest) -> Result<WebRequest, Registry
     let mut req = WebRequest::new(
         Method::parse(event.request_context.http.method.as_str()),
         event.raw_path.as_deref().unwrap_or_default(),
-        event.request_context.request_id.as_deref().unwrap_or_default(),
+        event
+            .request_context
+            .request_id
+            .as_deref()
+            .unwrap_or_default(),
     );
-    req.query = form_urlencoded::parse(event.raw_query_string.as_deref().unwrap_or_default().as_bytes()).into_owned().collect();
+    req.query = form_urlencoded::parse(
+        event
+            .raw_query_string
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+    .into_owned()
+    .collect();
     for (name, value) in &event.headers {
         let value = String::from_utf8_lossy(value.as_bytes());
         if name.as_str() == "cookie" {
@@ -41,7 +53,9 @@ pub fn from_apigw(event: ApiGatewayV2httpRequest) -> Result<WebRequest, Registry
     }
     req.body = match event.body {
         None => Vec::new(),
-        Some(b) if event.is_base64_encoded => STANDARD.decode(b).map_err(|_| invalid_request("the body is not valid base64"))?,
+        Some(b) if event.is_base64_encoded => STANDARD
+            .decode(b)
+            .map_err(|_| invalid_request("the body is not valid base64"))?,
         Some(b) => b.into_bytes(),
     };
     Ok(req)
@@ -61,9 +75,14 @@ pub fn to_apigw(resp: &WebResponse) -> Result<ApiGatewayV2httpResponse, InvalidH
     for (name, value) in &resp.headers {
         let invalid = || InvalidHeader { name: name.clone() };
         let header = HeaderName::from_bytes(name.as_bytes()).map_err(|_| invalid())?;
-        out.headers.append(header, HeaderValue::from_str(value).map_err(|_| invalid())?);
+        out.headers
+            .append(header, HeaderValue::from_str(value).map_err(|_| invalid())?);
     }
-    out.cookies = resp.set_cookies.iter().map(|c| c.as_str().to_string()).collect();
+    out.cookies = resp
+        .set_cookies
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect();
     out.body = (!resp.body.is_empty()).then(|| Body::Text(resp.body.clone()));
     Ok(out)
 }
@@ -71,14 +90,20 @@ pub fn to_apigw(resp: &WebResponse) -> Result<ApiGatewayV2httpResponse, InvalidH
 /// What a function answers when [`to_apigw`] refuses its response: `internal_error` (500) from fixed values,
 /// with `x-mopm-request-id` when `request_id` is a valid header value.
 pub fn fallback_internal_error(request_id: &str) -> ApiGatewayV2httpResponse {
-    let body = error_response(&RegistryError::new(ErrorCode::InternalError, "", Detail::new()), request_id).body;
+    let body = error_response(
+        &RegistryError::new(ErrorCode::InternalError, "", Detail::new()),
+        request_id,
+    )
+    .body;
     let mut out = ApiGatewayV2httpResponse::default();
     out.status_code = 500;
     if let Ok(id) = HeaderValue::from_str(request_id) {
         out.headers.insert(REQUEST_ID, id);
     }
-    out.headers.insert(CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
-    out.headers.insert(CONTENT_TYPE, HeaderValue::from_static(JSON));
+    out.headers
+        .insert(CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
+    out.headers
+        .insert(CONTENT_TYPE, HeaderValue::from_static(JSON));
     out.body = Some(Body::Text(body));
     out
 }
@@ -119,7 +144,10 @@ mod tests {
     }
 
     fn cookie(name: &str, value: &str) -> Cookie {
-        Cookie { name: name.to_string(), value: value.to_string() }
+        Cookie {
+            name: name.to_string(),
+            value: value.to_string(),
+        }
     }
 
     #[test]
@@ -131,8 +159,20 @@ mod tests {
         .unwrap();
         assert_eq!(req.method, Method::Get);
         assert_eq!(req.path, "/api/v2/auth/web/session");
-        assert_eq!(req.query, vec![("return_to".to_string(), "/tutorial/hello".to_string()), ("x".to_string(), "a b".to_string())]);
-        assert_eq!(req.cookies, vec![cookie("__Host-mopm_session", "mopm_abc"), cookie("theme", "dark")]);
+        assert_eq!(
+            req.query,
+            vec![
+                ("return_to".to_string(), "/tutorial/hello".to_string()),
+                ("x".to_string(), "a b".to_string())
+            ]
+        );
+        assert_eq!(
+            req.cookies,
+            vec![
+                cookie("__Host-mopm_session", "mopm_abc"),
+                cookie("theme", "dark")
+            ]
+        );
         assert_eq!(req.headers.get("X-Mopm-Edge"), Some("edge-value"));
         assert_eq!(req.headers.get("host"), Some("api.mopm.dev"));
         assert_eq!(req.request_id, "req-7f3a2c19d0e4");
@@ -160,11 +200,20 @@ mod tests {
 
     #[test]
     fn a_base64_body_is_decoded_and_a_bad_one_is_invalid_request() {
-        let req = from_apigw(event(json!({"body": "eyJhIjoxfQ==", "isBase64Encoded": true}))).unwrap();
+        let req = from_apigw(event(
+            json!({"body": "eyJhIjoxfQ==", "isBase64Encoded": true}),
+        ))
+        .unwrap();
         assert_eq!(req.body, b"{\"a\":1}");
-        let err = from_apigw(event(json!({"body": "not base64!", "isBase64Encoded": true}))).unwrap_err();
+        let err = from_apigw(event(
+            json!({"body": "not base64!", "isBase64Encoded": true}),
+        ))
+        .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidRequest);
-        assert_eq!(err.message, "The request is not valid: the body is not valid base64.");
+        assert_eq!(
+            err.message,
+            "The request is not valid: the body is not valid base64."
+        );
     }
 
     #[test]
@@ -174,7 +223,10 @@ mod tests {
             "cookies": ["c=3"]
         })))
         .unwrap();
-        assert_eq!(req.cookies, vec![cookie("a", "1"), cookie("b", "2"), cookie("c", "3")]);
+        assert_eq!(
+            req.cookies,
+            vec![cookie("a", "1"), cookie("b", "2"), cookie("c", "3")]
+        );
         assert_eq!(req.headers.get("cookie"), Some("a=1; b=2"));
     }
 
@@ -185,14 +237,21 @@ mod tests {
         e.raw_query_string = None;
         e.request_context.request_id = None;
         let req = from_apigw(e).unwrap();
-        assert_eq!((req.path.as_str(), req.query.len(), req.request_id.as_str()), ("", 0, ""));
+        assert_eq!(
+            (req.path.as_str(), req.query.len(), req.request_id.as_str()),
+            ("", 0, "")
+        );
     }
 
     #[test]
     fn a_header_value_that_is_not_utf8_is_kept_with_replacement_characters() {
         let mut e = event(json!({}));
-        e.headers.insert("x-mopm-csrf", HeaderValue::from_bytes(b"a\xffb").unwrap());
-        assert_eq!(from_apigw(e).unwrap().headers.get("x-mopm-csrf"), Some("a\u{fffd}b"));
+        e.headers
+            .insert("x-mopm-csrf", HeaderValue::from_bytes(b"a\xffb").unwrap());
+        assert_eq!(
+            from_apigw(e).unwrap().headers.get("x-mopm-csrf"),
+            Some("a\u{fffd}b")
+        );
     }
 
     fn secret() -> TokenSecret {
@@ -201,7 +260,8 @@ mod tests {
 
     #[test]
     fn a_json_answer_with_a_cookie_becomes_the_event_response() {
-        let resp = WebResponse::json(200, &json!({"login": "alice"}), "req-1").with_cookie(session_cookie(&secret()));
+        let resp = WebResponse::json(200, &json!({"login": "alice"}), "req-1")
+            .with_cookie(session_cookie(&secret()));
         let out = serde_json::to_value(to_apigw(&resp).unwrap()).unwrap();
         assert_eq!(
             out,
@@ -222,18 +282,41 @@ mod tests {
         let out = to_apigw(&resp).unwrap();
         assert_eq!(out.status_code, 204);
         assert_eq!(out.body, None);
-        assert_eq!(out.cookies, vec!["__Host-mopm_session=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0".to_string()]);
-        let redirect = to_apigw(&WebResponse::redirect(Redirect::SeeOther, "https://mopm.dev/tutorial", "r")).unwrap();
-        assert_eq!(redirect.headers.get("location").unwrap(), "https://mopm.dev/tutorial");
+        assert_eq!(
+            out.cookies,
+            vec![
+                "__Host-mopm_session=; Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"
+                    .to_string()
+            ]
+        );
+        let redirect = to_apigw(&WebResponse::redirect(
+            Redirect::SeeOther,
+            "https://mopm.dev/tutorial",
+            "r",
+        ))
+        .unwrap();
+        assert_eq!(
+            redirect.headers.get("location").unwrap(),
+            "https://mopm.dev/tutorial"
+        );
     }
 
     #[test]
     fn a_header_http_cannot_carry_is_refused_by_name() {
-        let bad_value = WebResponse::redirect(Redirect::Found, "https://x/\r\nset-cookie: a=b", "r");
-        assert_eq!(to_apigw(&bad_value).unwrap_err(), InvalidHeader { name: "location".to_string() });
+        let bad_value =
+            WebResponse::redirect(Redirect::Found, "https://x/\r\nset-cookie: a=b", "r");
+        assert_eq!(
+            to_apigw(&bad_value).unwrap_err(),
+            InvalidHeader {
+                name: "location".to_string()
+            }
+        );
         let bad_name = WebResponse::empty(200, "r").with_header("bad name", "v");
         let err = to_apigw(&bad_name).unwrap_err();
-        assert_eq!(err.to_string(), "the response header \"bad name\" is not valid HTTP");
+        assert_eq!(
+            err.to_string(),
+            "the response header \"bad name\" is not valid HTTP"
+        );
     }
 
     #[test]

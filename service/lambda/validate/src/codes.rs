@@ -101,11 +101,23 @@ impl std::error::Error for Failure {}
 pub type Checked<T> = Result<T, Failure>;
 
 pub fn fail<T>(rule: RuleCode, message: impl Into<String>) -> Checked<T> {
-    Err(Failure { rule, message: message.into(), path: None })
+    Err(Failure {
+        rule,
+        message: message.into(),
+        path: None,
+    })
 }
 
-pub fn fail_at<T>(rule: RuleCode, message: impl Into<String>, path: impl Into<String>) -> Checked<T> {
-    Err(Failure { rule, message: message.into(), path: Some(path.into()) })
+pub fn fail_at<T>(
+    rule: RuleCode,
+    message: impl Into<String>,
+    path: impl Into<String>,
+) -> Checked<T> {
+    Err(Failure {
+        rule,
+        message: message.into(),
+        path: Some(path.into()),
+    })
 }
 
 #[cfg(test)]
@@ -116,22 +128,53 @@ mod tests {
     fn every_rule_maps_to_the_contracts_rejection_code_as_the_typescript_table_does() {
         // service/api/src/validate/codes.ts RULE_TO_REJECTION.
         let ts: &[(&str, &str)] = &[
-            ("not_an_archive", "archive_invalid"), ("archive_corrupt", "archive_invalid"), ("format_not_allowed", "archive_invalid"),
-            ("conda_layout", "archive_invalid"), ("tar_header", "archive_invalid"), ("mojoc_missing", "archive_invalid"),
-            ("path_absolute", "path_not_allowed"), ("path_traversal", "path_not_allowed"), ("path_unsafe", "path_not_allowed"),
-            ("symlink", "path_not_allowed"), ("hardlink", "path_not_allowed"), ("special_file", "path_not_allowed"),
-            ("duplicate_path", "path_not_allowed"), ("unicode_collision", "path_not_allowed"), ("bin_dir", "path_not_allowed"),
-            ("link_script", "path_not_allowed"), ("layout_not_allowed", "path_not_allowed"), ("native_undeclared", "path_not_allowed"),
-            ("archive_too_large", "limit_exceeded"), ("file_too_large", "limit_exceeded"), ("unpacked_too_large", "limit_exceeded"),
-            ("too_many_files", "limit_exceeded"), ("compression_ratio", "limit_exceeded"), ("manifest_too_large", "limit_exceeded"),
-            ("manifest_missing", "manifest_invalid"), ("manifest_json", "manifest_invalid"), ("manifest_schema", "manifest_invalid"),
-            ("index_missing", "manifest_invalid"), ("index_invalid", "manifest_invalid"), ("name_mismatch", "manifest_invalid"),
-            ("version_mismatch", "manifest_invalid"), ("subdir_mismatch", "manifest_invalid"), ("compiler_missing", "manifest_invalid"),
-            ("compiler_mismatch", "manifest_invalid"), ("deps_mismatch", "manifest_invalid"), ("native_missing", "manifest_invalid"),
-            ("native_path", "manifest_invalid"), ("filename_mismatch", "filename_mismatch"), ("sha256_mismatch", "sha256_mismatch"),
-            ("manifest_sha256_mismatch", "sha256_mismatch"), ("dependency_not_allowed", "dependency_not_allowed"),
+            ("not_an_archive", "archive_invalid"),
+            ("archive_corrupt", "archive_invalid"),
+            ("format_not_allowed", "archive_invalid"),
+            ("conda_layout", "archive_invalid"),
+            ("tar_header", "archive_invalid"),
+            ("mojoc_missing", "archive_invalid"),
+            ("path_absolute", "path_not_allowed"),
+            ("path_traversal", "path_not_allowed"),
+            ("path_unsafe", "path_not_allowed"),
+            ("symlink", "path_not_allowed"),
+            ("hardlink", "path_not_allowed"),
+            ("special_file", "path_not_allowed"),
+            ("duplicate_path", "path_not_allowed"),
+            ("unicode_collision", "path_not_allowed"),
+            ("bin_dir", "path_not_allowed"),
+            ("link_script", "path_not_allowed"),
+            ("layout_not_allowed", "path_not_allowed"),
+            ("native_undeclared", "path_not_allowed"),
+            ("archive_too_large", "limit_exceeded"),
+            ("file_too_large", "limit_exceeded"),
+            ("unpacked_too_large", "limit_exceeded"),
+            ("too_many_files", "limit_exceeded"),
+            ("compression_ratio", "limit_exceeded"),
+            ("manifest_too_large", "limit_exceeded"),
+            ("manifest_missing", "manifest_invalid"),
+            ("manifest_json", "manifest_invalid"),
+            ("manifest_schema", "manifest_invalid"),
+            ("index_missing", "manifest_invalid"),
+            ("index_invalid", "manifest_invalid"),
+            ("name_mismatch", "manifest_invalid"),
+            ("version_mismatch", "manifest_invalid"),
+            ("subdir_mismatch", "manifest_invalid"),
+            ("compiler_missing", "manifest_invalid"),
+            ("compiler_mismatch", "manifest_invalid"),
+            ("deps_mismatch", "manifest_invalid"),
+            ("native_missing", "manifest_invalid"),
+            ("native_path", "manifest_invalid"),
+            ("filename_mismatch", "filename_mismatch"),
+            ("sha256_mismatch", "sha256_mismatch"),
+            ("manifest_sha256_mismatch", "sha256_mismatch"),
+            ("dependency_not_allowed", "dependency_not_allowed"),
         ];
-        assert_eq!(ts.len(), RuleCode::ALL.len(), "every rule is in the list, and no other");
+        assert_eq!(
+            ts.len(),
+            RuleCode::ALL.len(),
+            "every rule is in the list, and no other"
+        );
         for (rule, rejection) in ts {
             let r = RuleCode::parse(rule).unwrap_or_else(|| panic!("no rule {rule}"));
             assert_eq!(r.rejection().as_str(), *rejection, "{rule}");

@@ -79,12 +79,20 @@ fn str_of(v: Option<&Value>) -> Option<&str> {
 
 /// `^lib[^./]+\..+$`: the soname looks like `lib<name>.<suffix>`.
 fn soname_ok(s: &str) -> bool {
-    let Some(rest) = s.strip_prefix("lib") else { return false };
-    let stem_len: usize = rest.chars().take_while(|c| *c != '.' && *c != '/').map(char::len_utf8).sum();
+    let Some(rest) = s.strip_prefix("lib") else {
+        return false;
+    };
+    let stem_len: usize = rest
+        .chars()
+        .take_while(|c| *c != '.' && *c != '/')
+        .map(char::len_utf8)
+        .sum();
     if stem_len == 0 {
         return false;
     }
-    let Some(tail) = rest[stem_len..].strip_prefix('.') else { return false };
+    let Some(tail) = rest[stem_len..].strip_prefix('.') else {
+        return false;
+    };
     // `.` does not match a line terminator.
     !tail.is_empty() && !tail.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
 }
@@ -92,12 +100,18 @@ fn soname_ok(s: &str) -> bool {
 /// `^[^ \u0000-\u001f\u007f](?:[^\u0000-\u001f\u007f]*[^ \u0000-\u001f\u007f])?$`: an exclusivity group is not empty, has
 /// no space at either end and no control character.
 fn exclusive_ok(s: &str) -> bool {
-    !s.is_empty() && !s.starts_with(' ') && !s.ends_with(' ') && !s.chars().any(|c| c < ' ' || c == '\u{7f}')
+    !s.is_empty()
+        && !s.starts_with(' ')
+        && !s.ends_with(' ')
+        && !s.chars().any(|c| c < ' ' || c == '\u{7f}')
 }
 
 /// Validate `<name>.mopm.json` against spec/package-metadata.schema.json.
 pub fn check_mopm(o: &Map<String, Value>) -> Checked<Mopm> {
-    if !o.get("schema").is_some_and(|v| v.as_f64() == Some(METADATA_SCHEMA_VERSION as f64)) {
+    if !o
+        .get("schema")
+        .is_some_and(|v| v.as_f64() == Some(METADATA_SCHEMA_VERSION as f64))
+    {
         return bad(format!("'schema' must be {METADATA_SCHEMA_VERSION}"));
     }
     let name = match str_of(o.get("name")) {
@@ -106,17 +120,25 @@ pub fn check_mopm(o: &Map<String, Value>) -> Checked<Mopm> {
     };
     let mut version = None;
     if let Some(v) = o.get("version") {
-        let Some(s) = v.as_str() else { return bad("'version' must be a string") };
+        let Some(s) = v.as_str() else {
+            return bad("'version' must be a string");
+        };
         if !is_valid_version(s) {
-            return bad(format!("'version' '{s}' is not MAJOR.MINOR.PATCH (three numbers, no suffix)"));
+            return bad(format!(
+                "'version' '{s}' is not MAJOR.MINOR.PATCH (three numbers, no suffix)"
+            ));
         }
         version = Some(s.to_string());
     }
     let mut deps = Vec::new();
     if let Some(d) = o.get("deps") {
-        let Some(items) = d.as_array() else { return bad("'deps' must be an array") };
+        let Some(items) = d.as_array() else {
+            return bad("'deps' must be an array");
+        };
         for item in items {
-            let Some(r) = item.as_object() else { return bad("'deps' items must be objects") };
+            let Some(r) = item.as_object() else {
+                return bad("'deps' items must be objects");
+            };
             let dep_name = match str_of(r.get("name")) {
                 Some(n) if !n.is_empty() => n,
                 _ => return bad("a dependency needs a non-empty 'name'"),
@@ -131,28 +153,44 @@ pub fn check_mopm(o: &Map<String, Value>) -> Checked<Mopm> {
             if r.get("path").is_some() && r.get("range").is_none() {
                 return bad(format!("dependency '{dep_name}' has a path but no version; a published package depends on a version, so add one next to the path"));
             }
-            deps.push(Dep { name: dep_name.to_string(), range: str_of(r.get("range")).map(str::to_string) });
+            deps.push(Dep {
+                name: dep_name.to_string(),
+                range: str_of(r.get("range")).map(str::to_string),
+            });
         }
     }
     let mut native = Vec::new();
     if let Some(n) = o.get("native") {
-        let Some(items) = n.as_array() else { return bad("'native' must be an array") };
+        let Some(items) = n.as_array() else {
+            return bad("'native' must be an array");
+        };
         for item in items {
             native.push(check_native(item)?);
         }
     }
-    Ok(Mopm { name, version, deps, native })
+    Ok(Mopm {
+        name,
+        version,
+        deps,
+        native,
+    })
 }
 
 fn check_native(item: &Value) -> Checked<NativeDecl> {
-    let Some(r) = item.as_object() else { return bad("'native' items must be objects") };
+    let Some(r) = item.as_object() else {
+        return bad("'native' items must be objects");
+    };
     let id = match str_of(r.get("id")) {
         Some(i) if !i.is_empty() => i.to_string(),
         _ => return bad("a native library needs a non-empty 'id'"),
     };
     let soname = match str_of(r.get("soname")) {
         Some(s) if soname_ok(s) => s.to_string(),
-        _ => return bad(format!("native '{id}': 'soname' must look like lib<name>.<suffix>")),
+        _ => {
+            return bad(format!(
+                "native '{id}': 'soname' must look like lib<name>.<suffix>"
+            ))
+        }
     };
     // `r.kind ?? 'shared'`: absent or null is the default.
     let kind_v = r.get("kind").filter(|v| !v.is_null());
@@ -160,7 +198,11 @@ fn check_native(item: &Value) -> Checked<NativeDecl> {
     let kind = match kind_v {
         None => "shared",
         Some(Value::String(s)) if matches!(s.as_str(), "shared" | "static" | "both") => s.as_str(),
-        Some(_) => return bad(format!("native '{id}': 'kind' must be shared, static or both")),
+        Some(_) => {
+            return bad(format!(
+                "native '{id}': 'kind' must be shared, static or both"
+            ))
+        }
     };
     let mode = match mode_v {
         None => "link",
@@ -174,11 +216,18 @@ fn check_native(item: &Value) -> Checked<NativeDecl> {
         return bad(format!("native '{id}': 'static_file' must be a string"));
     }
     if let Some(needs) = r.get("needs") {
-        if !needs.as_array().is_some_and(|a| a.iter().all(Value::is_string)) {
-            return bad(format!("native '{id}': 'needs' must be an array of strings"));
+        if !needs
+            .as_array()
+            .is_some_and(|a| a.iter().all(Value::is_string))
+        {
+            return bad(format!(
+                "native '{id}': 'needs' must be an array of strings"
+            ));
         }
     }
-    if r.get("exclusive").is_some_and(|v| v.as_str().map_or(true, |s| !exclusive_ok(s))) {
+    if r.get("exclusive")
+        .is_some_and(|v| v.as_str().is_none_or(|s| !exclusive_ok(s)))
+    {
         return bad(format!("native '{id}': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"));
     }
     let file = str_of(r.get("file"));
@@ -195,9 +244,14 @@ fn check_native(item: &Value) -> Checked<NativeDecl> {
         let Some(rel) = rel else { continue };
         let resolved = js::posix_normalize(&js::posix_join("lib/mojo", rel));
         // Native libraries live directly in lib/: one level, no climbing out, no absolute paths.
-        let direct = resolved.strip_prefix("lib/").is_some_and(|r| !r.is_empty() && !r.contains('/'));
+        let direct = resolved
+            .strip_prefix("lib/")
+            .is_some_and(|r| !r.is_empty() && !r.contains('/'));
         if rel.starts_with('/') || !direct {
-            return fail(RuleCode::NativePath, format!("native '{id}': '{rel}' does not resolve to a file directly under lib/"));
+            return fail(
+                RuleCode::NativePath,
+                format!("native '{id}': '{rel}' does not resolve to a file directly under lib/"),
+            );
         }
         paths.push(resolved.clone());
         if field == "file" {
@@ -206,7 +260,15 @@ fn check_native(item: &Value) -> Checked<NativeDecl> {
             static_path = Some(resolved);
         }
     }
-    Ok(NativeDecl { id, soname, kind: kind.to_string(), mode: mode.to_string(), paths, shared_path, static_path })
+    Ok(NativeDecl {
+        id,
+        soname,
+        kind: kind.to_string(),
+        mode: mode.to_string(),
+        paths,
+        shared_path,
+        static_path,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -222,24 +284,50 @@ pub struct CondaIndex {
 /// The compiler of a build string `mojo<digits>(.<digits>)*_0`.
 fn compiler_of(build: &str) -> Option<&str> {
     let c = build.strip_prefix("mojo")?.strip_suffix("_0")?;
-    let ok = !c.is_empty() && c.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    let ok = !c.is_empty()
+        && c.split('.')
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
     ok.then_some(c)
 }
 
 /// Validate the fields of info/index.json that the registry relies on.
 pub fn check_index(o: &Map<String, Value>) -> Checked<CondaIndex> {
-    let bad2 = |m: &str| -> Checked<CondaIndex> { fail(RuleCode::IndexInvalid, format!("info/index.json: {m}")) };
-    let Some(name) = str_of(o.get("name")) else { return bad2("'name' must be a string") };
-    let Some(version) = str_of(o.get("version")) else { return bad2("'version' must be a string") };
-    let Some(build) = str_of(o.get("build")) else { return bad2("'build' must be a string") };
-    let Some(subdir) = str_of(o.get("subdir")) else { return bad2("'subdir' must be a string") };
+    let bad2 = |m: &str| -> Checked<CondaIndex> {
+        fail(RuleCode::IndexInvalid, format!("info/index.json: {m}"))
+    };
+    let Some(name) = str_of(o.get("name")) else {
+        return bad2("'name' must be a string");
+    };
+    let Some(version) = str_of(o.get("version")) else {
+        return bad2("'version' must be a string");
+    };
+    let Some(build) = str_of(o.get("build")) else {
+        return bad2("'build' must be a string");
+    };
+    let Some(subdir) = str_of(o.get("subdir")) else {
+        return bad2("'subdir' must be a string");
+    };
     if !o.get("build_number").is_some_and(is_zero) {
         return bad2("'build_number' must be 0");
     }
-    let Some(compiler) = compiler_of(build) else { return bad2("'build' must be mojo<compiler>_0") };
-    let depends: Option<Vec<String>> = o.get("depends").and_then(Value::as_array).and_then(|a| a.iter().map(|v| v.as_str().map(str::to_string)).collect());
-    let Some(depends) = depends else { return bad2("'depends' must be an array of strings") };
-    Ok(CondaIndex { name: name.into(), version: version.into(), build: build.into(), compiler: compiler.into(), subdir: subdir.into(), depends })
+    let Some(compiler) = compiler_of(build) else {
+        return bad2("'build' must be mojo<compiler>_0");
+    };
+    let depends: Option<Vec<String>> = o
+        .get("depends")
+        .and_then(Value::as_array)
+        .and_then(|a| a.iter().map(|v| v.as_str().map(str::to_string)).collect());
+    let Some(depends) = depends else {
+        return bad2("'depends' must be an array of strings");
+    };
+    Ok(CondaIndex {
+        name: name.into(),
+        version: version.into(),
+        build: build.into(),
+        compiler: compiler.into(),
+        subdir: subdir.into(),
+        depends,
+    })
 }
 
 /// The first whitespace-separated word, as `d.split(/\s+/, 1)[0]` gives it (a leading space gives "").
@@ -279,17 +367,25 @@ fn is_conda_name(s: &str) -> bool {
     !b.is_empty()
         && b.len() <= 128
         && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
-        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-'))
+        && b.iter().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-')
+        })
 }
 
 /// `[A-Za-z0-9.*+!_,|<>=~^-]{1,128}`: a version requirement as `depends` writes it.
 fn is_version_token(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 128 && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".*+!_,|<>=~^-".contains(&c))
+    !s.is_empty()
+        && s.len() <= 128
+        && s.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b".*+!_,|<>=~^-".contains(&c))
 }
 
 /// `[A-Za-z0-9.*+_-]{1,64}`: a build string.
 fn is_build_token(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 64 && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".*+_-".contains(&c))
+    !s.is_empty()
+        && s.len() <= 64
+        && s.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b".*+_-".contains(&c))
 }
 
 /// Whether one `depends` entry is well formed (`name`, `name version` or `name version build`), else why it is not
@@ -306,7 +402,10 @@ fn parse_spec(d: &str) -> Result<(), String> {
     }
     let name = parts.first().copied().unwrap_or("");
     if !is_conda_name(name) {
-        return Err("does not start with a conda package name (lower-case letters, digits, ., _ and -)".to_string());
+        return Err(
+            "does not start with a conda package name (lower-case letters, digits, ., _ and -)"
+                .to_string(),
+        );
     }
     if parts.len() > 3 {
         return Err("has more than a name, a version and a build string".to_string());
@@ -329,17 +428,30 @@ fn parse_spec(d: &str) -> Result<(), String> {
 /// `deps` of the embedded metadata. Returns the dependency names for the verdict. The TypeScript also warns about a name the
 /// conda-forge mirror does not list; this port has no mirror and no warnings yet (README, "Differences").
 pub fn check_depends(idx: &CondaIndex, mopm: &Mopm) -> Checked<Vec<String>> {
-    let compilers: Vec<&String> = idx.depends.iter().filter(|d| first_word(d) == "mojo-compiler").collect();
+    let compilers: Vec<&String> = idx
+        .depends
+        .iter()
+        .filter(|d| first_word(d) == "mojo-compiler")
+        .collect();
     if compilers.is_empty() {
-        return fail(RuleCode::CompilerMissing, "info/index.json 'depends' has no 'mojo-compiler ==<exact>'");
+        return fail(
+            RuleCode::CompilerMissing,
+            "info/index.json 'depends' has no 'mojo-compiler ==<exact>'",
+        );
     }
     if compilers.len() > 1 {
-        return fail(RuleCode::CompilerMismatch, "info/index.json 'depends' names mojo-compiler more than once");
+        return fail(
+            RuleCode::CompilerMismatch,
+            "info/index.json 'depends' names mojo-compiler more than once",
+        );
     }
     if collapse_space(compilers[0]) != format!("mojo-compiler =={}", idx.compiler) {
         return fail(
             RuleCode::CompilerMismatch,
-            format!("'{}' does not equal 'mojo-compiler =={}' (the compiler in the build string)", compilers[0], idx.compiler),
+            format!(
+                "'{}' does not equal 'mojo-compiler =={}' (the compiler in the build string)",
+                compilers[0], idx.compiler
+            ),
         );
     }
     let mut mojo_deps: BTreeSet<String> = BTreeSet::new();
@@ -352,21 +464,35 @@ pub fn check_depends(idx: &CondaIndex, mopm: &Mopm) -> Checked<Vec<String>> {
         // (below), and the bare prefix is not a package.
         if dn.starts_with("mojo-") {
             if dn.len() == 5 {
-                return fail(RuleCode::DependencyNotAllowed, format!("dependency '{d}' is not a Mojo package name"));
+                return fail(
+                    RuleCode::DependencyNotAllowed,
+                    format!("dependency '{d}' is not a Mojo package name"),
+                );
             }
             mojo_deps.insert(dn.to_string());
             continue;
         }
         if let Err(why) = parse_spec(d) {
             let head: Vec<u16> = d.encode_utf16().take(80).collect();
-            return fail(RuleCode::DependencyNotAllowed, format!("dependency '{}' {why}", String::from_utf16_lossy(&head)));
+            return fail(
+                RuleCode::DependencyNotAllowed,
+                format!("dependency '{}' {why}", String::from_utf16_lossy(&head)),
+            );
         }
     }
-    let declared: BTreeSet<String> = mopm.deps.iter().map(|d| format!("mojo-{}", d.name)).collect();
+    let declared: BTreeSet<String> = mopm
+        .deps
+        .iter()
+        .map(|d| format!("mojo-{}", d.name))
+        .collect();
     if declared != mojo_deps {
         return fail(
             RuleCode::DepsMismatch,
-            format!("info/index.json depends [{}] differ from the metadata deps [{}]", sorted_join(&mojo_deps), sorted_join(&declared)),
+            format!(
+                "info/index.json depends [{}] differ from the metadata deps [{}]",
+                sorted_join(&mojo_deps),
+                sorted_join(&declared)
+            ),
         );
     }
     let mut out: Vec<String> = mojo_deps.into_iter().collect();
@@ -409,18 +535,30 @@ pub fn check_native_names(n: &NativeDecl) -> Checked<()> {
             // /\.so(?:\.\d+)*$/ on the soname
             n.soname.match_indices(".so").any(|(i, _)| {
                 let tail = &n.soname[i + 3..];
-                tail.split('.').skip(1).all(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) && (tail.is_empty() || tail.starts_with('.'))
+                tail.split('.')
+                    .skip(1)
+                    .all(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+                    && (tail.is_empty() || tail.starts_with('.'))
             })
         };
         let ok = base == n.soname || (so_like && base.starts_with(&format!("{}.", n.soname)));
         if !ok {
-            return fail(RuleCode::NativePath, format!("native '{}': file '{base}' does not fit soname '{}'", n.id, n.soname));
+            return fail(
+                RuleCode::NativePath,
+                format!(
+                    "native '{}': file '{base}' does not fit soname '{}'",
+                    n.id, n.soname
+                ),
+            );
         }
     }
     if let Some(stat) = &n.static_path {
         let base = base_of(stat);
         if base != format!("{stem}.a") {
-            return fail(RuleCode::NativePath, format!("native '{}': static_file '{base}' must be '{stem}.a'", n.id));
+            return fail(
+                RuleCode::NativePath,
+                format!("native '{}': static_file '{base}' must be '{stem}.a'", n.id),
+            );
         }
     }
     Ok(())
@@ -436,7 +574,9 @@ mod tests {
         for ok in ["libcrypto", "lib x", "LibCrypto", "é", "a\u{80}"] {
             assert!(exclusive_ok(ok), "{ok:?}");
         }
-        for bad in ["", " ", " a", "a ", "a\t", "\ta", "a\nb", "a\u{0}b", "a\u{7f}"] {
+        for bad in [
+            "", " ", " a", "a ", "a\t", "\ta", "a\nb", "a\u{0}b", "a\u{7f}",
+        ] {
             assert!(!exclusive_ok(bad), "{bad:?}");
         }
     }
@@ -446,20 +586,41 @@ mod tests {
     }
 
     fn mopm_msg(v: Value) -> (RuleCode, String) {
-        let e = check_mopm(&obj(v)).err().expect("a refusal");
+        let e = check_mopm(&obj(v)).expect_err("a refusal");
         (e.rule, e.message)
     }
 
     #[test]
     fn a_minimal_manifest_and_the_defaults_of_a_native_declaration() {
         let m = check_mopm(&obj(json!({"schema": 1, "name": "demo"}))).unwrap();
-        assert_eq!(m, Mopm { name: "demo".into(), version: None, deps: vec![], native: vec![] });
+        assert_eq!(
+            m,
+            Mopm {
+                name: "demo".into(),
+                version: None,
+                deps: vec![],
+                native: vec![]
+            }
+        );
         let m = check_mopm(&obj(json!({"schema": 1.0, "name": "demo", "version": "1.0.0", "deps": [{"name": "q", "range": ">=1"}, {"name": "r"}],
             "native": [{"id": "zlib", "soname": "libz.so.1", "file": "../libz.so.1"}]})))
         .unwrap();
         assert_eq!(m.deps[1].range, None);
         let n = &m.native[0];
-        assert_eq!((n.kind.as_str(), n.mode.as_str(), n.paths.as_slice(), n.shared_path.as_deref()), ("shared", "link", &["lib/libz.so.1".to_string()][..], Some("lib/libz.so.1")));
+        assert_eq!(
+            (
+                n.kind.as_str(),
+                n.mode.as_str(),
+                n.paths.as_slice(),
+                n.shared_path.as_deref()
+            ),
+            (
+                "shared",
+                "link",
+                &["lib/libz.so.1".to_string()][..],
+                Some("lib/libz.so.1")
+            )
+        );
     }
 
     #[test]
@@ -499,7 +660,18 @@ mod tests {
         ];
         for (v, want) in table {
             let (rule, msg) = mopm_msg(v.clone());
-            assert_eq!((rule, msg.as_str()), (if want.is_empty() { rule } else { RuleCode::ManifestSchema }, want), "{v}");
+            assert_eq!(
+                (rule, msg.as_str()),
+                (
+                    if want.is_empty() {
+                        rule
+                    } else {
+                        RuleCode::ManifestSchema
+                    },
+                    want
+                ),
+                "{v}"
+            );
         }
     }
 
@@ -509,10 +681,21 @@ mod tests {
         for ok in ["../libz.so", "../x/../libz.so", "../././libz.so"] {
             check_mopm(&obj(with(ok))).unwrap_or_else(|e| panic!("{ok}: {e}"));
         }
-        for bad in ["libz.so", "/lib/libz.so", "../../libz.so", "../sub/libz.so", "..", "../", "x/y"] {
+        for bad in [
+            "libz.so",
+            "/lib/libz.so",
+            "../../libz.so",
+            "../sub/libz.so",
+            "..",
+            "../",
+            "x/y",
+        ] {
             let (rule, msg) = mopm_msg(with(bad));
             assert_eq!(rule, RuleCode::NativePath, "{bad}");
-            assert_eq!(msg, format!("native 'z': '{bad}' does not resolve to a file directly under lib/"));
+            assert_eq!(
+                msg,
+                format!("native 'z': '{bad}' does not resolve to a file directly under lib/")
+            );
         }
     }
 
@@ -521,10 +704,21 @@ mod tests {
         assert!(parse_json_object(b"{\"a\":1}", "x", JsonRule::Manifest).is_ok());
         assert!(parse_json_object(b"\xef\xbb\xbf{\"a\":1}", "x", JsonRule::Manifest).is_ok());
         let e = parse_json_object(b"{\"a\":\xff}", "the file", JsonRule::Manifest).unwrap_err();
-        assert_eq!((e.rule, e.message.as_str()), (RuleCode::ManifestJson, "the file is not valid UTF-8 JSON"));
+        assert_eq!(
+            (e.rule, e.message.as_str()),
+            (RuleCode::ManifestJson, "the file is not valid UTF-8 JSON")
+        );
         let e = parse_json_object(b"[1]", "the file", JsonRule::Index).unwrap_err();
-        assert_eq!((e.rule, e.message.as_str()), (RuleCode::IndexInvalid, "the file is not a JSON object"));
-        assert_eq!(parse_json_object(b"null", "f", JsonRule::Index).unwrap_err().message, "f is not a JSON object");
+        assert_eq!(
+            (e.rule, e.message.as_str()),
+            (RuleCode::IndexInvalid, "the file is not a JSON object")
+        );
+        assert_eq!(
+            parse_json_object(b"null", "f", JsonRule::Index)
+                .unwrap_err()
+                .message,
+            "f is not a JSON object"
+        );
     }
 
     fn index(v: Value) -> Checked<CondaIndex> {
@@ -535,38 +729,102 @@ mod tests {
     fn the_index_fields_and_the_compiler_in_the_build_string() {
         let good = json!({"name": "mojo-demo", "version": "1.0.0", "build": "mojo1.0.0_0", "build_number": 0, "subdir": "noarch", "depends": ["mojo-compiler ==1.0.0"]});
         let i = index(good.clone()).unwrap();
-        assert_eq!((i.compiler.as_str(), i.build.as_str()), ("1.0.0", "mojo1.0.0_0"));
+        assert_eq!(
+            (i.compiler.as_str(), i.build.as_str()),
+            ("1.0.0", "mojo1.0.0_0")
+        );
         let mut g = good.clone();
         g["build_number"] = json!(0.0);
         index(g).unwrap();
         for (field, value, msg) in [
             ("name", json!(1), "info/index.json: 'name' must be a string"),
-            ("version", json!(null), "info/index.json: 'version' must be a string"),
-            ("build", json!(1), "info/index.json: 'build' must be a string"),
-            ("subdir", json!(1), "info/index.json: 'subdir' must be a string"),
-            ("build_number", json!(1), "info/index.json: 'build_number' must be 0"),
-            ("build", json!("mojo1.0.0_1"), "info/index.json: 'build' must be mojo<compiler>_0"),
-            ("build", json!("mojo_0"), "info/index.json: 'build' must be mojo<compiler>_0"),
-            ("build", json!("mojo1..0_0"), "info/index.json: 'build' must be mojo<compiler>_0"),
-            ("depends", json!("x"), "info/index.json: 'depends' must be an array of strings"),
-            ("depends", json!([1]), "info/index.json: 'depends' must be an array of strings"),
+            (
+                "version",
+                json!(null),
+                "info/index.json: 'version' must be a string",
+            ),
+            (
+                "build",
+                json!(1),
+                "info/index.json: 'build' must be a string",
+            ),
+            (
+                "subdir",
+                json!(1),
+                "info/index.json: 'subdir' must be a string",
+            ),
+            (
+                "build_number",
+                json!(1),
+                "info/index.json: 'build_number' must be 0",
+            ),
+            (
+                "build",
+                json!("mojo1.0.0_1"),
+                "info/index.json: 'build' must be mojo<compiler>_0",
+            ),
+            (
+                "build",
+                json!("mojo_0"),
+                "info/index.json: 'build' must be mojo<compiler>_0",
+            ),
+            (
+                "build",
+                json!("mojo1..0_0"),
+                "info/index.json: 'build' must be mojo<compiler>_0",
+            ),
+            (
+                "depends",
+                json!("x"),
+                "info/index.json: 'depends' must be an array of strings",
+            ),
+            (
+                "depends",
+                json!([1]),
+                "info/index.json: 'depends' must be an array of strings",
+            ),
         ] {
             let mut g = good.clone();
             g[field] = value;
             let e = index(g).unwrap_err();
-            assert_eq!((e.rule, e.message.as_str()), (RuleCode::IndexInvalid, msg), "{field}");
+            assert_eq!(
+                (e.rule, e.message.as_str()),
+                (RuleCode::IndexInvalid, msg),
+                "{field}"
+            );
         }
         let mut g = good;
         g.as_object_mut().unwrap().remove("build_number");
-        assert_eq!(index(g).unwrap_err().message, "info/index.json: 'build_number' must be 0");
+        assert_eq!(
+            index(g).unwrap_err().message,
+            "info/index.json: 'build_number' must be 0"
+        );
     }
 
     fn idx(depends: &[&str]) -> CondaIndex {
-        CondaIndex { name: "mojo-demo".into(), version: "1.0.0".into(), build: "mojo1.0.0_0".into(), compiler: "1.0.0".into(), subdir: "noarch".into(), depends: depends.iter().map(|s| s.to_string()).collect() }
+        CondaIndex {
+            name: "mojo-demo".into(),
+            version: "1.0.0".into(),
+            build: "mojo1.0.0_0".into(),
+            compiler: "1.0.0".into(),
+            subdir: "noarch".into(),
+            depends: depends.iter().map(|s| s.to_string()).collect(),
+        }
     }
 
     fn mopm_with(deps: &[&str]) -> Mopm {
-        Mopm { name: "demo".into(), version: None, deps: deps.iter().map(|d| Dep { name: d.to_string(), range: None }).collect(), native: vec![] }
+        Mopm {
+            name: "demo".into(),
+            version: None,
+            deps: deps
+                .iter()
+                .map(|d| Dep {
+                    name: d.to_string(),
+                    range: None,
+                })
+                .collect(),
+            native: vec![],
+        }
     }
 
     fn depends(d: &[&str], deps: &[&str]) -> Checked<Vec<String>> {
@@ -575,35 +833,126 @@ mod tests {
 
     #[test]
     fn depends_rules_in_their_order() {
-        assert_eq!(depends(&["mojo-compiler ==1.0.0"], &[]).unwrap(), Vec::<String>::new());
-        assert_eq!(depends(&["mojo-compiler  ==1.0.0", "mojo-b >=1", "mojo-a", "zlib"], &["a", "b"]).unwrap(), ["mojo-a", "mojo-b"]);
+        assert_eq!(
+            depends(&["mojo-compiler ==1.0.0"], &[]).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            depends(
+                &["mojo-compiler  ==1.0.0", "mojo-b >=1", "mojo-a", "zlib"],
+                &["a", "b"]
+            )
+            .unwrap(),
+            ["mojo-a", "mojo-b"]
+        );
         let rule = |r: Checked<Vec<String>>| r.unwrap_err().rule;
         assert_eq!(rule(depends(&[], &[])), RuleCode::CompilerMissing);
-        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "mojo-compiler ==1.0.0"], &[])), RuleCode::CompilerMismatch);
-        assert_eq!(rule(depends(&["mojo-compiler >=1.0.0"], &[])), RuleCode::CompilerMismatch);
-        assert_eq!(rule(depends(&["mojo-compiler ==1.0.1"], &[])), RuleCode::CompilerMismatch);
-        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "Zlib"], &[])), RuleCode::DependencyNotAllowed, "a name that is not a conda name");
-        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "zlib >=1 h1 extra"], &[])), RuleCode::DependencyNotAllowed);
-        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "mojo-"], &[])), RuleCode::DependencyNotAllowed, "mojo- alone is not a package");
+        assert_eq!(
+            rule(depends(
+                &["mojo-compiler ==1.0.0", "mojo-compiler ==1.0.0"],
+                &[]
+            )),
+            RuleCode::CompilerMismatch
+        );
+        assert_eq!(
+            rule(depends(&["mojo-compiler >=1.0.0"], &[])),
+            RuleCode::CompilerMismatch
+        );
+        assert_eq!(
+            rule(depends(&["mojo-compiler ==1.0.1"], &[])),
+            RuleCode::CompilerMismatch
+        );
+        assert_eq!(
+            rule(depends(&["mojo-compiler ==1.0.0", "Zlib"], &[])),
+            RuleCode::DependencyNotAllowed,
+            "a name that is not a conda name"
+        );
+        assert_eq!(
+            rule(depends(
+                &["mojo-compiler ==1.0.0", "zlib >=1 h1 extra"],
+                &[]
+            )),
+            RuleCode::DependencyNotAllowed
+        );
+        assert_eq!(
+            rule(depends(&["mojo-compiler ==1.0.0", "mojo-"], &[])),
+            RuleCode::DependencyNotAllowed,
+            "mojo- alone is not a package"
+        );
         let e = depends(&["mojo-compiler ==1.0.0", "mojo-b"], &["a"]).unwrap_err();
-        assert_eq!((e.rule, e.message.as_str()), (RuleCode::DepsMismatch, "info/index.json depends [mojo-b] differ from the metadata deps [mojo-a]"));
+        assert_eq!(
+            (e.rule, e.message.as_str()),
+            (
+                RuleCode::DepsMismatch,
+                "info/index.json depends [mojo-b] differ from the metadata deps [mojo-a]"
+            )
+        );
         let e = depends(&["mojo-compiler ==1.0.0", "Zlib"], &[]).unwrap_err();
         assert_eq!(e.message, "dependency 'Zlib' does not start with a conda package name (lower-case letters, digits, ., _ and -)");
         let e = depends(&["mojo-compiler ==1.0.0", "mojo-"], &[]).unwrap_err();
         assert_eq!(e.message, "dependency 'mojo-' is not a Mojo package name");
         // Any well-formed native name is accepted, with or without a version and a build string.
-        assert!(depends(&["mojo-compiler ==1.0.0", "zlib", "openssl >=3,<4", "libsqlite 3.* h5eee18b_0", "x  >=1"], &[]).is_ok());
-        for bad in [" zlib", "zlib>=1", "zlib >=1;x", "zlib '>=1'", "zlib >=1 h/1", "a/b", "-zlib"] {
-            assert_eq!(depends(&["mojo-compiler ==1.0.0", bad], &[]).unwrap_err().rule, RuleCode::DependencyNotAllowed, "{bad}");
+        assert!(depends(
+            &[
+                "mojo-compiler ==1.0.0",
+                "zlib",
+                "openssl >=3,<4",
+                "libsqlite 3.* h5eee18b_0",
+                "x  >=1"
+            ],
+            &[]
+        )
+        .is_ok());
+        for bad in [
+            " zlib",
+            "zlib>=1",
+            "zlib >=1;x",
+            "zlib '>=1'",
+            "zlib >=1 h/1",
+            "a/b",
+            "-zlib",
+        ] {
+            assert_eq!(
+                depends(&["mojo-compiler ==1.0.0", bad], &[])
+                    .unwrap_err()
+                    .rule,
+                RuleCode::DependencyNotAllowed,
+                "{bad}"
+            );
         }
-        assert_eq!(depends(&["mojo-compiler ==1.0.0", &"a".repeat(129)], &[]).unwrap_err().rule, RuleCode::DependencyNotAllowed);
-        assert_eq!(depends(&["mojo-compiler ==1.0.0", &format!("zlib >={}", "1".repeat(300))], &[]).unwrap_err().rule, RuleCode::DependencyNotAllowed);
+        assert_eq!(
+            depends(&["mojo-compiler ==1.0.0", &"a".repeat(129)], &[])
+                .unwrap_err()
+                .rule,
+            RuleCode::DependencyNotAllowed
+        );
+        assert_eq!(
+            depends(
+                &[
+                    "mojo-compiler ==1.0.0",
+                    &format!("zlib >={}", "1".repeat(300))
+                ],
+                &[]
+            )
+            .unwrap_err()
+            .rule,
+            RuleCode::DependencyNotAllowed
+        );
     }
 
     #[test]
     fn mojo_deps_are_returned_in_javascript_sort_order() {
         // U+1F600 is a surrogate pair (D83D DE00) and sorts before U+FF5E in UTF-16, after it in UTF-8.
-        let r = depends(&["mojo-compiler ==1.0.0", "mojo-\u{ff5e}", "mojo-\u{1f600}", "mojo-a"], &["\u{ff5e}", "\u{1f600}", "a"]).unwrap();
+        let r = depends(
+            &[
+                "mojo-compiler ==1.0.0",
+                "mojo-\u{ff5e}",
+                "mojo-\u{1f600}",
+                "mojo-a",
+            ],
+            &["\u{ff5e}", "\u{1f600}", "a"],
+        )
+        .unwrap();
         assert_eq!(r, ["mojo-a", "mojo-\u{1f600}", "mojo-\u{ff5e}"]);
     }
 
@@ -621,10 +970,22 @@ mod tests {
         check_native_names(&n("libz.so.1", Some("lib/libz.so.1"), Some("lib/libz.a"))).unwrap();
         check_native_names(&n("libz.so", Some("lib/libz.so.1.2"), None)).unwrap();
         let e = check_native_names(&n("libz.so.1", Some("lib/libfoo.so.1"), None)).unwrap_err();
-        assert_eq!((e.rule, e.message.as_str()), (RuleCode::NativePath, "native 'z': file 'libfoo.so.1' does not fit soname 'libz.so.1'"));
-        assert!(check_native_names(&n("libz.dylib", Some("lib/libz.dylib.1"), None)).is_err(), "only a .so soname takes version suffixes");
+        assert_eq!(
+            (e.rule, e.message.as_str()),
+            (
+                RuleCode::NativePath,
+                "native 'z': file 'libfoo.so.1' does not fit soname 'libz.so.1'"
+            )
+        );
+        assert!(
+            check_native_names(&n("libz.dylib", Some("lib/libz.dylib.1"), None)).is_err(),
+            "only a .so soname takes version suffixes"
+        );
         let e = check_native_names(&n("libz.so", None, Some("lib/libfoo.a"))).unwrap_err();
-        assert_eq!(e.message, "native 'z': static_file 'libfoo.a' must be 'libz.a'");
+        assert_eq!(
+            e.message,
+            "native 'z': static_file 'libfoo.a' must be 'libz.a'"
+        );
     }
 
     #[test]
@@ -641,6 +1002,9 @@ mod tests {
     fn same_version_is_equality_of_valid_versions() {
         assert!(same_version("1.0.0", "1.0.0"));
         assert!(!same_version("1.0.0", "1.0.1"));
-        assert!(!same_version("1.0", "1.0"), "an invalid spelling matches nothing");
+        assert!(
+            !same_version("1.0", "1.0"),
+            "an invalid spelling matches nothing"
+        );
     }
 }

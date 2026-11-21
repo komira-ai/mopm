@@ -50,7 +50,10 @@ impl Seed {
         let mut versions = std::collections::BTreeSet::new();
         for v in &seed.versions {
             if !versions.insert((&v.name, &v.canonical)) {
-                return Err(SeedError::DuplicateVersion { name: v.name.clone(), version: v.version.clone() });
+                return Err(SeedError::DuplicateVersion {
+                    name: v.name.clone(),
+                    version: v.version.clone(),
+                });
             }
         }
         Ok(seed)
@@ -95,9 +98,21 @@ mod tests {
     async fn a_seed_becomes_a_store_holding_exactly_it() {
         let s = Seed::parse(&text()).unwrap().into_store();
         assert_eq!(s.list_package_names().await.unwrap(), ["http"]);
-        assert_eq!(s.get_version("http", "1.0.0").await.unwrap().unwrap().files.len(), 1);
+        assert_eq!(
+            s.get_version("http", "1.0.0")
+                .await
+                .unwrap()
+                .unwrap()
+                .files
+                .len(),
+            1
+        );
         assert_eq!(s.list_owners("http").await.unwrap()[0].github_id, 7);
-        assert_eq!(s.list_audit("http").await.unwrap().len(), 1, "seeding made no audit entry of its own");
+        assert_eq!(
+            s.list_audit("http").await.unwrap().len(),
+            1,
+            "seeding made no audit entry of its own"
+        );
     }
 
     #[test]
@@ -111,21 +126,33 @@ mod tests {
 
     #[test]
     fn a_typo_in_a_member_name_is_an_error_and_not_an_empty_seed() {
-        assert!(matches!(Seed::parse(r#"{"package": []}"#), Err(SeedError::Invalid(_))));
+        assert!(matches!(
+            Seed::parse(r#"{"package": []}"#),
+            Err(SeedError::Invalid(_))
+        ));
     }
 
     #[test]
     fn a_malformed_record_is_an_error() {
-        assert!(matches!(Seed::parse(r#"{"owners": [{"name": "p"}]}"#), Err(SeedError::Invalid(_))));
+        assert!(matches!(
+            Seed::parse(r#"{"owners": [{"name": "p"}]}"#),
+            Err(SeedError::Invalid(_))
+        ));
     }
 
     #[test]
     fn duplicates_are_refused() {
         let v = serde_json::to_value(rec("http", "1.0.0")).unwrap();
         let dup = serde_json::json!({"versions": [v.clone(), v]}).to_string();
-        assert!(matches!(Seed::parse(&dup), Err(SeedError::DuplicateVersion { .. })));
+        assert!(matches!(
+            Seed::parse(&dup),
+            Err(SeedError::DuplicateVersion { .. })
+        ));
         let p = serde_json::json!({"name": "a", "state": "active", "created_at": "t"});
         let dup = serde_json::json!({"packages": [p.clone(), p]}).to_string();
-        assert!(matches!(Seed::parse(&dup), Err(SeedError::DuplicatePackage(_))));
+        assert!(matches!(
+            Seed::parse(&dup),
+            Err(SeedError::DuplicatePackage(_))
+        ));
     }
 }

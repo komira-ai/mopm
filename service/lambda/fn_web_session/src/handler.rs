@@ -62,8 +62,14 @@ impl<S: AuthStore, C: Clock> WebSessionHandler<S, C> {
             (path, method) => Err(route_not_found(method_name(method), path)),
         };
         match routed {
-            Ok(response) => Answer { response, error: None },
-            Err(error) => Answer { response: error_response(&error, &req.request_id), error: Some(error) },
+            Ok(response) => Answer {
+                response,
+                error: None,
+            },
+            Err(error) => Answer {
+                response: error_response(&error, &req.request_id),
+                error: Some(error),
+            },
         }
     }
 
@@ -80,7 +86,11 @@ impl<S: AuthStore, C: Clock> WebSessionHandler<S, C> {
     async fn logout(&self, req: &WebRequest) -> Result<WebResponse, RegistryError> {
         let session = self.auth.session_for_post(req).await?;
         let at = iso_millis(self.auth.clock().now());
-        self.auth.store().revoke_token(&session.token.hash, &at).await.map_err(|fault| internal(&fault))?;
+        self.auth
+            .store()
+            .revoke_token(&session.token.hash, &at)
+            .await
+            .map_err(|fault| internal(&fault))?;
         Ok(WebResponse::empty(204, &req.request_id).with_cookie(clear_session_cookie()))
     }
 
@@ -92,7 +102,10 @@ impl<S: AuthStore, C: Clock> WebSessionHandler<S, C> {
         let path = event.raw_path.clone().unwrap_or_default();
         let answer = match from_apigw(event) {
             Ok(req) => self.answer(&req).await,
-            Err(error) => Answer { response: error_response(&error, &request_id), error: Some(error) },
+            Err(error) => Answer {
+                response: error_response(&error, &request_id),
+                error: Some(error),
+            },
         };
         log_answer(&method, &path, &answer);
         to_apigw(&answer.response).unwrap_or_else(|_| fallback_internal_error(&request_id))
@@ -104,6 +117,13 @@ fn log_answer(method: &str, path: &str, answer: &Answer) {
     let status = answer.response.status;
     match &answer.error {
         None => tracing::info!(method, path, status, "answered"),
-        Some(error) => tracing::warn!(method, path, status, error_code = error.code.as_str(), error_message = error.message.as_str(), "refused"),
+        Some(error) => tracing::warn!(
+            method,
+            path,
+            status,
+            error_code = error.code.as_str(),
+            error_message = error.message.as_str(),
+            "refused"
+        ),
     }
 }

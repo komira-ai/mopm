@@ -17,7 +17,11 @@ struct Unit {
 
 /// The quoted strings of `text`, in order.
 fn quoted(text: &str) -> Vec<String> {
-    text.split('"').skip(1).step_by(2).map(str::to_string).collect()
+    text.split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
 }
 
 /// The entries of the table's `UNITS` dict: one `    "<key>": {` line, then one field per line, then `    },`.
@@ -29,8 +33,14 @@ fn units(table: &str) -> Vec<Unit> {
         if line == "}" {
             break;
         }
-        if let Some(key) = line.strip_prefix("    \"").and_then(|l| l.strip_suffix("\": {")) {
-            cur = Some(Unit { key: key.to_string(), ..Unit::default() });
+        if let Some(key) = line
+            .strip_prefix("    \"")
+            .and_then(|l| l.strip_suffix("\": {"))
+        {
+            cur = Some(Unit {
+                key: key.to_string(),
+                ..Unit::default()
+            });
         } else if line == "    }," {
             out.extend(cur.take());
         } else if let Some(u) = cur.as_mut() {
@@ -85,7 +95,10 @@ fn the_committed_table_builds_tls_on_aws_lc_and_has_no_ring() {
     // The units this check is about are really read from it.
     let units = units(TABLE);
     assert!(units.iter().any(|u| u.krate == "hyper-rustls"));
-    assert!(units.iter().filter(|u| u.krate == "rustls").count() >= 2, "a unit per profile, at least");
+    assert!(
+        units.iter().filter(|u| u.krate == "rustls").count() >= 2,
+        "a unit per profile, at least"
+    );
 }
 
 /// A table in the committed format with the given units: (key, crate, features, dependency keys).
@@ -94,24 +107,49 @@ fn table(units: &[(&str, &str, &[&str], &[&str])]) -> String {
     for (key, krate, features, deps) in units {
         let features: Vec<String> = features.iter().map(|f| format!("\"{f}\"")).collect();
         let deps: Vec<String> = deps.iter().map(|d| format!("[\"x\", \"{d}\"]")).collect();
-        out.push_str(&format!("    \"{key}\": {{\n        \"crate\": \"{krate}\",\n        \"version\": \"1\",\n"));
-        out.push_str(&format!("        \"features\": [{}],\n        \"deps\": [{}],\n    }},\n", features.join(", "), deps.join(", ")));
+        out.push_str(&format!(
+            "    \"{key}\": {{\n        \"crate\": \"{krate}\",\n        \"version\": \"1\",\n"
+        ));
+        out.push_str(&format!(
+            "        \"features\": [{}],\n        \"deps\": [{}],\n    }},\n",
+            features.join(", "),
+            deps.join(", ")
+        ));
     }
     out.push_str("}\n\nOTHER = {\n    \"ring-0:1\": {\n        \"crate\": \"ring\",\n    },\n}\n");
     out
 }
 
-const AWS_LC_RS: (&str, &str, &[&str], &[&str]) = ("aws-lc-rs-1:a", "aws-lc-rs", &["aws-lc-sys"], &["aws-lc-sys-0:b"]);
+const AWS_LC_RS: (&str, &str, &[&str], &[&str]) = (
+    "aws-lc-rs-1:a",
+    "aws-lc-rs",
+    &["aws-lc-sys"],
+    &["aws-lc-sys-0:b"],
+);
 const AWS_LC_SYS: (&str, &str, &[&str], &[&str]) = ("aws-lc-sys-0:b", "aws-lc-sys", &[], &[]);
-const RUSTLS: (&str, &str, &[&str], &[&str]) = ("rustls-0:c", "rustls", &["aws_lc_rs", "std"], &["aws-lc-rs-1:a", "rustls-webpki-0:d"]);
-const WEBPKI: (&str, &str, &[&str], &[&str]) = ("rustls-webpki-0:d", "rustls-webpki", &["aws_lc_rs", "std"], &["aws-lc-rs-1:a"]);
+const RUSTLS: (&str, &str, &[&str], &[&str]) = (
+    "rustls-0:c",
+    "rustls",
+    &["aws_lc_rs", "std"],
+    &["aws-lc-rs-1:a", "rustls-webpki-0:d"],
+);
+const WEBPKI: (&str, &str, &[&str], &[&str]) = (
+    "rustls-webpki-0:d",
+    "rustls-webpki",
+    &["aws_lc_rs", "std"],
+    &["aws-lc-rs-1:a"],
+);
 
 #[test]
 fn a_small_table_on_aws_lc_only_passes_and_what_follows_its_dict_is_not_read() {
     let small = table(&[AWS_LC_RS, AWS_LC_SYS, RUSTLS, WEBPKI]);
     assert_eq!(findings(&small), Vec::<String>::new());
     // A line between two units (a comment, say) belongs to neither and changes nothing.
-    let with_comment = small.replacen("    },\n", "    },\n    # between units\n        \"crate\": \"ring\",\n", 1);
+    let with_comment = small.replacen(
+        "    },\n",
+        "    },\n    # between units\n        \"crate\": \"ring\",\n",
+        1,
+    );
     assert_eq!(units(&with_comment).len(), 4);
     assert_eq!(findings(&with_comment), Vec::<String>::new());
 }
@@ -119,24 +157,52 @@ fn a_small_table_on_aws_lc_only_passes_and_what_follows_its_dict_is_not_read() {
 #[test]
 fn a_ring_unit_and_a_unit_that_depends_on_it_are_found() {
     let ring = ("ring-0.17:e", "ring", &[][..], &[][..]);
-    let webpki = ("rustls-webpki-0:d", "rustls-webpki", &["aws_lc_rs", "std"][..], &["aws-lc-rs-1:a", "ring-0.17:e"][..]);
-    assert_eq!(findings(&table(&[AWS_LC_RS, AWS_LC_SYS, RUSTLS, webpki, ring])), ["rustls-webpki-0:d depends on ring-0.17:e", "ring-0.17:e is the ring crate"]);
+    let webpki = (
+        "rustls-webpki-0:d",
+        "rustls-webpki",
+        &["aws_lc_rs", "std"][..],
+        &["aws-lc-rs-1:a", "ring-0.17:e"][..],
+    );
+    assert_eq!(
+        findings(&table(&[AWS_LC_RS, AWS_LC_SYS, RUSTLS, webpki, ring])),
+        [
+            "rustls-webpki-0:d depends on ring-0.17:e",
+            "ring-0.17:e is the ring crate"
+        ]
+    );
 }
 
 #[test]
 fn rustls_or_webpki_on_ring_or_without_aws_lc_is_found() {
-    let rustls = ("rustls-0:c", "rustls", &["ring", "std"][..], &["rustls-webpki-0:d"][..]);
-    let webpki = ("rustls-webpki-0:d", "rustls-webpki", &["aws_lc_rs", "ring"][..], &[][..]);
+    let rustls = (
+        "rustls-0:c",
+        "rustls",
+        &["ring", "std"][..],
+        &["rustls-webpki-0:d"][..],
+    );
+    let webpki = (
+        "rustls-webpki-0:d",
+        "rustls-webpki",
+        &["aws_lc_rs", "ring"][..],
+        &[][..],
+    );
     assert_eq!(
         findings(&table(&[AWS_LC_RS, AWS_LC_SYS, rustls, webpki])),
-        ["rustls-0:c is built without its aws_lc_rs feature", "rustls-0:c is built with its ring feature", "rustls-webpki-0:d is built with its ring feature"]
+        [
+            "rustls-0:c is built without its aws_lc_rs feature",
+            "rustls-0:c is built with its ring feature",
+            "rustls-webpki-0:d is built with its ring feature"
+        ]
     );
 }
 
 #[test]
 fn a_table_without_the_aws_lc_crates_or_rustls_is_found() {
     let other = ("serde-1:f", "serde", &["std"][..], &[][..]);
-    assert_eq!(findings(&table(&[other])), ["no aws-lc-rs unit", "no aws-lc-sys unit", "no rustls unit"]);
+    assert_eq!(
+        findings(&table(&[other])),
+        ["no aws-lc-rs unit", "no aws-lc-sys unit", "no rustls unit"]
+    );
 }
 
 #[test]
@@ -145,5 +211,8 @@ fn a_table_this_check_cannot_read_is_a_finding_not_a_pass() {
     assert_eq!(findings("SCHEMA = 2\n"), want);
     assert_eq!(findings(&table(&[]).replace("UNITS = {", "UNITS={")), want);
     // A unit whose closing line is missing is not read either.
-    assert_eq!(findings(&table(&[AWS_LC_SYS]).replacen("    },\n", "", 1)), want);
+    assert_eq!(
+        findings(&table(&[AWS_LC_SYS]).replacen("    },\n", "", 1)),
+        want
+    );
 }

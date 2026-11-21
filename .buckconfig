@@ -54,10 +54,10 @@
 
 [external_cell_buildrules]
   # buildrules: its Rust (cargo_unit, the cargo_package front door), Zig, node, cxx, coverage and AWS-LC rules and the CLI.
-  # Bump commit_hash to take a newer commit. eec7f9f4c: buildrules main at the merge of komira-ai/buildrules#153 (cov_normalize
-  # refuses the action directory in a report only as a whole path).
+  # Bump commit_hash to take a newer commit. da5248c55: buildrules main at the merge of komira-ai/buildrules#159 (the pinned
+  # rustfmt, `:fmt` per cargo member and `//:fmt`, which Cargo.toml's `ci` action builds).
   git_origin = https://github.com/komira-ai/buildrules.git
-  commit_hash = eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503
+  commit_hash = da5248c55edc165dfa79a345115515f490dde90a
 
 # The farm's macOS arm64 workers, for buildrules, which reads every `[buildrules_re]` key from this (the root) cell. farm-connect
 # writes the worker property set and the hosts under `[komira_re]` (farm-macos.yml passes them); these keys follow them, holding no

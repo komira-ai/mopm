@@ -32,7 +32,8 @@ pub fn cmp_utf16(a: &str, b: &str) -> Ordering {
 
 /// The array index a key denotes in JavaScript, if it denotes one.
 fn array_index(k: &str) -> Option<u32> {
-    let canonical = !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()) && (k == "0" || !k.starts_with('0'));
+    let canonical =
+        !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()) && (k == "0" || !k.starts_with('0'));
     if !canonical || k.len() > 10 {
         return None;
     }
@@ -120,23 +121,41 @@ mod tests {
         // service/api/test/repodata.test.ts: { b: 1, a: { d: [{ z: 1, y: 2 }], c: undefined } } (undefined is
         // dropped before the value reaches here).
         let v = json!({"b": 1, "a": {"d": [{"z": 1, "y": 2}]}});
-        assert_eq!(canonical_json(&v).unwrap(), r#"{"a":{"d":[{"y":2,"z":1}]},"b":1}"#);
+        assert_eq!(
+            canonical_json(&v).unwrap(),
+            r#"{"a":{"d":[{"y":2,"z":1}]},"b":1}"#
+        );
     }
 
     #[test]
     fn writes_scalars_and_empty_containers() {
         assert_eq!(canonical_json(&json!({})).unwrap(), "{}");
         assert_eq!(canonical_json(&json!([])).unwrap(), "[]");
-        assert_eq!(canonical_json(&json!([null, true, false, 0, -7, "x"])).unwrap(), r#"[null,true,false,0,-7,"x"]"#);
+        assert_eq!(
+            canonical_json(&json!([null, true, false, 0, -7, "x"])).unwrap(),
+            r#"[null,true,false,0,-7,"x"]"#
+        );
     }
 
     #[test]
     fn refuses_what_is_not_a_safe_integer() {
-        for text in ["1.5", "9007199254740992", "-9007199254740992", "1152921504606846976"] {
+        for text in [
+            "1.5",
+            "9007199254740992",
+            "-9007199254740992",
+            "1152921504606846976",
+        ] {
             let v: Value = serde_json::from_str(&format!("{{\"n\":{text}}}")).unwrap();
-            assert_eq!(canonical_json(&v).unwrap_err(), CanonicalJsonError::NotSafeInteger(text.to_string()), "{text}");
+            assert_eq!(
+                canonical_json(&v).unwrap_err(),
+                CanonicalJsonError::NotSafeInteger(text.to_string()),
+                "{text}"
+            );
         }
-        assert_eq!(canonical_json(&json!({"n": 1.5})).unwrap_err().to_string(), "canonicalJson: 1.5 is not a safe integer");
+        assert_eq!(
+            canonical_json(&json!({"n": 1.5})).unwrap_err().to_string(),
+            "canonicalJson: 1.5 is not a safe integer"
+        );
     }
 
     #[test]
@@ -158,8 +177,14 @@ mod tests {
         // U+1F600 is the surrogate pair D83D DE00; U+FF5E is the single unit FF5E. UTF-16 order puts the
         // emoji FIRST; UTF-8 and code point order put it last.
         let v = json!({"\u{ff5e}": 1, "\u{1f600}": 2, "a": 3, "\u{e9}": 4});
-        assert_eq!(canonical_json(&v).unwrap(), "{\"a\":3,\"\u{e9}\":4,\"\u{1f600}\":2,\"\u{ff5e}\":1}");
-        assert!("\u{1f600}".as_bytes() > "\u{ff5e}".as_bytes(), "the premise: UTF-8 order is the other way");
+        assert_eq!(
+            canonical_json(&v).unwrap(),
+            "{\"a\":3,\"\u{e9}\":4,\"\u{1f600}\":2,\"\u{ff5e}\":1}"
+        );
+        assert!(
+            "\u{1f600}".as_bytes() > "\u{ff5e}".as_bytes(),
+            "the premise: UTF-8 order is the other way"
+        );
     }
 
     #[test]

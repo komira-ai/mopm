@@ -115,7 +115,11 @@ fn sha256_hex(b: &[u8]) -> String {
 }
 
 /// Validate an uploaded package archive before it is committed.
-pub fn validate_package(archive: &[u8], expected: &PublishExpectation, options: &ValidatorOptions) -> Verdict {
+pub fn validate_package(
+    archive: &[u8],
+    expected: &PublishExpectation,
+    options: &ValidatorOptions,
+) -> Verdict {
     match run(archive, expected, &options.limits) {
         Ok(facts) => Verdict::Accepted(Box::new(facts)),
         Err(f) => Verdict::Rejected(f),
@@ -124,7 +128,9 @@ pub fn validate_package(archive: &[u8], expected: &PublishExpectation, options: 
 
 /// `/^pkg-.+\.tar\.zst$/` and `/^info-.+\.tar\.zst$/` on a zip entry name.
 fn tar_zst_named(name: &str, prefix: &str) -> bool {
-    name.strip_prefix(prefix).and_then(|r| r.strip_suffix(".tar.zst")).is_some_and(|mid| !mid.is_empty() && !mid.contains(['\n', '\r', '\u{2028}', '\u{2029}']))
+    name.strip_prefix(prefix)
+        .and_then(|r| r.strip_suffix(".tar.zst"))
+        .is_some_and(|mid| !mid.is_empty() && !mid.contains(['\n', '\r', '\u{2028}', '\u{2029}']))
 }
 
 fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<PackageFacts> {
@@ -133,11 +139,21 @@ fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<Pa
         return fail(RuleCode::NotAnArchive, "the upload is empty");
     }
     if buf.len() as u64 > limits.max_archive_bytes {
-        return fail(RuleCode::ArchiveTooLarge, format!("the archive is {} bytes; the limit is {}", buf.len(), limits.max_archive_bytes));
+        return fail(
+            RuleCode::ArchiveTooLarge,
+            format!(
+                "the archive is {} bytes; the limit is {}",
+                buf.len(),
+                limits.max_archive_bytes
+            ),
+        );
     }
     if let Some(want) = &expected.sha256 {
         if sha256_hex(buf) != want.to_lowercase() {
-            return fail(RuleCode::Sha256Mismatch, "the archive does not hash to the sha256 declared at begin-upload");
+            return fail(
+                RuleCode::Sha256Mismatch,
+                "the archive does not hash to the sha256 declared at begin-upload",
+            );
         }
     }
 
@@ -147,14 +163,26 @@ fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<Pa
     } else if buf.starts_with(&BZIP2_MAGIC) {
         "tar.bz2"
     } else {
-        return fail(RuleCode::NotAnArchive, "the upload is neither a .conda (zip) nor a .tar.bz2 archive");
+        return fail(
+            RuleCode::NotAnArchive,
+            "the upload is neither a .conda (zip) nor a .tar.bz2 archive",
+        );
     };
     if !expected.filename.ends_with(&format!(".{format}")) {
-        return fail(RuleCode::NotAnArchive, format!("the bytes are a {format} archive but the file is named '{}'", expected.filename));
+        return fail(
+            RuleCode::NotAnArchive,
+            format!(
+                "the bytes are a {format} archive but the file is named '{}'",
+                expected.filename
+            ),
+        );
     }
     // The channel publishes only `.conda`; a `.tar.bz2` is read by nothing here.
     if format != "conda" {
-        return fail(RuleCode::FormatNotAllowed, format!(".{format} packages are not accepted"));
+        return fail(
+            RuleCode::FormatNotAllowed,
+            format!(".{format} packages are not accepted"),
+        );
     }
 
     // 3. Unpack with every cap live.
@@ -168,26 +196,51 @@ fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<Pa
     };
     let zip = zip::read_zip(buf, limits, limits.max_unpacked_bytes + slack)?;
     let meta: Vec<_> = zip.iter().filter(|z| z.name == "metadata.json").collect();
-    let pkg: Vec<_> = zip.iter().filter(|z| tar_zst_named(&z.name, "pkg-")).collect();
-    let info: Vec<_> = zip.iter().filter(|z| tar_zst_named(&z.name, "info-")).collect();
+    let pkg: Vec<_> = zip
+        .iter()
+        .filter(|z| tar_zst_named(&z.name, "pkg-"))
+        .collect();
+    let info: Vec<_> = zip
+        .iter()
+        .filter(|z| tar_zst_named(&z.name, "info-"))
+        .collect();
     if zip.len() != 3 || meta.len() != 1 || pkg.len() != 1 || info.len() != 1 {
-        return fail(RuleCode::CondaLayout, "a .conda holds exactly metadata.json, one pkg-*.tar.zst and one info-*.tar.zst");
+        return fail(
+            RuleCode::CondaLayout,
+            "a .conda holds exactly metadata.json, one pkg-*.tar.zst and one info-*.tar.zst",
+        );
     }
-    let conda_meta = js::decode_utf8(&meta[0].data).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-    let version_ok = conda_meta.as_ref().and_then(|m| m.as_object()).and_then(|o| o.get("conda_pkg_format_version")).is_some_and(|v| v.as_f64() == Some(2.0));
+    let conda_meta = js::decode_utf8(&meta[0].data)
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let version_ok = conda_meta
+        .as_ref()
+        .and_then(|m| m.as_object())
+        .and_then(|o| o.get("conda_pkg_format_version"))
+        .is_some_and(|v| v.as_f64() == Some(2.0));
     if !version_ok {
-        return fail(RuleCode::CondaLayout, "metadata.json must be an object with conda_pkg_format_version 2");
+        return fail(
+            RuleCode::CondaLayout,
+            "metadata.json must be an object with conda_pkg_format_version 2",
+        );
     }
     let info_entries = tar_of(&info[0].data, &info[0].name, &mut budget)?;
     for e in &info_entries {
         if e.path.split('/').next() != Some("info") {
-            return fail_at(RuleCode::CondaLayout, format!("'{}' is in the info tar but not under info/", e.path), e.path.clone());
+            return fail_at(
+                RuleCode::CondaLayout,
+                format!("'{}' is in the info tar but not under info/", e.path),
+                e.path.clone(),
+            );
         }
     }
     let pkg_entries = tar_of(&pkg[0].data, &pkg[0].name, &mut budget)?;
     for e in &pkg_entries {
         if e.path.split('/').next() == Some("info") {
-            return fail_at(RuleCode::CondaLayout, format!("'{}' is in the pkg tar but under info/", e.path), e.path.clone());
+            return fail_at(
+                RuleCode::CondaLayout,
+                format!("'{}' is in the pkg tar but under info/", e.path),
+                e.path.clone(),
+            );
         }
     }
     let entries: Vec<TarEntry> = info_entries.into_iter().chain(pkg_entries).collect();
@@ -205,11 +258,19 @@ fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<Pa
     if !by_path.contains_key(mojoc_path.as_str()) {
         return fail(RuleCode::MojocMissing, format!("{mojoc_path} is missing"));
     }
-    let Some(mopm_file) = by_path.get(mopm_path.as_str()) else { return fail(RuleCode::ManifestMissing, format!("{mopm_path} is missing")) };
-    let Some(index_file) = by_path.get("info/index.json") else { return fail(RuleCode::IndexMissing, "info/index.json is missing") };
+    let Some(mopm_file) = by_path.get(mopm_path.as_str()) else {
+        return fail(RuleCode::ManifestMissing, format!("{mopm_path} is missing"));
+    };
+    let Some(index_file) = by_path.get("info/index.json") else {
+        return fail(RuleCode::IndexMissing, "info/index.json is missing");
+    };
     for f in [mopm_file, index_file] {
         if f.data.len() as u64 > limits.max_metadata_bytes {
-            return fail_at(RuleCode::ManifestTooLarge, format!("'{}' is {} bytes", f.path, f.data.len()), f.path.clone());
+            return fail_at(
+                RuleCode::ManifestTooLarge,
+                format!("'{}' is {} bytes", f.path, f.data.len()),
+                f.path.clone(),
+            );
         }
     }
 
@@ -217,33 +278,83 @@ fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<Pa
     let manifest_sha256 = sha256_hex(&mopm_file.data);
     if let Some(want) = &expected.manifest_sha256 {
         if manifest_sha256 != want.to_lowercase() {
-            return fail(RuleCode::ManifestSha256Mismatch, "the embedded metadata does not hash to the manifest_sha256 declared at commit");
+            return fail(
+                RuleCode::ManifestSha256Mismatch,
+                "the embedded metadata does not hash to the manifest_sha256 declared at commit",
+            );
         }
     }
-    let mopm = metadata::check_mopm(&metadata::parse_json_object(&mopm_file.data, &mopm_file.path, metadata::JsonRule::Manifest)?)?;
+    let mopm = metadata::check_mopm(&metadata::parse_json_object(
+        &mopm_file.data,
+        &mopm_file.path,
+        metadata::JsonRule::Manifest,
+    )?)?;
     if mopm.name != expected.name {
-        return fail(RuleCode::NameMismatch, format!("metadata name '{}' is not the published name '{}'", mopm.name, expected.name));
+        return fail(
+            RuleCode::NameMismatch,
+            format!(
+                "metadata name '{}' is not the published name '{}'",
+                mopm.name, expected.name
+            ),
+        );
     }
     if let Some(v) = &mopm.version {
         if !metadata::same_version(v, &expected.version) {
-            return fail(RuleCode::VersionMismatch, format!("metadata version '{v}' is not the published version '{}'", expected.version));
+            return fail(
+                RuleCode::VersionMismatch,
+                format!(
+                    "metadata version '{v}' is not the published version '{}'",
+                    expected.version
+                ),
+            );
         }
     }
-    let idx = metadata::check_index(&metadata::parse_json_object(&index_file.data, &index_file.path, metadata::JsonRule::Index)?)?;
+    let idx = metadata::check_index(&metadata::parse_json_object(
+        &index_file.data,
+        &index_file.path,
+        metadata::JsonRule::Index,
+    )?)?;
     if idx.name != format!("mojo-{}", expected.name) {
-        return fail(RuleCode::NameMismatch, format!("info/index.json name '{}' is not 'mojo-{}'", idx.name, expected.name));
+        return fail(
+            RuleCode::NameMismatch,
+            format!(
+                "info/index.json name '{}' is not 'mojo-{}'",
+                idx.name, expected.name
+            ),
+        );
     }
     if !metadata::same_version(&idx.version, &expected.version) {
-        return fail(RuleCode::VersionMismatch, format!("info/index.json version '{}' is not the published version '{}'", idx.version, expected.version));
+        return fail(
+            RuleCode::VersionMismatch,
+            format!(
+                "info/index.json version '{}' is not the published version '{}'",
+                idx.version, expected.version
+            ),
+        );
     }
     if idx.subdir != expected.subdir {
-        return fail(RuleCode::SubdirMismatch, format!("info/index.json subdir '{}' is not '{}'", idx.subdir, expected.subdir));
+        return fail(
+            RuleCode::SubdirMismatch,
+            format!(
+                "info/index.json subdir '{}' is not '{}'",
+                idx.subdir, expected.subdir
+            ),
+        );
     }
     let mojo_deps = metadata::check_depends(&idx, &mopm)?;
     let native_depends = metadata::native_depends_of(&idx);
-    let want_file = format!("mojo-{}-{}-{}.{format}", expected.name, expected.version, idx.build);
+    let want_file = format!(
+        "mojo-{}-{}-{}.{format}",
+        expected.name, expected.version, idx.build
+    );
     if expected.filename != want_file {
-        return fail(RuleCode::FilenameMismatch, format!("the file is named '{}' but its metadata says '{want_file}'", expected.filename));
+        return fail(
+            RuleCode::FilenameMismatch,
+            format!(
+                "the file is named '{}' but its metadata says '{want_file}'",
+                expected.filename
+            ),
+        );
     }
 
     // 6. Native libraries: every declared file present, every library file declared.
@@ -251,12 +362,22 @@ fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<Pa
     let mut ids: BTreeSet<&str> = BTreeSet::new();
     for n in &mopm.native {
         if !ids.insert(&n.id) {
-            return fail(RuleCode::ManifestSchema, format!("native id '{}' is declared twice", n.id));
+            return fail(
+                RuleCode::ManifestSchema,
+                format!("native id '{}' is declared twice", n.id),
+            );
         }
         metadata::check_native_names(n)?;
         for p in &n.paths {
             if roles.get(p.as_str()) != Some(&Role::Native) {
-                return fail_at(RuleCode::NativeMissing, format!("native '{}' declares '{p}', which the package does not contain", n.id), p.clone());
+                return fail_at(
+                    RuleCode::NativeMissing,
+                    format!(
+                        "native '{}' declares '{p}', which the package does not contain",
+                        n.id
+                    ),
+                    p.clone(),
+                );
             }
             claimed.insert(p);
         }
@@ -265,7 +386,14 @@ fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<Pa
     // matter of which one is named in the message, so walk in insertion order.
     for e in &entries {
         if roles.get(e.path.as_str()) == Some(&Role::Native) && !claimed.contains(e.path.as_str()) {
-            return fail_at(RuleCode::NativeUndeclared, format!("'{}' is a native library the metadata does not declare", e.path), e.path.clone());
+            return fail_at(
+                RuleCode::NativeUndeclared,
+                format!(
+                    "'{}' is a native library the metadata does not declare",
+                    e.path
+                ),
+                e.path.clone(),
+            );
         }
     }
 
@@ -280,7 +408,14 @@ fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<Pa
         native_depends,
         metadata: mopm,
         manifest_sha256,
-        files: entries.iter().filter(|e| e.kind == tar::Kind::File).map(|e| FactsFile { path: e.path.clone(), size: e.data.len() as u64 }).collect(),
+        files: entries
+            .iter()
+            .filter(|e| e.kind == tar::Kind::File)
+            .map(|e| FactsFile {
+                path: e.path.clone(),
+                size: e.data.len() as u64,
+            })
+            .collect(),
         unpacked_bytes: budget.bytes,
     })
 }

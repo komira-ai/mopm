@@ -84,8 +84,8 @@ program. The tool of T11 is a Zig tool here (B7).
 ### Rust
 
 The registry's functions (`service/lambda/*`) and the Lambda packaging canary (`tools/lambda`), one Cargo workspace (`Cargo.toml`). The
-workspace's `//:lint` runs clippy without denying warnings, and no target runs `cargo fmt --check` or `cargo deny`: until one does, R1 and R6
-are held in review.
+workspace's `//:ci` (built by `farm.yml`) builds `//:fmt`, the pinned rustfmt, red on any difference, and `//:lint`, clippy with
+`-D warnings` over every lib, bin and test target. No target runs `cargo deny`: until one does, R6 is held in review.
 
 - R1 BLOCK. `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` are green. No new `#[allow(...)]`/`#![allow(...)]` without a stated reason.
 - R2 BLOCK. No new `unsafe`. The one `unsafe` block is the canary test's call into AWS-LC's C API (`tools/lambda/canary/tls_test.rs`).
@@ -125,5 +125,5 @@ The Mojo here is test fixtures, examples and the scaffold goldens (`tests/`, `ex
 - T19 in practice: the golden files of the command line are `tests/golden`; a behaviour change updates them in the same pull request and says why.
 
 Where the rules above are checked in this repository: coverage floors (T1, T3) by `//:coverage_floors`, each package's `coverage/<package>.txt` a
-minimum; secret and identifier patterns (S1) by `//:hygiene`; workflows (B9, B10) by `//:workflows` and `//:actionlint`; this file and `CLAUDE.md`
-by `//:agents`. `lint.yml` runs the same Zig tests on every pull request.
+minimum; secret and identifier patterns (S1) by `//:hygiene`; workflows (B9, B10) by `//:workflows` and `//:actionlint`; the Rust format and warnings (R1) by `//:fmt` and
+`//:lint`; this file and `CLAUDE.md` by `//:agents`. `lint.yml` runs the same Zig tests on every pull request.

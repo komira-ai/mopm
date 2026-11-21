@@ -9,9 +9,9 @@ pub mod services;
 #[cfg(test)]
 mod dynamo_config_tests;
 #[cfg(test)]
-mod dynamo_tests;
-#[cfg(test)]
 mod dynamo_specifics;
+#[cfg(test)]
+mod dynamo_tests;
 #[cfg(test)]
 mod dynamo_web_login_tests;
 #[cfg(test)]

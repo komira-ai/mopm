@@ -29,7 +29,9 @@ pub fn rec(name: &str, version: &str) -> VersionRecord {
             filename: format!("mojo-{name}-{version}-{build}.conda"),
             sha256: hex('a'),
             size: 1000,
-            url: Some(format!("https://conda.example.invalid/linux-64/mojo-{name}-{version}-{build}.conda")),
+            url: Some(format!(
+                "https://conda.example.invalid/linux-64/mojo-{name}-{version}-{build}.conda"
+            )),
         }],
         manifest_sha256: hex('f'),
         provenance: None,
@@ -47,20 +49,40 @@ pub fn rec(name: &str, version: &str) -> VersionRecord {
 
 /// `r` as a member of group `group` that is not shown: `pending`, stamped at `attempt` when it was staged.
 pub fn group_row(r: VersionRecord, group: &str, attempt: Option<u64>) -> VersionRecord {
-    VersionRecord { state: VersionState::Pending, group_id: Some(group.to_string()), staged_attempt: attempt, ..r }
+    VersionRecord {
+        state: VersionState::Pending,
+        group_id: Some(group.to_string()),
+        staged_attempt: attempt,
+        ..r
+    }
 }
 
 pub fn file(subdir: &str, name: &str, version: &str, sha: char, size: u64) -> FileRef {
-    FileRef { subdir: subdir.to_string(), filename: format!("mojo-{name}-{version}-mojo1.0.0_0.conda"), sha256: hex(sha), size, url: None }
+    FileRef {
+        subdir: subdir.to_string(),
+        filename: format!("mojo-{name}-{version}-mojo1.0.0_0.conda"),
+        sha256: hex(sha),
+        size,
+        url: None,
+    }
 }
 
 pub fn golden_records() -> Vec<VersionRecord> {
     let mut http_core = rec("http_core", "1.2.0");
-    http_core.files = vec![file("linux-64", "http_core", "1.2.0", 'a', 1000), file("osx-arm64", "http_core", "1.2.0", '9', 1001)];
+    http_core.files = vec![
+        file("linux-64", "http_core", "1.2.0", 'a', 1000),
+        file("osx-arm64", "http_core", "1.2.0", '9', 1001),
+    ];
 
     let mut http_client = rec("http_client", "0.4.0");
-    http_client.deps = vec![Dep { name: "http_core".to_string(), range: Some(">=1.2,<2".to_string()) }];
-    http_client.native = vec![NativeRef { id: "openssl".to_string(), soname: "libssl.so.3".to_string() }];
+    http_client.deps = vec![Dep {
+        name: "http_core".to_string(),
+        range: Some(">=1.2,<2".to_string()),
+    }];
+    http_client.native = vec![NativeRef {
+        id: "openssl".to_string(),
+        soname: "libssl.so.3".to_string(),
+    }];
     http_client.native_depends = vec!["lz4-c >=1.9,<2".to_string()];
     http_client.files = vec![file("linux-64", "http_client", "0.4.0", 'b', 2048)];
 
@@ -71,7 +93,10 @@ pub fn golden_records() -> Vec<VersionRecord> {
 
     let mut tls = rec("tls", "1.0.0");
     tls.state = VersionState::Tombstoned;
-    tls.tombstone = Some(Tombstone { reason_code: "malware".to_string(), date: "2026-10-12".to_string() });
+    tls.tombstone = Some(Tombstone {
+        reason_code: "malware".to_string(),
+        date: "2026-10-12".to_string(),
+    });
     tls.files = vec![file("linux-64", "tls", "1.0.0", 'd', 700)];
 
     let mut fresh = rec("fresh", "2.0.0");

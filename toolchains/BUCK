@@ -1,4 +1,4 @@
-# The `toolchains` cell, both from buildrules: the Rust toolchain of the cargo_unit rules (rust_toolchains: rustc, cargo, clippy,
+# The `toolchains` cell, both from buildrules: the Rust toolchain of the cargo_unit rules (rust_toolchains: rustc, cargo, clippy, rustfmt,
 # zig as the linker, busybox, all sha256-pinned) and the hermetic C/C++ toolchain on the pinned zig (cxx), which AWS-LC is built
 # with. No komira toolchain remains.
 load("@buildrules//rules/cxx:toolchain.bzl", "cxx_toolchains")

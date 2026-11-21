@@ -19,7 +19,10 @@ pub struct DynamoConfigTable {
 impl DynamoConfigTable {
     /// The table `table` (`mopm-<stage>-config`).
     pub fn new(client: Client, table: impl Into<String>) -> Self {
-        DynamoConfigTable { client, table: table.into() }
+        DynamoConfigTable {
+            client,
+            table: table.into(),
+        }
     }
 }
 

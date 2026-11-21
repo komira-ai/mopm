@@ -94,7 +94,11 @@ where
 
 /// `fake` behind TLS with `config`: each connection's decrypted bytes go to the fake and its answer comes back.
 pub async fn tls_front(fake: &FakeHttp, config: Arc<ServerConfig>) -> SocketAddr {
-    let backend: SocketAddr = fake.endpoint().trim_start_matches("http://").parse().unwrap();
+    let backend: SocketAddr = fake
+        .endpoint()
+        .trim_start_matches("http://")
+        .parse()
+        .unwrap();
     tls_server(config, move |mut tls| async move {
         let mut plain = TcpStream::connect(backend).await.unwrap();
         // The fake closes after its answer, which ends the copy.

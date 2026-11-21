@@ -33,7 +33,12 @@ pub trait ObjectStore: Send + Sync {
     fn head(&self, key: &str) -> impl Future<Output = PortResult<Option<ObjectInfo>>> + Send;
     /// The bytes, or `None` when absent.
     fn get(&self, key: &str) -> impl Future<Output = PortResult<Option<Vec<u8>>>> + Send;
-    fn put(&self, key: &str, body: &[u8], opts: &PutOptions) -> impl Future<Output = PortResult<PutOutcome>> + Send;
+    fn put(
+        &self,
+        key: &str,
+        body: &[u8],
+        opts: &PutOptions,
+    ) -> impl Future<Output = PortResult<PutOutcome>> + Send;
     fn delete(&self, key: &str) -> impl Future<Output = PortResult<()>> + Send;
 }
 
@@ -54,12 +59,20 @@ pub struct PresignRequest<'a> {
 
 /// A presigned PUT pinned to one exact length and sha256. No I/O beyond reading the clock the signer holds.
 pub trait Presigner: Send + Sync {
-    fn presign_put(&self, key: &str, req: &PresignRequest<'_>) -> impl Future<Output = PortResult<PresignedPut>> + Send;
+    fn presign_put(
+        &self,
+        key: &str,
+        req: &PresignRequest<'_>,
+    ) -> impl Future<Output = PortResult<PresignedPut>> + Send;
 }
 
 pub trait Invalidator: Send + Sync {
     /// Paths start with `/`. The reference makes a retry of the same batch idempotent.
-    fn invalidate(&self, paths: &[String], reference: &str) -> impl Future<Output = PortResult<()>> + Send;
+    fn invalidate(
+        &self,
+        paths: &[String],
+        reference: &str,
+    ) -> impl Future<Output = PortResult<()>> + Send;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,25 +104,54 @@ pub struct Hit {
 /// the rate counters. Every method is atomic (a conditional write in DynamoDB).
 pub trait PublishStore: Send + Sync {
     fn put_upload(&self, u: &UploadRecord) -> impl Future<Output = PortResult<()>> + Send;
-    fn get_upload(&self, id: &str) -> impl Future<Output = PortResult<Option<UploadRecord>>> + Send;
+    fn get_upload(&self, id: &str)
+        -> impl Future<Output = PortResult<Option<UploadRecord>>> + Send;
     /// Mark the upload as taken by a publish. `false` when another publish took it (or it does not exist);
     /// `true` again for the same one.
-    fn use_upload(&self, id: &str, publish_id: &str) -> impl Future<Output = PortResult<bool>> + Send;
+    fn use_upload(
+        &self,
+        id: &str,
+        publish_id: &str,
+    ) -> impl Future<Output = PortResult<bool>> + Send;
 
     /// Create-once lock on (name, canonical version): the publish id that holds it (the caller's when it won).
-    fn claim_version(&self, name: &str, canonical: &str, publish_id: &str) -> impl Future<Output = PortResult<String>> + Send;
-    fn version_holder(&self, name: &str, canonical: &str) -> impl Future<Output = PortResult<Option<String>>> + Send;
+    fn claim_version(
+        &self,
+        name: &str,
+        canonical: &str,
+        publish_id: &str,
+    ) -> impl Future<Output = PortResult<String>> + Send;
+    fn version_holder(
+        &self,
+        name: &str,
+        canonical: &str,
+    ) -> impl Future<Output = PortResult<Option<String>>> + Send;
 
     /// Create-once. Returns the stored record: the argument when created, the existing one otherwise.
-    fn create_publish(&self, rec: &PublishRecord) -> impl Future<Output = PortResult<PublishRecord>> + Send;
-    fn get_publish(&self, id: &str) -> impl Future<Output = PortResult<Option<PublishRecord>>> + Send;
+    fn create_publish(
+        &self,
+        rec: &PublishRecord,
+    ) -> impl Future<Output = PortResult<PublishRecord>> + Send;
+    fn get_publish(
+        &self,
+        id: &str,
+    ) -> impl Future<Output = PortResult<Option<PublishRecord>>> + Send;
     /// Read, apply `f`, write back only if nothing changed in between (retrying, so `f` may run more than
     /// once). `f` returns the new record, or `None` to leave it. Returns the record as it is afterwards, or
     /// `None` when there is none. The stored `rev` is the previous one plus one, whatever `f` put in it.
-    fn update_publish<F>(&self, id: &str, f: F) -> impl Future<Output = PortResult<Option<PublishRecord>>> + Send
+    fn update_publish<F>(
+        &self,
+        id: &str,
+        f: F,
+    ) -> impl Future<Output = PortResult<Option<PublishRecord>>> + Send
     where
         F: FnMut(&PublishRecord) -> Option<PublishRecord> + Send;
 
     /// Count one hit on `key` unless it already has `limit`. `expires_at` is epoch seconds (TTL cleanup).
-    fn hit(&self, key: &str, limit: u64, expires_at: i64) -> impl Future<Output = PortResult<Hit>> + Send;
+    fn hit(
+        &self,
+        key: &str,
+        limit: u64,
+        expires_at: i64,
+    ) -> impl Future<Output = PortResult<Hit>> + Send;
 }

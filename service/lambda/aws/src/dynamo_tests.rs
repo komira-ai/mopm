@@ -6,14 +6,23 @@ use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_dynamodb::Client;
 use mopm_testing::fake_dynamo::{FakeConfig, FakeDynamo};
 
-use crate::dynamo::{AuthTables, DynamoAuthStore, DynamoNamespaceStore, DynamoPublishStore, DynamoStore, DynamoWebLoginStore, PublishTables, Tables};
+use crate::dynamo::{
+    AuthTables, DynamoAuthStore, DynamoNamespaceStore, DynamoPublishStore, DynamoStore,
+    DynamoWebLoginStore, PublishTables, Tables,
+};
 
 fn client(endpoint: &str) -> Client {
     let config = aws_sdk_dynamodb::Config::builder()
         .behavior_version(BehaviorVersion::latest())
         .region(Region::new("us-east-1"))
         .endpoint_url(endpoint)
-        .credentials_provider(Credentials::new("AKIDFAKE", "fakesecret", None, None, "static"))
+        .credentials_provider(Credentials::new(
+            "AKIDFAKE",
+            "fakesecret",
+            None,
+            None,
+            "static",
+        ))
         .build();
     Client::from_conf(config)
 }
@@ -27,24 +36,40 @@ fn fake(cfg: FakeConfig) -> String {
 }
 
 fn store() -> DynamoStore {
-    DynamoStore::new(client(&fake(FakeConfig::registry("t"))), Tables::for_stage("t"))
+    DynamoStore::new(
+        client(&fake(FakeConfig::registry("t"))),
+        Tables::for_stage("t"),
+    )
 }
 
 fn auth_store() -> DynamoAuthStore {
-    DynamoAuthStore::new(client(&fake(FakeConfig::registry("t"))), AuthTables::for_stage("t"), Arc::new(mopm_testing::env::FixedClock::at_millis(1_760_356_800_000)))
+    DynamoAuthStore::new(
+        client(&fake(FakeConfig::registry("t"))),
+        AuthTables::for_stage("t"),
+        Arc::new(mopm_testing::env::FixedClock::at_millis(1_760_356_800_000)),
+    )
 }
 
 fn publish_store() -> DynamoPublishStore {
-    DynamoPublishStore::new(client(&fake(FakeConfig::registry("t"))), &PublishTables::for_stage("t"))
+    DynamoPublishStore::new(
+        client(&fake(FakeConfig::registry("t"))),
+        &PublishTables::for_stage("t"),
+    )
 }
 
 // The web sign-in's stores run under the sign-in function's grants, so a call the role lacks (any DeleteItem) fails the case.
 fn namespace_store() -> DynamoNamespaceStore {
-    DynamoNamespaceStore::new(client(&fake(FakeConfig::web_login("t"))), DynamoNamespaceStore::table_for_stage("t"))
+    DynamoNamespaceStore::new(
+        client(&fake(FakeConfig::web_login("t"))),
+        DynamoNamespaceStore::table_for_stage("t"),
+    )
 }
 
 fn web_login_store() -> DynamoWebLoginStore {
-    DynamoWebLoginStore::new(client(&fake(FakeConfig::web_login("t"))), DynamoWebLoginStore::table_for_stage("t"))
+    DynamoWebLoginStore::new(
+        client(&fake(FakeConfig::web_login("t"))),
+        DynamoWebLoginStore::table_for_stage("t"),
+    )
 }
 
 mod store_contract {
