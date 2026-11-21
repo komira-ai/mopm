@@ -6,6 +6,9 @@ Asynchronous. The caller has created the group and PUT every file to the URL it 
 the archives cannot say for themselves, one entry per member: the optional `manifest_sha256` of its embedded manifest (checked when given, as in
 `commitPublish`), the optional display fields (the same rules as `commitPublish`) and the optional `source_commit` (the
 same rules, informational and unverified; it lands on that member's version only). Every member of the group is listed exactly once.
+For a member that adds a build to a published version, a `manifest_sha256` that is not the version's refuses the commit
+(`group_commit_refused`) before anything is validated, so is a version that was yanked or taken down since the create, and the
+archives are compared with the version again when they are validated.
 
 The registry checks that the group is `open`, not past its `deadline_at`, that every member is reserved and that every
 file is in storage at its declared size, stores the request, moves the group to `validating` and answers 202. It then

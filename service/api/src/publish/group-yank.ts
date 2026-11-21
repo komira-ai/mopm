@@ -1,6 +1,7 @@
 import { isBuildRow } from '../builds';
-import type { GroupMembers } from '../group';
-import { bitmapHas, bitmapIndexes, bitmapSet, memberAuditId, type GroupRecord, type GroupYank } from '../group-store';
+import { API_VIEW, type GroupMembers } from '../group';
+import { bitmapHas, bitmapIndexes, bitmapSet, memberAuditId, type GroupRecord, type GroupStore, type GroupYank } from '../group-store';
+import type { Store } from '../store';
 import { progressed, requireMembers, stale, touchedDirs, writeOrderOf, type ChainQueues, type HopDeps } from './group-chain';
 import { groupAudit } from './group-lifecycle';
 import type { Queue } from './ports';
@@ -15,7 +16,9 @@ import type { GroupHop, IndexMessage, IndexPkgMessage, YankGroupMessage } from '
  *            `yank_group` message. The group queue's job then yanks every member that is `published` (a member somebody yanked by hand,
  *            or took down, is left as it is) and records exactly the members it changed in `yanked_set`, saved after each batch; every
  *            row it changes carries the sequence number. Then the files follow, in the benign direction: one repodata hop for each
- *            subdir a yanked member has files in, one index hop for each yanked member, in the header's `write_order`, and the end
+ *            repodata directory a yanked version has files in (the files of every build it has, the builds that another group or a publish
+ *            added included, not only those of the member list; the directories are saved on the header with `rows_done`), one index hop for
+ *            each yanked member, in the header's `write_order`, and the end
  *            (`yanked`, which takes the group out of the sweeper's index).
  *   unyank   the same machine the other way round, for a group that is `yanked`: the rows first (only the members of `yanked_set`
  *            that still carry the marker of that yank), then repodata hops, then index hops, then `restored`. As for a single version's
@@ -58,7 +61,24 @@ export const runningOp = (y: GroupYank): YankOp => (y.state === 'unyanking' ? 'u
 
 /** The member indexes in `yanked_set`. */
 const yankedIndexes = (y: GroupYank, members: GroupMembers): number[] => bitmapIndexes(y.yanked_set).filter((i) => i < members.members.length);
-const subdirsOf = (y: GroupYank, members: GroupMembers): string[] => touchedDirs({ members: yankedIndexes(y, members).map((i) => members.members[i]!) });
+/**
+ * The repodata directories of the yank's hops: those saved with `rows_done` (`yankedDirs`), or, for a yank that began before the header kept
+ * them, those of the yanked members' own files.
+ */
+const subdirsOf = (y: GroupYank, members: GroupMembers): string[] => y.repodata_dirs ?? touchedDirs({ members: yankedIndexes(y, members).map((i) => members.members[i]!) });
+
+/**
+ * The repodata directories of the versions the members of `set` stand for, as a reader sees them: the files of every build, so a build
+ * that another group or a publish added to the version, in a directory the member list does not have, is among them. A yanked version
+ * takes no more builds, so what is read now is what the hops of the yank or unyank put right.
+ */
+async function yankedDirs(groups: Pick<Store, 'versionsOf'>, members: GroupMembers, set: string): Promise<string[]> {
+  const yanked = bitmapIndexes(set).filter((i) => i < members.members.length).map((i) => members.members[i]!);
+  const shown = await groups.versionsOf([...new Set(yanked.map((m) => m.name))], API_VIEW);
+  return touchedDirs({
+    members: yanked.map((m) => ({ ...m, subdirs: [...m.subdirs, ...shown.get(m.name)!.filter((v) => v.canonical === m.canonical).flatMap((v) => v.files.map((f) => f.subdir))] })),
+  });
+}
 
 /** One step of a yank or unyank. `finish` has no message: whoever finds it next does it. */
 export type YankStep = { kind: 'rows' } | { kind: 'repodata'; subdir: string } | { kind: 'index'; position: number; name: string } | { kind: 'finish' };
@@ -133,7 +153,10 @@ async function finishYank(d: HopDeps, gid: string, attempt: number, op: YankOp, 
 
 // --- the rows ----------------------------------------------------------------------------------------------------------
 
-export interface YankDeps extends HopDeps, ChainQueues {}
+export interface YankDeps extends HopDeps, ChainQueues {
+  /** The group side, and the registry's reads: the rows' step reads the version each yanked member stands for. */
+  groups: GroupStore & Pick<Store, 'versionsOf'>;
+}
 export type YankRowsOutcome = 'done' | 'already' | 'skipped';
 
 /**
@@ -157,6 +180,7 @@ export async function yankRows(d: YankDeps, msg: YankGroupMessage): Promise<Yank
   const members = await requireMembers(d.groups, gid);
   const y = h.yank;
   const by = op === 'yank' ? y.by : (y.unyank_by ?? y.by);
+  let set = y.yanked_set;
   const todo = op === 'yank' ? members.members.map((_m, i) => i).filter((i) => !bitmapHas(y.yanked_set, i) && !isBuildRow(members.members[i]!)) : yankedIndexes(y, members);
 
   for (let k = 0; k < todo.length; k += BATCH) {
@@ -181,10 +205,14 @@ export async function yankRows(d: YankDeps, msg: YankGroupMessage): Promise<Yank
       return { ...cur, yank: { ...cur.yank, yanked_set: set }, ...progressed(at) };
     });
     if (!yankLive(saved, op, seq, attempt)) return 'skipped';
+    set = saved.yank.yanked_set;
   }
 
+  const dirs = await yankedDirs(d.groups, members, set);
   const at = d.now().toISOString();
-  const done = await d.groups.updateGroup(gid, (cur) => (!yankLive(cur, op, seq, attempt) || cur.yank.rows_done ? undefined : { ...cur, yank: { ...cur.yank, rows_done: true }, ...progressed(at) }));
+  const done = await d.groups.updateGroup(gid, (cur) =>
+    !yankLive(cur, op, seq, attempt) || cur.yank.rows_done ? undefined : { ...cur, yank: { ...cur.yank, rows_done: true, repodata_dirs: dirs }, ...progressed(at) },
+  );
   if (!yankLive(done, op, seq, attempt)) return 'skipped';
   await sendYankNext(d, d, gid, attempt, op, seq, 0);
   return 'done';

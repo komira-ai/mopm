@@ -41,6 +41,11 @@ export interface GroupYank {
   /** Gates of the running yank or unyank's own hops (the repodata subdirs, and positions in `write_order`), as `repodata_released` and `index_released` are for the commit's chain. */
   repodata_done?: string[];
   index_done?: number[];
+  /**
+   * The repodata directories the running yank or unyank has a hop for: those of every build of each version it changed, the builds that other groups
+   * or publishes added included. Saved with `rows_done`; a yank that began before the field existed has none and uses its members' own.
+   */
+  repodata_dirs?: string[];
   /** Who asked for the unyank, and when. */
   unyank_by?: string;
   unyank_at?: string;

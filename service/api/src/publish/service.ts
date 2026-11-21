@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Principal } from '../auth';
 import { NAME_PATTERN, NamespaceError, type NamespaceAccess } from '../auth';
 import { AuthError } from '../auth/errors';
-import { buildOfFile, buildRowKey, buildsOf, isBuildRow, splitRowKey } from '../builds';
+import { buildOfFile, buildRowKey, buildsOf, foldBuilds, isBuildRow, splitRowKey } from '../builds';
 import { condaNameOf, splitFullName } from '../names';
 import { ciActorOf } from '../auth/ci-publishers';
 import { RegistryError, versionExists } from '../errors';
@@ -539,10 +539,14 @@ async function requireWriter(registry: Store, p: Principal, name: string, namesp
   return handle;
 }
 
-/** Bytes of the files that are still on the channel: published and yanked versions (a tombstone's bytes are gone). */
+/**
+ * Bytes of the files that are still on the channel: published and yanked versions (a tombstone's bytes are gone). The builds added to a
+ * version count with it, as a reader sees them (`foldBuilds`): given the stored rows or the records `listVersions` folds, the answer is the
+ * same, so a taken-down version's added builds are gone with it.
+ */
 export function liveBytes(versions: readonly VersionRecord[]): number {
   let n = 0;
-  for (const v of versions) if (v.state === 'published' || v.state === 'yanked') for (const f of v.files) n += f.size;
+  for (const v of foldBuilds(versions)) if (v.state === 'published' || v.state === 'yanked') for (const f of v.files) n += f.size;
   return n;
 }
 

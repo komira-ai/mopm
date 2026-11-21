@@ -61,6 +61,8 @@ message VersionDetail {
   repeated NativeRef native = 10 [(field) = {required: true}];
   // The files of the primary build, one per platform directory. `builds` lists the files of every build.
   repeated FileRef files = 11 [(field) = {required: true, min_items: 1}];
+  // The sha256 of the version's `lib/mojo/<import name>.mopm.json`, the same in every build. A build added later must carry
+  // the same bytes (the same source), or it is refused.
   Sha256 manifest_sha256 = 12 [(field) = {required: true}];
   // The group (`createGroup`) that published this version. Absent for a version a single publish made, and for a version
   // published before the registry recorded it. It can be used with `getGroup` and `yankGroup`, which keep their own

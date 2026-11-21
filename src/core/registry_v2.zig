@@ -4,7 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const http = @import("http.zig");
 
-pub const sources_sha256 = "192e5ff0ac9ac4571714e5516b272e09b2262335c192197d600f1c0751fb9af3";
+pub const sources_sha256 = "757394756b51088abee648c0b87606499b8d4f70c2a660e9f0c52105ada63120";
 
 pub const base_path = "/api/v2";
 
@@ -1267,6 +1267,8 @@ pub const VersionDetail = struct {
     native: []const NativeRef,
     /// The files of the primary build, one per platform directory. `builds` lists the files of every build.
     files: []const FileRef,
+    /// The sha256 of the version's `lib/mojo/<import name>.mopm.json`, the same in every build. A build added later must carry
+    /// the same bytes (the same source), or it is refused.
     manifest_sha256: Sha256,
     /// The group (`createGroup`) that published this version. Absent for a version a single publish made, and for a version
     /// published before the registry recorded it. It can be used with `getGroup` and `yankGroup`, which keep their own
@@ -1548,7 +1550,9 @@ pub const CommitPublishRequest = struct {
     /// to something else is rejected `sha256_mismatch`. When absent, nothing is checked and the version holds the hash the
     /// registry computes from the archives; then every file of the version must carry the same manifest bytes, or the publish is
     /// rejected `manifest_invalid`. When given, a file whose manifest hashes to something else is `sha256_mismatch`, so at
-    /// most the files that carry the given manifest bytes pass.
+    /// most the files that carry the given manifest bytes pass. For a build added to a published version the value is the version's
+    /// `manifest_sha256` or nothing: another value is `version_exists`, before the build is claimed; when absent, the archives' manifest
+    /// is compared with the version's when they are validated, and another one is rejected `manifest_invalid`.
     manifest_sha256: ?Sha256 = null,
     /// Optional. The git commit the version was built from (see `SourceCommit`). Stored once with the version and served by
     /// `getVersion`; the registry does not verify it. Committing the same upload ids again must repeat it (or its absence): a
@@ -2699,9 +2703,18 @@ pub const GetVersion = struct {
 /// storage layer itself rejects any other bytes. The URL expires in at
 /// most five minutes.
 ///
+/// The version is new, or already published. A published version takes one
+/// more build, built with another Mojo: the files uploaded for it must be those
+/// of one build the version does not have, and the upload then fills that build.
+/// A file of a build the version has, a file for a yanked or taken-down version,
+/// and a file for a version that a group published (add its builds with
+/// `createGroup`) are `version_exists`. Once a build is committed its files are
+/// fixed: a file is never replaced.
+///
 /// A file over the per-file limit is `payload_too_large` (413). A file
 /// that would take the package's live files (published and yanked
-/// versions; a takedown frees its bytes) over the 10 GB per-project limit
+/// versions, the builds added to them included; a takedown frees their
+/// bytes) over the 10 GB per-project limit
 /// is `limit_exceeded` (403), which is about the project, not the file:
 /// a smaller file may still fit.
 pub const BeginUpload = struct {
@@ -2733,12 +2746,23 @@ pub const BeginUpload = struct {
 /// Asynchronous. The registry answers 202 with a status URL; the CLI
 /// polls it. Each upload id is single use and must belong to the caller
 /// and to this name and version. Committing the same upload ids again
-/// while the version is still `pending` resumes the same publish. A
-/// version that exists in any other state is refused with
-/// `version_exists`, whose message carries the sha256 already published;
-/// a client that wants "succeed if these exact bytes are already
-/// published" compares that sha256 with its own (or reads `getVersion`).
-/// The file set of a version is fixed at commit.
+/// while the publish is still `pending` resumes the same publish. A
+/// version that does not exist yet is published with the files of one or more
+/// builds (at most 20 files). A version that is already published takes one more
+/// build: the uploads must be the files of one build that the version does not
+/// have, built from the same source as the version, and the commit's
+/// `manifest_sha256`, when given, must be the version's (it is compared before the
+/// build is claimed; the archives are compared again when they are validated, and
+/// an archive built from another source is rejected `manifest_invalid`). Any
+/// other commit for a version that exists is refused with `version_exists`, whose
+/// message carries the sha256 already published: a yanked or taken-down version
+/// (it takes no more builds), a build the version already has or whose earlier
+/// add was rejected, a manifest that is not the version's, and a version that a
+/// group published (add its builds with `createGroup`). A client that wants
+/// "succeed if these exact bytes are already published" compares that sha256
+/// with its own (or reads `getVersion`). The files of a build are fixed once it
+/// is committed; a file is never replaced, and the version's dependencies,
+/// metadata and `published_at` stay as published.
 ///
 /// The optional display fields (`description`, `license`, `repository`,
 /// `homepage`, `keywords`, `readme`) are checked here, stored on the
@@ -2810,8 +2834,11 @@ pub const GetPublishStatus = struct {
 /// The token must be an API token with the `publish` or `stage` scope for every member's package, and the caller must be
 /// able to write the namespace of each package; or a CI identity token minted by `exchangeOidcToken` for a publisher of the
 /// namespace, which must name every member's package and version. The first member
-/// that fails any of these refuses the whole group and is named in the error. A number that a published version
-/// already holds is `version_exists`; one that another group is still using is `group_conflict`. A
+/// that fails any of these refuses the whole group and is named in the error. A member is a new version (it may have
+/// the files of several builds), or a build added to a version that is published, whether a single publish or another group
+/// published it: its files must then be those of one build that the version does not have. A number that a yanked or
+/// taken-down version holds, and a build that a published version already has, are `version_exists`; one that another
+/// group is still using is `group_conflict`. A
 /// `group_conflict` carries a `reason` (see `Error`) that tells the causes apart without reading the message.
 ///
 /// The id of a group is a function of the caller and the declared set: the same request again is the same group. The
@@ -2927,6 +2954,9 @@ pub const AbortGroup = struct {
 /// the archives cannot say for themselves, one entry per member: the optional `manifest_sha256` of its embedded manifest (checked when given, as in
 /// `commitPublish`), the optional display fields (the same rules as `commitPublish`) and the optional `source_commit` (the
 /// same rules, informational and unverified; it lands on that member's version only). Every member of the group is listed exactly once.
+/// For a member that adds a build to a published version, a `manifest_sha256` that is not the version's refuses the commit
+/// (`group_commit_refused`) before anything is validated, so is a version that was yanked or taken down since the create, and the
+/// archives are compared with the version again when they are validated.
 ///
 /// The registry checks that the group is `open`, not past its `deadline_at`, that every member is reserved and that every
 /// file is in storage at its declared size, stores the request, moves the group to `validating` and answers 202. It then

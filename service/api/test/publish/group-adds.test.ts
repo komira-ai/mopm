@@ -445,6 +445,30 @@ describe.each(RIGS)('a group that adds builds to published versions: %s', (_labe
       expect({ alpha: await row('alpha'), build: await buildRow('alpha'), beta: await row('beta') }).toEqual(before);
     });
 
+    test('a build that another group added in a directory the yanked group has no file in: the yank lists it under removed there, and the unyank lists it again', async () => {
+      // Group A publishes alpha for linux-64 only; group B adds the Mojo 1.1.0 build, for osx-arm64.
+      const a = await new Flow(env, token, [[build('alpha', '1.0.0', { subdir: 'linux-64' })]]).start();
+      expect(await env.runGroupJobs()).toEqual(['committed']);
+      await chain.drain();
+      const file = build('alpha', '1.1.0', { subdir: 'osx-arm64' });
+      const b = await new Flow(env, token, [[file]]).start();
+      expect(await env.runGroupJobs()).toEqual(['committed']);
+      await chain.drain();
+      expect(await rig.store.getGroupMembers(b.gid)).toEqual({ members: [{ name: 'alpha', version: '1.0.0', canonical: '1.0.0+mojo1.1.0_0', subdirs: ['osx-arm64'] }] });
+      const repodata = () => JSON.parse(env.objects.objects.get('osx-arm64/repodata.json')!.body.toString('utf8')) as { 'packages.conda': Record<string, unknown>; removed: string[] };
+      expect([Object.keys(repodata()['packages.conda']), repodata().removed]).toEqual([[file.filename], []]);
+
+      expect((await yank(a, true)).statusCode).toBe(202);
+      await chain.drain();
+      expect((await a.header())!.yank).toMatchObject({ state: 'yanked', repodata_dirs: ['linux-64', 'osx-arm64'] });
+      expect([Object.keys(repodata()['packages.conda']), repodata().removed]).toEqual([[], [file.filename]]);
+
+      expect((await yank(a, false)).statusCode).toBe(202);
+      await chain.drain();
+      expect((await a.header())!.yank).toMatchObject({ state: 'restored' });
+      expect([Object.keys(repodata()['packages.conda']), repodata().removed]).toEqual([[file.filename], []]);
+    });
+
     test('a group of adds only has nothing of its own to yank: the yank ends with no member changed, and the versions and their builds stay published', async () => {
       await published(['alpha', 'beta']);
       const f = await new Flow(env, token, [[build('alpha', '1.1.0')], [build('beta', '1.1.0')]]).start();

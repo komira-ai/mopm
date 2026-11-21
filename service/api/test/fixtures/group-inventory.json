@@ -37,6 +37,7 @@
     "publish/group-read.ts": ["store.versionsOf(api)"],
     "publish/group-service.ts": ["group create: a number the registry shows is version_exists"],
     "publish/group-validator.ts": ["store.versionsOf(api)", "store.listVersions"],
+  "publish/group-yank.ts": ["store.versionsOf(api)"],
     "publish/indexer.ts": ["indexSubdir(linux-64)", "indexPackage", "takedowns"],
     "publish/service.ts": ["begin: project quota counts the live bytes", "setYanked: only a shown version can be yanked", "single begin refuses a number a group holds", "single commit refuses a number a group holds"],
     "publish/takedown.ts": ["store.listVersions"],

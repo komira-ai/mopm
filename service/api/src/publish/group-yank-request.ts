@@ -128,7 +128,7 @@ export class GroupYanker {
       id,
       (cur) => {
         if (cur.status !== 'visible' || cur.attempt !== header.attempt || cur.yank?.seq !== y.seq || cur.yank.state !== 'yanked') return undefined;
-        const { rows_done: _rows, repodata_done: _repodata, index_done: _index, ...keep } = cur.yank;
+        const { rows_done: _rows, repodata_done: _repodata, index_done: _index, repodata_dirs: _dirs, ...keep } = cur.yank;
         return { ...cur, yank: { ...keep, state: 'unyanking', unyank_by: by, unyank_at: at }, progress_at: at, sweep_pk: 'active', sweep_at: at, resend: 0 };
       },
       groupAudit(id, `a_${id}_unyank_${y.seq}`, 'group_unyank_request', at, by),
