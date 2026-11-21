@@ -71,6 +71,7 @@ which the weekly `toolchain` job runs after `--natives-libs`. For each version i
 `mojo-compiler` of `../src/core/toolchain/mojo-<version>-linux-64.json`, checks its pinned size and sha256 (a mismatch
 fails the run, naming both), and reads `lib/mojo/std.mojoc`: after its header the file is one zstd frame, whose content
 records the source path of each file of the library, `mojo/stdlib/std/<module>/...` or `mojo/stdlib/std/<module>.mojo`
+(1.0.0 writes `oss/modular/mojo/...`, 1.1.0 and 1.2.0 `Mojo/...`; the `mojo` component is matched in any case)
 (`src/core/std_modules.zig`). The modules are those `<module>` names, except those starting with `_`. The standard
 library is the same Mojo source on every platform of one version, so one platform is read.
 

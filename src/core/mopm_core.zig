@@ -111,6 +111,7 @@ test {
     _ = @import("native_files.zig");
     _ = @import("unit_graph.zig");
     _ = @import("unit_graph_platform_test.zig");
+    _ = @import("unit_graph_versions_test.zig");
     _ = @import("unit_graph_loads_test.zig");
     _ = @import("unit_graph_provided_test.zig");
     _ = @import("unit_graph_imports_test.zig");
