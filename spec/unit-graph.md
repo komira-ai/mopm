@@ -40,7 +40,9 @@ So the Mojo version is part of what a unit is.
 - `mopm lock` resolves once for each listed Mojo version and takes, for each
   dependency, the newest version in range that has a build for that Mojo. A
   version mopm pins no toolchain for cannot be listed: `mopm lock` stops with
-  `mopm has no pinned toolchain for mojo <M> on <subdir> (it pins <list>)`.
+  `mopm has no pinned toolchain for mojo <M> on <subdir> (it pins <list>)`;
+  this mopm pins Mojo 1.0.0, 1.1.0 and 1.2.0, so `<list>` is
+  `mojo 1.0.0, 1.1.0, 1.2.0 on linux-64, linux-aarch64 and osx-arm64`.
   If no acceptable version has a build for `M`, it stops, writing no lock,
   with
 

@@ -159,7 +159,7 @@ test "a subdir mopm pins no toolchain for is refused, naming what it pins" {
     var why: []const u8 = "";
     for ([_][]const u8{ "osx-64", "win-64", "linux-ppc64le", "noarch", "" }) |subdir| {
         try std.testing.expectError(error.Refused, toolchainFor(a, "1.0.0", subdir, &why));
-        try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "mopm has no pinned toolchain for mojo 1.0.0 on {s} (it pins mojo 1.0.0 on linux-64, linux-aarch64 and osx-arm64)", .{subdir}), why);
+        try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "mopm has no pinned toolchain for mojo 1.0.0 on {s} (it pins mojo 1.0.0, 1.1.0, 1.2.0 on linux-64, linux-aarch64 and osx-arm64)", .{subdir}), why);
     }
     // The graph is refused the same way, before any source is read.
     var tmp = std.testing.tmpDir(.{});

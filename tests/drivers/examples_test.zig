@@ -289,9 +289,9 @@ fn toolchain(cx: *Cx) !void {
     const plan = try cx.run("toolchain", &.{ "plan", "--unit-graph", "--locked" });
     cx.rep.check("toolchain: mopm plan prints the unit graph of the lock", plan.code == 0 and h.contains(plan.stdout, "\"unit_graph\": 6") and h.contains(plan.stdout, "\"id\": \"example/pinned@0.1.0#mojo1.0.0/lib\"") and h.contains(plan.stdout, "\"closure_sha256\": \""), try cx.fmt("exit {d}: {s}{s}", .{ plan.code, plan.stdout, plan.stderr }));
     // A Mojo version mopm pins no toolchain for cannot be listed.
-    try cx.variant("toolchain_unpinned", "toolchain/mopm.toml", "mojo = [\"1.0.0\"]", "mojo = [\"1.0.0\", \"1.1.0\"]");
+    try cx.variant("toolchain_unpinned", "toolchain/mopm.toml", "mojo = [\"1.0.0\"]", "mojo = [\"1.0.0\", \"1.3.0\"]");
     try cx.put("toolchain_unpinned/src/pinned/__init__.mojo", try cx.committed("toolchain/src/pinned/__init__.mojo"));
-    try cx.refuses("toolchain: a Mojo version with no pinned toolchain is refused at lock", "toolchain_unpinned", &.{ "lock", "--registry", dead_registry }, 1, "mopm has no pinned toolchain for mojo 1.1.0");
+    try cx.refuses("toolchain: a Mojo version with no pinned toolchain is refused at lock", "toolchain_unpinned", &.{ "lock", "--registry", dead_registry }, 1, "mopm has no pinned toolchain for mojo 1.3.0");
     // The two forms of the pin are not mixed.
     try cx.variant("toolchain_both", "toolchain/mopm.toml", "[targets]", "[toolchain]\nmojo = \"1.0.0\"\n\n[targets]");
     try cx.refuses("toolchain: [package] mojo and [toolchain] together are refused", "toolchain_both", &.{"metadata"}, 1, "mojo is set in [package] and in [toolchain]; keep [package] mojo");
