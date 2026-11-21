@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 import { readdirSync, rmSync, statSync } from 'fs';
 import { join } from 'path';
-import { describe as describeSteps, installCommand, steps, templateDefinition } from '../src/definition';
+import { describe as describeSteps, installCommand, steps, TELEMETRY_PROFILE, templateDefinition } from '../src/definition';
 import { listLessons, readBase, releaseOf } from '../src/inputs';
 import { fixtureRepo, REPO_ROOT } from './fixture';
 
@@ -25,16 +25,44 @@ test('the whole definition, step by step', async () => {
     fromImage: 'e2bdev/base',
     steps: [
       { type: 'RUN', args: [installCommand({ version: '0.3.7', sha256: SHA }), 'root'] },
+      { type: 'RUN', args: ["echo 'export MODULAR_TELEMETRY_ENABLED=false' > /etc/profile.d/mopm-tutorial.sh", 'root'] },
       { type: 'COPY', args: ['tutorial/lessons/hello/project', '/home/user/lessons/hello/', 'user', ''] },
+      { type: 'RUN', args: ['chown user:user /home/user/lessons && chown -R user:user /home/user/lessons/hello', 'root'] },
       { type: 'WORKDIR', args: ['/home/user/lessons/hello'] },
       { type: 'RUN', args: ['mopm sync --locked --cache /home/user/.cache/mopm/pkgs', 'user'] },
       { type: 'COPY', args: ['tutorial/lessons/structs-2/project', '/home/user/lessons/structs-2/', 'user', ''] },
+      { type: 'RUN', args: ['chown user:user /home/user/lessons && chown -R user:user /home/user/lessons/structs-2', 'root'] },
       { type: 'WORKDIR', args: ['/home/user/lessons/structs-2'] },
       { type: 'RUN', args: ['mopm sync --locked --cache /home/user/.cache/mopm/pkgs', 'user'] },
       { type: 'WORKDIR', args: ['/home/user'] },
       { type: 'USER', args: ['user'] },
     ],
   });
+});
+
+test("each lesson's directory is the sandbox user's before mopm sync runs there as that user", async () => {
+  // E2B's copy creates the lessons directory and the lesson's directory as root; mopm sync, as the sandbox user,
+  // writes the lesson's .mopm/ there, so the root chown has to sit between the copy and the sync, for every lesson.
+  const repo = fixtureRepo('0.0', ['hello', 'loops']);
+  const { steps: all } = await steps(definitionOf(repo.root, 1));
+  const kinds = all.map((s) => `${s.type} ${s.args[0]} ${s.args[1] ?? ''}`.trim());
+  for (const id of ['hello', 'loops']) {
+    const copy = kinds.indexOf(`COPY tutorial/lessons/${id}/project /home/user/lessons/${id}/`);
+    const own = kinds.indexOf(`RUN chown user:user /home/user/lessons && chown -R user:user /home/user/lessons/${id} root`);
+    const sync = kinds.findIndex((k, i) => i > copy && k === 'RUN mopm sync --locked --cache /home/user/.cache/mopm/pkgs user');
+    expect(copy).toBeGreaterThanOrEqual(0);
+    expect([copy < own, own < sync]).toEqual([true, true]);
+  }
+});
+
+test("the toolchain's telemetry is off in every sandbox command, set once by root before any lesson", async () => {
+  // Offline, the toolchain waits about 20 s per run for its telemetry export; E2B runs commands as bash -l, so a
+  // login profile reaches them all, for the sandbox user and root.
+  const repo = fixtureRepo('0.0', ['hello', 'loops']);
+  const { steps: all } = await steps(definitionOf(repo.root, 1));
+  const profile = all.filter((s) => s.type === 'RUN' && s.args[0].includes(TELEMETRY_PROFILE));
+  expect(profile).toEqual([{ type: 'RUN', args: ["echo 'export MODULAR_TELEMETRY_ENABLED=false' > /etc/profile.d/mopm-tutorial.sh", 'root'] }]);
+  expect(all.indexOf(profile[0])).toBeLessThan(all.findIndex((s) => s.type === 'COPY'));
 });
 
 test('every lesson under tutorial/lessons is in the definition, a new one appears and a removed one goes', async () => {
@@ -83,7 +111,9 @@ test('the dry run lines: E2B Dockerfile form with the owner of each COPY and the
   expect(await describeSteps(definitionOf(repo.root, 2))).toEqual([
     'FROM e2bdev/base',
     `RUN ${installCommand({ version: '0.0.2', sha256: SHA })} (as root)`,
+    "RUN echo 'export MODULAR_TELEMETRY_ENABLED=false' > /etc/profile.d/mopm-tutorial.sh (as root)",
     'COPY tutorial/lessons/hello/project /home/user/lessons/hello/ (owner user)',
+    'RUN chown user:user /home/user/lessons && chown -R user:user /home/user/lessons/hello (as root)',
     'WORKDIR /home/user/lessons/hello',
     'RUN mopm sync --locked --cache /home/user/.cache/mopm/pkgs (as user)',
     'WORKDIR /home/user',
