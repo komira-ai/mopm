@@ -251,13 +251,13 @@ test "defect: an artifact attest's release-* download would merge into dist" {
 
 test "defect: no signatures" {
     try variant("attest does not sign", "        run: '\"$RUNNER_TEMP/release\" sign dist'", "        run: '\"$RUNNER_TEMP/release\" check dist'", "attest must sign the files");
-    try variant("verify without cosign", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n        with:\n          cosign-release: 'v3.0.6'\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "verify needs cosign");
+    try variant("verify without cosign", "      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3\n        with:\n          cosign-release: 'v3.0.6'\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "verify needs cosign");
 }
 
 test "release.yml: each install of cosign names the release the retry reads" {
     // The install in `verify` and the one in `attest`: the action's default, another release, and a renamed input are each refused.
-    const step = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n        with:\n          cosign-release: 'v3.0.6'\n";
-    const bare = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n";
+    const step = "      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3\n        with:\n          cosign-release: 'v3.0.6'\n";
+    const bare = "      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3\n";
     const needle = "installs cosign without `cosign-release: v3.0.6`";
     try defectAfter(release_path, "\n  verify:\n", "verify takes the action's default", step, bare, needle);
     try defectAfter(release_path, "\n  attest:\n", "attest takes the action's default", step, bare, needle);
