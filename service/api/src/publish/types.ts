@@ -10,6 +10,7 @@ export interface UploadRecord {
   name: string;
   /** The spelling the caller used; commit must use the same one. */
   version: string;
+  /** The key of the row the upload fills: the version's, or `<version>+<build>` for a build added to a published version (src/builds.ts). */
   canonical: string;
   subdir: string;
   filename: string;
@@ -42,7 +43,9 @@ export interface PublishFile {
 export interface PublishRecord {
   publish_id: string;
   name: string;
+  /** The version's spelling; the status route answers it, never the row key. */
   version: string;
+  /** The key of the row the publish fills, as the uploads': the version's, or `<version>+<build>` for a build added to a published version. */
   canonical: string;
   actor: Actor;
   /** Set when the publish came through a CI identity acting for the actor (`ci:gh-repo:<repository id>`); absent for the account's own. */
