@@ -24,6 +24,7 @@ const publish = @import("publish.zig");
 const api = @import("api.zig");
 const resp = @import("resp.zig");
 const names = @import("names.zig");
+const builds = @import("builds.zig");
 
 pub const subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64", "noarch" };
 
@@ -70,11 +71,16 @@ fn channelPath(arena: Allocator, key: []const u8, f: st.File) Allocator.Error![]
 
 /// Copies a newly published version's bytes into the channel.
 pub fn addFiles(s: *st.State, v: *const st.Version) !void {
+    try copyFiles(s, v, v.files);
+}
+
+/// Copies the bytes of `files`, which `v` holds, into the channel.
+pub fn copyFiles(s: *st.State, v: *const st.Version, files: []const st.File) !void {
     var dir = try std.fs.cwd().openDir(s.dir, .{});
     defer dir.close();
     var buf: [1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&buf);
-    for (v.files) |f| {
+    for (files) |f| {
         fba.reset();
         const to = try channelPath(fba.allocator(), v.package.name, f);
         if (std.fs.path.dirname(to)) |parent| try dir.makePath(parent);
@@ -126,22 +132,21 @@ fn shown(arena: Allocator, p: *const st.Package) Allocator.Error![]*st.Version {
 }
 
 /// The build string of a file name `mojo-<name>-<version>-<build>.conda`.
-pub fn build(filename: []const u8) []const u8 {
-    const stem = filename[0 .. filename.len - ".conda".len];
-    const dash = std.mem.lastIndexOfScalar(u8, stem, '-') orelse return stem;
-    return stem[dash + 1 ..];
-}
+pub const build = builds.buildOf;
 
 /// One NDJSON line per shown version, keys sorted (spec/index.md): record `v` 1 for a v1 package, `v` 2 (its `name` the
-/// full name, its URLs in the namespace's channel) for a package in a namespace.
+/// full name, its URLs in the namespace's channel) for a package in a namespace. The top-level `build`, `requires_mojo` and
+/// `files` are those of the version's primary build (the lowest compiler); a `v` 2 line also lists every build in `builds`.
 fn indexRecords(arena: Allocator, s: *const st.State, p: *const st.Package) ![]const u8 {
     const Dep = struct { name: []const u8, range: []const u8 };
     const Native = struct { id: []const u8, soname: []const u8 };
     const FileRef = struct { filename: []const u8, sha256: []const u8, size: u64, subdir: []const u8, url: ?[]const u8 };
     const Tombstone = struct { date: []const u8, reason_code: []const u8 };
     const Provenance = struct { kind: []const u8, repository: ?[]const u8 };
+    const BuildRef = struct { build: []const u8, files: []const FileRef, requires_mojo: []const u8 };
     const Record = struct {
         build: []const u8,
+        builds: ?[]const BuildRef,
         deps: []const Dep,
         files: []const FileRef,
         manifest_sha256: []const u8,
@@ -158,26 +163,31 @@ fn indexRecords(arena: Allocator, s: *const st.State, p: *const st.Package) ![]c
     };
     var out = std.ArrayList(u8).init(arena);
     for (try shown(arena, p)) |v| {
-        var files = std.ArrayList(FileRef).init(arena);
-        for (v.files) |f| {
-            try files.append(.{
-                .filename = f.filename,
-                .sha256 = f.sha256,
-                .size = f.size,
-                .subdir = f.subdir,
-                .url = if (v.state == .tombstoned) null else try publish.fileUrl(arena, s, p.name, f),
-            });
+        var refs = std.ArrayList(BuildRef).init(arena);
+        for (try builds.of(arena, v.files)) |b| {
+            var files = std.ArrayList(FileRef).init(arena);
+            for (b.files) |f| {
+                try files.append(.{
+                    .filename = f.filename,
+                    .sha256 = f.sha256,
+                    .size = f.size,
+                    .subdir = f.subdir,
+                    .url = if (v.state == .tombstoned) null else try publish.fileUrl(arena, s, p.name, f),
+                });
+            }
+            try refs.append(.{ .build = b.build, .files = files.items, .requires_mojo = try builds.requiresMojo(arena, b.build) });
         }
         try std.json.stringify(Record{
-            .build = build(v.files[0].filename),
+            .build = refs.items[0].build,
+            .builds = if (p.namespace == null) null else refs.items,
             .deps = &.{},
-            .files = files.items,
+            .files = refs.items[0].files,
             .manifest_sha256 = v.manifest_sha256,
             .name = p.name,
             .native = &.{},
             .provenance = .{ .kind = if (v.provenance == null) "none" else "oidc", .repository = v.provenance },
             .published_at = try util.rfc3339(arena, v.published_at),
-            .requires_mojo = try publish.requiresMojo(arena, v.files[0].filename),
+            .requires_mojo = refs.items[0].requires_mojo,
             .state = @tagName(v.state),
             .tombstone = if (v.state == .tombstoned) .{ .date = try util.date(arena, v.tombstone_at), .reason_code = v.tombstone_reason.? } else null,
             .v = if (p.namespace == null) @as(u32, 1) else 2,
