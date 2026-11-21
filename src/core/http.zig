@@ -100,17 +100,22 @@ fn requestOnce(arena: Allocator, method: std.http.Method, url: []const u8, optio
     if (options.timeout_secs > 0) try probeConnect(url, options.timeout_secs);
     var client = std.http.Client{ .allocator = arena };
     defer client.deinit();
+    return exchange(arena, &client, method, url, options);
+}
+
+/// One request on `client`. An `https` connection is made by tls_connect.zig, so the handshake's own error is kept; the
+/// client reads the system's certificates for it once.
+fn exchange(arena: Allocator, client: *std.http.Client, method: std.http.Method, url: []const u8, options: Options) !Answer {
     const uri = try std.Uri.parse(url);
     var header_buf: [16 * 1024]u8 = undefined;
     const authorization: ?[]const u8 = if (options.token) |t| try std.fmt.allocPrint(arena, "Bearer {s}", .{t}) else null;
-    // An https connection is made here, so the handshake's own error is kept (src/core/tls_connect.zig); `client.deinit`
-    // closes it if `open` fails.
-    const tls_conn: ?*std.http.Client.Connection = if (std.ascii.eqlIgnoreCase(uri.scheme, "https")) blk: {
+    // The scheme is compared as the client compares it (exactly), so a URL the client refuses makes no connection.
+    const tls_conn: ?*std.http.Client.Connection = if (std.mem.eql(u8, uri.scheme, "https")) blk: {
         const hp = hostPort(url) orelse break :blk null;
-        try tls_connect.loadCertificates(&client);
-        break :blk try tls_connect.connect(&client, hp.host, hp.port);
+        try tls_connect.loadCertificates(client);
+        break :blk try tls_connect.connect(client, hp.host, hp.port);
     } else null;
-    var req = try client.open(method, uri, .{
+    var req = client.open(method, uri, .{
         .connection = tls_conn,
         .server_header_buffer = &header_buf,
         .keep_alive = false,
@@ -120,7 +125,12 @@ fn requestOnce(arena: Allocator, method: std.http.Method, url: []const u8, optio
             .user_agent = .{ .override = "mopm" },
         },
         .extra_headers = options.extra_headers,
-    });
+    }) catch |e| {
+        // A Request owns the connection from when `open` returns it; before that, nothing does, and the client must not
+        // be given back with a connection in use.
+        if (tls_conn) |c| tls_connect.release(client, c);
+        return e;
+    };
     defer req.deinit();
     if (options.timeout_secs > 0) try setSocketTimeouts(req.connection.?.stream.handle, options.timeout_secs);
     if (options.body) |b| req.transfer_encoding = .{ .content_length = b.len };
@@ -509,6 +519,39 @@ test "a rejected certificate is reported at once: neither a wrong name nor an un
         try std.testing.expectEqual(@as(usize, 1), io.calls);
         try std.testing.expectEqual(@as(usize, 0), io.pauses);
     }
+}
+
+test "an https request is sent on mopm's TLS connection and its answer read, over a handshake with a trusted certificate" {
+    const test_server = @import("tls_test_server.zig");
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const key = try test_server.testKey();
+    const cert = try test_server.certificate(a, key, "127.0.0.1");
+    var s: test_server.Server = undefined;
+    try s.start(cert, key, "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nx-mopm-request-id: r-1\r\n\r\nok");
+    // The client has read its certificates already (none), and trusts the test certificate only.
+    var client = std.http.Client{ .allocator = a, .next_https_rescan_certs = false };
+    try test_server.trust(&client, cert);
+    const url = try std.fmt.allocPrint(a, "https://127.0.0.1:{d}/v2/x", .{s.port()});
+    const got = exchange(a, &client, .GET, url, .{});
+    client.deinit();
+    s.stop();
+    try std.testing.expectEqual(@as(?anyerror, null), s.failed);
+    const answer = try got;
+    try std.testing.expectEqual(@as(u16, 200), answer.status);
+    try std.testing.expectEqualStrings("ok", answer.body);
+    try std.testing.expectEqualStrings("r-1", answer.request_id);
+    try std.testing.expect(std.mem.startsWith(u8, s.request[0..s.request_len], "GET /v2/x HTTP/1.1\r\n"));
+}
+
+test "a scheme the client does not know makes no connection: HTTPS in capitals is refused as it always was" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var client = std.http.Client{ .allocator = arena_state.allocator(), .next_https_rescan_certs = false };
+    defer client.deinit();
+    try std.testing.expectError(error.UnsupportedUriScheme, exchange(arena_state.allocator(), &client, .GET, "HTTPS://127.0.0.1:1/", .{}));
+    try std.testing.expect(client.connection_pool.used.first == null and client.connection_pool.free.first == null);
 }
 
 test "a 429 waits the Retry-After the server named, when it is short, and stops when it is long" {
