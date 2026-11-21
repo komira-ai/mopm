@@ -243,7 +243,8 @@ beta first, then gamma, then prod, each checked before the next.
    - The first call of step 1 shows a version labelled `AWSCURRENT`, the version id the script printed.
    - `curl -sS -i -X POST https://beta.mopm.dev/api/v2/tutorial/sandbox` (no cookie; `gamma.mopm.dev`, `mopm.dev` for
      the other stages) answers 401 `session_required`: the route is deployed and gated. Ask the site host, not
-     `api.<site>`: the function refuses a request that did not come through the site's CDN.
+     `api.<site>`: the function also answers 401 `session_required` to a request that did not come through the site's
+     CDN (no edge header), so only the site host's answer shows the CDN's `/api/*` path reaches it.
    - Signed in on the stage's site in a browser, a run in the tutorial gets a grant whose `expires_at` is about 30
      minutes ahead. It also needs the stage's `tutorial.e2bTemplateId`; without one the route answers 503
      `tutorial_unavailable` with `template_missing` in the function's log.
