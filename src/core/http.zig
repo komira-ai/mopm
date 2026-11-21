@@ -228,9 +228,10 @@ pub fn retryableAnswer(a: Answer) bool {
 
 /// Whether a request that ended in `e` may succeed when repeated: the connection broke, was refused or reset, the
 /// name server failed for now, the time limit ran out, or TLS failed on the connection. An error of the request itself
-/// (a bad URL, a body too long) is not. The standard client reports any TLS handshake that did not finish (the peer
-/// closed or reset the connection, or sent something it could not read) as `TlsInitializationFailed`, and a TLS record
-/// it could not read after that as `TlsFailure`; neither says which, so both are tried again.
+/// (a bad URL, a body too long) is not. The standard client reports every failure of the TLS handshake as
+/// `TlsInitializationFailed` (the peer closed or reset the connection, sent something it could not read, or presented a
+/// certificate it rejected), and a TLS record it could not read after that as `TlsFailure`. Neither says which, so
+/// both are tried again: a lasting cause such as a rejected certificate costs the bounded retries, then is reported.
 pub fn retryableError(e: anyerror) bool {
     const name = @errorName(e);
     const transient = [_][]const u8{
