@@ -19,7 +19,8 @@ same bytes go through every stage.
 
 A function built from the pinned crates (`Cargo.toml`, `Cargo.lock`, `third_party/buildrules`) with buildrules' Rust rules to
 hold the foundation. Nothing deploys it. This directory is the Cargo package `mopm_canary` (`cargo_package` in `BUCK`), so
-its targets are `:release` (the executable), `:test` (one marker per test binary), `:lint`.
+its targets are `:release` (the executable), `:test` (one marker per test binary), `:lint` (clippy, `-D warnings`) and `:fmt`
+(rustfmt).
 
 | target | what it proves |
 |---|---|

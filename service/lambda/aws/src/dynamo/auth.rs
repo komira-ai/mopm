@@ -105,7 +105,8 @@ impl DynamoAuthStore {
         }
     }
 
-    // One DynamoDB UpdateItem: the arguments are that request's own fields, set once each below.
+    // One DynamoDB UpdateItem, called from four methods: the arguments are that request's own fields, each set once below. A
+    // struct holding them would only be built at each call and taken apart here.
     #[allow(clippy::too_many_arguments)]
     async fn update(
         &self,
