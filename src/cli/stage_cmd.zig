@@ -36,10 +36,14 @@
 //!    version has (a build is the files of one compiler, `mojo<compiler>_0`; `builds` of the answer, or the version's files as one
 //!    build when the answer has none). Not there: `upload`, with every staged build. Yanked or tombstoned (its number is burned):
 //!    `refuse`. Published: a staged build the version has must be the same files, byte for byte (else `refuse`: a published file is
-//!    never replaced, so bump the version); a staged build the version lacks is an add, allowed when the member's
-//!    `manifest_sha256` is the version's (else `refuse`: built from other sources) and when it is the only one (else `refuse`: the
-//!    registry takes one Mojo build per publish); an add is an `upload` member of the plan whose files are that build's only.
-//!    A published version with no new build is `skip`.
+//!    never replaced, so bump the version); a build whose files differ from the staged ones only by the source digest in their metadata
+//!    (the version was packed before source digests: packing the build again without the digest gives the registry's files) counts
+//!    as the same. A staged build the version lacks is an add, allowed when the member's `manifest_sha256` is the version's (else
+//!    `refuse`: built from other sources), when that version carries a source digest (a version whose metadata is the digest-less one,
+//!    or a member with no library directory, takes no add: `refuse`, publish a new version), and when it is the only one (else
+//!    `refuse`: the registry takes one Mojo build per publish); an add is an `upload` member of the plan whose files are that
+//!    build's only. A published version with no new build is `skip`, with the reason 'already published with these bytes', or
+//!    'already published, packed before source digests' when a build was the same only without the digest.
 //! 5. Write. `<out>/<subdir>/<file>.conda` for each upload member (the file is `mojo-<namespace>.<name>-...`), its readme
 //!    at `<out>/<namespace>/<name>/README.md` (none for an add: a published version's readme is not changed), and `plan.json` (version 2, members named by full name) last, which a reader
 //!    treats as proof the set is complete. A set with a `refuse` member is written too (`publish --staged` refuses it
@@ -400,7 +404,25 @@ pub const StagedBuild = struct {
     /// `mojo<compiler>_0`, as in the file names and in `builds` of the registry's answer.
     build: []const u8,
     packs: []const conda.Packed,
+    /// Set when the package has a source digest: what `check` needs to pack this build again without it.
+    legacy: ?Legacy = null,
+
+    /// The files of this build as a mopm that wrote no source digest packed them: empty when the package has none (`packs` are those).
+    fn unsigned(b: StagedBuild, arena: Allocator) !Result([]const conda.Packed) {
+        const l = b.legacy orelse return .{ .ok = &.{} };
+        var packer = l.packer;
+        packer.source_sha256 = "";
+        const got = switch (try packer.pack(arena, l.artifacts, b.compiler)) {
+            .ok => |p| p,
+            .bad => |why| return .{ .bad = why },
+        };
+        if (got.len == 0) return bad([]const conda.Packed, arena, "{s} has no build artifact for Mojo {s} below {s} any more", .{ packer.m.name, b.compiler, l.artifacts });
+        return .{ .ok = got };
+    }
 };
+
+/// A member's packer and the directory of one compiler's artifacts: enough to pack a build again.
+const Legacy = struct { packer: Packer, artifacts: []const u8 };
 
 pub const Staged = struct {
     member: Member,
@@ -490,7 +512,12 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, builds: 
             return bad(T, arena, "{s} has no build artifact for Mojo {s}: expected {s}/<subdir>/{s}/{s}.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{ m.name, b.compiler, b.artifacts, m.m.package.namespace, m.import });
         }
         try all.appendSlice(packs);
-        try staged_builds.append(.{ .compiler = b.compiler, .build = try std.fmt.allocPrint(arena, "mojo{s}_0", .{b.compiler}), .packs = packs });
+        try staged_builds.append(.{
+            .compiler = b.compiler,
+            .build = try std.fmt.allocPrint(arena, "mojo{s}_0", .{b.compiler}),
+            .packs = packs,
+            .legacy = if (source_sha256.len > 0) .{ .packer = one, .artifacts = b.artifacts } else null,
+        });
     }
     if (all.items.len > plan_mod.max_files_per_member) {
         return bad(T, arena, "{s} would be {d} files for {d} compilers; a version has at most {d} files", .{ m.name, all.items.len, builds.len, plan_mod.max_files_per_member });
@@ -571,7 +598,8 @@ pub const Verdict = union(enum) {
     /// The registry has the version but not this build of it (an index into the member's staged builds): only that build is
     /// uploaded.
     add: usize,
-    skip,
+    /// The registry has every staged build; the reason says why the bytes count as the same.
+    skip: []const u8,
     refuse: []const u8,
 };
 
@@ -618,6 +646,7 @@ pub fn check(arena: Allocator, net: Net, api_v2_url: []const u8, name: []const u
     // Published: a build the version has must be the same files, byte for byte; a build it lacks is an add.
     const have = try versionBuilds(arena, v);
     var fresh = std.ArrayList(usize).init(arena);
+    var packed_before_digests = false;
     for (builds, 0..) |s, i| {
         const held = for (have) |h| {
             if (std.mem.eql(u8, h.build, s.build)) break h;
@@ -625,29 +654,53 @@ pub fn check(arena: Allocator, net: Net, api_v2_url: []const u8, name: []const u
             try fresh.append(i);
             continue;
         };
-        for (s.packs) |p| {
-            var same = false;
-            for (held.files) |f| {
-                if (std.mem.eql(u8, @tagName(f.subdir), p.subdir) and std.mem.eql(u8, f.filename, p.file_name) and std.mem.eql(u8, f.sha256, &p.sha256)) same = true;
+        if (unheld(held, s.packs)) |p| {
+            // A version packed before source digests differs from this pack only by the digest in its metadata.
+            const old = switch (try s.unsigned(arena)) {
+                .ok => |o| o,
+                .bad => |why| return .{ .bad = why },
+            };
+            if (old.len == held.files.len and unheld(held, old) == null) {
+                packed_before_digests = true;
+                continue;
             }
-            if (!same) {
-                return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published with different bytes ({s}/{s} is not what the registry holds); a published file is never replaced, so bump the version", .{ name, version, p.subdir, p.file_name }) } };
-            }
+            return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published with different bytes ({s}/{s} is not what the registry holds); a published file is never replaced, so bump the version", .{ name, version, p.subdir, p.file_name }) } };
         }
         if (held.files.len != s.packs.len) {
             return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published with {d} files and this stages {d} for {s}; a published file is never replaced, so bump the version", .{ name, version, held.files.len, s.packs.len, s.build }) } };
         }
     }
-    if (fresh.items.len == 0) return .{ .ok = .skip };
+    if (fresh.items.len == 0) return .{ .ok = .{ .skip = if (packed_before_digests) skip_legacy_reason else skip_reason } };
     if (fresh.items.len > 1) {
         var list = std.ArrayList(u8).init(arena);
         for (fresh.items, 0..) |i, k| try list.writer().print("{s}{s}", .{ if (k > 0) ", " else "", builds[i].build });
         return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published and this stages {d} builds it does not have ({s}); the registry takes one Mojo build per publish, so stage one of them", .{ name, version, fresh.items.len, list.items }) } };
     }
+    // The registry takes an added build only from the same sources, which only a source digest in the metadata shows. A version whose
+    // metadata is what the sources give without a digest has none, and no build can be added to it.
+    const unsigned_manifest = switch (try builds[fresh.items[0]].unsigned(arena)) {
+        .ok => |o| if (o.len > 0) &o[0].manifest_sha256 else manifest_sha256,
+        .bad => |why| return .{ .bad = why },
+    };
+    if (std.mem.eql(u8, v.manifest_sha256, unsigned_manifest)) {
+        return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published without a source digest, so the build {s} cannot be added to it: the registry adds a build only to the same sources, and only a source digest shows that; publish a new version", .{ name, version, builds[fresh.items[0]].build }) } };
+    }
     if (!std.mem.eql(u8, v.manifest_sha256, manifest_sha256)) {
         return .{ .ok = .{ .refuse = try std.fmt.allocPrint(arena, "{s} {s} is already published, and the build {s} was built from other sources than the published version (the metadata differs: the registry's manifest_sha256 is {s}, this stages {s}); a build for another Mojo is added only to the same sources, so bump the version", .{ name, version, builds[fresh.items[0]].build, v.manifest_sha256, manifest_sha256 }) } };
     }
     return .{ .ok = .{ .add = fresh.items[0] } };
+}
+
+/// The first of `packs` that the published `held` build does not have, as the same subdir, file name and sha256; null when it has all.
+fn unheld(held: v2.VersionBuild, packs: []const conda.Packed) ?conda.Packed {
+    for (packs) |p| {
+        var same = false;
+        for (held.files) |f| {
+            if (std.mem.eql(u8, @tagName(f.subdir), p.subdir) and std.mem.eql(u8, f.filename, p.file_name) and std.mem.eql(u8, f.sha256, &p.sha256)) same = true;
+        }
+        if (!same) return p;
+    }
+    return null;
 }
 
 /// The builds of a version: `builds` of the registry's answer, or, from a registry that does not list them, its files as the one build
@@ -687,6 +740,8 @@ fn writeFileIn(dir: std.fs.Dir, path: []const u8, bytes: []const u8) !void {
 }
 
 pub const skip_reason = "already published with these bytes";
+/// The files differ from this pack only by the source digest in their metadata, which the published ones were packed without.
+pub const skip_legacy_reason = "already published, packed before source digests";
 
 pub const Run = struct {
     arena: Allocator,
@@ -801,10 +856,10 @@ pub fn run(r: Run) !u8 {
     for (staged.items, verdicts.items) |s, v| {
         const m = s.member;
         switch (v) {
-            .skip => {
+            .skip => |why| {
                 skips += 1;
-                try members_out.append(.{ .name = m.name, .version = m.version, .action = "skip", .reason = skip_reason });
-                c.say("skip   {s} {s}: {s}\n", .{ m.name, m.version, skip_reason });
+                try members_out.append(.{ .name = m.name, .version = m.version, .action = "skip", .reason = why });
+                c.say("skip   {s} {s}: {s}\n", .{ m.name, m.version, why });
             },
             .refuse => |why| {
                 refused += 1;

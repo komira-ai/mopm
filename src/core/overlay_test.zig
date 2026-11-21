@@ -6,10 +6,11 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const resolve = @import("resolve.zig");
 const overlay = @import("overlay.zig");
+const fixture = @import("overlay_set_test.zig");
 const plan = @import("install_plan.zig");
 
 const sha256Hex = overlay.sha256Hex;
-const test_sha = overlay.test_sha;
+const test_sha = fixture.test_sha;
 const sha_a = "a" ** 64;
 const sha_b = "b" ** 64;
 const sha_c = "c" ** 64;
@@ -72,7 +73,7 @@ fn registry(a: Allocator) !Registry {
 
 /// The staged set of the add: acme/libbase 0.1.0 with the Mojo 1.1.0 build alone.
 fn addSet(a: Allocator, tmp: *std.testing.TmpDir, bytes: []const u8) !overlay.Overlay {
-    const dir = try overlay.testSet(a, tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .build = "mojo1.1.0_0", .bytes = bytes }} }});
+    const dir = try fixture.testSet(a, tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .build = "mojo1.1.0_0", .bytes = bytes }} }});
     var why: []const u8 = "";
     return overlay.load(a, dir, &why);
 }
@@ -101,7 +102,7 @@ test "a set that adds a build to a version the registry holds resolves for the a
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const staged_bytes = try overlay.testCondaStamped(a, "acme/libbase", "0.1.0", libbase_meta, "1.1.0 linux");
+    const staged_bytes = try fixture.testCondaStamped(a, "acme/libbase", "0.1.0", libbase_meta, "1.1.0 linux");
     const ov = try addSet(a, &tmp, staged_bytes);
     const reg = try registry(a);
     var asked = false;
@@ -166,7 +167,7 @@ test "a set that adds a build to a version the registry holds leaves the registr
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const ov = try addSet(a, &tmp, try overlay.testCondaStamped(a, "acme/libbase", "0.1.0", libbase_meta, "1.1.0 linux"));
+    const ov = try addSet(a, &tmp, try fixture.testCondaStamped(a, "acme/libbase", "0.1.0", libbase_meta, "1.1.0 linux"));
     var asked = false;
     var diag: resolve.Diagnostic = .{};
     const source = overlay.Index(Registry){ .overlay = &ov, .inner = try registry(a), .asked = &asked };
@@ -194,8 +195,8 @@ test "a staged version the registry does not hold is the staged line alone, what
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const staged_bytes = try overlay.testCondaStamped(a, "acme/libbase", "0.2.0", "{\"schema\":2,\"name\":\"acme/libbase\",\"version\":\"0.2.0\",\"deps\":[]}", "new");
-    const dir = try overlay.testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.2.0", .files = &.{.{ .bytes = staged_bytes }} }});
+    const staged_bytes = try fixture.testCondaStamped(a, "acme/libbase", "0.2.0", "{\"schema\":2,\"name\":\"acme/libbase\",\"version\":\"0.2.0\",\"deps\":[]}", "new");
+    const dir = try fixture.testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.2.0", .files = &.{.{ .bytes = staged_bytes }} }});
     var why: []const u8 = "";
     const ov = try overlay.load(a, dir, &why);
     var asked = false;
@@ -231,7 +232,7 @@ test "the merged line holds the registry's builds and the staged one by compiler
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const staged_bytes = try overlay.testCondaStamped(a, "acme/libbase", "0.1.0", libbase_meta, "1.1.0 linux");
+    const staged_bytes = try fixture.testCondaStamped(a, "acme/libbase", "0.1.0", libbase_meta, "1.1.0 linux");
     const ov = try addSet(a, &tmp, staged_bytes);
     const b10 = try build(a, "acme.libbase", "0.1.0", "1.0.0", "linux-64", sha_a, 20);
     const b12 = try build(a, "acme.libbase", "0.1.0", "1.2.0", "linux-64", sha_b, 21);
@@ -295,7 +296,7 @@ test "a registry line the merge cannot add to leaves the staged line alone" {
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const ov = try addSet(a, &tmp, try overlay.testCondaStamped(a, "acme/libbase", "0.1.0", libbase_meta, "1.1.0 linux"));
+    const ov = try addSet(a, &tmp, try fixture.testCondaStamped(a, "acme/libbase", "0.1.0", libbase_meta, "1.1.0 linux"));
     const m = ov.member("acme/libbase").?;
     const staged_line = try overlay.indexText(a, m);
     const b10 = try build(a, "acme.libbase", "0.1.0", "1.0.0", "linux-64", sha_a, 20);
@@ -318,6 +319,36 @@ test "a registry line the merge cannot add to leaves the staged line alone" {
     // A bad line after the line of the version is the same: the registry's text is not one this reads.
     const good = try line(a, "acme/libbase", "0.1.0", "", &.{b10});
     try std.testing.expectEqualStrings(staged_line, try overlay.mergedIndexText(a, m, try std.mem.concat(a, u8, &.{ good, "not json\n" })));
+}
+
+test "a registry build without a requires_mojo string or a files list is a line the merge cannot read, not a crash" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const ov = try addSet(a, &tmp, try fixture.testCondaStamped(a, "acme/libbase", "0.1.0", libbase_meta, "1.1.0 linux"));
+    const m = ov.member("acme/libbase").?;
+    const staged_line = try overlay.indexText(a, m);
+    // The entry for 1.0.0 sorts before the staged 1.1.0 build, so the line's top-level trio would be taken from it.
+    const entries = [_][]const u8{
+        "{\"build\":\"mojo1.0.0_0\"}",
+        "{\"build\":\"mojo1.0.0_0\",\"requires_mojo\":\"==1.0.0\"}",
+        "{\"build\":\"mojo1.0.0_0\",\"files\":[]}",
+        "{\"build\":\"mojo1.0.0_0\",\"requires_mojo\":1,\"files\":[]}",
+        "{\"build\":\"mojo1.0.0_0\",\"requires_mojo\":\"==1.0.0\",\"files\":\"none\"}",
+    };
+    for (entries) |entry_text| {
+        const held = try std.fmt.allocPrint(a, "{{\"v\":2,\"name\":\"acme/libbase\",\"version\":\"0.1.0\",\"state\":\"published\",\"deps\":[],\"builds\":[{s}]}}\n", .{entry_text});
+        try std.testing.expectEqualStrings(staged_line, try overlay.mergedIndexText(a, m, held));
+    }
+    // The same entry beside a readable one is as unreadable.
+    const readable = try build(a, "acme.libbase", "0.1.0", "1.0.0", "linux-64", sha_a, 20);
+    const mixed = try std.fmt.allocPrint(a, "{{\"version\":\"0.1.0\",\"builds\":[{s},{{\"build\":\"mojo1.2.0_0\"}}]}}\n", .{readable});
+    try std.testing.expectEqualStrings(staged_line, try overlay.mergedIndexText(a, m, mixed));
+    // And a line with every key of every build is merged, so the cases above are refused for what they lack.
+    const whole = try line(a, "acme/libbase", "0.1.0", "", &.{readable});
+    try std.testing.expect(!std.mem.eql(u8, staged_line, try overlay.mergedIndexText(a, m, whole)));
 }
 
 fn mergeWithFailures(a: Allocator) !void {
@@ -353,7 +384,7 @@ test "a staged package with a registry that cannot be reached resolves from the 
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const staged_bytes = try overlay.testCondaStamped(a, "acme/libbase", "0.1.0", "{\"schema\":2,\"name\":\"acme/libbase\",\"version\":\"0.1.0\"}", "1.1.0 linux");
+    const staged_bytes = try fixture.testCondaStamped(a, "acme/libbase", "0.1.0", "{\"schema\":2,\"name\":\"acme/libbase\",\"version\":\"0.1.0\"}", "1.1.0 linux");
     const ov = try addSet(a, &tmp, staged_bytes);
     var asked = false;
     var diag: resolve.Diagnostic = .{};

@@ -95,6 +95,7 @@ test {
     _ = @import("install.zig");
     _ = @import("overlay.zig");
     _ = @import("overlay_test.zig");
+    _ = @import("overlay_set_test.zig");
     _ = @import("tar_read.zig");
     _ = @import("conda_prefix.zig");
     _ = @import("conda_unpack.zig");
