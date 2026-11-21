@@ -231,8 +231,8 @@ package re-runs it and its dependents; unchanged `.mojoc` bytes stop the cascade
 declared input against the graph, run a pinned hermetic compiler wrapper with an empty environment, and
 require non-empty outputs. The toolchain is mopm's own pin (a closure of conda packages plus a pinned Zig
 as C compiler and linker), recorded in the lock as a hash, so a different mopm cannot silently build with
-different bytes; `plan` refuses a lock whose recorded hash is not the one this mopm computes. Only Mojo
-1.0.0 is pinned today.
+different bytes; `plan` refuses a lock whose recorded hash is not the one this mopm computes. Mojo 1.0.0,
+1.1.0 and 1.2.0 are pinned today.
 
 The Buck2 integration is in the separate buildrules project, which reads the unit graph (its mopm
 rules pin a mopm release). Its Mojo support is version 0 and runs on Linux x86_64 only; the mopm
