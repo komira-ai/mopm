@@ -380,6 +380,19 @@ zig_test(  # buck-only: mopm publish --oidc against the fake registry and a stan
     **_TOOLS
 )
 
+zig_test(  # buck-only: one package version with a build per Mojo compiler: stage and publish --staged against the fake registry, lock and mopm_core's resolver on what it serves
+    name = "multi_build",
+    src = "tests/drivers/multi_build_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    deps = [":mopm_core"],
+    data = glob(["tests/e2e/multibuild/**"]),
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
 zig_test(  # buck-only: mopm stage against the fake registry, and publish --staged on what it writes
     name = "stage",
     src = "tests/drivers/stage_test.zig",
