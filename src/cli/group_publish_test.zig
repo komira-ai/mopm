@@ -669,6 +669,32 @@ test "a PUT that breaks or times out is repeated, and so is one the server asked
     try std.testing.expect(script.slept >= 1 + 1 + 5);
 }
 
+test "a PUT whose TLS handshake or TLS read fails is repeated, and the run publishes without being run again" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, throughWith(&.{
+        .{ .method = .PUT, .suffix = "/put/b", .status = 0, .err = error.TlsInitializationFailed },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 0, .err = error.TlsFailure },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+    }));
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    // b's file was sent three times, the same bytes to the same URL; a and c once.
+    try std.testing.expectEqual(@as(usize, 5), script.count(.PUT));
+    for (script.seen.items[2..5]) |x| {
+        try std.testing.expectEqualStrings(url_b, x.url);
+        try std.testing.expectEqualStrings("b-bytes", x.body.?);
+    }
+    try std.testing.expect(!contains(console.err.items, "failed"));
+    try std.testing.expect(!contains(console.err.items, "run the same command again"));
+}
+
 test "a 4xx other than 429 is final: the PUT is not repeated, though the next try would have worked" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
