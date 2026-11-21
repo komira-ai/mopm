@@ -418,7 +418,7 @@ test "a version a group published takes a build from a later group that states t
     try std.testing.expectEqual(@as(u16, 202), (try fx.call(.POST, try std.fmt.allocPrint(fx.life.allocator(), "/api/v1/groups/{s}/commit", .{idOf(first)}), try fx.commitBody(g.abc), fx.alice_token)).status);
     _ = try visible(&fx, idOf(first));
 
-    // The version holds the sha256 of its first file (the group's way); a build must state what the commit stated: sha256("pkg_a").
+    // The version holds the manifest its commit stated, sha256("pkg_a"); a build must state the same.
     const created = try createOf(&fx, &.{try member(&fx, "pkg_a", "1.0.0", "1.1.0", "eleven")});
     try putAll(&fx, created, &.{"eleven"});
     const id = idOf(created);
@@ -427,7 +427,7 @@ test "a version a group published takes a build from a later group that states t
     _ = try visible(&fx, id);
     const v = try getVersion(&fx, "/api/v1", "pkg_a", "1.0.0");
     try std.testing.expectEqualStrings(idOf(first), v.value.object.get("group_id").?.string);
-    try std.testing.expectEqualStrings(try fx.sha("pkg_ax"), v.value.object.get("manifest_sha256").?.string);
+    try std.testing.expectEqualStrings(try fx.sha("pkg_a"), v.value.object.get("manifest_sha256").?.string);
     // The group's own file is in noarch, the added build's in linux-64.
     try std.testing.expectEqual(@as(usize, 3), (try fx.call(.GET, "/channel/noarch/repodata.json", "", null)).value.object.get("packages.conda").?.object.count());
     try std.testing.expectEqualStrings("mojo-pkg_a-1.0.0-mojo1.1.0_0.conda", (try fx.call(.GET, "/channel/linux-64/repodata.json", "", null)).value.object.get("packages.conda").?.object.keys()[0]);

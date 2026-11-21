@@ -416,8 +416,9 @@ pub fn registrySubdirs(arena: Allocator, ov: Overlay, res: resolve.Resolution) A
 }
 
 /// The resolver's source of index files: a staged package from the set (merged into the registry's record of its version
-/// when the registry holds that version), anything else from `Inner` (the registry's), and `asked` set when `Inner` was
-/// asked.
+/// when the registry holds that version), anything else from `Inner` (the registry's), and `asked` set when `Inner`
+/// answered. For a staged package a registry that cannot be read (no network, a refusal) is not an error: the staged
+/// line is used alone and `asked` is left as it was, so a closure the set holds whole still needs no registry.
 pub fn Index(comptime Inner: type) type {
     return struct {
         overlay: *const Overlay,
@@ -425,9 +426,18 @@ pub fn Index(comptime Inner: type) type {
         asked: *bool,
 
         pub fn fetch(self: @This(), arena: Allocator, name: []const u8, diag: *resolve.Diagnostic) resolve.Error!?[]const u8 {
+            const m = self.overlay.member(name) orelse {
+                self.asked.* = true;
+                return self.inner.fetch(arena, name, diag);
+            };
+            const held = self.inner.fetch(arena, name, diag) catch |e| switch (e) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.ResolveFailed => {
+                    diag.* = .{};
+                    return try indexText(arena, m);
+                },
+            };
             self.asked.* = true;
-            const held = try self.inner.fetch(arena, name, diag);
-            const m = self.overlay.member(name) orelse return held;
             return try mergedIndexText(arena, m, held orelse return try indexText(arena, m));
         }
     };

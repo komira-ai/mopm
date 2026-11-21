@@ -728,6 +728,8 @@ fn advance(ctx: *Ctx, g: *st.Group) anyerror!void {
                 }
                 m.row.files = files;
                 m.row.manifest_stated = m.manifest_sha256;
+                // The hash the commit stated is the version's, as the hosted registry keeps the archive's (which the commit states).
+                if (m.manifest_sha256.len > 0) m.row.manifest_sha256 = m.manifest_sha256;
                 m.row.state = .published;
                 m.row.published_at = g.committed_at;
                 m.row.group = null;

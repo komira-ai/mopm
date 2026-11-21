@@ -339,3 +339,34 @@ fn mergeWithFailures(a: Allocator) !void {
 test "an allocation that fails while a line is merged is an out-of-memory error and leaks nothing" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, mergeWithFailures, .{});
 }
+
+/// A registry that cannot be reached: every request fails, as a machine with no network sees it.
+const Unreachable = struct {
+    pub fn fetch(_: Unreachable, a: Allocator, name: []const u8, diag: *resolve.Diagnostic) resolve.Error!?[]const u8 {
+        return resolve.fail(a, diag, .bad_index, "cannot reach the registry for {s}", .{name});
+    }
+};
+
+test "a staged package with a registry that cannot be reached resolves from the set alone, and the registry counts as not asked" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const staged_bytes = try overlay.testCondaStamped(a, "acme/libbase", "0.1.0", "{\"schema\":2,\"name\":\"acme/libbase\",\"version\":\"0.1.0\"}", "1.1.0 linux");
+    const ov = try addSet(a, &tmp, staged_bytes);
+    var asked = false;
+    var diag: resolve.Diagnostic = .{};
+    const roots = [_]resolve.Root{.{ .name = "acme/libbase", .requirement = "0.1" }};
+    const source = overlay.Index(Unreachable){ .overlay = &ov, .inner = .{}, .asked = &asked };
+    const res = try resolve.resolve(a, source, .{ .mojo = "1.1.0", .roots = &roots }, &diag);
+    try std.testing.expect(!asked);
+    try std.testing.expectEqualStrings("", diag.message);
+    try std.testing.expectEqual(@as(usize, 1), res.packages.len);
+    try std.testing.expectEqualStrings("mojo-acme.libbase-0.1.0-mojo1.1.0_0.conda", res.packages[0].record.buildFor("1.1.0").?.files[0].filename);
+    // A package the set does not hold still needs the registry, and its failure is the resolution's.
+    const other = [_]resolve.Root{.{ .name = "acme/regdep", .requirement = "1" }};
+    try std.testing.expectError(error.ResolveFailed, resolve.resolve(a, source, .{ .mojo = "1.1.0", .roots = &other }, &diag));
+    try std.testing.expect(asked);
+    try std.testing.expectEqualStrings("cannot reach the registry for acme/regdep", diag.message);
+}

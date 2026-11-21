@@ -144,9 +144,10 @@ async function fail(args: OpsArgs, d: OpsDeps, now: Date): Promise<number> {
     const members = await d.groups.getGroupMembers(gid);
     const date = at.slice(0, 10);
     for (const [i, m] of (members?.members ?? []).entries()) {
+      // By the member's row key: an add member's row is its build row, `<version>+<build>`, not the version's.
       await d.groups.applyGroupEvent(
         m.name,
-        m.version,
+        m.canonical,
         { type: 'group_burn', group_id: gid, reason_code: failure.code, date },
         { name: m.name, ts: at, id: `${memberAuditId(gid, i)}_group_burn_${after.attempt}`, actor: 'operator', action: 'group_burn', version: m.version, detail: { group_id: gid } },
       );

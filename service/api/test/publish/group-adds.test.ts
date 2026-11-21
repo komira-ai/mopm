@@ -3,6 +3,7 @@ import { bitmapIndexes } from '../../src/group-store';
 import { indexKey } from '../../src/index-files';
 import { quarantineKeyFor } from '../../src/publish/group-keys';
 import { groupIdFor } from '../../src/publish/group-service';
+import { runOps } from '../../src/ops/group-ops';
 import { RIGS, type Rig } from '../group-rig';
 import { audit } from '../helpers';
 import type { Spec } from '../validate/builder';
@@ -493,5 +494,36 @@ describe.each(RIGS)('a group that adds a build to a version of a namespace: %s',
     const last = JSON.parse(lines[lines.length - 1]!) as { build: string; builds: Array<{ build: string; requires_mojo: string }> };
     expect(last.build).toBe('mojo1.0.0_0');
     expect(last.builds.map((b) => [b.build, b.requires_mojo])).toEqual([['mojo1.0.0_0', '==1.0.0'], ['mojo1.1.0_0', '==1.1.0']]);
+  });
+});
+
+describe.each(RIGS)('the operator ends a stuck group that adds a build: %s', (_label, make) => {
+  test('--mode=fail --apply on a group that began to copy burns the build row of its add and leaves the version as it was', async () => {
+    const rig = make();
+    const env = new GroupEnv(rig);
+    const chain = new Chain(env);
+    const token = await env.account(1, 'octocat', NAMES);
+    const first = await new Flow(env, token, [[build('alpha')]]).start();
+    expect(await env.runGroupJobs()).toEqual(['committed']);
+    await chain.drain();
+    expect((await first.header())!.status).toBe('visible');
+    const before = await rig.store.raw.rawGet('alpha', '1.0.0');
+
+    const add = await new Flow(env, token, [[build('alpha', '1.1.0')]]).start();
+    const put = env.objects.put.bind(env.objects);
+    env.objects.put = async (k, body, opts) => {
+      if (!k.startsWith('quarantine/')) throw new Error('the Lambda died while copying');
+      return put(k, body, opts);
+    };
+    await expect(env.runGroupJob()).rejects.toThrow('the Lambda died while copying');
+    expect((await add.header())!.phase).toBe(2);
+
+    const out: Array<Record<string, unknown>> = [];
+    const code = await runOps({ mode: 'fail', group: add.gid, apply: true }, { groups: rig.store, queueDepth: async () => [], now: env.clock.now, out: (l) => out.push(l) });
+    expect(code).toBe(0);
+    expect(out.map((l) => l.kind)).toEqual(['plan', 'ended', 'burned']);
+    expect(await rig.store.raw.rawGet('alpha', '1.0.0+mojo1.1.0_0')).toMatchObject({ state: 'tombstoned', tombstone: { reason_code: 'operator' }, files: [] });
+    expect(await rig.store.raw.rawGet('alpha', '1.0.0')).toEqual(before);
+    expect(buildsOf((await rig.store.listVersions('alpha'))[0]!).map((b) => b.build)).toEqual(['mojo1.0.0_0']);
   });
 });
