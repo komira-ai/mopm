@@ -86,9 +86,43 @@ https://conda.<site>/<namespace>/
   channel add https://conda.mopm.dev/komira-ai/` then `pixi add
   mojo-komira-ai.json` installs `komira-ai/json`.
 - The build string is `mojo<compiler>_<n>` for the exact compiler the `.mojoc`
-  was built with, for example `mojo1.0.0_0`. `n` is always 0. A version's file
-  set is fixed when it is committed, so supporting a new compiler means
-  publishing a new version.
+  was built with, for example `mojo1.0.0_0`. `n` is always 0.
+- A **build** of a version is the set of its files built with one Mojo compiler:
+  the build string `mojo<compiler>_0`, the requirement `mojo-compiler ==<compiler>`
+  in `depends`, and one file for each subdir it covers. A version has one or more
+  builds, each under its own file names, so two builds of a version never share
+  a file. The **primary build** is the build with the lowest compiler version
+  (compared as dot-separated numbers).
+- The publish rule. A file `(package, version, build, subdir)` is created once and
+  never replaced.
+  - A version is created with one or more builds in one publish (or one member of a
+    group), at most 20 files in all. A later publish that names a build the
+    version already has is refused `version_exists`, and so is any publish under
+    an existing version that does not add a build.
+  - A build for another Mojo can be **added** to a published version, one build for
+    each publish (or group member), when it is built from the same source. A
+    yanked or taken-down version takes no added build.
+  - **The same source** means the same `<import name>.mopm.json` bytes (see
+    "Inside a package"): its name, version, dependencies with their ranges and
+    native libraries, and `source_sha256`, the digest of the package's sources.
+    For an added build the registry checks that the `manifest_sha256` of its
+    archives equals the version's (the commit's declared value is compared before
+    anything is reserved; the archives are compared again when they are
+    validated), that its metadata has a `source_sha256` (a version published
+    before that key existed has none, so it takes no added build: publish a new
+    version), and that its `depends` equal the version's apart from
+    `mojo-compiler`.
+  - Dependencies do not differ between builds: every file of every build of a
+    version has the same `<import name>.mopm.json` bytes and the same `depends`
+    apart from `mojo-compiler`, and the registry checks both for every file it
+    accepts into a version, an added build included.
+  - An added build has no state of its own: yank, unyank and takedown act on the
+    whole version, and the version's dependencies, metadata, readme and
+    `published_at` stay as published.
+  - An added build is stored as its own create-once record, so two publishes of
+    the same build of a version have one winner. A rejected add burns that build
+    of that version, as a rejected publish burns a version number: that build
+    cannot be added to that version again.
 - The version is `MAJOR.MINOR.PATCH` (grammar in `api/openapi.yaml`,
   `Version`): three numbers, no leading zeros, no pre-release or other
   suffix. A package whose `info/index.json` names any other spelling of the
@@ -114,7 +148,15 @@ other file below `lib/mojo/<import name>.bins/`.
 The import name is the part of the full name after `/`. `<import name>.mopm.json` is the source of truth for
 dependencies and native libraries; its `schema` field is 2, its `name` and each dependency's `name` are full names, and
 any other value is refused. Paths inside
-it are relative to the file. The registry refuses archives that contain
+it are relative to the file.
+
+`source_sha256` is an optional key of that file: the sha256, as 64 lower-case hex digits, of a text with one line
+`<sha256 of the file> <path>\n` for each file of the package, sorted by path (as bytes), the paths relative to the
+package directory and written with `/`. The files are the package's `mopm.toml`, every file under its library
+directory (`[targets] lib`) and the source of each program listed in `[targets] bins`. `mopm pack`, `mopm publish` and
+`mopm stage` write it whenever the library directory exists. It is part of the bytes that `manifest_sha256` covers, so
+two archives with the same `manifest_sha256` came from the same sources and the same manifest, whatever compiler built
+them; that is what "the same source" means for a build added to a published version (see "Package naming"). The registry refuses archives that contain
 anything outside the paths it allows (no `bin/`, no link or activate
 scripts, no symlinks or hardlinks, no executable code outside declared native
 libraries). A client that extracts a package applies the same rules and treats

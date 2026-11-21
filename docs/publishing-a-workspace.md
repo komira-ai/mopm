@@ -16,14 +16,17 @@ Group publish is deployed, and it is switched off. On `prod`, `gamma` and `beta`
 
 ```text
 mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version> --out <dir> --registry <prod|gamma|beta|url>
+mopm stage --workspace-root <dir> [<package>...] --artifacts <mojo version>=<dir> [--artifacts <mojo version>=<dir>]... --out <dir> --registry <prod|gamma|beta|url>
 ```
+
+The second form stages several compilers at once; see "One version, several Mojo builds" below.
 
 | flag | meaning |
 |---|---|
 | `--workspace-root <dir>` | The directory searched for members: every directory below it that holds a `mopm.toml`. |
 | `<package>...` | Optional package names, each a full name (`example/util`) or its import name (`util`; one workspace holds one member per import name). With names, the set is those packages and the members they depend on; without, every member. |
-| `--artifacts <dir>` | Where the built `.mojoc` files are: `<dir>/<subdir>/<namespace>/<name>.mojoc` for each member (`<subdir>` is `noarch`, `linux-64`, `linux-aarch64` or `osx-arm64`; the layout without the namespace directory is not read). A member with `[native.<id>]` libraries also has each one's static archive beside it, at `<dir>/<subdir>/<namespace>/<name>.native/lib<id>.a` (the native's `soname`, if it sets one, is the file name); stage packs it as `mopm pack --native <id>=<subdir>:<file>` would, and refuses a member whose archive is missing or is not an `ar` archive. A native is built for one platform, so its `.mojoc` is never under `noarch`. |
-| `--compiler <mojo version>` | The exact Mojo version the artifacts were built with. |
+| `--artifacts <dir>` or `--artifacts <mojo version>=<dir>` | Where the built `.mojoc` files are, for one compiler (the second form is repeated once for each compiler): `<dir>/<subdir>/<namespace>/<name>.mojoc` for each member (`<subdir>` is `noarch`, `linux-64`, `linux-aarch64` or `osx-arm64`; the layout without the namespace directory is not read). A member with `[native.<id>]` libraries also has each one's static archive beside it, at `<dir>/<subdir>/<namespace>/<name>.native/lib<id>.a` (the native's `soname`, if it sets one, is the file name); stage packs it as `mopm pack --native <id>=<subdir>:<file>` would, and refuses a member whose archive is missing or is not an `ar` archive. A native is built for one platform, so its `.mojoc` is never under `noarch`. |
+| `--compiler <mojo version>` | The exact Mojo version the artifacts were built with. Given with a plain `--artifacts <dir>`; the form `--artifacts <mojo version>=<dir>` names the version itself and takes no `--compiler`. |
 | `--out <dir>` | Where the staged set is written. |
 | `--registry <name>` | Which registry the versions are checked against: `prod`, `gamma`, `beta` or a URL. There is no default. |
 
@@ -33,13 +36,43 @@ A dependency on another member (a path dependency, or a registry dependency whos
 
 | action | when |
 |---|---|
-| `upload` | the registry does not have the version |
+| `upload` | the registry does not have the version, or has it published and the set holds one build of it that it lacks (see below) |
 | `skip` | the registry has the version with the same files |
-| `refuse` | the registry has the version with other bytes, or the version is yanked, or its number is burned |
+| `refuse` | the registry has the version with other bytes, or the version is yanked, or its number is burned, or the set adds a build built from other sources or more than one new build |
 
 The run exits 0 when the set is staged, 1 when it refused or failed, and 2 for a usage error. A set with a `refuse` member is written all the same and `mopm stage` exits 1; `mopm publish --staged` will not send it.
 
 A registry that lists `group_readme_objects` in the `features` of its `/health` answer takes the readmes as uploaded objects, and the commit request names each by its digest and size, so the readmes can be as many as the members allow. The rest of this paragraph is for a registry that does not: there the readmes of the members to upload travel in the body of the group's commit request, and the registry's function takes that request with the body escaped into it, at most 6 MiB in all. After the registry has answered for every member, and before it writes anything, `mopm stage` refuses a set whose commit body could take more than 6 MiB less 64 KiB there, naming the three largest readmes ("...; nothing was written"), and exits 1. It reads `GET /health` (no token) only for a set that is over that size, to learn whether the registry takes the readmes as objects; the plan it writes is the same either way and names no transfer form. The size is counted conservatively: the larger of the body's base64 and the body as one JSON string, in which every character outside ASCII counts as `\u` escapes. That holds about 4.45 MiB of plain text, and less of text full of quotes, backslashes, control characters or non-ASCII characters. Shorten the readmes or stage fewer packages in one group.
+
+### One version, several Mojo builds
+
+A package version has one build for each Mojo compiler it was built with (`mojo<compiler>_0` in the file name, `mojo-compiler ==<compiler>` in its dependencies). The registry creates each file once and never replaces it; a build for another compiler is a new file under the same version and can be added later, when it is built from the same source as the version: the same `mopm.toml` and the same library sources, which the registry compares by the `source_sha256` that `mopm pack`, `publish` and `stage` write into the package's metadata, and the same dependencies. A version published before `source_sha256` existed takes no added build; publish a new version. A yanked or taken-down version takes none either, and an added build has no state of its own: yanking the version yanks every build.
+
+To publish version 0.4.0 of `example/util` with builds for Mojo 1.0.0, 1.1.0 and 1.2.0, one compiler to a run, build the library with each compiler into its own artifacts tree (`out-1.0.0`, `out-1.1.0`, `out-1.2.0`, each laid out as `--artifacts` above says) and run, once for each:
+
+```text
+mopm stage --workspace-root . --artifacts out-1.0.0 --compiler 1.0.0 --out staged-1.0.0 --registry beta
+mopm publish --staged staged-1.0.0 --registry beta
+
+mopm stage --workspace-root . --artifacts out-1.1.0 --compiler 1.1.0 --out staged-1.1.0 --registry beta
+mopm publish --staged staged-1.1.0 --registry beta
+
+mopm stage --workspace-root . --artifacts out-1.2.0 --compiler 1.2.0 --out staged-1.2.0 --registry beta
+mopm publish --staged staged-1.2.0 --registry beta
+```
+
+The first run stages the version as `upload` with the Mojo 1.0.0 build. The second and third find the version published, see that it lacks the build they stage, and stage it as an `upload` of that one build's files: the registry sees that the version is published and adds the build. Staging all three compilers of a version that is not published yet takes one run and publishes the three builds together:
+
+```text
+mopm stage --workspace-root . --artifacts 1.0.0=out-1.0.0 --artifacts 1.1.0=out-1.1.0 --artifacts 1.2.0=out-1.2.0 --out staged --registry beta
+mopm publish --staged staged --registry beta
+```
+
+A version has at most 20 files in all, so four platforms allow five builds in one publish.
+
+For a version that is already published, `mopm stage` refuses a staged build whose file differs from the published one ("a published file is never replaced"), a build whose sources differ from the version's ("built from other sources"), and more than one new build ("one Mojo build per publish": stage the builds in separate runs, as above). A build it has staged byte for byte is not sent again, and a set with nothing new is `skip`. A rejected add burns that build of that version, as a rejected publish burns a version number.
+
+For one package, `mopm publish --compiler <mojo version> --mojoc <subdir>=<file>` to a version that is published adds that build the same way.
 
 ### mopm publish --staged
 

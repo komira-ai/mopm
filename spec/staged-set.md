@@ -21,6 +21,16 @@ namespace directory is not read. A member with none of the files is refused:
 `<full name> has no build artifact: expected <artifacts>/<subdir>/<namespace>/<name>.mojoc
 for one of noarch, linux-64, linux-aarch64, osx-arm64`.
 
+A tree of artifacts is built with one Mojo compiler. `mopm stage` takes it one of two ways:
+
+- `--compiler <mojo version> --artifacts <dir>`: one tree, one compiler.
+- `--artifacts <mojo>=<dir>`, repeated once for each compiler (`--artifacts 1.0.0=out-1.0.0 --artifacts 1.1.0=out-1.1.0`),
+  each tree laid out as above and `<mojo>` an exact Mojo version (digits and dots), none repeated. Each member is packed
+  once for each tree, and the files of all the trees are the builds of one version of the member (`channel.md`,
+  "Package naming").
+
+The compiler is in no path of the staged set: it is in each file's name (`mojo<compiler>_0`) and inside the package.
+
 ## The directory
 
 ```text
@@ -60,7 +70,11 @@ conda channel (`channel.md`). Other files in the directory are ignored.
 - `members` is in dependency order: a package comes after every package of the
   set it depends on. `publish --staged` uploads in this order.
 - `action` is `upload`, `skip` or `refuse`.
-  - `upload`: the member goes into the group. It needs `manifest_sha256` (the
+  - `upload`: the member goes into the group. For a version the registry does not have, `files` holds every
+    build staged (up to 20 files in all). For a version the registry has published, the member is an **add** of one
+    build: `files` holds only the files of the build that the version lacks (`channel.md`, "Package naming"), and
+    nothing else about the member differs; `plan.json` stays version 2 and has no field that says so, because the
+    registry sees that the version is published. It needs `manifest_sha256` (the
     hash `mopm pack` prints, which the registry compares with the manifest in
     the archive; the registry's commit accepts a request without it, and then
     uses the hash it computes, but `mopm` always sends it so that the check
@@ -91,6 +105,15 @@ conda channel (`channel.md`). Other files in the directory are ignored.
   - `refuse`: the staging found the member cannot be published (a yanked version,
     a different file under a version that exists). `publish --staged` refuses the
     whole set before it sends a request. `reason` says why.
+  - What `mopm stage` decides for a version the registry has published (not yanked, taken down or burned), for each
+    build it staged:
+    - a build the version has, with the same files byte for byte, is nothing new;
+    - a build the version has, with a file that differs, is `refuse`: a published file is never replaced;
+    - a build the version lacks is an add, `upload` with only that build's files, when the member's
+      `manifest_sha256` equals the version's; with another `manifest_sha256` it is `refuse`: built from other sources;
+    - more than one new build of a published version is `refuse`: one Mojo build per publish; stage the builds in
+      separate runs, one `--compiler` each;
+    - nothing new is `skip`.
 - A package appears once. A group has at most 500 members to upload.
 - `version` is exactly `MAJOR.MINOR.PATCH`.
 
