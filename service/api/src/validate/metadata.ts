@@ -31,6 +31,8 @@ export interface Mopm {
   version?: string;
   deps: Array<{ name: string; range?: string }>;
   native: NativeDecl[];
+  /** The digest of the package's sources, when the metadata carries one: what makes two builds of a version the same source. */
+  sourceSha256?: string;
 }
 
 const td = new TextDecoder('utf-8', { fatal: true });
@@ -56,6 +58,9 @@ export function checkMopm(o: Record<string, unknown>, schema: 1 | 2 = METADATA_S
   if (o.version !== undefined && !isStr(o.version)) return bad("'version' must be a string");
   if (o.version !== undefined && !isValidVersion(o.version as string)) {
     return bad(`'version' '${String(o.version)}' is not MAJOR.MINOR.PATCH (three numbers, no suffix)`);
+  }
+  if (o.source_sha256 !== undefined && !(isStr(o.source_sha256) && /^[0-9a-f]{64}$/.test(o.source_sha256))) {
+    return bad("'source_sha256' must be 64 lowercase hex digits");
   }
   const deps: Mopm['deps'] = [];
   if (o.deps !== undefined) {
@@ -113,7 +118,7 @@ export function checkMopm(o: Record<string, unknown>, schema: 1 | 2 = METADATA_S
       native.push({ id: r.id, soname: r.soname, kind: kind as NativeDecl['kind'], mode: mode as NativeDecl['mode'], paths, sharedPath: resolvedBy.file, staticPath: resolvedBy.static_file });
     }
   }
-  return { name: o.name, version: o.version as string | undefined, deps, native };
+  return { name: o.name, version: o.version as string | undefined, deps, native, ...(o.source_sha256 === undefined ? {} : { sourceSha256: o.source_sha256 as string }) };
 }
 
 export interface CondaIndex {

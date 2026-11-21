@@ -1,7 +1,8 @@
+import { buildsOf } from '../builds';
 import { RegistryError, HTTP_STATUS } from '../errors';
 import { API_VIEW } from '../group';
 import type { Store } from '../store';
-import { README_MAX_BYTES, type PackageRecord, type PackageSummaryRecord, type VersionRecord } from '../types';
+import { README_MAX_BYTES, type FileRef, type PackageRecord, type PackageSummaryRecord, type VersionRecord } from '../types';
 import { canonicalVersion, compareVersions } from '../version';
 import { AuthError } from '../auth/errors';
 import { routeAuth, type AuthServices } from './auth-routes';
@@ -323,10 +324,24 @@ async function getVersion(deps: RouterDeps, name: string, version: string) {
   return versionDetail(deps, p, version);
 }
 
-/** The version row of `p`, as `VersionDetail`; `version_not_found` for a missing or pending one. */
-export async function versionDetail(deps: RouterDeps, p: PackageRecord, version: string) {
-  const v = await deps.store.getVersion(p.name, version);
+/** A file as the API shows it: a tombstoned version keeps each file's sha256 but not its url, whatever the row still holds. */
+function fileShown(state: VersionRecord['state'], f: FileRef) {
+  const { url, ...rest } = f;
+  return state === 'tombstoned' || url === undefined ? rest : { ...rest, url };
+}
+
+/**
+ * The version of `p` as `VersionDetail`; `version_not_found` for a missing or pending one. It is the record of the
+ * version with its builds folded in (`Store.listVersions`). `requires_mojo` and `files` are those of the primary build, the
+ * one build a client that predates `builds` understands. With `withBuilds` (`/api/v2`) every build is also listed in
+ * `builds`, sorted by compiler; `/api/v1` never has the key.
+ */
+export async function versionDetail(deps: RouterDeps, p: PackageRecord, version: string, withBuilds = false) {
+  const canonical = canonicalVersion(version);
+  const v = (await deps.store.listVersions(p.name)).find((r) => r.canonical === canonical);
   if (!v || v.state === 'pending') throw new RegistryError('version_not_found', `'${p.name}' has no version '${version}'.`, { name: p.name, version });
+  const builds = buildsOf(v);
+  const primary = builds[0];
   return {
     name: v.name,
     version: v.version,
@@ -335,14 +350,11 @@ export async function versionDetail(deps: RouterDeps, p: PackageRecord, version:
     ...(v.tombstone ? { tombstone: v.tombstone } : {}),
     published_at: v.published_at,
     ...(v.published_by === undefined ? {} : { published_by: v.published_by }),
-    requires_mojo: v.requires_mojo,
+    requires_mojo: primary?.requires_mojo ?? v.requires_mojo,
     deps: v.deps,
     native: v.native,
-    // A tombstoned version keeps each file's sha256 but not its url, whatever the row still holds.
-    files: v.files.map((f) => {
-      const { url, ...rest } = f;
-      return v.state === 'tombstoned' || url === undefined ? rest : { ...rest, url };
-    }),
+    files: (primary?.files ?? v.files).map((f) => fileShown(v.state, f)),
+    ...(withBuilds ? { builds: builds.map((b) => ({ build: b.build, requires_mojo: b.requires_mojo, files: b.files.map((f) => fileShown(v.state, f)) })) } : {}),
     manifest_sha256: v.manifest_sha256,
     // Present when a group published the version; absent for a single publish.
     ...(v.group_id !== undefined ? { group_id: v.group_id } : {}),

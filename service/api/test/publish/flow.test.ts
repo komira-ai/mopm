@@ -190,25 +190,24 @@ describe('rejections', () => {
     expect((await h.status(me.token, JSON.parse(c.body).publish_id)).body).toMatchObject({ status: 'rejected', rejection_code: 'sha256_mismatch' });
   });
 
-  test('two files of one version built with different compilers: manifest_invalid, and nothing reaches the channel', async () => {
+  test('two files of one version built with different compilers are two builds of one version: published, the lowest compiler is the primary build, each repodata entry pins its own compiler', async () => {
     const h = new Harness();
     const me = await h.account(1, 'a', ['demo']);
-    // Each archive is valid on its own (its file name, metadata and build agree); together they are not one version.
-    const a = pkg({ name: 'demo', version: '1.0.0', subdir: 'linux-64', compiler: '1.0.0' });
-    const b = pkg({ name: 'demo', version: '1.0.0', subdir: 'osx-arm64', compiler: '1.1.0' });
+    // Each archive is valid on its own (its file name, metadata and build agree); they differ in the compiler and the platform.
+    const a = pkg({ name: 'demo', version: '1.0.0', subdir: 'linux-64', compiler: '1.1.0' });
+    const b = pkg({ name: 'demo', version: '1.0.0', subdir: 'osx-arm64', compiler: '1.0.0' });
     const ua = await h.upload(me.token, a);
     const ub = await h.upload(me.token, b);
     const c = await h.commit(me.token, 'demo', '1.0.0', [ua.upload_id!, ub.upload_id!], a.manifest);
     expect(c.statusCode).toBe(202);
     await h.runValidator();
-    expect((await h.status(me.token, JSON.parse(c.body).publish_id)).body).toMatchObject({
-      status: 'rejected',
-      rejection_code: 'manifest_invalid',
-      message: expect.stringContaining('disagrees'),
-    });
-    expect(h.objects.keys('linux-64/')).toEqual([]);
-    expect(h.objects.keys('osx-arm64/')).toEqual([]);
-    expect(h.objects.keys('quarantine/')).toEqual([]);
+    await h.runIndexer();
+    expect((await h.status(me.token, JSON.parse(c.body).publish_id)).body).toMatchObject({ status: 'published' });
+    const v = (await h.registry.getVersion('demo', '1.0.0'))!;
+    expect(v).toMatchObject({ state: 'published', build: 'mojo1.0.0_0', requires_mojo: '==1.0.0' });
+    expect(v.files.map((f) => f.filename).sort()).toEqual([a.filename, b.filename].sort());
+    expect(h.repodata('linux-64')['packages.conda'][a.filename]).toMatchObject({ build: 'mojo1.1.0_0', depends: ['mojo-compiler ==1.1.0'] });
+    expect(h.repodata('osx-arm64')['packages.conda'][b.filename]).toMatchObject({ build: 'mojo1.0.0_0', depends: ['mojo-compiler ==1.0.0'] });
   });
 
   test('a rejected publish does not disturb the others in the index', async () => {

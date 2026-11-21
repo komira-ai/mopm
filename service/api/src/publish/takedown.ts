@@ -11,7 +11,8 @@ import type { IndexMessage, IndexTakedownsMessage } from './types';
  * the package's sparse-index file (state `tombstoned`, sha256 kept, no url) and both takedown logs.
  *
  * The tombstone itself comes first and is the truth; this only queues the rebuilds, and sending it again after a
- * crash is safe (every job re-reads the rows). Like a yank, a takedown needs no gate: an index that says
+ * crash is safe (every job re-reads the rows). The versions come folded (`Store.listVersions`), so a version's
+ * repodata directories are those of the files of every build it has. Like a yank, a takedown needs no gate: an index that says
  * `tombstoned` while repodata still lists the file is not picked by the CLI.
  */
 export async function queueTakedownIndex(d: { registry: Store; indexQueue: Queue }, name: string): Promise<void> {
