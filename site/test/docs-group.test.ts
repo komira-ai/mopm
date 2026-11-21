@@ -76,7 +76,7 @@ function usageCommands(zig: string): string[] {
     .split(/\s(?=mopm )/);
 }
 
-/** The flags a Zig parser takes: those of its `const takes = ...;`, and the flags that take no value. */
+/** The flags a Zig parser takes: those of its `const takes = ...;`, and the flags the parser tests by name outside it (the ones that take no value, and stage's --artifacts, which takes a value of two forms). */
 function flagsOf(zig: string, noValue: readonly string[] = []): string[] {
   const m = /const takes = ([^;]+);/.exec(zig);
   if (!m) throw new Error('no takes list');
@@ -89,17 +89,17 @@ const flagTokens = (text: string): string[] => sorted(text.match(/--[a-z]+(?:-[a
 // ------------------------------------------------------------------------------------------------- the commands
 
 describe.each([
-  ['mopm stage', stageZig, undefined],
-  ['mopm publish --staged', flagsZig, ['--dry-run', '--oidc', '--no-commit', '--abort']],
-] as const)('docs: %s', (heading, zig, noValue) => {
+  ['mopm stage', stageZig, ['--artifacts'], 2],
+  ['mopm publish --staged', flagsZig, ['--dry-run', '--oidc', '--no-commit', '--abort'], 1],
+] as const)('docs: %s', (heading, zig, noValue, forms) => {
   const sec = section(doc, heading);
   const source = flagsOf(zig, noValue);
   const first = fences(sec)[0];
 
   test('the synopsis is the usage string of the command', () => {
     const commands = usageCommands(zig);
-    expect(commands).toHaveLength(1);
-    expect(squash(first)).toBe(commands[0]);
+    expect(commands).toHaveLength(forms);
+    expect(first.trim().split('\n').map(squash)).toEqual(commands);
   });
 
   test('the synopsis names every flag the parser takes, and no other', () => {

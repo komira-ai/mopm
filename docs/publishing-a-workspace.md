@@ -16,7 +16,7 @@ Group publish is deployed, and it is switched off. On `prod`, `gamma` and `beta`
 
 ```text
 mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version> --out <dir> --registry <prod|gamma|beta|url>
-mopm stage --workspace-root <dir> [<package>...] --artifacts <mojo version>=<dir> [--artifacts <mojo version>=<dir>]... --out <dir> --registry <prod|gamma|beta|url>
+mopm stage --workspace-root <dir> [<package>...] --artifacts <mojo version>=<dir>... --out <dir> --registry <prod|gamma|beta|url>
 ```
 
 The second form stages several compilers at once; see "One version, several Mojo builds" below.

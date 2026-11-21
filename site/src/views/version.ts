@@ -79,8 +79,19 @@ function fileRow<N>(doc: Doc<N>, f: FileRef, i: number, channel: string | null, 
  * small grid (file, then platform and size, then the digest), and a browser may drop a table's semantics when its
  * display changes; the roles keep it a table to a screen reader.
  */
+/** The files of every build when the version lists several builds; one build is the version's own files and requirement (the primary build). */
+function allFiles(v: VersionDetail): FileRef[] {
+  return v.builds !== undefined && v.builds.length > 1 ? v.builds.flatMap((b) => b.files) : v.files;
+}
+
+/** The Mojo requirement of each build, in the order given, joined; the top-level one when no builds are listed. */
+function requiresMojo(v: VersionDetail): string {
+  return v.builds !== undefined && v.builds.length > 1 ? v.builds.map((b) => b.requires_mojo).join(' · ') : v.requires_mojo;
+}
+
 function filesTable<N>(doc: Doc<N>, f: FullName, v: VersionDetail, ctx: PageContext): N {
-  if (v.files.length === 0) return h(doc, 'p', { class: 'muted' }, 'No files.');
+  const files = allFiles(v);
+  if (files.length === 0) return h(doc, 'p', { class: 'muted' }, 'No files.');
   const base = condaBase(ctx.host);
   const channel = base === null ? null : namespaceChannel(base, f.namespace);
   const allow = downloadable(v);
@@ -99,7 +110,7 @@ function filesTable<N>(doc: Doc<N>, f: FullName, v: VersionDetail, ctx: PageCont
         { role: 'rowgroup' },
         h(doc, 'tr', { role: 'row' }, ...['File', 'Platform', 'Size', 'SHA-256'].map((c) => h(doc, 'th', { scope: 'col', role: 'columnheader' }, c))),
       ),
-      h(doc, 'tbody', { role: 'rowgroup' }, ...v.files.map((f, i) => fileRow(doc, f, i, channel, allow))),
+      h(doc, 'tbody', { role: 'rowgroup' }, ...files.map((f, i) => fileRow(doc, f, i, channel, allow))),
     ),
   );
 }
@@ -136,7 +147,7 @@ function nativeList<N>(doc: Doc<N>, v: VersionDetail): N | null {
 
 /** The platforms of a version's files, each once, in their order. */
 function platforms(v: VersionDetail): string[] {
-  return [...new Set(v.files.map((f) => f.subdir))];
+  return [...new Set(allFiles(v).map((f) => f.subdir))];
 }
 
 /** spec/channel.md documents no version-pinned pixi spelling, so the one command installs the newest version. */
@@ -151,10 +162,11 @@ export function versionView<N>(doc: Doc<N>, name: FullName, v: VersionDetail, ct
 
   const facts: N[] = [h(doc, 'li', null, 'Published ', h(doc, 'strong', null, timeEl(doc, v.published_at)))];
   if (v.license) facts.push(h(doc, 'li', null, 'License ', h(doc, 'strong', null, v.license)));
-  if (v.requires_mojo) facts.push(h(doc, 'li', null, 'Mojo ', h(doc, 'strong', null, v.requires_mojo)));
+  const mojo = requiresMojo(v);
+  if (mojo) facts.push(h(doc, 'li', null, 'Mojo ', h(doc, 'strong', null, mojo)));
   const plats = platforms(v);
   if (plats.length > 0) facts.push(h(doc, 'li', null, plats.length === 1 ? 'Platform ' : 'Platforms ', h(doc, 'strong', null, plats.join(' · '))));
-  const tabs: N[] = [h(doc, 'a', { href: anchorHref('files-heading') }, 'Files ', h(doc, 'span', { class: 'count' }, String(v.files.length))), h(doc, 'a', { href: anchorHref('deps-heading') }, 'Dependencies ', h(doc, 'span', { class: 'count' }, String(v.deps.length)))];
+  const tabs: N[] = [h(doc, 'a', { href: anchorHref('files-heading') }, 'Files ', h(doc, 'span', { class: 'count' }, String(allFiles(v).length))), h(doc, 'a', { href: anchorHref('deps-heading') }, 'Dependencies ', h(doc, 'span', { class: 'count' }, String(v.deps.length)))];
   if (readme) tabs.push(h(doc, 'a', { href: anchorHref('section-readme') }, 'Readme'));
   const head = pageHead(doc, {
     name,
@@ -190,7 +202,7 @@ export function versionView<N>(doc: Doc<N>, name: FullName, v: VersionDetail, ct
   const meta = details(doc, [
     ['State', stateLabel(v.state, v.state_raw, v.yank_reason)],
     ['Published', [timeEl(doc, v.published_at), v.published_by ? ` by ${v.published_by}` : null]],
-    ['Requires Mojo', h(doc, 'code', null, v.requires_mojo)],
+    ['Requires Mojo', h(doc, 'code', null, requiresMojo(v))],
     ['License', v.license],
     ['Repository', webLink(doc, v.repository)],
     ['Homepage', webLink(doc, v.homepage)],

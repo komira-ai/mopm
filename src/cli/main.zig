@@ -576,6 +576,7 @@ test {
     _ = @import("stage_test.zig");
     _ = @import("stage_builds_test.zig");
     _ = @import("publish_digest_test.zig");
+    _ = @import("publish_prepare_test.zig");
     _ = @import("plan_v2_test.zig");
     _ = @import("publish_false_test.zig");
     _ = @import("bin_run.zig");
