@@ -113,6 +113,7 @@ test {
     _ = @import("unit_graph_imports_test.zig");
     _ = @import("unit_graph_names_test.zig");
     _ = @import("install_plan_loads_test.zig");
+    _ = @import("builds_test.zig");
     _ = @import("lock_libs.zig");
     _ = @import("lock_libs_test.zig");
     _ = @import("system_libs.zig");

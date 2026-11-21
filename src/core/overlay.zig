@@ -8,7 +8,7 @@
 //!
 //! - `indexText` is the sparse-index file of a staged package (the records the registry will serve once the version
 //!   is published), with the dependencies and native libraries the package's own `lib/mojo/<import name>.mopm.json`
-//!   declares and a build for exactly the compiler its file name names;
+//!   declares and one build per compiler its file names name (a set may hold the files of several builds of a version);
 //! - `repodata` is the `<namespace>/<subdir>/repodata.json` entries of its files, merged into the registry's when the
 //!   registry is asked at all;
 //! - `fileBytes` and `bytesFor` are the bytes of a file, for the natives a lock hashes and for an install.
@@ -42,13 +42,12 @@ pub const Member = struct {
     /// The full name, `<namespace>/<name>`.
     name: []const u8,
     version: []const u8,
-    /// `mojo1.0.0_0`: the same for every file.
-    build: []const u8,
-    /// `==1.0.0`.
-    requires_mojo: []const u8,
     deps: []const resolve.Dep,
     native: []const resolve.Native,
-    files: []const resolve.File,
+    /// The builds the set holds of the version, one per Mojo compiler, by compiler version: the files of each
+    /// (`mojo1.0.0_0`, `==1.0.0`). A set made with one compiler has one; a set may also hold a build the
+    /// registry's version lacks.
+    builds: []const resolve.Build,
 };
 
 pub const Error = error{Refused} || Allocator.Error;
@@ -124,8 +123,10 @@ pub const Overlay = struct {
     /// The staged file `<subdir>/<filename>`, if the set holds it.
     pub fn file(self: Overlay, subdir: []const u8, filename: []const u8) ?resolve.File {
         for (self.members) |m| {
-            for (m.files) |f| {
-                if (std.mem.eql(u8, f.subdir, subdir) and std.mem.eql(u8, f.filename, filename)) return f;
+            for (m.builds) |b| {
+                for (b.files) |f| {
+                    if (std.mem.eql(u8, f.subdir, subdir) and std.mem.eql(u8, f.filename, filename)) return f;
+                }
             }
         }
         return null;
@@ -151,10 +152,13 @@ pub const Overlay = struct {
     pub fn bytesFor(self: Overlay, arena: Allocator, p: lock.Package, why: *[]const u8) Error!?[]const u8 {
         if (p.source != .registry) return null;
         const m = self.member(p.name) orelse return null;
-        if (!std.mem.eql(u8, m.version, p.version) or !std.mem.eql(u8, m.build, p.build)) return null;
-        for (m.files) |f| {
-            if (std.mem.eql(u8, f.subdir, p.subdir) and std.mem.eql(u8, f.sha256, p.sha256) and f.size == p.size) {
-                return self.fileBytes(arena, f.subdir, f.filename, why);
+        if (!std.mem.eql(u8, m.version, p.version)) return null;
+        for (m.builds) |b| {
+            if (!std.mem.eql(u8, b.build, p.build)) continue;
+            for (b.files) |f| {
+                if (std.mem.eql(u8, f.subdir, p.subdir) and std.mem.eql(u8, f.sha256, p.sha256) and f.size == p.size) {
+                    return self.fileBytes(arena, f.subdir, f.filename, why);
+                }
             }
         }
         return null;
@@ -182,7 +186,7 @@ pub const Overlay = struct {
         const packages = doc.object.getPtr("packages.conda").?;
         for (self.members) |m| {
             if (!std.mem.eql(u8, names.namespaceOf(m.name), namespace)) continue;
-            for (m.files) |f| {
+            for (m.builds) |b| for (b.files) |f| {
                 if (!std.mem.eql(u8, f.subdir, subdir)) continue;
                 if (packages.object.get(f.filename)) |held| {
                     const same = held == .object and
@@ -194,14 +198,14 @@ pub const Overlay = struct {
                     }
                 }
                 var entry = std.json.ObjectMap.init(arena);
-                try entry.put("build", .{ .string = m.build });
+                try entry.put("build", .{ .string = b.build });
                 try entry.put("name", .{ .string = try names.condaName(arena, m.name) });
                 try entry.put("sha256", .{ .string = f.sha256 });
                 try entry.put("size", .{ .integer = @intCast(f.size) });
                 try entry.put("subdir", .{ .string = f.subdir });
                 try entry.put("version", .{ .string = m.version });
                 try packages.object.put(f.filename, .{ .object = entry });
-            }
+            };
         }
         return std.json.stringifyAlloc(arena, doc, .{});
     }
@@ -218,21 +222,25 @@ const IndexLine = struct {
     deps: []const IndexDep,
     native: []const resolve.Native,
     files: []const resolve.File,
+    builds: []const resolve.Build,
 };
 
-/// The index file of a staged package: one record, as the registry will serve it.
+/// The index file of a staged package: one record, as the registry will serve it. Its top-level `build`,
+/// `requires_mojo` and `files` are those of the primary build (the lowest compiler); `builds` lists every build.
 pub fn indexText(arena: Allocator, m: *const Member) Allocator.Error![]const u8 {
     const deps = try arena.alloc(IndexDep, m.deps.len);
     for (m.deps, deps) |d, *out| out.* = .{ .name = d.name, .range = d.range };
     var out = std.ArrayList(u8).init(arena);
+    const primary = m.builds[0];
     try std.json.stringify(IndexLine{
         .name = m.name,
         .version = m.version,
-        .build = m.build,
-        .requires_mojo = m.requires_mojo,
+        .build = primary.build,
+        .requires_mojo = primary.requires_mojo,
         .deps = deps,
         .native = m.native,
-        .files = m.files,
+        .files = primary.files,
+        .builds = m.builds,
     }, .{ .emit_null_optional_fields = false }, out.writer());
     try out.append('\n');
     return out.items;
@@ -245,28 +253,41 @@ fn sameVersion(a: []const u8, b: []const u8) bool {
     return semver.compare(x, y) == .eq;
 }
 
-/// Why the registry's `records` of the package already hold the staged version with other bytes (a different
-/// file, or another set of files), or null. The registry never replaces a published version, so a staged one that
-/// differs cannot be what the registry gives once it is published.
+/// Why the registry's `records` of the package already hold a build of the staged version with other bytes (a
+/// different file, or another set of files), or null. The registry never replaces a published file, so a staged build
+/// that differs from the registry's build of the same name cannot be what the registry gives once it is published.
+/// A staged build the registry's version lacks is an addition and a build only the registry has is untouched: neither
+/// is a difference.
 pub fn registryDiffers(arena: Allocator, dir: []const u8, m: *const Member, records: []const resolve.Record) Allocator.Error!?[]const u8 {
     for (records) |r| {
         if (!sameVersion(r.version, m.version)) continue;
-        for (m.files) |f| {
-            var found = false;
-            for (r.files) |g| {
-                if (!std.mem.eql(u8, g.subdir, f.subdir) or !std.mem.eql(u8, g.filename, f.filename)) continue;
-                found = true;
-                if (!std.mem.eql(u8, g.sha256, f.sha256) or g.size != f.size) {
-                    return try std.fmt.allocPrint(arena, "{s} {s} is staged in {s} with {s}/{s} at sha256 {s}, and the registry already holds that version with sha256 {s}; a published version cannot be replaced, so the staged one needs a new version", .{ m.name, m.version, dir, f.subdir, f.filename, f.sha256, g.sha256 });
-                }
-            }
-            if (!found) {
-                return try std.fmt.allocPrint(arena, "{s} {s} is staged in {s} with {s}/{s}, and the registry already holds that version without that file; a published version cannot be replaced, so the staged one needs a new version", .{ m.name, m.version, dir, f.subdir, f.filename });
+        for (m.builds) |staged| {
+            for (r.builds) |held| {
+                if (!std.mem.eql(u8, held.build, staged.build)) continue;
+                if (try buildDiffers(arena, dir, m, staged, held)) |why| return why;
             }
         }
-        if (r.files.len != m.files.len) {
-            return try std.fmt.allocPrint(arena, "{s} {s} is staged in {s} with {d} files, and the registry already holds that version with {d}; a published version cannot be replaced, so the staged one needs a new version", .{ m.name, m.version, dir, m.files.len, r.files.len });
+    }
+    return null;
+}
+
+/// Why the staged build `staged` is not the registry's `held` build of the same name, or null when it is.
+fn buildDiffers(arena: Allocator, dir: []const u8, m: *const Member, staged: resolve.Build, held: resolve.Build) Allocator.Error!?[]const u8 {
+    for (staged.files) |f| {
+        var found = false;
+        for (held.files) |g| {
+            if (!std.mem.eql(u8, g.subdir, f.subdir) or !std.mem.eql(u8, g.filename, f.filename)) continue;
+            found = true;
+            if (!std.mem.eql(u8, g.sha256, f.sha256) or g.size != f.size) {
+                return try std.fmt.allocPrint(arena, "{s} {s} is staged in {s} with {s}/{s} at sha256 {s}, and the registry already holds that version with sha256 {s}; a published version cannot be replaced, so the staged one needs a new version", .{ m.name, m.version, dir, f.subdir, f.filename, f.sha256, g.sha256 });
+            }
         }
+        if (!found) {
+            return try std.fmt.allocPrint(arena, "{s} {s} is staged in {s} with {s}/{s}, and the registry already holds that version without that file; a published version cannot be replaced, so the staged one needs a new version", .{ m.name, m.version, dir, f.subdir, f.filename });
+        }
+    }
+    if (held.files.len != staged.files.len) {
+        return try std.fmt.allocPrint(arena, "{s} {s} is staged in {s} with {d} files of {s}, and the registry already holds that build with {d}; a published version cannot be replaced, so the staged one needs a new version", .{ m.name, m.version, dir, staged.files.len, staged.build, held.files.len });
     }
     return null;
 }
@@ -277,7 +298,8 @@ pub fn registrySubdirs(arena: Allocator, ov: Overlay, res: resolve.Resolution) A
     var out = std.ArrayList([]const u8).init(arena);
     for (res.packages) |p| {
         if (ov.member(p.record.name) != null) continue;
-        for (p.record.files) |f| {
+        const build = p.record.buildFor(res.mojo) orelse continue;
+        for (build.files) |f| {
             const key = try std.fmt.allocPrint(arena, "{s}/{s}", .{ names.namespaceOf(p.record.name), f.subdir });
             if (!contains(out.items, key)) try out.append(key);
         }
@@ -387,8 +409,9 @@ pub fn load(arena: Allocator, dir_path: []const u8, why: *[]const u8) Error!Over
             return refuse(arena, why, "{s}/plan.json: {s} {s}: files is one to 20 entries", .{ dir_path, name, ver });
         }
 
-        var m = Member{ .name = name, .version = ver, .build = "", .requires_mojo = "", .deps = &.{}, .native = &.{}, .files = &.{} };
+        var m = Member{ .name = name, .version = ver, .deps = &.{}, .native = &.{}, .builds = &.{} };
         var files = std.ArrayList(resolve.File).init(arena);
+        var staged_builds = std.ArrayList(StagedBuild).init(arena);
         for (files_v.array.items, 0..) |fv, i| {
             if (fv != .object) return refuse(arena, why, "{s}/plan.json: a file of {s} {s} is not an object", .{ dir_path, name, ver });
             const subdir = getStr(fv.object, "subdir") orelse return refuse(arena, why, "{s}/plan.json: a file of {s} {s} has no subdir", .{ dir_path, name, ver });
@@ -407,22 +430,19 @@ pub fn load(arena: Allocator, dir_path: []const u8, why: *[]const u8) Error!Over
                 }
             }
 
-            // The name says the build: mojo-<namespace>.<name>-<version>-<build>.conda, and the build mojo<compiler>_<n>.
+            // The name says the build: mojo-<namespace>.<name>-<version>-<build>.conda, and the build mojo<compiler>_0.
             const conda_name = try names.condaName(arena, name);
             const head = try std.fmt.allocPrint(arena, "{s}-{s}-", .{ conda_name, ver });
             if (!std.mem.startsWith(u8, filename, head) or !std.mem.endsWith(u8, filename, ".conda")) {
                 return refuse(arena, why, "{s}/plan.json: {s} is not a file of {s} {s} ({s}-{s}-<build>.conda)", .{ dir_path, filename, name, ver, conda_name, ver });
             }
             const build = filename[head.len .. filename.len - ".conda".len];
-            const compiler = compilerOf(build) orelse {
-                return refuse(arena, why, "{s}/plan.json: the build {s} of {s} is not mojo<compiler>_<n>", .{ dir_path, build, filename });
+            const compiler = resolve.compilerOfBuild(build) orelse {
+                return refuse(arena, why, "{s}/plan.json: the build {s} of {s} is not mojo<compiler>_0", .{ dir_path, build, filename });
             };
-            if (i == 0) {
-                m.build = build;
-                m.requires_mojo = try std.fmt.allocPrint(arena, "=={s}", .{compiler});
-            } else if (!std.mem.eql(u8, m.build, build)) {
-                return refuse(arena, why, "{s}/plan.json: the files of {s} {s} are of different builds ({s}, {s})", .{ dir_path, name, ver, m.build, build });
-            }
+            var known = false;
+            for (staged_builds.items) |sb| known = known or std.mem.eql(u8, sb.build, build);
+            if (!known) try staged_builds.append(.{ .build = build, .compiler = compiler });
 
             // The file: the plan's size and sha256, then its own metadata.
             const rel = try std.fmt.allocPrint(arena, "{s}/{s}", .{ subdir, filename });
@@ -466,22 +486,33 @@ pub fn load(arena: Allocator, dir_path: []const u8, why: *[]const u8) Error!Over
             }
             try files.append(.{ .subdir = subdir, .filename = filename, .sha256 = sha, .size = @intCast(size_v.integer) });
         }
-        m.files = files.items;
+        const stem = try std.fmt.allocPrint(arena, "{s}-{s}-", .{ try names.condaName(arena, name), ver });
+        m.builds = try groupBuilds(arena, staged_builds.items, files.items, stem);
         try members.append(m);
     }
     return .{ .dir = dir_path, .members = members.items };
 }
 
-/// `1.0.0` of `mojo1.0.0_0`; null for any other spelling of a build.
-fn compilerOf(build: []const u8) ?[]const u8 {
-    const prefix = "mojo";
-    if (!std.mem.startsWith(u8, build, prefix)) return null;
-    const us = std.mem.lastIndexOfScalar(u8, build, '_') orelse return null;
-    if (us <= prefix.len or us + 1 >= build.len) return null;
-    for (build[us + 1 ..]) |c| {
-        if (!std.ascii.isDigit(c)) return null;
+const StagedBuild = struct { build: []const u8, compiler: []const u8 };
+
+fn lessStaged(_: void, a: StagedBuild, b: StagedBuild) bool {
+    return resolve.lessCompiler({}, a.compiler, b.compiler);
+}
+
+/// The builds of a staged version: one per build of `staged`, by compiler version, each with those of `files` named
+/// `<stem><build>.conda`.
+fn groupBuilds(arena: Allocator, staged: []StagedBuild, files: []const resolve.File, stem: []const u8) Allocator.Error![]const resolve.Build {
+    std.mem.sort(StagedBuild, staged, {}, lessStaged);
+    const out = try arena.alloc(resolve.Build, staged.len);
+    for (staged, out) |sb, *b| {
+        const want = try std.fmt.allocPrint(arena, "{s}{s}.conda", .{ stem, sb.build });
+        var mine = std.ArrayList(resolve.File).init(arena);
+        for (files) |f| {
+            if (std.mem.eql(u8, f.filename, want)) try mine.append(f);
+        }
+        b.* = .{ .build = sb.build, .requires_mojo = try std.fmt.allocPrint(arena, "=={s}", .{sb.compiler}), .files = mine.items };
     }
-    return build[prefix.len..us];
+    return out;
 }
 
 // ---------------------------------------------------------------- tests
@@ -648,7 +679,14 @@ test "a staged set that is not what it says is refused, naming why" {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
         const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .build = "py3_0", .bytes = good }} }});
-        try expectRefused(a, dir, "is not mojo<compiler>_<n>");
+        try expectRefused(a, dir, "is not mojo<compiler>_0");
+    }
+    {
+        // The registry's build strings end in _0; a staged one that does not could not be served as an index line.
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .build = "mojo1.0.0_1", .bytes = good }} }});
+        try expectRefused(a, dir, "the build mojo1.0.0_1 of mojo-acme.libbase-0.1.0-mojo1.0.0_1.conda is not mojo<compiler>_0");
     }
     {
         var tmp = std.testing.tmpDir(.{});
@@ -814,8 +852,8 @@ test "the registry holding a staged version with other bytes is named; the same 
     try std.testing.expect(std.mem.indexOf(u8, other, "needs a new version") != null);
     const resized = try registryDiffers(a, dir, m, try line(a, "0.1.0", "mojo1.0.0_0", &mine, bytes.len + 1));
     try std.testing.expect(resized != null);
-    const renamed = try registryDiffers(a, dir, m, try line(a, "0.1.0", "mojo1.0.0_1", &mine, bytes.len));
-    try std.testing.expect(renamed != null);
+    // A registry build of another name is another build: the staged one is an addition, not a replacement.
+    try std.testing.expect((try registryDiffers(a, dir, m, try line(a, "0.1.0", "mojo1.0.0_1", &mine, bytes.len))) == null);
 }
 
 test "the bytes of a file come only for the file a lock pins, and from the set itself" {
@@ -980,9 +1018,10 @@ test "a plan that is not what the spec says is refused, naming the member" {
         defer tmp.cleanup();
         const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{
             .{ .subdir = "linux-64", .bytes = good },
-            .{ .subdir = "osx-arm64", .build = "mojo1.1.0_0", .bytes = good },
+            .{ .subdir = "osx-arm64", .build = "mojo1.1.0_0", .bytes = try testConda(a, "acme/libbase", "0.1.0", "{\"schema\":2,\"name\":\"acme/libbase\",\"version\":\"0.1.0\",\"deps\":[{\"name\":\"acme/other\"}]}") },
         } }});
-        try expectRefused(a, dir, "are of different builds");
+        // Every file of every build carries the same dependencies.
+        try expectRefused(a, dir, "osx-arm64/mojo-acme.libbase-0.1.0-mojo1.1.0_0.conda disagrees with the first file of acme/libbase 0.1.0");
     }
     {
         var tmp = std.testing.tmpDir(.{});
@@ -995,5 +1034,230 @@ test "a plan that is not what the spec says is refused, naming the member" {
         defer tmp.cleanup();
         const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = try testConda(a, "acme/libbase", "0.1.0", "not json") }} }});
         try expectRefused(a, dir, "is not valid package metadata");
+    }
+}
+
+// ------------------------------------------------------------ a staged version with several builds
+
+/// A staged package file like `testConda`, with `stamp` inside so that two files of one package differ.
+fn testCondaStamped(a: Allocator, name: []const u8, version: []const u8, meta: []const u8, stamp: []const u8) ![]u8 {
+    const path = try std.fmt.allocPrint(a, "lib/mojo/{s}.mopm.json", .{names.importName(name)});
+    return conda_fixture.simple(a, try names.condaName(a, name), version, &.{ .{ .name = path, .data = meta }, .{ .name = "lib/stamp.txt", .data = stamp } });
+}
+
+/// The files of acme/libbase 0.1.0 of a set built with Mojo 1.0.0 (linux-64 and osx-arm64) and 1.1.0 (linux-64).
+const Built = struct { l10: []u8, o10: []u8, l11: []u8 };
+
+fn built(a: Allocator) !Built {
+    return .{
+        .l10 = try testCondaStamped(a, "acme/libbase", "0.1.0", base_meta, "1.0.0 linux"),
+        .o10 = try testCondaStamped(a, "acme/libbase", "0.1.0", base_meta, "1.0.0 osx"),
+        .l11 = try testCondaStamped(a, "acme/libbase", "0.1.0", base_meta, "1.1.0 linux"),
+    };
+}
+
+fn builtSet(a: Allocator, tmp: *std.testing.TmpDir, b: Built) ![]const u8 {
+    return testSet(a, tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{
+        .{ .subdir = "linux-64", .build = "mojo1.1.0_0", .bytes = b.l11 },
+        .{ .subdir = "linux-64", .build = "mojo1.0.0_0", .bytes = b.l10 },
+        .{ .subdir = "osx-arm64", .build = "mojo1.0.0_0", .bytes = b.o10 },
+    } }});
+}
+
+test "a staged set with files of several builds is one member with one build per build string, by compiler, and says so in its index line and repodata" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const b = try built(a);
+    const dir = try builtSet(a, &tmp, b);
+    var why: []const u8 = "";
+    const ov = try load(a, dir, &why);
+    try std.testing.expectEqual(@as(usize, 1), ov.members.len);
+    const m = ov.member("acme/libbase").?;
+    try std.testing.expectEqual(@as(usize, 2), m.builds.len);
+    try std.testing.expectEqualStrings("mojo1.0.0_0", m.builds[0].build);
+    try std.testing.expectEqualStrings("==1.0.0", m.builds[0].requires_mojo);
+    try std.testing.expectEqual(@as(usize, 2), m.builds[0].files.len);
+    try std.testing.expectEqualStrings("mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", m.builds[0].files[0].filename);
+    try std.testing.expectEqualStrings("osx-arm64", m.builds[0].files[1].subdir);
+    try std.testing.expectEqualStrings("mojo1.1.0_0", m.builds[1].build);
+    try std.testing.expectEqualStrings("==1.1.0", m.builds[1].requires_mojo);
+    try std.testing.expectEqual(@as(usize, 1), m.builds[1].files.len);
+    try std.testing.expectEqualStrings(&sha256Hex(b.l11), m.builds[1].files[0].sha256);
+
+    // The index line is the registry's: the primary build (lowest compiler) at the top level, every build in `builds`.
+    var diag: resolve.Diagnostic = .{};
+    const recs = try resolve.parseIndex(a, "acme/libbase", try indexText(a, m), &diag);
+    const r = recs[0];
+    try std.testing.expectEqualStrings("mojo1.0.0_0", r.build);
+    try std.testing.expectEqualStrings("==1.0.0", r.requires_mojo);
+    try std.testing.expectEqual(@as(usize, 2), r.files.len);
+    try std.testing.expectEqual(@as(usize, 2), r.builds.len);
+    try std.testing.expect(r.builtFor("1.0.0") and r.builtFor("1.1.0") and !r.builtFor("1.2.0"));
+    try std.testing.expectEqualStrings("mojo-acme.libbase-0.1.0-mojo1.1.0_0.conda", r.buildFor("1.1.0").?.files[0].filename);
+
+    // The repodata entry of each staged file names the build of that file.
+    const repodata = try ov.repodata(a, "acme", "linux-64", null, &why);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, a, repodata, .{});
+    const packages = parsed.object.get("packages.conda").?.object;
+    try std.testing.expectEqualStrings("mojo1.0.0_0", packages.get("mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda").?.object.get("build").?.string);
+    try std.testing.expectEqualStrings("mojo1.1.0_0", packages.get("mojo-acme.libbase-0.1.0-mojo1.1.0_0.conda").?.object.get("build").?.string);
+
+    // The set answers for the file of each build.
+    try std.testing.expect(ov.file("linux-64", "mojo-acme.libbase-0.1.0-mojo1.1.0_0.conda") != null);
+    const sha_l11 = sha256Hex(b.l11);
+    const sha_l10 = sha256Hex(b.l10);
+    var p = lock.Package{
+        .name = "acme/libbase",
+        .version = "0.1.0",
+        .build = "mojo1.1.0_0",
+        .subdir = "linux-64",
+        .channel = "https://conda.example/",
+        .url = "https://conda.example/linux-64/mojo-acme.libbase-0.1.0-mojo1.1.0_0.conda",
+        .sha256 = &sha_l11,
+        .size = b.l11.len,
+        .mojo = "1.1.0",
+        .deps = &.{},
+        .native = &.{},
+    };
+    try std.testing.expectEqualSlices(u8, b.l11, (try ov.bytesFor(a, p, &why)).?);
+    // The build a lock pins is the build of the file: another build string, or another build's bytes, is not ours.
+    p.build = "mojo1.2.0_0";
+    try std.testing.expect((try ov.bytesFor(a, p, &why)) == null);
+    p.build = "mojo1.1.0_0";
+    p.sha256 = &sha_l10;
+    try std.testing.expect((try ov.bytesFor(a, p, &why)) == null);
+}
+
+test "a staged version with builds for two compilers is resolved and locked for each Mojo with that Mojo's files, from the set alone" {
+    const plan = @import("install_plan.zig");
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const b = try built(a);
+    const dir = try builtSet(a, &tmp, b);
+    var why: []const u8 = "";
+    const ov = try load(a, dir, &why);
+    const roots = [_]resolve.Root{.{ .name = "acme/libbase", .requirement = "0.1" }};
+    const channel = Channel(ForbiddenChannel){ .overlay = &ov, .inner = .{}, .registry_subdirs = &.{} };
+    var asked = false;
+    var diag: resolve.Diagnostic = .{};
+
+    const res10 = try resolve.resolve(a, Index(Forbidden){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.0.0", .roots = &roots }, &diag);
+    const l10 = try plan.buildLock(a, res10, "https://conda.example/", channel, null, &diag);
+    try std.testing.expectEqual(@as(usize, 2), l10.packages.len);
+    try std.testing.expectEqualStrings("https://conda.example/acme/linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", l10.packages[0].url);
+    try std.testing.expectEqualStrings(&sha256Hex(b.l10), l10.packages[0].sha256);
+    try std.testing.expectEqualStrings("https://conda.example/acme/osx-arm64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", l10.packages[1].url);
+
+    const res11 = try resolve.resolve(a, Index(Forbidden){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.1.0", .roots = &roots }, &diag);
+    const l11 = try plan.buildLock(a, res11, "https://conda.example/", channel, null, &diag);
+    try std.testing.expectEqual(@as(usize, 1), l11.packages.len);
+    try std.testing.expectEqualStrings("mojo1.1.0_0", l11.packages[0].build);
+    try std.testing.expectEqualStrings("https://conda.example/acme/linux-64/mojo-acme.libbase-0.1.0-mojo1.1.0_0.conda", l11.packages[0].url);
+    try std.testing.expectEqualStrings(&sha256Hex(b.l11), l11.packages[0].sha256);
+    try std.testing.expectEqual(@as(u64, b.l11.len), l11.packages[0].size);
+    try std.testing.expect(!asked);
+
+    // A Mojo with no staged build is told which there are.
+    try std.testing.expectError(error.ResolveFailed, resolve.resolve(a, Index(Forbidden){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.2.0", .roots = &roots, .mojoc_message = true }, &diag));
+    try std.testing.expectEqualStrings("acme/libbase 0.1.0 has no .mojoc for Mojo 1.2.0 (published for: 1.0.0, 1.1.0). Build with mojo 1.0.0, ask the publisher for a 1.2.0 build, or pin a version that has one.", diag.message);
+}
+
+const RegFile = struct { subdir: []const u8 = "linux-64", sha: []const u8, size: usize };
+const RegBuild = struct { compiler: []const u8, files: []const RegFile };
+
+fn writeRegFiles(w: anytype, compiler: []const u8, files: []const RegFile) !void {
+    for (files, 0..) |f, j| {
+        try w.print("{s}{{\"subdir\":\"{s}\",\"filename\":\"mojo-acme.libbase-0.1.0-mojo{s}_0.conda\",\"sha256\":\"{s}\",\"size\":{d}}}", .{ if (j > 0) "," else "", f.subdir, compiler, f.sha, f.size });
+    }
+}
+
+/// The index line of acme/libbase 0.1.0 as the registry serves it, with `builds`, the first being the primary build.
+fn registryRecords(a: Allocator, builds: []const RegBuild) ![]const resolve.Record {
+    var out = std.ArrayList(u8).init(a);
+    const w = out.writer();
+    try w.writeAll("{\"v\":2,\"name\":\"acme/libbase\",\"version\":\"0.1.0\",\"state\":\"published\",\"deps\":[],\"builds\":[");
+    for (builds, 0..) |rb, i| {
+        try w.print("{s}{{\"build\":\"mojo{s}_0\",\"requires_mojo\":\"=={s}\",\"files\":[", .{ if (i > 0) "," else "", rb.compiler, rb.compiler });
+        try writeRegFiles(w, rb.compiler, rb.files);
+        try w.writeAll("]}");
+    }
+    const first = builds[0];
+    try w.print("],\"build\":\"mojo{s}_0\",\"requires_mojo\":\"=={s}\",\"files\":[", .{ first.compiler, first.compiler });
+    try writeRegFiles(w, first.compiler, first.files);
+    try w.writeAll("]}\n");
+    var d: resolve.Diagnostic = .{};
+    return resolve.parseIndex(a, "acme/libbase", out.items, &d);
+}
+
+test "against the registry's version, a staged build it also has must be the same files; a build it lacks is an addition; its other builds are left alone" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const b = try built(a);
+    const dir = try builtSet(a, &tmp, b);
+    var why: []const u8 = "";
+    const ov = try load(a, dir, &why);
+    const m = ov.member("acme/libbase").?;
+    const sha_l10 = sha256Hex(b.l10);
+    const sha_o10 = sha256Hex(b.o10);
+    const sha_l11 = sha256Hex(b.l11);
+    const l10 = RegFile{ .subdir = "linux-64", .sha = &sha_l10, .size = b.l10.len };
+    const o10 = RegFile{ .subdir = "osx-arm64", .sha = &sha_o10, .size = b.o10.len };
+    const l11 = RegFile{ .subdir = "linux-64", .sha = &sha_l11, .size = b.l11.len };
+
+    // The registry has the 1.0.0 build as staged: staging the 1.1.0 build adds it.
+    try std.testing.expect((try registryDiffers(a, dir, m, try registryRecords(a, &.{.{ .compiler = "1.0.0", .files = &.{ l10, o10 } }}))) == null);
+    // It has both builds as staged: nothing differs.
+    try std.testing.expect((try registryDiffers(a, dir, m, try registryRecords(a, &.{ .{ .compiler = "1.0.0", .files = &.{ l10, o10 } }, .{ .compiler = "1.1.0", .files = &.{l11} } }))) == null);
+    // It has the 1.1.0 build as staged and a 1.2.0 build the set does not hold: the 1.0.0 build is an addition, the 1.2.0 one is its own.
+    try std.testing.expect((try registryDiffers(a, dir, m, try registryRecords(a, &.{ .{ .compiler = "1.1.0", .files = &.{l11} }, .{ .compiler = "1.2.0", .files = &.{l11} } }))) == null);
+
+    // A staged file with other bytes than the registry's file of that build is a replacement, naming the file.
+    const replaced = try registryDiffers(a, dir, m, try registryRecords(a, &.{.{ .compiler = "1.0.0", .files = &.{ .{ .subdir = "linux-64", .sha = test_sha, .size = b.l10.len }, o10 } }}));
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "acme/libbase 0.1.0 is staged in {s} with linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda at sha256 {s}, and the registry already holds that version with sha256 {s}; a published version cannot be replaced, so the staged one needs a new version", .{ dir, &sha_l10, test_sha }), replaced.?);
+    // The same when the build that differs is the second one, though the first matches.
+    const resized = try registryDiffers(a, dir, m, try registryRecords(a, &.{ .{ .compiler = "1.0.0", .files = &.{ l10, o10 } }, .{ .compiler = "1.1.0", .files = &.{.{ .subdir = "linux-64", .sha = &sha_l11, .size = b.l11.len + 1 }} } }));
+    try std.testing.expect(resized != null);
+    try std.testing.expect(std.mem.indexOf(u8, resized.?, "linux-64/mojo-acme.libbase-0.1.0-mojo1.1.0_0.conda at sha256") != null);
+    // A staged file the registry's build does not have is refused: that build is not the staged one.
+    const lacks = try registryDiffers(a, dir, m, try registryRecords(a, &.{.{ .compiler = "1.0.0", .files = &.{l10} }}));
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "acme/libbase 0.1.0 is staged in {s} with osx-arm64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda, and the registry already holds that version without that file; a published version cannot be replaced, so the staged one needs a new version", .{dir}), lacks.?);
+
+    // A staged build with fewer files than the registry's build of that name is not that build.
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    const dir2 = try testSet(a, &tmp2, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .subdir = "linux-64", .build = "mojo1.0.0_0", .bytes = b.l10 }} }});
+    const ov2 = try load(a, dir2, &why);
+    const fewer = try registryDiffers(a, dir2, ov2.member("acme/libbase").?, try registryRecords(a, &.{.{ .compiler = "1.0.0", .files = &.{ l10, o10 } }}));
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "acme/libbase 0.1.0 is staged in {s} with 1 files of mojo1.0.0_0, and the registry already holds that build with 2; a published version cannot be replaced, so the staged one needs a new version", .{dir2}), fewer.?);
+}
+
+test "the registry subdirs to ask for are those of each picked version's build for the Mojo, and a record without one asks for none" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const o = RegFile{ .subdir = "osx-arm64", .sha = test_sha, .size = 5 };
+    const l = RegFile{ .subdir = "linux-64", .sha = test_sha, .size = 5 };
+    const recs = try registryRecords(a, &.{ .{ .compiler = "1.0.0", .files = &.{l} }, .{ .compiler = "1.1.0", .files = &.{o} } });
+    const ov = Overlay{ .dir = "staged", .members = &.{} };
+    const Case = struct { mojo: []const u8, want: []const []const u8 };
+    const cases = [_]Case{
+        .{ .mojo = "1.0.0", .want = &.{"acme/linux-64"} },
+        .{ .mojo = "1.1.0", .want = &.{"acme/osx-arm64"} },
+        .{ .mojo = "1.2.0", .want = &.{} },
+    };
+    for (cases) |c| {
+        const res = resolve.Resolution{ .mojo = c.mojo, .packages = &.{.{ .record = &recs[0], .deps = &.{} }} };
+        const got = try registrySubdirs(a, ov, res);
+        try std.testing.expectEqual(c.want.len, got.len);
+        for (c.want, got) |w, g| try std.testing.expectEqualStrings(w, g);
     }
 }
