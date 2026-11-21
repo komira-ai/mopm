@@ -138,16 +138,16 @@ mod tests {
 
     #[test]
     fn no_cookie_names_a_domain() {
-        for c in [
-            session_cookie(&secret()),
-            login_cookie("t").unwrap(),
-            clear_session_cookie(),
-            clear_login_cookie(),
+        // The failure message names the cookie, never its value: the session cookie holds a token.
+        for (name, c) in [
+            ("session", session_cookie(&secret())),
+            ("login", login_cookie("t").unwrap()),
+            ("clear session", clear_session_cookie()),
+            ("clear login", clear_login_cookie()),
         ] {
             assert!(
                 !c.as_str().to_ascii_lowercase().contains("domain"),
-                "{}",
-                c.as_str()
+                "{name}"
             );
         }
     }

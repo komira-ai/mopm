@@ -404,19 +404,23 @@ async fn two_session_cookies_are_session_required_without_a_store_call() {
 #[tokio::test]
 async fn a_cookie_that_is_not_a_token_is_session_required_without_a_store_call() {
     let rig = live().await;
-    for bad in [
-        "__Host-mopm_session=",
-        "__Host-mopm_session=mopm_short",
-        "__Host-mopm_session=Bearer",
-        &format!("__Host-mopm_session=\"{}\"", secret(1).expose()),
+    // The failure message names the case, never the cookie: the last one holds a token.
+    for (case, bad) in [
+        ("empty", "__Host-mopm_session=".to_owned()),
+        ("short", "__Host-mopm_session=mopm_short".to_owned()),
+        ("Bearer", "__Host-mopm_session=Bearer".to_owned()),
+        (
+            "quoted token",
+            format!("__Host-mopm_session=\"{}\"", secret(1).expose()),
+        ),
     ] {
         assert_eq!(
             refused(
-                rig.auth.session(&get(bad)).await,
+                rig.auth.session(&get(&bad)).await,
                 ErrorCode::SessionRequired
             ),
             "not signed in: the session cookie is not a token",
-            "{bad}"
+            "{case}"
         );
     }
     assert!(rig.calls().is_empty());
