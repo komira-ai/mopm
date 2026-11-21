@@ -227,13 +227,18 @@ pub fn retryableAnswer(a: Answer) bool {
 }
 
 /// Whether a request that ended in `e` may succeed when repeated: the connection broke, was refused or reset, the
-/// name server failed for now, or the time limit ran out. An error of the request itself (a bad URL, a body too long) is not.
+/// name server failed for now, the time limit ran out, or TLS failed on the connection. An error of the request itself
+/// (a bad URL, a body too long) is not. The standard client reports every failure of the TLS handshake as
+/// `TlsInitializationFailed` (the peer closed or reset the connection, sent something it could not read, or presented a
+/// certificate it rejected), and a TLS record it could not read after that as `TlsFailure`. Neither says which, so
+/// both are tried again: a lasting cause such as a rejected certificate costs the bounded retries, then is reported.
 pub fn retryableError(e: anyerror) bool {
     const name = @errorName(e);
     const transient = [_][]const u8{
         "RequestTimedOut",        "ConnectTimedOut",      "ConnectionRefused",     "ConnectionResetByPeer", "ConnectionTimedOut",
         "NetworkUnreachable",     "BrokenPipe",           "EndOfStream",           "TemporaryNameServerFailure", "UnexpectedConnectFailure",
         "UnexpectedReadFailure",  "UnexpectedWriteFailure", "TlsConnectionTruncated", "TlsAlert",
+        "TlsInitializationFailed", "TlsFailure",
     };
     for (transient) |t| {
         if (std.mem.eql(u8, name, t)) return true;
@@ -470,6 +475,24 @@ test "a broken connection, a refusal and a timeout are retried; an error of the 
     try std.testing.expectEqual(@as(usize, 3), last.calls);
 }
 
+test "a TLS handshake that did not finish and a TLS record that could not be read are retried" {
+    var io = ScriptedIo{ .results = &.{ error.TlsInitializationFailed, error.TlsFailure, answerWith(200, null) } };
+    const got = try retrying(std.testing.allocator, &io, .PUT, "https://x/", .{}, .{ .retries = 3 });
+    try std.testing.expectEqual(@as(u16, 200), got.status);
+    try std.testing.expectEqual(@as(usize, 3), io.calls);
+    try std.testing.expectEqual(@as(usize, 2), io.pauses);
+
+    // Still bounded: a handshake that keeps failing comes back as itself after the last retry.
+    var always = ScriptedIo{ .results = &.{error.TlsInitializationFailed} };
+    try std.testing.expectError(error.TlsInitializationFailed, retrying(std.testing.allocator, &always, .PUT, "https://x/", .{}, .{ .retries = 2 }));
+    try std.testing.expectEqual(@as(usize, 3), always.calls);
+
+    // And never for a request that is not idempotent.
+    var post = ScriptedIo{ .results = &.{ error.TlsInitializationFailed, answerWith(200, null) } };
+    try std.testing.expectError(error.TlsInitializationFailed, retrying(std.testing.allocator, &post, .POST, "https://x/", .{}, .{}));
+    try std.testing.expectEqual(@as(usize, 1), post.calls);
+}
+
 test "a 429 waits the Retry-After the server named, when it is short, and stops when it is long" {
     var io = ScriptedIo{ .results = &.{ answerWith(429, 7), answerWith(200, null) } };
     const got = try retrying(std.testing.allocator, &io, .PUT, "http://x/", .{}, .{});
@@ -523,6 +546,8 @@ test "which answers and errors are worth a second try" {
     try std.testing.expect(!retryableAnswer(answerWith(503, max_retry_after_secs + 1)));
     try std.testing.expect(retryableError(error.ConnectionRefused));
     try std.testing.expect(retryableError(error.RequestTimedOut));
+    try std.testing.expect(retryableError(error.TlsInitializationFailed));
+    try std.testing.expect(retryableError(error.TlsFailure));
     try std.testing.expect(!retryableError(error.OutOfMemory));
     try std.testing.expect(!retryableError(error.InvalidFormat));
     try std.testing.expect(idempotent(.PUT) and idempotent(.GET) and !idempotent(.POST) and !idempotent(.PATCH));
