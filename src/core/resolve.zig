@@ -3,7 +3,10 @@
 //! `parseIndex` reads one package's index file and applies the reader's rules
 //! (record version 2, one full name `<namespace>/<name>` equal to the file's,
 //! full names in `deps`, each file named after the record's conda name, no
-//! repeated version, the state's required keys, a final newline). Every
+//! repeated version, the state's required keys, a final newline). A record
+//! holds one version with one or more builds, one per Mojo compiler: its
+//! `builds` when the line has that key, else the build of its top-level
+//! `build`, `requires_mojo` and `files`. Every
 //! package name here is a full name; two full names are two packages. `resolve` picks one version of every package in the
 //! closure of the root requirements:
 //!
@@ -14,8 +17,8 @@
 //!   of the channel's repodata.json are never read: they are conda's
 //!   spelling of the same graph, for conda and pixi, not for this resolver;
 //! - a candidate must be `published` (yanked and taken-down versions are
-//!   hidden from new resolution, spec/channel.md) and built for exactly the
-//!   project's Mojo (`requires_mojo` is `==<toolchain>`);
+//!   hidden from new resolution, spec/channel.md) and have a build for exactly
+//!   the project's Mojo (a build's `requires_mojo` is `==<toolchain>`);
 //! - candidates are tried newest first, after the version a lock already
 //!   pins (`Input.pins`); a dead end backtracks to the latest choice.
 //!
@@ -40,7 +43,33 @@ pub const File = struct { subdir: []const u8, filename: []const u8, sha256: []co
 pub const Dep = struct { name: []const u8, range: ?[]const u8 = null };
 pub const Native = struct { id: []const u8, soname: []const u8 };
 
-/// One line of an index file.
+/// The files of one version built with one Mojo compiler: build string `mojo<compiler>_0`, `requires_mojo`
+/// `==<compiler>`, one file per subdir, each named `<conda name>-<version>-<build>.conda`.
+pub const Build = struct {
+    build: []const u8,
+    requires_mojo: []const u8,
+    files: []const File,
+
+    /// Whether this build is for exactly `mojo` (`requires_mojo` is `==<mojo>`).
+    pub fn builtFor(b: Build, mojo: []const u8) bool {
+        return std.mem.eql(u8, compilerOf(b.requires_mojo) orelse return false, mojo);
+    }
+
+    /// The compiler the build names (`==1.0.0` gives `1.0.0`), for messages.
+    pub fn mojoOf(b: Build) []const u8 {
+        return compilerOf(b.requires_mojo) orelse std.mem.trim(u8, b.requires_mojo, " ");
+    }
+};
+
+/// `1.0.0` of `==1.0.0`; null when the text is not `==<compiler>`.
+fn compilerOf(requires_mojo: []const u8) ?[]const u8 {
+    const req = std.mem.trim(u8, requires_mojo, " ");
+    if (!std.mem.startsWith(u8, req, "==")) return null;
+    return std.mem.trim(u8, req[2..], " ");
+}
+
+/// One line of an index file: one version. `build`, `requires_mojo` and `files` are the top-level ones of the
+/// line, the record's primary build as a reader that predates `builds` sees it; `builds` is what selection reads.
 pub const Record = struct {
     name: []const u8,
     version: []const u8,
@@ -52,22 +81,45 @@ pub const Record = struct {
     deps: []const Dep = &.{},
     native: []const Native = &.{},
     files: []const File,
+    /// Every build of the version, one or more: the line's `builds` when it has the key, else the top-level build.
+    builds: []const Build = &.{},
     /// `version` read as MAJOR.MINOR.PATCH; null when it is not one (ignored).
     sv: ?semver.Version,
 
-    /// Whether this build is for exactly `mojo` (`requires_mojo` is `==<mojo>`).
+    /// Whether the version has a build for exactly `mojo`.
     pub fn builtFor(r: Record, mojo: []const u8) bool {
-        const req = std.mem.trim(u8, r.requires_mojo, " ");
-        if (!std.mem.startsWith(u8, req, "==")) return false;
-        return std.mem.eql(u8, std.mem.trim(u8, req[2..], " "), mojo);
+        return r.buildFor(mojo) != null;
     }
 
-    /// The compiler the build names (`==1.0.0` gives `1.0.0`), for messages.
-    pub fn mojoOf(r: Record) []const u8 {
-        const req = std.mem.trim(u8, r.requires_mojo, " ");
-        return if (std.mem.startsWith(u8, req, "==")) std.mem.trim(u8, req[2..], " ") else req;
+    /// The build of the version for exactly `mojo`, if it has one.
+    pub fn buildFor(r: Record, mojo: []const u8) ?Build {
+        for (r.builds) |b| {
+            if (b.builtFor(mojo)) return b;
+        }
+        return null;
+    }
+
+    /// The compilers the version has builds for, by compiler version (numeric part by part), for messages.
+    pub fn compilers(r: Record, arena: Allocator) Allocator.Error![]const []const u8 {
+        const out = try arena.alloc([]const u8, r.builds.len);
+        for (r.builds, out) |b, *c| c.* = b.mojoOf();
+        std.mem.sort([]const u8, out, {}, lessCompiler);
+        return out;
     }
 };
+
+/// Orders compiler versions part by part: parts that are numbers by value, anything else as text.
+pub fn lessCompiler(_: void, a: []const u8, b: []const u8) bool {
+    var x = std.mem.splitScalar(u8, a, '.');
+    var y = std.mem.splitScalar(u8, b, '.');
+    while (true) {
+        const p = x.next();
+        const q = y.next();
+        if (p == null or q == null) return p == null and q != null;
+        const order = if (number(p.?)) |m| (if (number(q.?)) |n| std.math.order(m, n) else std.mem.order(u8, p.?, q.?)) else std.mem.order(u8, p.?, q.?);
+        if (order != .eq) return order == .lt;
+    }
+}
 
 pub const Kind = enum {
     /// An index file breaks spec/index.md.
@@ -158,6 +210,33 @@ const Line = struct {
         };
     }
 
+    /// A string of an entry of `builds`.
+    fn buildString(l: Line, o: std.json.ObjectMap, key: []const u8) Error![]const u8 {
+        return switch (o.get(key) orelse return l.bad("a build has no {s}", .{key})) {
+            .string => |s| s,
+            else => return l.bad("a build's {s} is not a string", .{key}),
+        };
+    }
+
+    /// The entries of a `files` array, each named `want_file`.
+    fn files(l: Line, items: []const std.json.Value, rec_name: []const u8, want_file: []const u8) Error![]const File {
+        var out = std.ArrayList(File).init(l.arena);
+        for (items) |fv| {
+            const f = try l.object(fv, "a file");
+            const sha = try l.string(f, "sha256");
+            if (!isSha256(sha)) return l.bad("a file's sha256 is not 64 lowercase hex digits", .{});
+            const size: i64 = switch (f.get("size") orelse return l.bad("a file has no size", .{})) {
+                .integer => |s| s,
+                else => return l.bad("a file's size is not an integer", .{}),
+            };
+            if (size < 1) return l.bad("a file's size is not positive", .{});
+            const filename = try l.string(f, "filename");
+            if (!std.mem.eql(u8, filename, want_file)) return l.bad("a file is named {s}; the conda name of {s} makes it {s}", .{ filename, rec_name, want_file });
+            try out.append(.{ .subdir = try l.string(f, "subdir"), .filename = filename, .sha256 = sha, .size = @intCast(size) });
+        }
+        return out.items;
+    }
+
     fn object(l: Line, v: std.json.Value, what: []const u8) Error!std.json.ObjectMap {
         return switch (v) {
             .object => |o| o,
@@ -217,24 +296,61 @@ fn parseRecord(arena: Allocator, name: []const u8, text: []const u8, n: usize, d
         }
         r.native = natives.items;
     }
-    const want_file = try std.fmt.allocPrint(arena, "{s}-{s}-{s}.conda", .{ try names.condaName(arena, rec_name), r.version, r.build });
-    var files = std.ArrayList(File).init(arena);
-    for (try l.array(o, "files")) |fv| {
-        const f = try l.object(fv, "a file");
-        const sha = try l.string(f, "sha256");
-        if (!isSha256(sha)) return l.bad("a file's sha256 is not 64 lowercase hex digits", .{});
-        const size: i64 = switch (f.get("size") orelse return l.bad("a file has no size", .{})) {
-            .integer => |s| s,
-            else => return l.bad("a file's size is not an integer", .{}),
-        };
-        if (size < 1) return l.bad("a file's size is not positive", .{});
-        const filename = try l.string(f, "filename");
-        if (!std.mem.eql(u8, filename, want_file)) return l.bad("a file is named {s}; the conda name of {s} makes it {s}", .{ filename, rec_name, want_file });
-        try files.append(.{ .subdir = try l.string(f, "subdir"), .filename = filename, .sha256 = sha, .size = @intCast(size) });
+    const conda_name = try names.condaName(arena, rec_name);
+    const want_file = try std.fmt.allocPrint(arena, "{s}-{s}-{s}.conda", .{ conda_name, r.version, r.build });
+    r.files = try l.files(try l.array(o, "files"), rec_name, want_file);
+    if (r.files.len == 0) return l.bad("no files", .{});
+    if (o.get("builds") == null) {
+        const only = try arena.alloc(Build, 1);
+        only[0] = .{ .build = r.build, .requires_mojo = r.requires_mojo, .files = r.files };
+        r.builds = only;
+        return r;
     }
-    if (files.items.len == 0) return l.bad("no files", .{});
-    r.files = files.items;
+    const items = try l.array(o, "builds");
+    if (items.len == 0) return l.bad("builds is empty", .{});
+    var builds = std.ArrayList(Build).init(arena);
+    for (items) |bv| {
+        const b = try l.object(bv, "a build");
+        const build = try l.buildString(b, "build");
+        const requires = try l.buildString(b, "requires_mojo");
+        const compiler = compilerOfBuild(build) orelse return l.bad("the build {s} is not mojo<compiler>_0", .{build});
+        const want_requires = try std.fmt.allocPrint(arena, "=={s}", .{compiler});
+        if (!std.mem.eql(u8, requires, want_requires)) {
+            return l.bad("the build {s} requires {s}; it is built with mojo {s}, so it requires {s}", .{ build, requires, compiler, want_requires });
+        }
+        for (builds.items) |prev| {
+            if (std.mem.eql(u8, prev.build, build)) return l.bad("the build {s} is listed twice", .{build});
+        }
+        const build_file = try std.fmt.allocPrint(arena, "{s}-{s}-{s}.conda", .{ conda_name, r.version, build });
+        const fv = b.get("files") orelse return l.bad("the build {s} has no files", .{build});
+        const list = switch (fv) {
+            .array => |a| a.items,
+            else => return l.bad("the files of the build {s} is not an array", .{build}),
+        };
+        const build_files = try l.files(list, rec_name, build_file);
+        if (build_files.len == 0) return l.bad("the build {s} has no files", .{build});
+        try builds.append(.{ .build = build, .requires_mojo = requires, .files = build_files });
+    }
+    r.builds = builds.items;
     return r;
+}
+
+/// `1.0.0` of `mojo1.0.0_0`: the build strings mopm writes, `mojo<compiler>_0` with the compiler digits separated by
+/// dots; null for any other spelling.
+pub fn compilerOfBuild(build: []const u8) ?[]const u8 {
+    const prefix = "mojo";
+    const suffix = "_0";
+    if (build.len <= prefix.len + suffix.len) return null;
+    if (!std.mem.startsWith(u8, build, prefix) or !std.mem.endsWith(u8, build, suffix)) return null;
+    const compiler = build[prefix.len .. build.len - suffix.len];
+    var parts = std.mem.splitScalar(u8, compiler, '.');
+    while (parts.next()) |part| {
+        if (part.len == 0) return null;
+        for (part) |c| {
+            if (!std.ascii.isDigit(c)) return null;
+        }
+    }
+    return compiler;
 }
 
 fn isSha256(s: []const u8) bool {
@@ -505,17 +621,12 @@ fn Resolver(comptime S: type) type {
                 for (published.items) |rec| {
                     if (rec.sv != null and (best.sv == null or semver.compare(rec.sv.?, best.sv.?) == .gt)) best = rec;
                 }
-                var for_mojo = std.ArrayList([]const u8).init(self.arena);
-                for (published.items) |rec| {
-                    if (std.mem.eql(u8, rec.version, best.version)) try for_mojo.append(rec.mojoOf());
-                }
-                std.mem.sort([]const u8, for_mojo.items, {}, lessString);
-                const first = for_mojo.items[0];
-                try self.note(.compiler_mismatch, "{s} {s} has no .mojoc for Mojo {s} (published for: {s}). Build with mojo {s}, ask the publisher for a {s} build, or pin a version that has one.", .{ name, best.version, self.input.mojo, try std.mem.join(self.arena, ", ", for_mojo.items), first, self.input.mojo });
+                const for_mojo = try best.compilers(self.arena);
+                try self.note(.compiler_mismatch, "{s} {s} has no .mojoc for Mojo {s} (published for: {s}). Build with mojo {s}, ask the publisher for a {s} build, or pin a version that has one.", .{ name, best.version, self.input.mojo, try std.mem.join(self.arena, ", ", for_mojo), for_mojo[0], self.input.mojo });
             } else if (!built) {
                 var list = std.ArrayList(u8).init(self.arena);
                 for (published.items, 0..) |rec, i| {
-                    try list.writer().print("{s}{s} (mojo {s})", .{ if (i == 0) "" else ", ", rec.version, rec.mojoOf() });
+                    try list.writer().print("{s}{s} (mojo {s})", .{ if (i == 0) "" else ", ", rec.version, try std.mem.join(self.arena, ", ", try rec.compilers(self.arena)) });
                 }
                 try self.note(.compiler_mismatch, "no version of {s} that matches {s} is built for mojo {s}, the project's toolchain: {s}", .{ name, reqs, self.input.mojo, list.items });
             }

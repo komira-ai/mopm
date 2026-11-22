@@ -233,7 +233,22 @@ mod tests {
     fn a_token_serialises_with_the_typescript_names_and_no_nulls() {
         let v: serde_json::Value = serde_json::to_value(token()).unwrap();
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(keys, ["all_current", "created_at", "expires_at", "github_id", "hash", "id", "kind", "name", "packages", "prefix", "scopes"]);
+        assert_eq!(
+            keys,
+            [
+                "all_current",
+                "created_at",
+                "expires_at",
+                "github_id",
+                "hash",
+                "id",
+                "kind",
+                "name",
+                "packages",
+                "prefix",
+                "scopes"
+            ]
+        );
         assert_eq!(v["kind"], "api");
         assert_eq!(v["scopes"], serde_json::json!(["publish", "yank"]));
     }
@@ -250,10 +265,13 @@ mod tests {
     }
 
     #[test]
-    fn a_web_session_row_from_the_cores_fields_is_the_fixture_the_typescript_authenticator_accepts() {
+    fn a_web_session_row_from_the_cores_fields_is_the_fixture_the_typescript_authenticator_accepts()
+    {
         // service/api/test/auth/web-session-row.test.ts authenticates the same `record` with the TypeScript Authenticator.
-        let doc: serde_json::Value =
-            serde_json::from_str(include_str!("../../core/tests/fixtures/web_session_record.json")).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(include_str!(
+            "../../core/tests/fixtures/web_session_record.json"
+        ))
+        .unwrap();
         let secret = mopm_core::token::TokenSecret::parse(doc["token"].as_str().unwrap()).unwrap();
         let now: jiff::Timestamp = doc["now"].as_str().unwrap().parse().unwrap();
         let f = mopm_core::token::web_session_fields(&secret, now).unwrap();
@@ -276,18 +294,44 @@ mod tests {
             issued_to: None,
         };
         assert_eq!(serde_json::to_value(&row).unwrap(), doc["record"]);
-        assert_eq!(serde_json::from_value::<TokenRecord>(doc["record"].clone()).unwrap(), row);
+        assert_eq!(
+            serde_json::from_value::<TokenRecord>(doc["record"].clone()).unwrap(),
+            row
+        );
     }
 
     #[test]
     fn queue_messages_carry_their_type_tag() {
-        let v = QueueBody::Validate { publish_id: "p1".into() };
-        assert_eq!(serde_json::to_string(&v).unwrap(), r#"{"type":"validate","publish_id":"p1"}"#);
-        let i = QueueBody::Index { subdir: "linux-64".into(), publish_id: None };
-        assert_eq!(serde_json::to_string(&i).unwrap(), r#"{"type":"index","subdir":"linux-64"}"#);
-        let i = QueueBody::Index { subdir: "noarch".into(), publish_id: Some("p1".into()) };
-        assert_eq!(serde_json::to_string(&i).unwrap(), r#"{"type":"index","subdir":"noarch","publish_id":"p1"}"#);
-        assert_eq!(serde_json::from_str::<QueueBody>(r#"{"type":"index","subdir":"noarch"}"#).unwrap(), QueueBody::Index { subdir: "noarch".into(), publish_id: None });
+        let v = QueueBody::Validate {
+            publish_id: "p1".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&v).unwrap(),
+            r#"{"type":"validate","publish_id":"p1"}"#
+        );
+        let i = QueueBody::Index {
+            subdir: "linux-64".into(),
+            publish_id: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&i).unwrap(),
+            r#"{"type":"index","subdir":"linux-64"}"#
+        );
+        let i = QueueBody::Index {
+            subdir: "noarch".into(),
+            publish_id: Some("p1".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&i).unwrap(),
+            r#"{"type":"index","subdir":"noarch","publish_id":"p1"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<QueueBody>(r#"{"type":"index","subdir":"noarch"}"#).unwrap(),
+            QueueBody::Index {
+                subdir: "noarch".into(),
+                publish_id: None
+            }
+        );
         // An unknown type, or a body of the other type's shape, is refused.
         assert!(serde_json::from_str::<QueueBody>(r#"{"type":"nope","publish_id":"p"}"#).is_err());
         assert!(serde_json::from_str::<QueueBody>(r#"{"type":"validate","subdir":"x"}"#).is_err());
@@ -306,7 +350,10 @@ mod tests {
             rejection_code: Some(RejectionCode::LimitExceeded),
             message: Some("too big".into()),
             manifest_sha256: "f".repeat(64),
-            display: Some(DisplayMeta { description: Some("d".into()), ..DisplayMeta::default() }),
+            display: Some(DisplayMeta {
+                description: Some("d".into()),
+                ..DisplayMeta::default()
+            }),
             files: vec![],
             remaining_subdirs: vec!["linux-64".into()],
             created_at: "t".into(),
@@ -314,7 +361,10 @@ mod tests {
             rev: 2,
         };
         let text = serde_json::to_string(&r).unwrap();
-        assert!(text.contains(r#""rejection_code":"limit_exceeded""#), "{text}");
+        assert!(
+            text.contains(r#""rejection_code":"limit_exceeded""#),
+            "{text}"
+        );
         assert!(text.contains(r#""status":"rejected""#));
         assert_eq!(serde_json::from_str::<PublishRecord>(&text).unwrap(), r);
     }

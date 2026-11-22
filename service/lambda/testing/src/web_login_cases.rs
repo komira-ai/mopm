@@ -30,28 +30,50 @@ pub async fn a_row_is_consumed_once_and_comes_back_whole_with_consumed_at<S: Web
     s.put(&row(1)).await.unwrap();
     clock.advance_millis(4_250);
     let taken = s.consume(&h(1), clock.now()).await.unwrap();
-    assert_eq!(taken, Some(WebLoginRecord { consumed_at: Some("2026-11-19T12:00:04.250Z".to_string()), ..row(1) }));
+    assert_eq!(
+        taken,
+        Some(WebLoginRecord {
+            consumed_at: Some("2026-11-19T12:00:04.250Z".to_string()),
+            ..row(1)
+        })
+    );
     assert_eq!(iso_millis(clock.now()), "2026-11-19T12:00:04.250Z");
     clock.advance_millis(1);
-    assert_eq!(s.consume(&h(1), clock.now()).await.unwrap(), None, "a second consume gets nothing");
+    assert_eq!(
+        s.consume(&h(1), clock.now()).await.unwrap(),
+        None,
+        "a second consume gets nothing"
+    );
 }
 
 pub async fn a_row_stored_with_consumed_at_is_not_consumable<S: WebLoginStore>(s: S) {
     let clock = FixedClock::at_millis(START_MS);
-    let taken = WebLoginRecord { consumed_at: Some("2026-11-19T11:59:00.000Z".to_string()), ..row(1) };
+    let taken = WebLoginRecord {
+        consumed_at: Some("2026-11-19T11:59:00.000Z".to_string()),
+        ..row(1)
+    };
     s.put(&taken).await.unwrap();
     assert_eq!(s.consume(&h(1), clock.now()).await.unwrap(), None);
     // Stored again without consumed_at, the row is consumable: what refused it was consumed_at alone.
     s.put(&row(1)).await.unwrap();
     let again = s.consume(&h(1), clock.now()).await.unwrap();
-    assert_eq!(again, Some(WebLoginRecord { consumed_at: Some("2026-11-19T12:00:00.000Z".to_string()), ..row(1) }));
+    assert_eq!(
+        again,
+        Some(WebLoginRecord {
+            consumed_at: Some("2026-11-19T12:00:00.000Z".to_string()),
+            ..row(1)
+        })
+    );
 }
 
 pub async fn an_unknown_id_is_not_consumable<S: WebLoginStore>(s: S) {
     let clock = FixedClock::at_millis(START_MS);
     s.put(&row(1)).await.unwrap();
     assert_eq!(s.consume(&h(2), clock.now()).await.unwrap(), None);
-    assert!(s.consume(&h(1), clock.now()).await.unwrap().is_some(), "the stored row is untouched");
+    assert!(
+        s.consume(&h(1), clock.now()).await.unwrap().is_some(),
+        "the stored row is untouched"
+    );
 }
 
 pub async fn a_row_is_consumable_until_the_millisecond_before_expires_at<S: WebLoginStore>(s: S) {
@@ -60,9 +82,16 @@ pub async fn a_row_is_consumable_until_the_millisecond_before_expires_at<S: WebL
     s.put(&row(2)).await.unwrap();
     clock.advance_millis(600_000 - 1);
     let last_moment = s.consume(&h(1), clock.now()).await.unwrap();
-    assert_eq!(last_moment.and_then(|r| r.consumed_at).as_deref(), Some("2026-11-19T12:09:59.999Z"));
+    assert_eq!(
+        last_moment.and_then(|r| r.consumed_at).as_deref(),
+        Some("2026-11-19T12:09:59.999Z")
+    );
     clock.advance_millis(1);
-    assert_eq!(s.consume(&h(2), clock.now()).await.unwrap(), None, "expired at expires_at");
+    assert_eq!(
+        s.consume(&h(2), clock.now()).await.unwrap(),
+        None,
+        "expired at expires_at"
+    );
 }
 
 pub async fn an_expired_row_stays_refused_and_is_not_marked_consumed<S: WebLoginStore>(s: S) {
@@ -73,7 +102,13 @@ pub async fn an_expired_row_stays_refused_and_is_not_marked_consumed<S: WebLogin
     assert_eq!(s.consume(&h(1), clock.now()).await.unwrap(), None);
     // A refused consume wrote nothing: at a time before expiry (a skewed caller), the row is still whole.
     let earlier = jiff::Timestamp::from_millisecond(START_MS).unwrap();
-    assert_eq!(s.consume(&h(1), earlier).await.unwrap(), Some(WebLoginRecord { consumed_at: Some("2026-11-19T12:00:00.000Z".to_string()), ..row(1) }));
+    assert_eq!(
+        s.consume(&h(1), earlier).await.unwrap(),
+        Some(WebLoginRecord {
+            consumed_at: Some("2026-11-19T12:00:00.000Z".to_string()),
+            ..row(1)
+        })
+    );
 }
 
 pub async fn consuming_one_row_leaves_the_others_consumable<S: WebLoginStore>(s: S) {
@@ -83,7 +118,10 @@ pub async fn consuming_one_row_leaves_the_others_consumable<S: WebLoginStore>(s:
     }
     assert!(s.consume(&h(2), clock.now()).await.unwrap().is_some());
     let one = s.consume(&h(1), clock.now()).await.unwrap();
-    assert_eq!(one.map(|r| r.return_to), Some("/tutorial/lesson-1?step=2".to_string()));
+    assert_eq!(
+        one.map(|r| r.return_to),
+        Some("/tutorial/lesson-1?step=2".to_string())
+    );
     let three = s.consume(&h(3), clock.now()).await.unwrap();
     assert_eq!(three.map(|r| r.state_hash), Some(h(1003)));
 }
@@ -94,7 +132,13 @@ pub async fn of_two_racing_consumes_exactly_one_gets_the_row<S: WebLoginStore>(s
     let id = h(1);
     let (a, b) = tokio::join!(s.consume(&id, clock.now()), s.consume(&id, clock.now()));
     let got: Vec<WebLoginRecord> = [a.unwrap(), b.unwrap()].into_iter().flatten().collect();
-    assert_eq!(got, vec![WebLoginRecord { consumed_at: Some("2026-11-19T12:00:00.000Z".to_string()), ..row(1) }]);
+    assert_eq!(
+        got,
+        vec![WebLoginRecord {
+            consumed_at: Some("2026-11-19T12:00:00.000Z".to_string()),
+            ..row(1)
+        }]
+    );
 }
 
 #[macro_export]

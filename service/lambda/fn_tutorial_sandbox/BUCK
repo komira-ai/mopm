@@ -1,0 +1,57 @@
+# fn_tutorial_sandbox: the tutorial-sandbox Lambda (POST /api/v2/tutorial/sandbox). Built from Cargo.toml by buildrules'
+# cargo_package: the library (all the logic), the executable (`:release`, `src/main.rs` only forwards to the library) and
+# the tests. `:e2e_test` runs the release executable against one loopback server that plays both the Lambda runtime API
+# and the AWS endpoint; `:zip` is the deployment package, not built unless `:test` and `:e2e_test` passed. See README.md.
+#
+# The tests read the website's contract examples (tests/contract/api-v2/tutorial-sandbox.json), the stack's
+# `stage_settings` item (mopm_web's tests/fixtures/stage_settings_item.json; the tests' own item is it with test values set over
+# it) and the function's grants with `include_str!` at their real
+# paths, so `cargo test` finds them too; `extra_srcs` makes them inputs.
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_test")
+load("//:buildrules.bzl", "cargo_package")
+load("//tools/lambda:lambda.bzl", "lambda_zip")
+
+cargo_package(
+    path = ".",
+    extra_srcs = [
+        "//:lambda.contract.v2.tutorial-sandbox.json",
+        "//service/lambda/web:stage_settings_item.json",
+        ":grants.json",
+    ],
+)
+
+# What this function's role may call, as the fake DynamoDB's grants (mopm_testing::fake_dynamo::Grants): this package's
+# tests run the function over a fake restricted to them, and the stack's jest test holds the role's statements to them.
+export_file(
+    name = "grants.json",
+    src = "tests/fixtures/grants.json",
+    mode = "reference",
+    visibility = ["//service/infra/stacks:"],
+)
+
+zig_test(
+    name = "e2e_test",
+    src = "e2e_test.zig",
+    # The test CA the binary is given as its roots (SSL_CERT_FILE): the farm's workers have none.
+    imports = ["tests/fixtures/e2e_root.pem"],
+    env_tools = {"BOOTSTRAP": ":release"},
+    busybox = "buildrules//rules/pins:busybox",
+    exec_compatible_with = LINUX_X86_64,
+    zig = "buildrules//rules/pins:zig",
+)
+
+lambda_zip(
+    name = "zip",
+    bootstrap = ":release",
+    welded_tests = [":e2e_test", ":test"],
+    visibility = ["PUBLIC"],
+)
+
+# This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"]) + [],
+    copy = True,
+    visibility = ["//:"],
+)

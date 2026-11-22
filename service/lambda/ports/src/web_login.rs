@@ -44,7 +44,11 @@ pub trait WebLoginStore: Send + Sync {
     /// id, a row consumed before (a second `consume` of a row is always `None`), or an expired row. Atomic: of
     /// two consumes at the same time at most one gets the row. (The DynamoDB adapter is one conditional
     /// update that returns the new row.)
-    fn consume(&self, id: &str, now: Timestamp) -> impl Future<Output = PortResult<Option<WebLoginRecord>>> + Send;
+    fn consume(
+        &self,
+        id: &str,
+        now: Timestamp,
+    ) -> impl Future<Output = PortResult<Option<WebLoginRecord>>> + Send;
 }
 
 #[cfg(test)]
@@ -79,10 +83,19 @@ mod tests {
             json,
             serde_json::json!({"id": "1".repeat(64), "state_hash": "2".repeat(64), "code_verifier": "verifier", "return_to": "/tutorial", "expires_at": 1_795_608_600})
         );
-        assert_eq!(serde_json::from_value::<WebLoginRecord>(json).unwrap(), fresh);
-        let taken = WebLoginRecord { consumed_at: Some("2026-11-19T12:00:01.000Z".into()), ..row() };
+        assert_eq!(
+            serde_json::from_value::<WebLoginRecord>(json).unwrap(),
+            fresh
+        );
+        let taken = WebLoginRecord {
+            consumed_at: Some("2026-11-19T12:00:01.000Z".into()),
+            ..row()
+        };
         let json = serde_json::to_value(&taken).unwrap();
         assert_eq!(json["consumed_at"], "2026-11-19T12:00:01.000Z");
-        assert_eq!(serde_json::from_value::<WebLoginRecord>(json).unwrap(), taken);
+        assert_eq!(
+            serde_json::from_value::<WebLoginRecord>(json).unwrap(),
+            taken
+        );
     }
 }

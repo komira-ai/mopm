@@ -24,8 +24,8 @@ load("//:buildrules.bzl", "cargo_workspace")
 load("//tests/compat:tree.bzl", "tree")
 
 # The Rust workspace (Cargo.toml): `:check` (is the generated table what Cargo.toml / Cargo.lock / rust-toolchain.toml say),
-# and one aggregate per step, `:lint :debug :test :release`, over every member. Each member's BUCK file has one
-# `cargo_package` call. `buildrules sync` regenerates buildrules.lock.bzl, buildrules.bzl and third_party/buildrules/BUCK.
+# one aggregate per step, `:fmt :lint :debug :test :release`, over every member, and `:ci` (Cargo.toml's action: fmt, lint,
+# test). Each member's BUCK file has one `cargo_package` call. `buildrules sync` regenerates buildrules.lock.bzl, buildrules.bzl and third_party/buildrules/BUCK.
 cargo_workspace(path = ".")
 
 # What every Zig rule here takes: buildrules' pinned busybox and zig, on linux.
@@ -105,7 +105,7 @@ zig_exe(
     src = "src/cli/main.zig",
     imports = _CLI_SRCS,
     deps = [":mopm_core", ":build_options"],
-    unit_tests = [":cli_test", ":compat_namespaces"],
+    unit_tests = [":cli_test", ":compat_namespaces", ":compat_pre_builds"],
     visibility = ["PUBLIC"],
     **_TOOLS
 )
@@ -369,10 +369,41 @@ zig_test(
     **_TOOLS
 )
 
+# The command line before versions had several builds (main at 8b8a8cc) against what this release writes: the index line and the
+# registry answer with `builds`, the package file with `source_sha256`. Its sparse-index reader, metadata reader and generated
+# registry client are vendored byte for byte under tests/compat/pre_builds (README.md there; SHA256SUMS pins every file, and the test
+# checks it). They import only their own files, so they build as one module, which `zig build test` builds too.
+zig_module(
+    name = "prev_pre_builds",
+    src = "tests/compat/prev_pre_builds.zig",
+    imports = glob(["tests/compat/pre_builds/core/**"]),
+)
+
+zig_test(
+    name = "compat_pre_builds",
+    src = "tests/drivers/compat_pre_builds_test.zig",
+    deps = [":mopm_core", ":prev_pre_builds"],
+    data = {f: f for f in glob(["tests/compat/pre_builds/**"])},
+    **_TOOLS
+)
+
 zig_test(  # buck-only: mopm publish --oidc against the fake registry and a stand-in for GitHub's identity-token endpoint
     name = "oidc_publish",
     src = "tests/drivers/oidc_publish_test.zig",
     imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: one package version with a build per Mojo compiler: stage and publish --staged against the fake registry, lock and mopm_core's resolver on what it serves
+    name = "multi_build",
+    src = "tests/drivers/multi_build_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    deps = [":mopm_core"],
+    data = glob(["tests/e2e/multibuild/**"]),
     env_tools = {
         "MOPM": ":mopm",
         "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
@@ -687,8 +718,10 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "registry/fake/groups_test.zig",
         "tests/drivers/group_e2e.zig",
         "tests/drivers/compat_namespaces_test.zig",
+        "tests/drivers/compat_pre_builds_test.zig",
         "tests/drivers/registry_client_lint_test.zig",
         "tests/compat/prev_v0_0_108.zig",
+        "tests/compat/prev_pre_builds.zig",
     ],
     **_TOOLS
 )
@@ -1087,7 +1120,7 @@ export_file(
     name = "lambda.contract.v2.tutorial-sandbox.json",
     src = "tests/contract/api-v2/tutorial-sandbox.json",
     mode = "reference",
-    visibility = ["//service/lambda/web:"],
+    visibility = ["//service/lambda/fn_tutorial_sandbox:", "//service/lambda/web:"],
 )
 
 # The unit table `buildrules sync` writes, for the canary's graph_test (tools/lambda/canary/graph_test.rs): TLS on AWS-LC, no ring.
@@ -1383,6 +1416,13 @@ export_file(
     visibility = ["//tutorial/template:"],
 )
 
+# The tutorial author's guide: the template's test/guide-doc.test.ts holds its code blocks to tutorial/template/guide.
+export_file(
+    name = "tutorial_template.tutorial-author-guide.md",
+    src = "docs/tutorial-author-guide.md",
+    visibility = ["//tutorial/template:"],
+)
+
 filegroup(
     name = "tutorial_template_lessons",
     srcs = {f[len("tutorial/lessons/"):]: f for f in glob(["tutorial/lessons/**"])},
@@ -1422,7 +1462,9 @@ _LINT_PACKAGES = [
     "service/lambda/aws",
     "service/lambda/core",
     "service/lambda/e2b",
+    "service/lambda/fn_tutorial_sandbox",
     "service/lambda/fn_web_login",
+    "service/lambda/fn_web_session",
     "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",
@@ -1467,6 +1509,8 @@ zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in f
     imports = _LINT_LIBS + [
         "tests/drivers/shell_syntax.zig",
         "tests/drivers/release_lint.zig",
+        "tests/drivers/function_zips_lint.zig",
+        "tests/drivers/function_zips_lint_test.zig",  # the tests of function_zips_lint.zig, pulled in by workflow_lint_test.zig
         "tests/drivers/workflow_lint.zig",
     ],
     data = dict({f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])}, **{"tools/install_osv_scanner.zig": "tools/install_osv_scanner.zig"}),  # the installer: the pinned version, the sha256 and the refusal
@@ -1496,6 +1540,7 @@ zig_test(  # buck-only: both lints over the fixtures, against the table in the t
         "tests/drivers/hygiene.zig",
         "tests/drivers/shell_syntax.zig",
         "tests/drivers/release_lint.zig",
+        "tests/drivers/function_zips_lint.zig",
         "tests/drivers/workflow_lint.zig",
     ],
     data = {f: f for f in glob(["tests/lint/fixtures/*"])},
@@ -1738,6 +1783,7 @@ zig_coverage(
         "tests/drivers/autopin_lint.zig",
         "tests/drivers/contract.zig",
         "tests/drivers/errors_gen.zig",
+        "tests/drivers/function_zips_lint.zig",
         "tests/drivers/hygiene.zig",
         "tests/drivers/jsonschema.zig",
         "tests/drivers/lint_common.zig",

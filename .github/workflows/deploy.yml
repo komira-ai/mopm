@@ -1,9 +1,12 @@
 name: deploy
 
-# Deploys service/infra/stacks to one stage. Reusable (promote.yml calls it) and manual.
-# It can mint AWS credentials, so it never runs for a pull request: the guard job
-# refuses any ref but refs/heads/main and any event but push or workflow_dispatch,
-# and the stage role's trust policy independently requires this file at refs/heads/main.
+# Deploys service/infra/stacks to one stage. Reusable only: promote.yml calls it, after function-zips.yml has built the Rust Lambda
+# zips. There is no manual trigger here, because a deploy with no zips would make CDK delete the Rust functions; a manual deploy is a
+# manual run of promote.yml. The deploy downloads the function-zips artifact, checks it against its sums, hands the directory to the
+# CDK app, and after the deploy compares each function's CodeSha256 with the sums, so every stage runs the bytes that were built once.
+# It builds no zip. It can mint AWS credentials, so it never runs for a pull request: the guard job refuses any ref but
+# refs/heads/main and any event but push or workflow_dispatch (the events of the promote run that calls it), and the stage role's trust
+# policy independently requires this file at refs/heads/main.
 
 on:
   workflow_call:
@@ -12,17 +15,14 @@ on:
         description: Stage to deploy (beta, gamma or prod)
         required: true
         type: string
+      function_zips:
+        description: Name of the workflow artifact that holds the Rust Lambda zips and their sums (built once by function-zips.yml)
+        required: true
+        type: string
     outputs:
       deployed_sha:
         description: Commit SHA that was deployed
         value: ${{ jobs.deploy.outputs.deployed_sha }}
-  workflow_dispatch:
-    inputs:
-      stage:
-        description: Stage to deploy
-        required: true
-        type: choice
-        options: [beta, gamma, prod]
 
 permissions:
   contents: read
@@ -61,6 +61,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The one build of the three Rust Lambda zips for this promotion, and its sums (function-zips.yml).
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.function_zips }}
+          path: ${{ runner.temp }}/function-zips
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
@@ -68,6 +73,12 @@ jobs:
       - name: Install CDK dependencies
         working-directory: service/infra/stacks
         run: npm ci --ignore-scripts --no-audit --no-fund
+      # Before any AWS credential exists (and so before anything deploys): the sums name exactly the three zips and each zip in the directory hashes to its line.
+      - name: Check the function zips against their sums
+        working-directory: service/infra/stacks
+        env:
+          ZIP_DIR: ${{ runner.temp }}/function-zips
+        run: npx ts-node --prefer-ts-exts bin/function-zips.ts check-zips --zip-dir "$ZIP_DIR"
       # The API stack deploys this bundle (service/api compiled; the Node.js runtime provides AWS SDK v3).
       - name: Build the API handler bundle
         working-directory: service/api
@@ -126,16 +137,30 @@ jobs:
           CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
           CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          ZIP_DIR: ${{ runner.temp }}/function-zips
         run: |
           set -euo pipefail
           if [ -z "$CDK_DEFAULT_ACCOUNT" ]; then echo "AWS_ACCOUNT_ID is not set on the $STAGE environment" >&2; exit 1; fi
           echo "::add-mask::$CDK_DEFAULT_ACCOUNT"
           # The stack definitions are the source of truth for hosts; service/config/<stage>.json
           # mirrors them (a test keeps the two equal) and is what e2e reads.
+          # rustZipDir turns the three Rust functions on, from the zips every stage shares.
           npx cdk deploy --all --require-approval never \
             --context "stage=${STAGE}" \
             --context "version=sha-${GITHUB_SHA::12}" \
-            --context "commit=${GITHUB_SHA}"
+            --context "commit=${GITHUB_SHA}" \
+            --context "rustZipDir=${ZIP_DIR}"
+      # The Lambda service's CodeSha256 of each deployed Rust function is the base64 sha256 of the zip it was given: it must equal the
+      # sums line, or this stage is not running the bytes the first stage ran. The deploy role may only assume the CDK bootstrap roles,
+      # so the check reads the functions through the stage's CDK lookup role (ReadOnlyAccess, from `cdk bootstrap`).
+      - name: Compare each function's CodeSha256 with the sums
+        working-directory: service/infra/stacks
+        env:
+          STAGE: ${{ inputs.stage }}
+          ZIP_DIR: ${{ runner.temp }}/function-zips
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+        run: npx ts-node --prefer-ts-exts bin/function-zips.ts check-deployed --stage "$STAGE" --zip-dir "$ZIP_DIR" --account "$AWS_ACCOUNT_ID" --region "$AWS_DEFAULT_REGION"
       - name: Record deployed commit
         id: record
         env:

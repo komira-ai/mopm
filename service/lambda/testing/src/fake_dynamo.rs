@@ -46,31 +46,96 @@ pub struct TableDef {
     pub ttl: Option<String>,
 }
 
-fn table(stage_prefix: &str, name: &str, pk: &str, sk: Option<&str>, ttl: Option<&str>, indexes: Vec<IndexDef>) -> TableDef {
-    TableDef { name: format!("{stage_prefix}{name}"), pk: pk.into(), sk: sk.map(Into::into), indexes, ttl: ttl.map(Into::into) }
+fn table(
+    stage_prefix: &str,
+    name: &str,
+    pk: &str,
+    sk: Option<&str>,
+    ttl: Option<&str>,
+    indexes: Vec<IndexDef>,
+) -> TableDef {
+    TableDef {
+        name: format!("{stage_prefix}{name}"),
+        pk: pk.into(),
+        sk: sk.map(Into::into),
+        indexes,
+        ttl: ttl.map(Into::into),
+    }
 }
 
 /// The tables of the data stack (service/infra/stacks/lib/data-stack.ts) for `mopm-<stage>-`, and `web_logins`, the web
 /// sign-in's (`docs/design/tutorial-sign-in.md`, section 6: key `id`, TTL `expires_at`).
 pub fn registry_tables(stage: &str) -> Vec<TableDef> {
     let p = format!("mopm-{stage}-");
-    let search = IndexDef { name: "by_search_bucket".into(), pk: "search_bucket".into(), sk: "name".into(), projected: Some(vec!["description".into(), "state".into(), "created_at".into()]) };
-    let by_account = IndexDef { name: "by_github_id".into(), pk: "github_id".into(), sk: "id".into(), projected: None };
-    let owned = IndexDef { name: "by_github_id".into(), pk: "github_id".into(), sk: "name".into(), projected: None };
-    let namespaces_by_account = IndexDef { name: "by_github_id".into(), pk: "github_id".into(), sk: "namespace".into(), projected: None };
+    let search = IndexDef {
+        name: "by_search_bucket".into(),
+        pk: "search_bucket".into(),
+        sk: "name".into(),
+        projected: Some(vec![
+            "description".into(),
+            "state".into(),
+            "created_at".into(),
+        ]),
+    };
+    let by_account = IndexDef {
+        name: "by_github_id".into(),
+        pk: "github_id".into(),
+        sk: "id".into(),
+        projected: None,
+    };
+    let owned = IndexDef {
+        name: "by_github_id".into(),
+        pk: "github_id".into(),
+        sk: "name".into(),
+        projected: None,
+    };
+    let namespaces_by_account = IndexDef {
+        name: "by_github_id".into(),
+        pk: "github_id".into(),
+        sk: "namespace".into(),
+        projected: None,
+    };
     vec![
         table(&p, "packages", "name", None, None, vec![search]),
         table(&p, "versions", "name", Some("version"), None, vec![]),
         table(&p, "owners", "name", Some("github_id"), None, vec![owned]),
         table(&p, "audit", "name", Some("ts_seq"), None, vec![]),
         table(&p, "users", "github_id", None, None, vec![]),
-        table(&p, "tokens", "token_hash", None, Some("expires_at"), vec![by_account]),
+        table(
+            &p,
+            "tokens",
+            "token_hash",
+            None,
+            Some("expires_at"),
+            vec![by_account],
+        ),
         table(&p, "device_logins", "id", None, Some("expires_at"), vec![]),
-        table(&p, "trusted_publishers", "name", Some("publisher"), None, vec![]),
+        table(
+            &p,
+            "trusted_publishers",
+            "name",
+            Some("publisher"),
+            None,
+            vec![],
+        ),
         table(&p, "uploads", "upload_id", None, Some("expires_at"), vec![]),
-        table(&p, "publishes", "publish_id", None, Some("expires_at"), vec![]),
+        table(
+            &p,
+            "publishes",
+            "publish_id",
+            None,
+            Some("expires_at"),
+            vec![],
+        ),
         table(&p, "config", "key", None, None, vec![]),
-        table(&p, "namespaces", "namespace", None, None, vec![namespaces_by_account]),
+        table(
+            &p,
+            "namespaces",
+            "namespace",
+            None,
+            None,
+            vec![namespaces_by_account],
+        ),
         table(&p, "web_logins", "id", None, Some("expires_at"), vec![]),
     ]
 }
@@ -81,6 +146,11 @@ pub fn registry_tables(stage: &str) -> Vec<TableDef> {
 /// the read of a row another create holds). No `DeleteItem`: rows leave by TTL or never. In the format of
 /// [`Grants::parse`].
 pub const WEB_LOGIN_GRANTS: &str = include_str!("../tests/fixtures/web_login_grants.json");
+
+/// The web session function's grants (`docs/design/tutorial-sign-in.md`, section 5): `tokens` (the read by hash, and
+/// the conditional updates that touch and revoke a row), `users` (the read of the account) and `config` (the read of
+/// the `stage_settings` item); every other table is denied. In the format of [`Grants::parse`].
+pub const WEB_SESSION_GRANTS: &str = include_str!("../tests/fixtures/web_session_grants.json");
 
 /// What a role may call, per table (`service/api/test/fixtures/lambda-auth-grants.json`):
 /// `{ "<table>": { "actions": ["dynamodb:GetItem", ...], "indexes": ["by_github_id"] } }`. A table the grants do
@@ -93,7 +163,17 @@ impl Grants {
         let v: Value = serde_json::from_str(text)?;
         let mut m = BTreeMap::new();
         for (table, g) in v.as_object().cloned().unwrap_or_default() {
-            let list = |k: &str| g.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
+            let list = |k: &str| {
+                g.get(k)
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
             m.insert(table, (list("actions"), list("indexes")));
         }
         Ok(Grants(m))
@@ -111,13 +191,24 @@ pub struct FakeConfig {
 impl FakeConfig {
     /// All tables of the data stack for `stage`, pages of two, no grants.
     pub fn registry(stage: &str) -> FakeConfig {
-        FakeConfig { tables: registry_tables(stage), page_size: 2, grants: None }
+        FakeConfig {
+            tables: registry_tables(stage),
+            page_size: 2,
+            grants: None,
+        }
     }
 
     /// All tables of the data stack for `stage`, restricted to the web sign-in function's grants on `web_logins` and
     /// `namespaces` ([`WEB_LOGIN_GRANTS`]); every other table is denied.
     pub fn web_login(stage: &str) -> FakeConfig {
         let grants = Grants::parse(WEB_LOGIN_GRANTS).expect("the web sign-in grants are JSON");
+        FakeConfig::registry(stage).with_grants(&format!("mopm-{stage}-"), grants)
+    }
+
+    /// All tables of the data stack for `stage`, restricted to the web session function's grants
+    /// ([`WEB_SESSION_GRANTS`]); every other table is denied.
+    pub fn web_session(stage: &str) -> FakeConfig {
+        let grants = Grants::parse(WEB_SESSION_GRANTS).expect("the web session grants are JSON");
         FakeConfig::registry(stage).with_grants(&format!("mopm-{stage}-"), grants)
     }
 
@@ -164,14 +255,19 @@ impl FakeDynamo {
     /// Binds a loopback port and serves on the current tokio runtime (so it must be called inside one).
     pub fn start(cfg: FakeConfig) -> FakeDynamo {
         let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-        std_listener.set_nonblocking(true).expect("a non-blocking listener");
+        std_listener
+            .set_nonblocking(true)
+            .expect("a non-blocking listener");
         let addr = std_listener.local_addr().expect("a local address");
         let listener = TcpListener::from_std(std_listener).expect("a tokio listener");
         let mut state = State::default();
         for t in &cfg.tables {
             state.tables.insert(t.name.clone(), BTreeMap::new());
         }
-        let shared = Arc::new(Shared { cfg, state: Mutex::new(state) });
+        let shared = Arc::new(Shared {
+            cfg,
+            state: Mutex::new(state),
+        });
         let accept = shared.clone();
         // The first accept error ends the server.
         let task = tokio::spawn(async move {
@@ -185,7 +281,10 @@ impl FakeDynamo {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.shared.state.lock().expect("a lock is never held across a panic")
+        self.shared
+            .state
+            .lock()
+            .expect("a lock is never held across a panic")
     }
 
     /// Every request, oldest first.
@@ -195,7 +294,11 @@ impl FakeDynamo {
 
     /// The operations asked of the service, in order (`GetItem`, `TransactWriteItems`, ...).
     pub fn operations(&self) -> Vec<String> {
-        self.lock().requests.iter().map(|r| r.operation.clone()).collect()
+        self.lock()
+            .requests
+            .iter()
+            .map(|r| r.operation.clone())
+            .collect()
     }
 
     pub fn clear_requests(&self) {
@@ -204,15 +307,29 @@ impl FakeDynamo {
 
     /// The items of a table in key order, as DynamoDB JSON.
     pub fn dump(&self, table: &str) -> Vec<Value> {
-        self.lock().tables.get(table).map(|t| t.values().map(|i| Value::Object(i.clone())).collect()).unwrap_or_default()
+        self.lock()
+            .tables
+            .get(table)
+            .map(|t| t.values().map(|i| Value::Object(i.clone())).collect())
+            .unwrap_or_default()
     }
 
     /// Put an item (DynamoDB JSON) without any check, as data that was there before.
     pub fn seed(&self, table: &str, item: Value) {
-        let def = self.shared.cfg.tables.iter().find(|t| t.name == table).expect("a table of the fake");
+        let def = self
+            .shared
+            .cfg
+            .tables
+            .iter()
+            .find(|t| t.name == table)
+            .expect("a table of the fake");
         let item = item.as_object().cloned().expect("an item is an object");
         let key = key_of(def, &item).expect("a seeded item has its key");
-        self.lock().tables.get_mut(table).expect("a table of the fake").insert(key, item);
+        self.lock()
+            .tables
+            .get_mut(table)
+            .expect("a table of the fake")
+            .insert(key, item);
     }
 }
 
@@ -244,7 +361,9 @@ async fn serve(shared: Arc<Shared>, mut stream: TcpStream) {
             k.eq_ignore_ascii_case(name).then(|| v.trim().to_string())
         })
     };
-    let len: usize = header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let len: usize = header("content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     while buf.len() < body_start + len {
         let n = stream.read(&mut chunk).await.unwrap_or(0);
         if n == 0 {
@@ -252,12 +371,23 @@ async fn serve(shared: Arc<Shared>, mut stream: TcpStream) {
         }
         buf.extend_from_slice(&chunk[..n]);
     }
-    let body: Value = serde_json::from_slice(&buf[body_start..body_start + len]).unwrap_or(Value::Null);
-    let operation = header("x-amz-target").and_then(|t| t.rsplit('.').next().map(str::to_string)).unwrap_or_default();
-    let signed = header("authorization").is_some_and(|a| a.starts_with("AWS4-HMAC-SHA256 ") && a.contains("SignedHeaders="));
+    let body: Value =
+        serde_json::from_slice(&buf[body_start..body_start + len]).unwrap_or(Value::Null);
+    let operation = header("x-amz-target")
+        .and_then(|t| t.rsplit('.').next().map(str::to_string))
+        .unwrap_or_default();
+    let signed = header("authorization")
+        .is_some_and(|a| a.starts_with("AWS4-HMAC-SHA256 ") && a.contains("SignedHeaders="));
     let (status, reply) = {
-        let mut st = shared.state.lock().expect("a lock is never held across a panic");
-        st.requests.push(Recorded { operation: operation.clone(), body: body.clone(), signed });
+        let mut st = shared
+            .state
+            .lock()
+            .expect("a lock is never held across a panic");
+        st.requests.push(Recorded {
+            operation: operation.clone(),
+            body: body.clone(),
+            signed,
+        });
         match handle(&shared.cfg, &mut st, &operation, &body) {
             Ok(v) => (200, v),
             Err(f) => (400, f.json()),
@@ -290,15 +420,24 @@ impl Fail {
 
     fn json(&self) -> Value {
         match self {
-            Fail::Validation(m) => json!({"__type": "com.amazon.coral.validate#ValidationException", "message": m}),
-            Fail::ConditionFailed => json!({"__type": "com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException", "message": "The conditional request failed"}),
-            Fail::AccessDenied(m) => json!({"__type": "com.amazon.coral.service#AccessDeniedException", "Message": m}),
+            Fail::Validation(m) => {
+                json!({"__type": "com.amazon.coral.validate#ValidationException", "message": m})
+            }
+            Fail::ConditionFailed => {
+                json!({"__type": "com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException", "message": "The conditional request failed"})
+            }
+            Fail::AccessDenied(m) => {
+                json!({"__type": "com.amazon.coral.service#AccessDeniedException", "Message": m})
+            }
             Fail::Cancelled(failed) => {
                 let reasons: Vec<Value> = failed
                     .iter()
                     .map(|f| if *f { json!({"Code": "ConditionalCheckFailed", "Message": "The conditional request failed"}) } else { json!({"Code": "None"}) })
                     .collect();
-                let codes: Vec<&str> = failed.iter().map(|f| if *f { "ConditionalCheckFailed" } else { "None" }).collect();
+                let codes: Vec<&str> = failed
+                    .iter()
+                    .map(|f| if *f { "ConditionalCheckFailed" } else { "None" })
+                    .collect();
                 json!({
                     "__type": "com.amazonaws.dynamodb.v20120810#TransactionCanceledException",
                     "message": format!("Transaction cancelled, please refer cancellation reasons for specific reasons [{}]", codes.join(", ")),
@@ -312,28 +451,48 @@ impl Fail {
 // ---- operations ------------------------------------------------------------------------------------
 
 fn str_of<'a>(v: &'a Value, key: &str) -> Result<&'a str, Fail> {
-    v.get(key).and_then(Value::as_str).ok_or_else(|| Fail::validation(format!("{key} is required")))
+    v.get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| Fail::validation(format!("{key} is required")))
 }
 
 fn table_def<'a>(cfg: &'a FakeConfig, name: &str) -> Result<&'a TableDef, Fail> {
-    cfg.tables.iter().find(|t| t.name == name).ok_or_else(|| Fail::validation(format!("Requested resource not found: table {name}")))
+    cfg.tables
+        .iter()
+        .find(|t| t.name == name)
+        .ok_or_else(|| Fail::validation(format!("Requested resource not found: table {name}")))
 }
 
 fn attr_s(item: &Item, name: &str) -> Option<String> {
-    item.get(name).and_then(|v| v.get("S")).and_then(Value::as_str).map(str::to_string)
+    item.get(name)
+        .and_then(|v| v.get("S"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 fn key_of(def: &TableDef, item: &Item) -> Result<(String, String), Fail> {
-    let part = attr_s(item, &def.pk).ok_or_else(|| Fail::validation(format!("One or more parameter values were invalid: Type mismatch for key {} expected: S", def.pk)))?;
+    let part = attr_s(item, &def.pk).ok_or_else(|| {
+        Fail::validation(format!(
+            "One or more parameter values were invalid: Type mismatch for key {} expected: S",
+            def.pk
+        ))
+    })?;
     let sort = match &def.sk {
-        Some(sk) => attr_s(item, sk).ok_or_else(|| Fail::validation(format!("One or more parameter values were invalid: Type mismatch for key {sk} expected: S")))?,
+        Some(sk) => attr_s(item, sk).ok_or_else(|| {
+            Fail::validation(format!(
+                "One or more parameter values were invalid: Type mismatch for key {sk} expected: S"
+            ))
+        })?,
         None => String::new(),
     };
     Ok((part, sort))
 }
 
 fn item_of(v: &Value, key: &str) -> Result<Item, Fail> {
-    v.get(key).and_then(Value::as_object).cloned().ok_or_else(|| Fail::validation(format!("{key} is required")))
+    v.get(key)
+        .and_then(Value::as_object)
+        .cloned()
+        .ok_or_else(|| Fail::validation(format!("{key} is required")))
 }
 
 /// Checks a written item against the table: its key, its index keys and its TTL attribute.
@@ -351,7 +510,9 @@ fn check_item(def: &TableDef, item: &Item) -> Result<(), Fail> {
     if let Some(ttl) = &def.ttl {
         if let Some(v) = item.get(ttl) {
             if v.get("N").is_none() {
-                return Err(Fail::validation(format!("TimeToLive attribute {ttl} must be a number")));
+                return Err(Fail::validation(format!(
+                    "TimeToLive attribute {ttl} must be a number"
+                )));
             }
         }
     }
@@ -372,7 +533,11 @@ fn tokens(exprs: &[&str]) -> (BTreeSet<String>, BTreeSet<String>) {
                     i += 1;
                 }
                 let t = e[start..i].to_string();
-                if b[start] == b'#' { n.insert(t); } else { v.insert(t); }
+                if b[start] == b'#' {
+                    n.insert(t);
+                } else {
+                    v.insert(t);
+                }
             } else {
                 i += 1;
             }
@@ -389,10 +554,21 @@ struct Exprs<'a> {
 
 impl<'a> Exprs<'a> {
     fn new(req: &'a Value, keys: &[&str]) -> Result<Exprs<'a>, Fail> {
-        let texts: Vec<&str> = keys.iter().filter_map(|k| req.get(*k).and_then(Value::as_str)).collect();
+        let texts: Vec<&str> = keys
+            .iter()
+            .filter_map(|k| req.get(*k).and_then(Value::as_str))
+            .collect();
         let e = Exprs {
-            names: req.get("ExpressionAttributeNames").and_then(Value::as_object).cloned().unwrap_or_default(),
-            values: req.get("ExpressionAttributeValues").and_then(Value::as_object).cloned().unwrap_or_default(),
+            names: req
+                .get("ExpressionAttributeNames")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            values: req
+                .get("ExpressionAttributeValues")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
             texts,
         };
         let (used_n, used_v) = tokens(&e.texts);
@@ -421,13 +597,21 @@ impl<'a> Exprs<'a> {
 
     fn name(&self, t: &str) -> Result<String, Fail> {
         if !t.starts_with('#') {
-            return Err(Fail::validation(format!("Attribute name is a reserved keyword or not a placeholder: {t}")));
+            return Err(Fail::validation(format!(
+                "Attribute name is a reserved keyword or not a placeholder: {t}"
+            )));
         }
-        self.names.get(t).and_then(Value::as_str).map(str::to_string).ok_or_else(|| Fail::validation(format!("undefined name {t}")))
+        self.names
+            .get(t)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| Fail::validation(format!("undefined name {t}")))
     }
 
     fn value(&self, t: &str) -> Result<&Value, Fail> {
-        self.values.get(t).ok_or_else(|| Fail::validation(format!("undefined value {t}")))
+        self.values
+            .get(t)
+            .ok_or_else(|| Fail::validation(format!("undefined value {t}")))
     }
 
     /// `attribute_not_exists(#x)`, `attribute_exists(#x)`, `#x = :v` and `#x > :v`, joined by AND.
@@ -436,20 +620,35 @@ impl<'a> Exprs<'a> {
         let mut all = true;
         for clause in cond.split(" AND ") {
             let c = clause.trim();
-            let ok = if let Some(x) = c.strip_prefix("attribute_not_exists(").and_then(|r| r.strip_suffix(')')) {
+            let ok = if let Some(x) = c
+                .strip_prefix("attribute_not_exists(")
+                .and_then(|r| r.strip_suffix(')'))
+            {
                 let a = self.name(x)?;
                 !existing.is_some_and(|i| i.contains_key(&a))
-            } else if let Some(x) = c.strip_prefix("attribute_exists(").and_then(|r| r.strip_suffix(')')) {
+            } else if let Some(x) = c
+                .strip_prefix("attribute_exists(")
+                .and_then(|r| r.strip_suffix(')'))
+            {
                 let a = self.name(x)?;
                 existing.is_some_and(|i| i.contains_key(&a))
             } else if let Some((l, r)) = c.split_once(" > ").filter(|(l, _)| !l.contains('(')) {
                 // A comparison of an attribute; a function on the left (`size(#x) > :v`) is a form the fake does not know.
                 let a = self.name(l.trim())?;
-                let bound = integer(self.value(r.trim())?).ok_or_else(|| Fail::validation(format!("fake: unsupported comparison operand {}", r.trim())))?;
+                let bound = integer(self.value(r.trim())?).ok_or_else(|| {
+                    Fail::validation(format!("fake: unsupported comparison operand {}", r.trim()))
+                })?;
                 // As in DynamoDB, an absent attribute or one of another type compares false.
-                match existing.and_then(|i| i.get(&a)).filter(|v| v.get("N").is_some()) {
+                match existing
+                    .and_then(|i| i.get(&a))
+                    .filter(|v| v.get("N").is_some())
+                {
                     None => false,
-                    Some(v) => integer(v).ok_or_else(|| Fail::validation(format!("fake: unsupported comparison of {v}")))? > bound,
+                    Some(v) => {
+                        integer(v).ok_or_else(|| {
+                            Fail::validation(format!("fake: unsupported comparison of {v}"))
+                        })? > bound
+                    }
                 }
             } else if let Some((l, r)) = c.split_once(" = ") {
                 let a = self.name(l.trim())?;
@@ -466,14 +665,29 @@ impl<'a> Exprs<'a> {
 
 /// An `N` value that is an integer.
 fn integer(v: &Value) -> Option<i64> {
-    v.get("N").and_then(Value::as_str).and_then(|n| n.parse().ok())
+    v.get("N")
+        .and_then(Value::as_str)
+        .and_then(|n| n.parse().ok())
 }
 
-fn check_grant(cfg: &FakeConfig, table: &str, action: &str, index: Option<&str>) -> Result<(), Fail> {
-    let Some((prefix, grants)) = &cfg.grants else { return Ok(()) };
+fn check_grant(
+    cfg: &FakeConfig,
+    table: &str,
+    action: &str,
+    index: Option<&str>,
+) -> Result<(), Fail> {
+    let Some((prefix, grants)) = &cfg.grants else {
+        return Ok(());
+    };
     let logical = table.strip_prefix(prefix.as_str()).unwrap_or(table);
-    let denied = |what: &str| Fail::AccessDenied(format!("User is not authorized to perform: {what} on resource: {table}"));
-    let Some((actions, indexes)) = grants.0.get(logical) else { return Err(denied(action)) };
+    let denied = |what: &str| {
+        Fail::AccessDenied(format!(
+            "User is not authorized to perform: {what} on resource: {table}"
+        ))
+    };
+    let Some((actions, indexes)) = grants.0.get(logical) else {
+        return Err(denied(action));
+    };
     if !actions.contains(action) {
         return Err(denied(action));
     }
@@ -506,7 +720,10 @@ fn handle(cfg: &FakeConfig, st: &mut State, op: &str, req: &Value) -> Result<Val
             check_item(def, &item)?;
             let e = Exprs::new(req, &["ConditionExpression"])?;
             let k = key_of(def, &item)?;
-            if !e.holds(req.get("ConditionExpression").and_then(Value::as_str), st.tables[t].get(&k))? {
+            if !e.holds(
+                req.get("ConditionExpression").and_then(Value::as_str),
+                st.tables[t].get(&k),
+            )? {
                 return Err(Fail::ConditionFailed);
             }
             st.tables.get_mut(t).expect("checked").insert(k, item);
@@ -519,7 +736,10 @@ fn handle(cfg: &FakeConfig, st: &mut State, op: &str, req: &Value) -> Result<Val
             let key = item_of(req, "Key")?;
             let k = key_of(def, &key)?;
             let e = Exprs::new(req, &["ConditionExpression"])?;
-            if !e.holds(req.get("ConditionExpression").and_then(Value::as_str), st.tables[t].get(&k))? {
+            if !e.holds(
+                req.get("ConditionExpression").and_then(Value::as_str),
+                st.tables[t].get(&k),
+            )? {
                 return Err(Fail::ConditionFailed);
             }
             st.tables.get_mut(t).expect("checked").remove(&k);
@@ -529,7 +749,9 @@ fn handle(cfg: &FakeConfig, st: &mut State, op: &str, req: &Value) -> Result<Val
         "Query" => query(cfg, st, req),
         "Scan" => scan(cfg, st, req),
         "TransactWriteItems" => transact(cfg, st, req),
-        other => Err(Fail::validation(format!("fake: unsupported operation {other}"))),
+        other => Err(Fail::validation(format!(
+            "fake: unsupported operation {other}"
+        ))),
     }
 }
 
@@ -543,10 +765,17 @@ fn update_item(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, F
     let all_new = match req.get("ReturnValues").and_then(Value::as_str) {
         None | Some("NONE") => false,
         Some("ALL_NEW") => true,
-        Some(other) => return Err(Fail::validation(format!("fake: unsupported ReturnValues {other}"))),
+        Some(other) => {
+            return Err(Fail::validation(format!(
+                "fake: unsupported ReturnValues {other}"
+            )))
+        }
     };
     let current = st.tables[t].get(&k).cloned();
-    if !e.holds(req.get("ConditionExpression").and_then(Value::as_str), current.as_ref())? {
+    if !e.holds(
+        req.get("ConditionExpression").and_then(Value::as_str),
+        current.as_ref(),
+    )? {
         return Err(Fail::ConditionFailed);
     }
     let upd = str_of(req, "UpdateExpression")?;
@@ -554,11 +783,15 @@ fn update_item(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, F
         Some((a, b)) => (a, Some(b)),
         None => (upd, None),
     };
-    let assignments = set_part.strip_prefix("SET ").ok_or_else(|| Fail::validation(format!("fake: unsupported update {upd}")))?;
+    let assignments = set_part
+        .strip_prefix("SET ")
+        .ok_or_else(|| Fail::validation(format!("fake: unsupported update {upd}")))?;
     // An update creates the item when there is none, from its key.
     let mut item = current.unwrap_or(key);
     for a in assignments.split(", ") {
-        let (l, r) = a.split_once(" = ").ok_or_else(|| Fail::validation(format!("fake: unsupported update {a}")))?;
+        let (l, r) = a
+            .split_once(" = ")
+            .ok_or_else(|| Fail::validation(format!("fake: unsupported update {a}")))?;
         item.insert(e.name(l.trim())?, e.value(r.trim())?.clone());
     }
     if let Some(r) = remove_part {
@@ -567,12 +800,22 @@ fn update_item(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, F
         }
     }
     check_item(def, &item)?;
-    let reply = if all_new { json!({"Attributes": item}) } else { json!({}) };
+    let reply = if all_new {
+        json!({"Attributes": item})
+    } else {
+        json!({})
+    };
     st.tables.get_mut(t).expect("checked").insert(k, item);
     Ok(reply)
 }
 
-fn page(items: Vec<Item>, key_attrs: &[String], start: Option<&Item>, limit: usize, page_size: usize) -> Value {
+fn page(
+    items: Vec<Item>,
+    key_attrs: &[String],
+    start: Option<&Item>,
+    limit: usize,
+    page_size: usize,
+) -> Value {
     let from = match start {
         Some(s) => {
             let same = |i: &Item| key_attrs.iter().all(|a| i.get(a) == s.get(a));
@@ -586,7 +829,10 @@ fn page(items: Vec<Item>, key_attrs: &[String], start: Option<&Item>, limit: usi
     let mut out = json!({"Items": slice, "Count": slice.len(), "ScannedCount": slice.len()});
     if rest.len() > take {
         if let Some(last) = slice.last() {
-            let lek: Item = key_attrs.iter().filter_map(|a| last.get(a).map(|v| (a.clone(), v.clone()))).collect();
+            let lek: Item = key_attrs
+                .iter()
+                .filter_map(|a| last.get(a).map(|v| (a.clone(), v.clone())))
+                .collect();
             out["LastEvaluatedKey"] = Value::Object(lek);
         }
     }
@@ -608,11 +854,17 @@ fn query(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
         },
     };
     if index.is_some() && req.get("ConsistentRead").and_then(Value::as_bool) == Some(true) {
-        return Err(Fail::validation("Consistent reads are not supported on global secondary indexes"));
+        return Err(Fail::validation(
+            "Consistent reads are not supported on global secondary indexes",
+        ));
     }
     let (pk_attr, sk_attr, projected): (String, Option<String>, Option<Vec<String>>) = match index {
         Some(name) => {
-            let ix = def.indexes.iter().find(|i| i.name == name).ok_or_else(|| Fail::validation(format!("The table does not have the specified index: {name}")))?;
+            let ix = def.indexes.iter().find(|i| i.name == name).ok_or_else(|| {
+                Fail::validation(format!(
+                    "The table does not have the specified index: {name}"
+                ))
+            })?;
             (ix.pk.clone(), Some(ix.sk.clone()), ix.projected.clone())
         }
         None => (def.pk.clone(), def.sk.clone(), None),
@@ -622,9 +874,13 @@ fn query(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
         Some((a, b)) => (a, Some(b)),
         None => (kc, None),
     };
-    let (l, r) = first.split_once(" = ").ok_or_else(|| Fail::validation(format!("fake: unsupported key condition {kc}")))?;
+    let (l, r) = first
+        .split_once(" = ")
+        .ok_or_else(|| Fail::validation(format!("fake: unsupported key condition {kc}")))?;
     if e.name(l.trim())? != pk_attr {
-        return Err(Fail::validation(format!("Query condition missed key schema element: {pk_attr}")));
+        return Err(Fail::validation(format!(
+            "Query condition missed key schema element: {pk_attr}"
+        )));
     }
     let pk_value = e.value(r.trim())?.clone();
     enum Sort {
@@ -636,10 +892,17 @@ fn query(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
         None => Sort::None,
         Some(c) => {
             let c = c.trim();
-            if let Some(args) = c.strip_prefix("begins_with(").and_then(|x| x.strip_suffix(')')) {
-                let (a, v) = args.split_once(", ").ok_or_else(|| Fail::validation(format!("fake: unsupported key condition {c}")))?;
+            if let Some(args) = c
+                .strip_prefix("begins_with(")
+                .and_then(|x| x.strip_suffix(')'))
+            {
+                let (a, v) = args.split_once(", ").ok_or_else(|| {
+                    Fail::validation(format!("fake: unsupported key condition {c}"))
+                })?;
                 if Some(e.name(a.trim())?) != sk_attr {
-                    return Err(Fail::validation(format!("begins_with must be on the sort key {sk_attr:?}")));
+                    return Err(Fail::validation(format!(
+                        "begins_with must be on the sort key {sk_attr:?}"
+                    )));
                 }
                 match e.value(v.trim())?.get("S").and_then(Value::as_str) {
                     Some(p) if !p.is_empty() => Sort::Prefix(p.to_string()),
@@ -647,19 +910,28 @@ fn query(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
                 }
             } else if let Some((a, v)) = c.split_once(" = ") {
                 if Some(e.name(a.trim())?) != sk_attr {
-                    return Err(Fail::validation(format!("Query condition missed key schema element: {sk_attr:?}")));
+                    return Err(Fail::validation(format!(
+                        "Query condition missed key schema element: {sk_attr:?}"
+                    )));
                 }
                 Sort::Equals(e.value(v.trim())?.clone())
             } else {
-                return Err(Fail::validation(format!("fake: unsupported key condition {c}")));
+                return Err(Fail::validation(format!(
+                    "fake: unsupported key condition {c}"
+                )));
             }
         }
     };
-    let start = req.get("ExclusiveStartKey").and_then(Value::as_object).cloned();
+    let start = req
+        .get("ExclusiveStartKey")
+        .and_then(Value::as_object)
+        .cloned();
     if let Some(s) = &start {
         let outside = s.get(&pk_attr) != Some(&pk_value)
             || match (&sort, &sk_attr) {
-                (Sort::Prefix(p), Some(sk)) => !attr_s(s, sk).is_some_and(|v| v.starts_with(p.as_str())),
+                (Sort::Prefix(p), Some(sk)) => {
+                    !attr_s(s, sk).is_some_and(|v| v.starts_with(p.as_str()))
+                }
                 _ => false,
             };
         if outside {
@@ -679,14 +951,27 @@ fn query(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
     // Table rows come out in key order already (a BTreeMap); an index orders by its sort key, then the table key.
     if let (Some(_), Some(sk)) = (index, &sk_attr) {
         rows.sort_by(|a, b| {
-            let ka = (attr_s(a, sk), attr_s(a, &def.pk), def.sk.as_ref().and_then(|s| attr_s(a, s)));
-            let kb = (attr_s(b, sk), attr_s(b, &def.pk), def.sk.as_ref().and_then(|s| attr_s(b, s)));
+            let ka = (
+                attr_s(a, sk),
+                attr_s(a, &def.pk),
+                def.sk.as_ref().and_then(|s| attr_s(a, s)),
+            );
+            let kb = (
+                attr_s(b, sk),
+                attr_s(b, &def.pk),
+                def.sk.as_ref().and_then(|s| attr_s(b, s)),
+            );
             ka.cmp(&kb)
         });
     }
     if let Some(keep) = &projected {
         let table_keys = [Some(def.pk.clone()), def.sk.clone()];
-        let allowed: BTreeSet<&String> = keep.iter().chain([&pk_attr]).chain(sk_attr.iter()).chain(table_keys.iter().flatten()).collect();
+        let allowed: BTreeSet<&String> = keep
+            .iter()
+            .chain([&pk_attr])
+            .chain(sk_attr.iter())
+            .chain(table_keys.iter().flatten())
+            .collect();
         for r in &mut rows {
             r.retain(|k, _| allowed.contains(k));
         }
@@ -707,7 +992,10 @@ fn scan(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
     let e = Exprs::new(req, &["ProjectionExpression"])?;
     let mut rows: Vec<Item> = st.tables[t].values().cloned().collect();
     if let Some(p) = req.get("ProjectionExpression").and_then(Value::as_str) {
-        let keep: Vec<String> = p.split(',').map(|x| e.name(x.trim())).collect::<Result<_, _>>()?;
+        let keep: Vec<String> = p
+            .split(',')
+            .map(|x| e.name(x.trim()))
+            .collect::<Result<_, _>>()?;
         for r in &mut rows {
             r.retain(|k, _| keep.contains(k));
         }
@@ -717,9 +1005,15 @@ fn scan(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
     let full: Vec<Item> = st.tables[t].values().cloned().collect();
     let mut key_attrs = vec![def.pk.clone()];
     key_attrs.extend(def.sk.clone());
-    let start = req.get("ExclusiveStartKey").and_then(Value::as_object).cloned();
+    let start = req
+        .get("ExclusiveStartKey")
+        .and_then(Value::as_object)
+        .cloned();
     let from = match &start {
-        Some(s) => full.iter().position(|i| key_attrs.iter().all(|a| i.get(a) == s.get(a))).map_or(0, |p| p + 1),
+        Some(s) => full
+            .iter()
+            .position(|i| key_attrs.iter().all(|a| i.get(a) == s.get(a)))
+            .map_or(0, |p| p + 1),
         None => 0,
     };
     let take = cfg.page_size;
@@ -727,19 +1021,31 @@ fn scan(cfg: &FakeConfig, st: &State, req: &Value) -> Result<Value, Fail> {
     let mut out = json!({"Items": slice, "Count": slice.len(), "ScannedCount": slice.len()});
     if take > 0 && from + take < rows.len() {
         let last = &full[from + take - 1];
-        let lek: Item = key_attrs.iter().filter_map(|a| last.get(a).map(|v| (a.clone(), v.clone()))).collect();
+        let lek: Item = key_attrs
+            .iter()
+            .filter_map(|a| last.get(a).map(|v| (a.clone(), v.clone())))
+            .collect();
         out["LastEvaluatedKey"] = Value::Object(lek);
     }
     Ok(out)
 }
 
 fn transact(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, Fail> {
-    let items = req.get("TransactItems").and_then(Value::as_array).ok_or_else(|| Fail::validation("TransactItems is required"))?;
+    let items = req
+        .get("TransactItems")
+        .and_then(Value::as_array)
+        .ok_or_else(|| Fail::validation("TransactItems is required"))?;
     if items.is_empty() || items.len() > 100 {
         return Err(Fail::validation("TransactItems must hold 1 to 100 items"));
     }
-    if req.get("ClientRequestToken").and_then(Value::as_str).is_none_or(str::is_empty) {
-        return Err(Fail::validation("ClientRequestToken is required: a retry of the transaction must not apply it twice"));
+    if req
+        .get("ClientRequestToken")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err(Fail::validation(
+            "ClientRequestToken is required: a retry of the transaction must not apply it twice",
+        ));
     }
     struct W<'a> {
         table: &'a str,
@@ -750,7 +1056,9 @@ fn transact(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, Fail
     let mut writes: Vec<W<'_>> = Vec::new();
     let mut seen = BTreeSet::new();
     for it in items {
-        let put = it.get("Put").ok_or_else(|| Fail::validation("fake: a transaction item other than Put"))?;
+        let put = it
+            .get("Put")
+            .ok_or_else(|| Fail::validation("fake: a transaction item other than Put"))?;
         let t = str_of(put, "TableName")?;
         let def = table_def(cfg, t)?;
         check_grant(cfg, t, "dynamodb:PutItem", None)?;
@@ -758,21 +1066,34 @@ fn transact(cfg: &FakeConfig, st: &mut State, req: &Value) -> Result<Value, Fail
         check_item(def, &item)?;
         let key = key_of(def, &item)?;
         if !seen.insert((t.to_string(), key.clone())) {
-            return Err(Fail::validation("Transaction request cannot include multiple operations on one item"));
+            return Err(Fail::validation(
+                "Transaction request cannot include multiple operations on one item",
+            ));
         }
-        writes.push(W { table: t, item, key, put });
+        writes.push(W {
+            table: t,
+            item,
+            key,
+            put,
+        });
     }
     let mut failed = Vec::new();
     for w in &writes {
         let e = Exprs::new(w.put, &["ConditionExpression"])?;
-        let ok = e.holds(w.put.get("ConditionExpression").and_then(Value::as_str), st.tables[w.table].get(&w.key))?;
+        let ok = e.holds(
+            w.put.get("ConditionExpression").and_then(Value::as_str),
+            st.tables[w.table].get(&w.key),
+        )?;
         failed.push(!ok);
     }
     if failed.iter().any(|f| *f) {
         return Err(Fail::Cancelled(failed));
     }
     for w in writes {
-        st.tables.get_mut(w.table).expect("checked").insert(w.key, w.item);
+        st.tables
+            .get_mut(w.table)
+            .expect("checked")
+            .insert(w.key, w.item);
     }
     Ok(json!({}))
 }

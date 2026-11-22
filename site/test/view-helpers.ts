@@ -55,7 +55,7 @@ export function packageFixture(change: (raw: Record<string, unknown>) => void = 
 }
 
 export function versionFixture(
-  name: 'version detail' | 'yanked version keeps its files and says why' | 'tombstoned version has no url',
+  name: 'version detail' | 'version detail with two builds' | 'yanked version keeps its files and says why' | 'tombstoned version has no url',
   change: (raw: Record<string, unknown>) => void = () => undefined,
 ): VersionDetail {
   const raw = fixture(name) as Record<string, unknown>;

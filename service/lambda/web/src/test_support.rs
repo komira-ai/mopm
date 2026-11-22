@@ -23,7 +23,15 @@ impl Recording {
     /// `inner`, recorded; the call named `fail` answers a fault.
     pub fn new(inner: MemoryAuthStore, fail: Option<&'static str>) -> (Recording, Calls) {
         let calls = Calls::default();
-        (Recording { inner, calls: calls.clone(), fail, token_answer: None }, calls)
+        (
+            Recording {
+                inner,
+                calls: calls.clone(),
+                fail,
+                token_answer: None,
+            },
+            calls,
+        )
     }
 
     /// The store, except that `get_token_by_hash` answers `row` whatever hash it is asked for.
@@ -42,9 +50,17 @@ impl Recording {
 }
 
 impl AuthStore for Recording {
-    async fn upsert_user(&self, github_id: u64, handle: &str, now: &str, two_factor: Option<bool>) -> PortResult<UserRecord> {
+    async fn upsert_user(
+        &self,
+        github_id: u64,
+        handle: &str,
+        now: &str,
+        two_factor: Option<bool>,
+    ) -> PortResult<UserRecord> {
         self.note("upsert_user")?;
-        self.inner.upsert_user(github_id, handle, now, two_factor).await
+        self.inner
+            .upsert_user(github_id, handle, now, two_factor)
+            .await
     }
     async fn get_user(&self, github_id: u64) -> PortResult<Option<UserRecord>> {
         self.note("get_user")?;

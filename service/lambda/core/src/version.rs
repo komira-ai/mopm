@@ -22,7 +22,10 @@ impl Number {
 impl Ord for Number {
     fn cmp(&self, other: &Self) -> Ordering {
         // No leading zeros, so a longer number is a larger one.
-        self.0.len().cmp(&other.0.len()).then_with(|| self.0.cmp(&other.0))
+        self.0
+            .len()
+            .cmp(&other.0.len())
+            .then_with(|| self.0.cmp(&other.0))
     }
 }
 
@@ -54,7 +57,8 @@ impl PartialOrd for ParsedVersion {
 }
 
 fn component(s: &str) -> Option<Number> {
-    let ok = !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
+    let ok =
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
     ok.then(|| Number(s.to_string()))
 }
 
@@ -62,8 +66,15 @@ fn component(s: &str) -> Option<Number> {
 pub fn parse_version(input: &str) -> Result<ParsedVersion, RegistryError> {
     let parts: Vec<&str> = input.split('.').collect();
     if input.len() <= MAX_VERSION_LENGTH && parts.len() == 3 {
-        if let (Some(a), Some(b), Some(c)) = (component(parts[0]), component(parts[1]), component(parts[2])) {
-            return Ok(ParsedVersion { release: [a, b, c], canonical: input.to_string() });
+        if let (Some(a), Some(b), Some(c)) = (
+            component(parts[0]),
+            component(parts[1]),
+            component(parts[2]),
+        ) {
+            return Ok(ParsedVersion {
+                release: [a, b, c],
+                canonical: input.to_string(),
+            });
         }
     }
     Err(invalid_version(input))
@@ -93,12 +104,47 @@ mod tests {
     use crate::error::ErrorCode;
 
     // The accepted and refused spellings, as in service/api/test/version.test.ts.
-    const ACCEPTED: &[&str] = &["0.0.0", "1.0.0", "0.4.0", "10.20.30", "1.10.100", "99999999999999999999.0.1"];
+    const ACCEPTED: &[&str] = &[
+        "0.0.0",
+        "1.0.0",
+        "0.4.0",
+        "10.20.30",
+        "1.10.100",
+        "99999999999999999999.0.1",
+    ];
     const REFUSED: &[&str] = &[
-        "", "0", "1", "1.0", "1.2.3.4", "1.0.0.0", "1.", ".1", "1..0", "1.0.",
-        "1.0rc1", "1.0.0rc1", "1.0.0-rc.1", "1.0.0-rc1", "1.0a1", "1.0.0a1", "1.0.0b2", "1.0.0dev", "1.0.0.dev1",
-        "1.0.0.post1", "1.0.0+local", "1!2.0.0", "dev", "v1.0.0", "1.0.x", "1.0.0A1",
-        "01.0.0", "1.00.0", "1.0.00", " 1.0.0", "1.0.0 ", "1.0.0\n",
+        "",
+        "0",
+        "1",
+        "1.0",
+        "1.2.3.4",
+        "1.0.0.0",
+        "1.",
+        ".1",
+        "1..0",
+        "1.0.",
+        "1.0rc1",
+        "1.0.0rc1",
+        "1.0.0-rc.1",
+        "1.0.0-rc1",
+        "1.0a1",
+        "1.0.0a1",
+        "1.0.0b2",
+        "1.0.0dev",
+        "1.0.0.dev1",
+        "1.0.0.post1",
+        "1.0.0+local",
+        "1!2.0.0",
+        "dev",
+        "v1.0.0",
+        "1.0.x",
+        "1.0.0A1",
+        "01.0.0",
+        "1.00.0",
+        "1.0.00",
+        " 1.0.0",
+        "1.0.0 ",
+        "1.0.0\n",
         "1.0.\u{663}", // an Arabic-Indic digit is not an ASCII digit
     ];
 
@@ -134,7 +180,10 @@ mod tests {
     #[test]
     fn a_version_has_one_spelling() {
         assert_eq!(canonical_version("1.2.3").unwrap(), "1.2.3");
-        assert_eq!(canonical_version("1.2").unwrap_err().code, ErrorCode::InvalidVersion);
+        assert_eq!(
+            canonical_version("1.2").unwrap_err().code,
+            ErrorCode::InvalidVersion
+        );
     }
 
     #[test]
@@ -145,7 +194,11 @@ mod tests {
             ("1.9.0", "1.10.0", Ordering::Less),
             ("1.0.9", "1.0.10", Ordering::Less),
             ("2.0.0", "1.99.99", Ordering::Greater),
-            ("99999999999999999999.0.0", "99999999999999999998.0.0", Ordering::Greater),
+            (
+                "99999999999999999999.0.0",
+                "99999999999999999998.0.0",
+                Ordering::Greater,
+            ),
         ];
         for (a, b, want) in table {
             assert_eq!(compare_versions(a, b).unwrap(), *want, "{a} {b}");
@@ -156,8 +209,14 @@ mod tests {
 
     #[test]
     fn comparing_an_invalid_version_is_an_error() {
-        assert_eq!(compare_versions("1.0", "1.0.0").unwrap_err().code, ErrorCode::InvalidVersion);
-        assert_eq!(compare_versions("1.0.0", "x").unwrap_err().code, ErrorCode::InvalidVersion);
+        assert_eq!(
+            compare_versions("1.0", "1.0.0").unwrap_err().code,
+            ErrorCode::InvalidVersion
+        );
+        assert_eq!(
+            compare_versions("1.0.0", "x").unwrap_err().code,
+            ErrorCode::InvalidVersion
+        );
     }
 
     #[test]
@@ -174,7 +233,11 @@ mod tests {
         for x in &all {
             for y in &all {
                 let want = x.cmp(y);
-                let got = compare_versions(&format!("{}.{}.{}", x.0, x.1, x.2), &format!("{}.{}.{}", y.0, y.1, y.2)).unwrap();
+                let got = compare_versions(
+                    &format!("{}.{}.{}", x.0, x.1, x.2),
+                    &format!("{}.{}.{}", y.0, y.1, y.2),
+                )
+                .unwrap();
                 assert_eq!(got, want, "{x:?} {y:?}");
             }
         }

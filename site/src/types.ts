@@ -92,6 +92,13 @@ export interface Tombstone {
   date: string;
 }
 
+/** The files of a version built with one Mojo compiler. */
+export interface VersionBuild {
+  build: string;
+  requires_mojo: string;
+  files: FileRef[];
+}
+
 export interface VersionDetail {
   name: string;
   version: string;
@@ -107,6 +114,7 @@ export interface VersionDetail {
   files: FileRef[];
   manifest_sha256: string;
   provenance: Provenance;
+  builds?: VersionBuild[];
   description?: string;
   license?: string;
   repository?: string;

@@ -46,8 +46,14 @@ mod tests {
     #[test]
     fn a_domain_error_converts_and_is_found_again() {
         let e: PortError = invalid_request("x").into();
-        assert_eq!(e.registry().map(|r| r.code), Some(ErrorCode::InvalidRequest));
-        assert_eq!(e.to_string(), "invalid_request: The request is not valid: x.");
+        assert_eq!(
+            e.registry().map(|r| r.code),
+            Some(ErrorCode::InvalidRequest)
+        );
+        assert_eq!(
+            e.to_string(),
+            "invalid_request: The request is not valid: x."
+        );
     }
 
     #[test]
@@ -59,9 +65,19 @@ mod tests {
 
     #[test]
     fn no_http_answer_is_its_own_error_and_not_a_domain_error() {
-        let e: PortError = HttpError { failure: HttpFailure::Timeout, detail: "after 8s".to_string() }.into();
+        let e: PortError = HttpError {
+            failure: HttpFailure::Timeout,
+            detail: "after 8s".to_string(),
+        }
+        .into();
         assert!(e.registry().is_none());
-        assert_eq!(format!("{e:?}"), r#"Http(HttpError { failure: Timeout, detail: "after 8s" })"#);
-        assert_eq!(e.to_string(), "HTTP request got no answer: timed out: after 8s");
+        assert_eq!(
+            format!("{e:?}"),
+            r#"Http(HttpError { failure: Timeout, detail: "after 8s" })"#
+        );
+        assert_eq!(
+            e.to_string(),
+            "HTTP request got no answer: timed out: after 8s"
+        );
     }
 }

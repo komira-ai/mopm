@@ -402,6 +402,21 @@
               "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
             }
           ],
+          "builds": [
+            {
+              "build": "mojo1.0.0_0",
+              "requires_mojo": "==1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+                  "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+                  "size": 4096,
+                  "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+                }
+              ]
+            }
+          ],
           "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
           "provenance": {
             "kind": "none"
@@ -441,6 +456,21 @@
               "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
               "size": 4096,
               "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "builds": [
+            {
+              "build": "mojo1.0.0_0",
+              "requires_mojo": "==1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+                  "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+                  "size": 4096,
+                  "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+                }
+              ]
             }
           ],
           "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
@@ -493,6 +523,21 @@
               "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
             }
           ],
+          "builds": [
+            {
+              "build": "mojo1.0.0_0",
+              "requires_mojo": "==1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+                  "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+                  "size": 4096,
+                  "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+                }
+              ]
+            }
+          ],
           "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
           "source_commit": "9f2c4b7e1d0a83c5b6e7f8091a2b3c4d5e6f7081",
           "provenance": {
@@ -535,6 +580,21 @@
               "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
             }
           ],
+          "builds": [
+            {
+              "build": "mojo1.0.0_0",
+              "requires_mojo": "==1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+                  "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+                  "size": 4096,
+                  "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+                }
+              ]
+            }
+          ],
           "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
           "group_id": "grp_598a7e4a7e56109c58051a434f3be338",
           "provenance": {
@@ -575,6 +635,21 @@
               "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
               "size": 4096,
               "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "builds": [
+            {
+              "build": "mojo1.0.0_0",
+              "requires_mojo": "==1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+                  "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+                  "size": 4096,
+                  "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+                }
+              ]
             }
           ],
           "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
@@ -620,6 +695,21 @@
               "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
             }
           ],
+          "builds": [
+            {
+              "build": "mojo1.0.0_0",
+              "requires_mojo": "==1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+                  "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+                  "size": 4096,
+                  "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+                }
+              ]
+            }
+          ],
           "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
           "provenance": {
             "kind": "none"
@@ -662,6 +752,89 @@
               "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
               "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
               "size": 4096
+            }
+          ],
+          "builds": [
+            {
+              "build": "mojo1.0.0_0",
+              "requires_mojo": "==1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+                  "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+                  "size": 4096
+                }
+              ]
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "provenance": {
+            "kind": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "version detail with two builds",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "version": "1.1.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096,
+              "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "builds": [
+            {
+              "build": "mojo1.0.0_0",
+              "requires_mojo": "==1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+                  "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+                  "size": 4096,
+                  "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+                }
+              ]
+            },
+            {
+              "build": "mojo1.2.0_0",
+              "requires_mojo": "==1.2.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.2.0_0.conda",
+                  "sha256": "1d2c8f0a4e7b93c5d6a1f2e3b4c5d60718293a4b5c6d7e8f90a1b2c3d4e5f607",
+                  "size": 4100,
+                  "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.2.0_0.conda"
+                }
+              ]
             }
           ],
           "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
@@ -787,6 +960,67 @@
               "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
               "size": 4096,
               "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",
+          "provenance": {
+            "kind": "none"
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a version answered with a build that has no files",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "namespace": "komira-ai",
+          "name": "json",
+          "version": "1.1.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "komira-ai/json",
+          "version": "1.1.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-11-10T08:30:00.000Z",
+          "published_by": "alice",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "noarch",
+              "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+              "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+              "size": 4096,
+              "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "builds": [
+            {
+              "build": "mojo1.0.0_0",
+              "requires_mojo": "==1.0.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda",
+                  "sha256": "b99626a770481314f984e934a502ef8be9e3d1df0a06f5703c8fd4533bf4ed72",
+                  "size": 4096,
+                  "url": "https://conda.mopm.dev/komira-ai/noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda"
+                }
+              ]
+            },
+            {
+              "build": "mojo1.2.0_0",
+              "requires_mojo": "==1.2.0"
             }
           ],
           "manifest_sha256": "bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363",

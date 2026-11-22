@@ -22,7 +22,7 @@ import type { RawVersionPort } from './raw-port';
 import { applyEvent, IllegalTransition, publishesVersion, type GroupEvent, type UserEvent, type VersionEvent } from './state';
 import { auditSortKey, type RowDeleter, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
-import { canonicalVersion } from './version';
+import { keyOfRecord, rowKeyOf, rowLabel } from './builds';
 
 const copy = <T>(v: T): T => structuredClone(v);
 
@@ -84,7 +84,7 @@ export class MemoryStore implements Store, GroupStore, RowDeleter {
   /** The rows as stored (src/raw-port.ts): for the group module and for tests that must see the stored form. */
   readonly raw: RawVersionPort = {
     rawGet: async (name, version) => {
-      const r = this.versions.get(`${name}\0${canonicalVersion(version)}`);
+      const r = this.versions.get(`${name}\0${rowKeyOf(version)}`);
       return r && copy(r);
     },
     rawQuery: async (name) => [...this.versions.values()].filter((v) => v.name === name).map(copy),
@@ -139,10 +139,10 @@ export class MemoryStore implements Store, GroupStore, RowDeleter {
   }
 
   async createVersion(rec: VersionRecord, audit: AuditEntry): Promise<void> {
-    const canonical = canonicalVersion(rec.version);
+    const canonical = keyOfRecord(rec);
     const key = `${rec.name}\0${canonical}`;
     const existing = this.versions.get(key);
-    if (existing) throw versionExists(rec.name, rec.version, existing.files[0]?.sha256 ?? existing.manifest_sha256);
+    if (existing) throw versionExists(rec.name, rowLabel(rec), existing.files[0]?.sha256 ?? existing.manifest_sha256);
     this.versions.set(key, copy({ ...rec, canonical }));
     this.audit.push(copy(audit));
   }
@@ -150,7 +150,7 @@ export class MemoryStore implements Store, GroupStore, RowDeleter {
     return this.funnel.getOne(name, version);
   }
   async updateVersion(name: string, version: string, event: UserEvent, audit: AuditEntry): Promise<VersionRecord> {
-    const key = `${name}\0${canonicalVersion(version)}`;
+    const key = `${name}\0${rowKeyOf(version)}`;
     for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt++) {
       // The row as a reader sees it: a member of a committed group is `published` here, and one of a group that has
       // not committed stays `pending` and cannot be changed through this port.
@@ -235,7 +235,7 @@ export class MemoryStore implements Store, GroupStore, RowDeleter {
     return this.adopt(rec, audit, free);
   }
   private adopt(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): AdoptOutcome {
-    const canonical = canonicalVersion(rec.version);
+    const canonical = keyOfRecord(rec);
     const key = `${rec.name}\0${canonical}`;
     const fresh = { ...rec, canonical };
     const cur = this.versions.get(key);
@@ -252,7 +252,7 @@ export class MemoryStore implements Store, GroupStore, RowDeleter {
   }
 
   async applyGroupEvent(name: string, version: string, event: GroupEvent, audit: AuditEntry): Promise<VersionRecord> {
-    const key = `${name}\0${canonicalVersion(version)}`;
+    const key = `${name}\0${rowKeyOf(version)}`;
     const cur = this.versions.get(key);
     if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
     const next = applyEvent(cur, event);

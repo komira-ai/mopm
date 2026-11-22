@@ -677,11 +677,11 @@ The lock is `lock_version` 3. It records, for each Mojo version and platform, th
 }
 ```
 
-`mopm plan --unit-graph --locked` then prints the unit graph for the one listed version, with `"id": "example/pinned@0.1.0#mojo1.0.0/lib"` among its units. mopm pins a toolchain only for the Mojo versions in `src/core/toolchain/` (1.0.0 today), and says so for the others:
+`mopm plan --unit-graph --locked` then prints the unit graph for the one listed version, with `"id": "example/pinned@0.1.0#mojo1.0.0/lib"` among its units. mopm pins a toolchain only for the Mojo versions in `src/core/toolchain/` (1.0.0, 1.1.0 and 1.2.0 today), and says so for the others:
 
 | change | message |
 |---|---|
-| `mojo = ["1.0.0", "1.1.0"]` | `mopm has no pinned toolchain for mojo 1.1.0` |
+| `mojo = ["1.0.0", "1.3.0"]` | `mopm has no pinned toolchain for mojo 1.3.0` |
 | a `[toolchain]` table beside `[package] mojo` | `mojo is set in [package] and in [toolchain]; keep [package] mojo` |
 
 `[toolchain] mojo = "1.0.0"`, the form `mopm new` writes, is the older way: one version, or a list read as alternatives. It makes a `lock_version` 3 lock with one Mojo version.

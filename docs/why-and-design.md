@@ -70,7 +70,11 @@ outside declared native libraries. A client that unpacks a package applies the s
 
 **The build string carries the compiler.** It is `mojo<compiler>_<n>`, for example `mojo1.0.0_0`, so two
 builds of one package version for two compilers are two files under one version, and pixi's solver
-cannot mix them either (the package depends on `mojo-compiler ==<exact>`).
+cannot mix them either (the package depends on `mojo-compiler ==<exact>`). A version has one build for
+each compiler it was built with. Its first build is created with the version, and a build for another compiler can be
+added later, one at a time, when it is built from the same source: the same metadata file, which carries a
+digest of the package's sources (`source_sha256`), and the same dependencies. Every file of a version is still created once and never replaced, so the files
+of a published build never change and a lock that names them stays valid.
 
 **Immutability.** A published file never changes; a version number is never reused. Instead of deletion
 there are two states. *Yank* hides a version from new resolution but leaves the file downloadable, so an
@@ -79,7 +83,9 @@ removes the bytes, answers 410, and leaves a public log entry; the sha256 stays 
 can explain what it was asking for. A tombstoned version never changes again.
 
 **The sparse index.** `/index/v2/<aa>/<bb>/<namespace>/<name>` (`aa` and `bb` come from the namespace) is one newline-delimited JSON file per package, one line
-per version, with state, the compiler requirement (`requires_mojo`), dependencies with their cargo-style
+per version, with state, its builds (`builds`: the build string, the compiler requirement `requires_mojo` and the files
+of each; the top-level `build`, `requires_mojo` and `files` are the build for the lowest compiler, for readers that
+predate `builds`), dependencies with their cargo-style
 ranges, native library facts, file urls, sizes and sha256 values. It exists because conda repodata is
 shaped for conda solvers and carries no yank reasons, tombstones or provenance. mopm resolves from the
 index and never reads the conda `depends` strings, so there is no second dependency syntax to keep in
@@ -151,17 +157,22 @@ Mojo version the lock lists.
 ## 5. Packaging: conda and `.mojoc`
 
 `mopm pack` writes one `.conda` per platform directory from a `.mojoc` you built with the compiler you
-name (`--compiler`), plus the manifest-derived metadata. `mopm publish` packs and then follows the
+name (`--compiler`), plus the manifest-derived metadata (which includes a digest of the package's sources, `source_sha256`). `mopm publish` packs and then follows the
 registry's three steps: begin an upload for each file and PUT the bytes to the storage url the registry
 names, commit the uploads, and poll until the publish is `published` or `rejected`. The token goes only
 to the API, as a bearer token; the storage PUT carries none. The registry validates the archive (layout,
 limits, manifest, filename, sha256) and generates the repodata entry itself from the validated manifest;
 it never copies metadata out of the uploaded archive.
 
-Today the `.mojoc` is an input: you run `mojo precompile` (or a build system does) and pass the result
-with `--mojoc`. The spec describes `publish` building one `.mojoc` per listed Mojo version itself; that
-is **planned** in the CLI. A buildrules integration (section 8) builds the `.mojoc` files as cached
-actions.
+`mopm publish` takes one `--compiler` for each run. To a version that a single publish made it adds the build for that
+compiler; a version that a group published (every version `mopm publish --staged` makes) takes added builds only through
+`mopm stage` and `mopm publish --staged`. `mopm stage` takes several compilers (`--artifacts <mojo>=<dir>`, repeated) and
+stages them as the builds of one version, and a build for another compiler can be staged and added later (see
+[publishing a workspace](publishing-a-workspace.md)).
+
+The `.mojoc` is an input: you run `mojo precompile` (or a build system does) once for each Mojo version and pass
+the result with `--mojoc` (`publish`) or `--artifacts` (`stage`); mopm does not build it for you. A buildrules integration
+(section 8) builds the `.mojoc` files as cached actions.
 
 ## 6. Natives and autolink
 
@@ -230,8 +241,8 @@ package re-runs it and its dependents; unchanged `.mojoc` bytes stop the cascade
 declared input against the graph, run a pinned hermetic compiler wrapper with an empty environment, and
 require non-empty outputs. The toolchain is mopm's own pin (a closure of conda packages plus a pinned Zig
 as C compiler and linker), recorded in the lock as a hash, so a different mopm cannot silently build with
-different bytes; `plan` refuses a lock whose recorded hash is not the one this mopm computes. Only Mojo
-1.0.0 is pinned today.
+different bytes; `plan` refuses a lock whose recorded hash is not the one this mopm computes. Mojo 1.0.0,
+1.1.0 and 1.2.0 are pinned today.
 
 The Buck2 integration is in the separate buildrules project, which reads the unit graph (its mopm
 rules pin a mopm release). Its Mojo support is version 0 and runs on Linux x86_64 only; the mopm
@@ -295,4 +306,4 @@ Not built today (all **planned** unless stated):
 - Sharded repodata; signed package snapshots; Apple signing and notarization.
 - Test parallelism, flake history, `--failed`, `--shuffle`, result cache.
 - Homebrew and apt packages (only the install script and the GitHub release exist).
-- Mojo versions other than 1.0.0 in the pinned toolchain; Windows.
+- Mojo versions other than 1.0.0, 1.1.0 and 1.2.0 in the pinned toolchain; Windows.

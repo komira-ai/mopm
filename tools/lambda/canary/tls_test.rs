@@ -14,7 +14,9 @@ use std::thread;
 
 use rustls::crypto::aws_lc_rs;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
-use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection, StreamOwned};
+use rustls::{
+    ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection, StreamOwned,
+};
 
 const CA: &[u8] = include_bytes!("fixtures/ca.der");
 const LEAF: &[u8] = include_bytes!("fixtures/leaf.der");
@@ -45,7 +47,10 @@ fn client_config() -> ClientConfig {
 
 /// One exchange: the client sends "ping", the server answers "pong".
 /// Returns what the client negotiated: protocol version and cipher suite.
-fn exchange(version: &'static rustls::SupportedProtocolVersion, server_name: &'static str) -> std::io::Result<(rustls::ProtocolVersion, String)> {
+fn exchange(
+    version: &'static rustls::SupportedProtocolVersion,
+    server_name: &'static str,
+) -> std::io::Result<(rustls::ProtocolVersion, String)> {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let config = server_config(version);
@@ -64,7 +69,10 @@ fn exchange(version: &'static rustls::SupportedProtocolVersion, server_name: &'s
     });
     let tcp = TcpStream::connect(addr).unwrap();
     let name = ServerName::try_from(server_name).unwrap();
-    let mut tls = StreamOwned::new(ClientConnection::new(Arc::new(client_config()), name).unwrap(), tcp);
+    let mut tls = StreamOwned::new(
+        ClientConnection::new(Arc::new(client_config()), name).unwrap(),
+        tcp,
+    );
     let result = (|| {
         tls.write_all(b"ping")?;
         let mut buf = [0u8; 4];
@@ -105,6 +113,8 @@ fn a_wrong_server_name_is_refused() {
 #[test]
 fn the_library_is_komiras_aws_lc() {
     // SAFETY: OpenSSL_version(0) returns a pointer to a static NUL-terminated string.
-    let text = unsafe { CStr::from_ptr(aws_lc_sys::OpenSSL_version(0)) }.to_str().unwrap();
+    let text = unsafe { CStr::from_ptr(aws_lc_sys::OpenSSL_version(0)) }
+        .to_str()
+        .unwrap();
     assert!(text.starts_with("AWS-LC 1.39.0"), "{text}");
 }

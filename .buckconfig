@@ -34,7 +34,7 @@
   fbsource = none
   fbcode_macros = none
   buck = none
-  # komira 9504a2daf names its own tests cell in a few visibility lists; the alias
+  # komira aefee5326 names its own tests cell in a few visibility lists; the alias
   # makes those patterns resolve (to packages that are not there). Nothing is built from it.
   tests = komira
 
@@ -47,21 +47,28 @@
   git_origin = https://github.com/komira-ai/komira.git
   # komira, kept for the Mojo compiler of the end-to-end tests (komira//tools/build/toolchains:mojo_compiler): the Zig,
   # node, C/C++ and Rust rules, and AWS-LC, are buildrules'. Bump it with farm.yml.
-  # 9504a2daf: komira main at the commit whose farm-connect action takes the tls input.
-  commit_hash = 9504a2daf88754de25d93f62a76ea2955ebc38c8
+  # aefee5326: komira main at the merge of komira-ai/komira#2094, whose farm-connect gives a farm PING 60 s
+  # to come back and sends at most 4 blobs of an action at once (a slow farm connection is no longer dropped
+  # with KeepAliveTimedOut).
+  commit_hash = aefee53266277c55b40ccbf35782a296ceecf687
 
 [external_cell_buildrules]
   # buildrules: its Rust (cargo_unit, the cargo_package front door), Zig, node, cxx, coverage and AWS-LC rules and the CLI.
-  # Bump commit_hash to take a newer commit. eec7f9f4c: buildrules main at the merge of komira-ai/buildrules#153 (cov_normalize
-  # refuses the action directory in a report only as a whole path).
+  # Bump commit_hash to take a newer commit. da5248c55: buildrules main at the merge of komira-ai/buildrules#159 (the pinned
+  # rustfmt, `:fmt` per cargo member and `//:fmt`, which Cargo.toml's `ci` action builds).
   git_origin = https://github.com/komira-ai/buildrules.git
-  commit_hash = eec7f9f4cdb509a161095fcc78f7dcd1dc1ca503
+  commit_hash = da5248c55edc165dfa79a345115515f490dde90a
 
 # The farm's macOS arm64 workers, for buildrules, which reads every `[buildrules_re]` key from this (the root) cell. farm-connect
 # writes the worker property set and the hosts under `[komira_re]` (farm-macos.yml passes them); these keys follow them, holding no
 # value of their own, so a build with no macOS workers (every farm.yml build) leaves them empty and registers no macOS execution
 # platform (platforms/macos.bzl, `macos_gate`). This is the passthrough of komira's own .buckconfig.
+# farm-connect writes the linux worker property set under `[komira_re]` too; mapped here, a CI job needs no step to copy it. A
+# .buckconfig.local that sets `[buildrules_re] linux_x86_64_properties` (a developer's, or farm.yml's appended section) overrides it.
+# With neither the key is empty: buildrules' remote mode refuses to load the platform (rules/platforms.bzl `_properties`: "is not
+# set"), and local mode (`-c buildrules_re.mode=local`) still runs, its check being only for a non-empty value.
 [buildrules_re]
+  linux_x86_64_properties = $(config komira_re.linux_x86_64_properties)
   macos_aarch64_properties = $(config komira_re.darwin_arm64_properties)
   darwin_macos_hosts = $(config komira_re.darwin_macos_hosts)
 

@@ -48,22 +48,32 @@ impl EdgeCheck {
 
     /// What [`EdgeCheck::load`] makes of the secret `id`'s answer (not generic, so one instantiation covers it).
     fn from_secret(id: String, found: PortResult<Option<String>>) -> Result<EdgeCheck, SetupError> {
-        let value = found.map_err(|source| SetupError::Port { what: format!("the secret {id}"), source })?;
+        let value = found.map_err(|source| SetupError::Port {
+            what: format!("the secret {id}"),
+            source,
+        })?;
         match value {
             None => Err(SetupError::SecretMissing(id)),
             Some(v) if v.is_empty() => Err(SetupError::SecretEmpty(id)),
-            Some(v) => Ok(EdgeCheck { expected: v.into_bytes() }),
+            Some(v) => Ok(EdgeCheck {
+                expected: v.into_bytes(),
+            }),
         }
     }
 
     /// Admits `req` when it carries exactly one `x-mopm-edge` equal to the stage's value, compared in constant
     /// time. Anything else is `session_required`.
     pub fn check(&self, req: &WebRequest) -> Result<(), RegistryError> {
-        let presented = req.headers.get(EDGE_HEADER).ok_or_else(|| session_required("no single x-mopm-edge header"))?;
+        let presented = req
+            .headers
+            .get(EDGE_HEADER)
+            .ok_or_else(|| session_required("no single x-mopm-edge header"))?;
         if bool::from(self.expected.ct_eq(presented.as_bytes())) {
             Ok(())
         } else {
-            Err(session_required("the x-mopm-edge header is not the stage's value"))
+            Err(session_required(
+                "the x-mopm-edge header is not the stage's value",
+            ))
         }
     }
 }
@@ -79,7 +89,9 @@ mod tests {
     use std::ffi::OsStr;
 
     fn beta() -> Stage {
-        parse_function_name(Some(OsStr::new("mopm-beta-web-session"))).unwrap().stage
+        parse_function_name(Some(OsStr::new("mopm-beta-web-session")))
+            .unwrap()
+            .stage
     }
 
     async fn loaded(value: &str) -> EdgeCheck {
@@ -95,8 +107,14 @@ mod tests {
     #[tokio::test]
     async fn the_right_value_is_admitted_under_any_header_case() {
         let edge = loaded("edge-secret-value").await;
-        assert_eq!(edge.check(&req().with_header("x-mopm-edge", "edge-secret-value")), Ok(()));
-        assert_eq!(edge.check(&req().with_header("X-Mopm-Edge", "edge-secret-value")), Ok(()));
+        assert_eq!(
+            edge.check(&req().with_header("x-mopm-edge", "edge-secret-value")),
+            Ok(())
+        );
+        assert_eq!(
+            edge.check(&req().with_header("X-Mopm-Edge", "edge-secret-value")),
+            Ok(())
+        );
     }
 
     #[tokio::test]
@@ -109,17 +127,34 @@ mod tests {
     #[tokio::test]
     async fn a_wrong_value_is_session_required() {
         let edge = loaded("edge-secret-value").await;
-        for wrong in ["", "edge-secret-valuE", "edge-secret-valu", "edge-secret-value ", "EDGE-SECRET-VALUE"] {
-            let err = edge.check(&req().with_header("x-mopm-edge", wrong)).unwrap_err();
+        for wrong in [
+            "",
+            "edge-secret-valuE",
+            "edge-secret-valu",
+            "edge-secret-value ",
+            "EDGE-SECRET-VALUE",
+        ] {
+            let err = edge
+                .check(&req().with_header("x-mopm-edge", wrong))
+                .unwrap_err();
             assert_eq!(err.code, ErrorCode::SessionRequired, "{wrong:?}");
-            assert_eq!(err.message, "not signed in: the x-mopm-edge header is not the stage's value", "{wrong:?}");
+            assert_eq!(
+                err.message, "not signed in: the x-mopm-edge header is not the stage's value",
+                "{wrong:?}"
+            );
         }
     }
 
     #[tokio::test]
     async fn two_edge_headers_are_refused_even_if_one_is_right() {
         let edge = loaded("v").await;
-        let err = edge.check(&req().with_header("x-mopm-edge", "v").with_header("x-mopm-edge", "v")).unwrap_err();
+        let err = edge
+            .check(
+                &req()
+                    .with_header("x-mopm-edge", "v")
+                    .with_header("x-mopm-edge", "v"),
+            )
+            .unwrap_err();
         assert_eq!(err.message, "not signed in: no single x-mopm-edge header");
     }
 
@@ -129,8 +164,13 @@ mod tests {
         secrets.set("mopm/beta/edge-origin", "first");
         let edge = EdgeCheck::load(&secrets, &beta()).await.unwrap();
         secrets.set("mopm/beta/edge-origin", "second");
-        assert_eq!(edge.check(&req().with_header("x-mopm-edge", "first")), Ok(()));
-        assert!(edge.check(&req().with_header("x-mopm-edge", "second")).is_err());
+        assert_eq!(
+            edge.check(&req().with_header("x-mopm-edge", "first")),
+            Ok(())
+        );
+        assert!(edge
+            .check(&req().with_header("x-mopm-edge", "second"))
+            .is_err());
     }
 
     #[tokio::test]
@@ -138,14 +178,23 @@ mod tests {
         let secrets = MemorySecrets::new();
         secrets.set("mopm/prod/edge-origin", "prod-value");
         let err = EdgeCheck::load(&secrets, &beta()).await.unwrap_err();
-        assert_eq!(err.to_string(), "the secret mopm/beta/edge-origin does not exist");
+        assert_eq!(
+            err.to_string(),
+            "the secret mopm/beta/edge-origin does not exist"
+        );
     }
 
     #[tokio::test]
     async fn an_empty_secret_fails_the_start() {
         let secrets = MemorySecrets::new();
         secrets.set("mopm/beta/edge-origin", "");
-        assert_eq!(EdgeCheck::load(&secrets, &beta()).await.unwrap_err().to_string(), "the secret mopm/beta/edge-origin is empty");
+        assert_eq!(
+            EdgeCheck::load(&secrets, &beta())
+                .await
+                .unwrap_err()
+                .to_string(),
+            "the secret mopm/beta/edge-origin is empty"
+        );
     }
 
     struct Failing;
@@ -159,11 +208,17 @@ mod tests {
     #[tokio::test]
     async fn a_failing_reader_fails_the_start_naming_the_secret() {
         let err = EdgeCheck::load(&Failing, &beta()).await.unwrap_err();
-        assert_eq!(err.to_string(), "reading the secret mopm/beta/edge-origin: infrastructure fault: access denied");
+        assert_eq!(
+            err.to_string(),
+            "reading the secret mopm/beta/edge-origin: infrastructure fault: access denied"
+        );
     }
 
     #[tokio::test]
     async fn debug_never_shows_the_value() {
-        assert_eq!(format!("{:?}", loaded("edge-secret-value").await), "EdgeCheck(..)");
+        assert_eq!(
+            format!("{:?}", loaded("edge-secret-value").await),
+            "EdgeCheck(..)"
+        );
     }
 }

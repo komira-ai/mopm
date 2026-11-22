@@ -7,6 +7,9 @@
 //! does not open archives, so a file whose bytes start with
 //! `REJECT:<rejection code>` is rejected with that code, which lets a client
 //! test every rejection.
+//!
+//! A version holds the files of one or more builds (builds.zig). A publish of a version that is already published may add a build
+//! to it (`addRefusal` says when): the files are appended when the publish is published, and the version's other fields stay.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -23,6 +26,7 @@ const channel = @import("files.zig");
 const gr = @import("group_readmes.zig");
 const keys = @import("keys.zig");
 const names = @import("names.zig");
+const builds = @import("builds.zig");
 
 const subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64", "noarch" };
 
@@ -86,6 +90,60 @@ pub fn findVersion(p: *st.Package, version: []const u8) ?*st.Version {
         if (versions.same(v.version, version)) return v;
     }
     return null;
+}
+
+// ---------------------------------------------------------------------------
+// Adding a build to a published version
+// ---------------------------------------------------------------------------
+
+/// `version_exists` for `row`: the catalogue's message, which the contract's replay holds every answer of that code to, so it does
+/// not say which rule refused.
+pub fn existsRefusal(ctx: *Ctx, p: *const st.Package, row: *const st.Version) Allocator.Error!Response {
+    return resp.fail(ctx.arena, .version_exists, &.{ .{ "name", p.name }, .{ "version", row.version }, .{ "sha256", row.files[0].sha256 } });
+}
+
+/// Whether a publish or a group that is running, or a publish that was rejected, holds `build` of `row`: such a build is not free
+/// for another, though the version does not list its files (yet, or ever).
+fn buildHeld(s: *const st.State, row: *const st.Version, build: []const u8) bool {
+    for (s.publishes.items) |q| {
+        if (q.version == row and q.add.len > 0 and std.mem.eql(u8, builds.buildOf(q.add[0].filename), build)) return true;
+    }
+    for (s.groups.items) |g| {
+        if (g.status != .validating and g.status != .committed) continue;
+        for (g.members) |m| {
+            if (m.add and m.row == row and std.mem.eql(u8, builds.buildOf(m.files[0].filename), build)) return true;
+        }
+    }
+    return false;
+}
+
+/// Why the files `filenames` cannot be added to `row`, a version that no publish is running for, as the answer to send (always
+/// `version_exists`), or null when they can. A build is added to a version that is published (not yanked, taken down or rejected),
+/// one build at a time, when the version has no file of that build, no other publish holds it, and the commit's `manifest_sha256`
+/// (`manifest`; null while it is not known yet, at the creation of a group) is the one the version was committed with.
+pub fn addRefusal(ctx: *Ctx, p: *const st.Package, row: *const st.Version, filenames: []const []const u8, manifest: ?[]const u8) Allocator.Error!?Response {
+    if (row.state != .published) return try existsRefusal(ctx, p, row);
+    const build = builds.buildOf(filenames[0]);
+    for (filenames[1..]) |f| {
+        if (!std.mem.eql(u8, builds.buildOf(f), build)) return try existsRefusal(ctx, p, row);
+    }
+    if (builds.has(row.files, build) or buildHeld(ctx.state, row, build)) return try existsRefusal(ctx, p, row);
+    if (manifest) |m| {
+        const held = if (row.manifest_stated.len > 0) row.manifest_stated else row.manifest_sha256;
+        if (!std.mem.eql(u8, m, held)) return try existsRefusal(ctx, p, row);
+    }
+    return null;
+}
+
+/// Adds the files of a build to the version `v` and puts their bytes in the channel. A version taken down since the build was
+/// accepted keeps no bytes: the build is dropped.
+pub fn appendBuild(s: *st.State, v: *st.Version, add: []const st.File) !void {
+    if (v.state == .tombstoned) return;
+    const all = try s.alloc.alloc(st.File, v.files.len + add.len);
+    @memcpy(all[0..v.files.len], v.files);
+    @memcpy(all[v.files.len..], add);
+    v.files = all;
+    try channel.copyFiles(s, v, add);
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +261,8 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     };
     if (try keys.useRefusal(ctx, p, t.user)) |r| return r;
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
-    // Optional. Given, it is checked for its format as before; the fake opens no archive, so it does not compare it with a manifest.
+    // Optional. Given, it is checked for its format; the fake opens no archive, so it compares it with no manifest but the one the
+    // version was committed with, when the files are a build to add to it.
     const given: ?[]const u8 = if (obj.get("manifest_sha256")) |v| switch (v) {
         .string => |x| x,
         else => return resp.invalid(ctx.arena, "'manifest_sha256' must be a string"),
@@ -256,6 +315,7 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
             held.group = null;
         }
     }
+    var add_to: ?*st.Version = null;
     if (findVersion(p, params[1])) |existing| {
         if (existing.state == .pending) {
             // The same upload ids again resume the publish already running.
@@ -273,11 +333,14 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
                 }
             }
         } else {
-            return resp.fail(ctx.arena, .version_exists, &.{
-                .{ "name", p.name },
-                .{ "version", existing.version },
-                .{ "sha256", existing.files[0].sha256 },
-            });
+            // A version that exists takes a build it does not have (and nothing else); the same upload ids again resume that publish.
+            for (s.publishes.items) |pub_| {
+                if (pub_.version == existing and pub_.add.len > 0 and sameIds(pub_.upload_ids, ids.items)) return accepted(ctx, pub_);
+            }
+            const filenames = try ctx.arena.alloc([]const u8, uploads.items.len);
+            for (uploads.items, filenames) |u, *f| f.* = u.filename;
+            if (try addRefusal(ctx, p, existing, filenames, given orelse uploads.items[0].sha256)) |r| return r;
+            add_to = existing;
         }
     }
     for (uploads.items) |u| {
@@ -288,6 +351,16 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     for (uploads.items) |u| {
         u.used = true;
         try files.append(.{ .subdir = u.subdir, .filename = u.filename, .sha256 = u.sha256, .size = u.size, .path = u.path.? });
+    }
+    if (add_to) |row| {
+        const added = try s.add(st.Publish, &s.publishes, .{
+            .id = try util.newId(s.alloc, "pub"),
+            .user = t.user,
+            .version = row,
+            .upload_ids = try ids.toOwnedSlice(),
+            .add = try files.toOwnedSlice(),
+        });
+        return accepted(ctx, added);
     }
     const v = findVersion(p, params[1]) orelse try s.add(st.Version, &p.versions, .{
         .package = p,
@@ -300,6 +373,7 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     // Absent, the version holds a hash the registry computed. The fake computes none (it has no archive to open): it uses the
     // sha256 of the first file, which is what its group publishes hold too.
     v.manifest_sha256 = try s.alloc.dupe(u8, given orelse uploads.items[0].sha256);
+    v.manifest_stated = if (given) |x| try s.alloc.dupe(u8, x) else "";
     v.source_commit = if (source) |x| try s.alloc.dupe(u8, x) else null;
     v.provenance = if (t.kind == .oidc) t.oidc_repository else null;
     const pub_ = try s.add(st.Publish, &s.publishes, .{
@@ -338,7 +412,8 @@ fn validate(ctx: *Ctx, p: *st.Publish) anyerror!?[]const u8 {
     const want = try std.fmt.allocPrint(ctx.arena, "{s}-{s}-", .{ try names.condaName(ctx.arena, v.package.name), v.version });
     var dir = try std.fs.cwd().openDir(ctx.state.dir, .{});
     defer dir.close();
-    for (v.files) |f| {
+    // A publish that adds a build checks the files it adds: the version's others were checked when they were published.
+    for (if (p.add.len > 0) p.add else v.files) |f| {
         if (!std.mem.startsWith(u8, f.filename, want)) return "filename_mismatch";
         var head: [64]u8 = undefined;
         const file = try dir.openFile(f.path, .{});
@@ -377,13 +452,14 @@ pub fn getPublishStatus(ctx: *Ctx, params: []const []const u8) anyerror!Response
         if (p.stage == 1) {
             p.rejection = try validate(ctx, p);
             if (p.rejection != null) {
-                p.version.state = .rejected;
+                // A rejected build leaves its version as it is; the publish holds the build, so no other takes it.
+                if (p.add.len == 0) p.version.state = .rejected;
                 just_rejected = true;
             }
         }
         if (p.rejection == null) {
             p.stage += 1;
-            if (p.stage == 3) try finish(ctx, p.version);
+            if (p.stage == 3) try finish(ctx, p);
         }
     }
     const v = p.version;
@@ -403,9 +479,16 @@ pub fn getPublishStatus(ctx: *Ctx, params: []const []const u8) anyerror!Response
     return resp.json(ctx.arena, .ok, .{ .publish_id = p.id, .name = v.package.name, .version = v.version, .status = stage_names[shown] });
 }
 
-/// A publish has passed its checks: the version is published.
-fn finish(ctx: *Ctx, v: *st.Version) anyerror!void {
+/// A publish has passed its checks: the version is published, or, for a publish that adds a build, gains it.
+fn finish(ctx: *Ctx, p: *const st.Publish) anyerror!void {
+    const v = p.version;
     const now = ctx.state.now();
+    if (p.add.len > 0) {
+        try appendBuild(ctx.state, v, p.add);
+        v.package.updated_at = now;
+        try channel.rewrite(ctx.arena, ctx.state);
+        return;
+    }
     v.state = .published;
     v.published_at = now;
     v.package.state = .active;
@@ -515,22 +598,21 @@ pub fn latest(p: *const st.Package) ?[]const u8 {
 
 /// The compiler requirement from a build string `mojo<version>_<n>`.
 pub fn requiresMojo(arena: Allocator, filename: []const u8) Allocator.Error![]const u8 {
-    const stem = filename[0 .. filename.len - ".conda".len];
-    const dash = std.mem.lastIndexOfScalar(u8, stem, '-') orelse return ">=0";
-    const build = stem[dash + 1 ..];
-    if (!std.mem.startsWith(u8, build, "mojo")) return ">=0";
-    const under = std.mem.lastIndexOfScalar(u8, build, '_') orelse build.len;
-    if (under <= 4) return ">=0";
-    return std.fmt.allocPrint(arena, "=={s}", .{build[4..under]});
+    return builds.requiresMojo(arena, builds.buildOf(filename));
 }
 
-/// The 200 answer of getVersion: `body` as JSON, with `group_id` added when a group published the version and `source_commit` when the
-/// commit request had one. A key is absent, not null, when there is nothing to say.
-fn withGroupId(arena: Allocator, v: *const st.Version, body: anytype) Allocator.Error!Response {
+/// The 200 answer of getVersion: `body` as JSON, with `builds` (the JSON text of the array) added when the answer has it, `group_id`
+/// when a group published the version and `source_commit` when the commit request had one. A key is absent, not null, when there is
+/// nothing to say.
+fn withGroupId(arena: Allocator, v: *const st.Version, body: anytype, builds_json: ?[]const u8) Allocator.Error!Response {
     var r = try resp.json(arena, .ok, body);
-    if (v.group_id == null and v.source_commit == null) return r;
+    if (v.group_id == null and v.source_commit == null and builds_json == null) return r;
     var buf = std.ArrayList(u8).init(arena);
     try buf.appendSlice(r.body[0 .. r.body.len - 1]); // without the closing brace
+    if (builds_json) |j| {
+        try buf.appendSlice(",\"builds\":");
+        try buf.appendSlice(j);
+    }
     const extra = [_]struct { key: []const u8, value: ?[]const u8 }{
         .{ .key = "group_id", .value = v.group_id },
         .{ .key = "source_commit", .value = v.source_commit },
@@ -545,6 +627,32 @@ fn withGroupId(arena: Allocator, v: *const st.Version, body: anytype) Allocator.
     return r;
 }
 
+/// The `builds` of a getVersion answer under `/api/v2`: every build of `v`, sorted by compiler, with its files (no `url` once the
+/// version is taken down), as the JSON text of the array.
+fn buildsJson(ctx: *Ctx, p: *const st.Package, v: *const st.Version, all: []const builds.Build) Allocator.Error![]const u8 {
+    const FileRef = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64, url: ?[]const u8 };
+    const BuildRef = struct { build: []const u8, requires_mojo: []const u8, files: []const FileRef };
+    var refs = std.ArrayList(BuildRef).init(ctx.arena);
+    for (all) |b| {
+        var files = std.ArrayList(FileRef).init(ctx.arena);
+        for (b.files) |f| {
+            try files.append(.{
+                .subdir = f.subdir,
+                .filename = f.filename,
+                .sha256 = f.sha256,
+                .size = f.size,
+                .url = if (v.state == .tombstoned) null else try fileUrl(ctx.arena, ctx.state, p.name, f),
+            });
+        }
+        try refs.append(.{ .build = b.build, .requires_mojo = try builds.requiresMojo(ctx.arena, b.build), .files = files.items });
+    }
+    var buf = std.ArrayList(u8).init(ctx.arena);
+    std.json.stringify(refs.items, .{ .emit_null_optional_fields = false }, buf.writer()) catch return error.OutOfMemory;
+    return buf.items;
+}
+
+/// getVersion. `requires_mojo` and `files` are those of the version's primary build (the lowest compiler); under `/api/v2` the
+/// answer also lists every build in `builds`.
 pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     const p = switch (try target(ctx, params[0], params[1])) {
         .ok => |p| p,
@@ -572,12 +680,15 @@ pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         }
     };
     const provenance = Provenance{ .kind = if (v.provenance == null) "none" else "oidc", .repository = v.provenance };
-    const requires = try requiresMojo(ctx.arena, v.files[0].filename);
+    const all = try builds.of(ctx.arena, v.files);
+    const primary = all[0];
+    const requires = try builds.requiresMojo(ctx.arena, primary.build);
+    const builds_json: ?[]const u8 = if (ctx.v2) try buildsJson(ctx, p, v, all) else null;
 
     if (v.state == .tombstoned) {
         const BareFile = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64 };
         var bare = std.ArrayList(BareFile).init(ctx.arena);
-        for (v.files) |f| try bare.append(.{ .subdir = f.subdir, .filename = f.filename, .sha256 = f.sha256, .size = f.size });
+        for (primary.files) |f| try bare.append(.{ .subdir = f.subdir, .filename = f.filename, .sha256 = f.sha256, .size = f.size });
         return withGroupId(ctx.arena, v, .{
             .name = p.name,
             .version = v.version,
@@ -593,11 +704,11 @@ pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
             .manifest_sha256 = v.manifest_sha256,
             .readme_html = @as(?[]const u8, null),
             .provenance = provenance,
-        });
+        }, builds_json);
     }
     const FileRef = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64, url: []const u8 };
     var files = std.ArrayList(FileRef).init(ctx.arena);
-    for (v.files) |f| {
+    for (primary.files) |f| {
         try files.append(.{
             .subdir = f.subdir,
             .filename = f.filename,
@@ -620,7 +731,7 @@ pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .manifest_sha256 = v.manifest_sha256,
         .readme_html = @as(?[]const u8, null),
         .provenance = provenance,
-    }), v.readme);
+    }, builds_json), v.readme);
 }
 
 test "requires_mojo comes from the build string" {

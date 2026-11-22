@@ -45,22 +45,39 @@ pub struct HyperHttpClient {
 impl HyperHttpClient {
     /// A client that trusts the system's root certificates. A system with none is a fault.
     pub fn with_native_roots(max_body_bytes: usize) -> PortResult<Self> {
-        let config = tls_builder()?.with_native_roots().map_err(|e| PortError::fault(format!("no root certificates to trust: {e}")))?;
+        let config = tls_builder()?
+            .with_native_roots()
+            .map_err(|e| PortError::fault(format!("no root certificates to trust: {e}")))?;
         Ok(Self::from_config(config, max_body_bytes))
     }
 
     /// A client that trusts `roots` only.
     pub fn with_roots(roots: RootCertStore, max_body_bytes: usize) -> PortResult<Self> {
-        Ok(Self::from_config(tls_builder()?.with_root_certificates(roots), max_body_bytes))
+        Ok(Self::from_config(
+            tls_builder()?.with_root_certificates(roots),
+            max_body_bytes,
+        ))
     }
 
-    fn from_config(config: ConfigBuilder<ClientConfig, WantsClientCert>, max_body_bytes: usize) -> Self {
+    fn from_config(
+        config: ConfigBuilder<ClientConfig, WantsClientCert>,
+        max_body_bytes: usize,
+    ) -> Self {
         let mut tcp = HttpConnector::new();
         // The TLS layer above it takes the https:// URLs; HttpConnector alone would refuse them.
         tcp.enforce_http(false);
-        let https = HttpsConnectorBuilder::new().with_tls_config(config.with_no_client_auth()).https_only().enable_http1().wrap_connector(tcp);
-        let client = Client::builder(TokioExecutor::new()).pool_timer(TokioTimer::new()).build(https);
-        HyperHttpClient { client, max_body_bytes }
+        let https = HttpsConnectorBuilder::new()
+            .with_tls_config(config.with_no_client_auth())
+            .https_only()
+            .enable_http1()
+            .wrap_connector(tcp);
+        let client = Client::builder(TokioExecutor::new())
+            .pool_timer(TokioTimer::new())
+            .build(https);
+        HyperHttpClient {
+            client,
+            max_body_bytes,
+        }
     }
 }
 
@@ -68,7 +85,9 @@ impl HyperHttpClient {
 /// (TLS 1.3 and 1.2). rustls refuses a provider with no cipher suite for those versions; aws-lc-rs's default provider has
 /// suites for both, so that refusal is not expected here, and it would be a fault with rustls's message.
 fn tls_builder() -> PortResult<ConfigBuilder<ClientConfig, WantsVerifier>> {
-    ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider())).with_safe_default_protocol_versions().map_err(PortError::fault)
+    ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
+        .with_safe_default_protocol_versions()
+        .map_err(PortError::fault)
 }
 
 /// Refused before anything is sent. The message never repeats the URL or a header value.
@@ -78,7 +97,10 @@ fn refused(why: impl std::fmt::Display) -> PortError {
 
 /// The request as hyper sends it, and the `host:port` it goes to (for the log).
 fn build(req: HttpRequest) -> PortResult<(Request<Full<Bytes>>, String)> {
-    let uri: Uri = req.url.parse().map_err(|_| refused("the URL does not parse"))?;
+    let uri: Uri = req
+        .url
+        .parse()
+        .map_err(|_| refused("the URL does not parse"))?;
     match uri.scheme_str() {
         Some("https") => {}
         Some(other) => return Err(refused(format_args!("{other}:// is not https://"))),
@@ -94,8 +116,10 @@ fn build(req: HttpRequest) -> PortResult<(Request<Full<Bytes>>, String)> {
     };
     *out.uri_mut() = uri;
     for (name, value) in req.headers {
-        let header = HeaderName::from_bytes(name.as_bytes()).map_err(|_| refused(format_args!("{name:?} is not a header name")))?;
-        let value = HeaderValue::from_bytes(value.as_bytes()).map_err(|_| refused(format_args!("the value of header {header} is not valid")))?;
+        let header = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| refused(format_args!("{name:?} is not a header name")))?;
+        let value = HeaderValue::from_bytes(value.as_bytes())
+            .map_err(|_| refused(format_args!("the value of header {header} is not valid")))?;
         out.headers_mut().append(header, value);
     }
     Ok((out, target))
@@ -130,23 +154,51 @@ fn causes(e: &(dyn StdError + 'static)) -> String {
 }
 
 fn no_answer(target: &str, e: &(dyn StdError + 'static)) -> PortError {
-    let failure = if is_tls(e) { HttpFailure::Tls } else { HttpFailure::Connect };
-    HttpError { failure, detail: format!("{target}: {}", causes(e)) }.into()
+    let failure = if is_tls(e) {
+        HttpFailure::Tls
+    } else {
+        HttpFailure::Connect
+    };
+    HttpError {
+        failure,
+        detail: format!("{target}: {}", causes(e)),
+    }
+    .into()
 }
 
 impl HyperHttpClient {
     async fn exchange(&self, req: Request<Full<Bytes>>, target: &str) -> PortResult<HttpResponse> {
-        let response = self.client.request(req).await.map_err(|e| no_answer(target, &e))?;
+        let response = self
+            .client
+            .request(req)
+            .await
+            .map_err(|e| no_answer(target, &e))?;
         let (parts, body) = response.into_parts();
         let body = match Limited::new(body, self.max_body_bytes).collect().await {
             Ok(collected) => collected.to_bytes().to_vec(),
             Err(e) if e.is::<LengthLimitError>() => {
-                return Err(PortError::fault(format!("{target}: the response body is longer than {} bytes", self.max_body_bytes)));
+                return Err(PortError::fault(format!(
+                    "{target}: the response body is longer than {} bytes",
+                    self.max_body_bytes
+                )));
             }
             Err(e) => return Err(no_answer(target, &*e)),
         };
-        let headers = parts.headers.iter().map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect();
-        Ok(HttpResponse { status: parts.status.as_u16(), headers, body })
+        let headers = parts
+            .headers
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                )
+            })
+            .collect();
+        Ok(HttpResponse {
+            status: parts.status.as_u16(),
+            headers,
+            body,
+        })
     }
 }
 
@@ -156,7 +208,11 @@ impl HttpClient for HyperHttpClient {
         let (request, target) = build(req)?;
         match tokio::time::timeout(timeout, self.exchange(request, &target)).await {
             Ok(answer) => answer,
-            Err(_) => Err(HttpError { failure: HttpFailure::Timeout, detail: format!("{target}: no whole answer within {timeout:?}") }.into()),
+            Err(_) => Err(HttpError {
+                failure: HttpFailure::Timeout,
+                detail: format!("{target}: no whole answer within {timeout:?}"),
+            }
+            .into()),
         }
     }
 }

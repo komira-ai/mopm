@@ -19,9 +19,15 @@ A `.mojoc` is tied to one Mojo version: output of 1.0 does not load in 1.1.
 So the Mojo version is part of what a unit is.
 
 - `mopm.toml` lists the exact compiler versions a package builds for:
-  `[package] mojo = ["1.0.0", "1.1.0"]` (a string is one version). `mopm
-  publish` builds one `.mojoc` per listed version and uploads all of them under
-  one package version. The older `[toolchain] mojo` is read too, as
+  `[package] mojo = ["1.0.0", "1.1.0"]` (a string is one version). A package
+  version on the registry has one build per Mojo version (`channel.md`,
+  "Package naming"): `mopm stage` takes one `.mojoc` for each compiler and
+  stages them as the builds of one version (`staged-set.md`), and a build for
+  another Mojo can be added later to a published version, from the same
+  source (a version that a group published takes it through `mopm stage`;
+  `mopm publish` takes one `--compiler` for each run and adds only to a version
+  that a single publish made).
+  The older `[toolchain] mojo` is read too, as
   alternatives (a lock is made for the first that resolves); setting both is an
   error.
 - A **unit id** is `<full name>@<version>#mojo<M>/<mode>[:<file>]`, for example
@@ -40,7 +46,9 @@ So the Mojo version is part of what a unit is.
 - `mopm lock` resolves once for each listed Mojo version and takes, for each
   dependency, the newest version in range that has a build for that Mojo. A
   version mopm pins no toolchain for cannot be listed: `mopm lock` stops with
-  `mopm has no pinned toolchain for mojo <M> on <subdir> (it pins <list>)`.
+  `mopm has no pinned toolchain for mojo <M> on <subdir> (it pins <list>)`;
+  this mopm pins Mojo 1.0.0, 1.1.0 and 1.2.0, so `<list>` is
+  `mojo 1.0.0, 1.1.0, 1.2.0 on linux-64, linux-aarch64 and osx-arm64`.
   If no acceptable version has a build for `M`, it stops, writing no lock,
   with
 

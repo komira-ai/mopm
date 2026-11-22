@@ -34,14 +34,21 @@ impl Headers {
     /// The value of `name` when the request carries exactly one field of that name. Two fields of one name
     /// answer `None`, so a check never picks one of them.
     pub fn get(&self, name: &str) -> Option<&str> {
-        let mut values = self.0.iter().filter(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str());
+        let mut values = self
+            .0
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str());
         let first = values.next()?;
         values.next().is_none().then_some(first)
     }
 
     /// Every value of `name`, in the order received.
     pub fn all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        self.0.iter().filter(move |(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.0
+            .iter()
+            .filter(move |(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     /// Whether the request carries any field named `name`.
@@ -71,7 +78,10 @@ pub fn parse_cookie_header(header: &str) -> Vec<Cookie> {
         .filter_map(|piece| {
             let (name, value) = piece.split_once('=')?;
             let name = name.trim();
-            (!name.is_empty()).then(|| Cookie { name: name.to_string(), value: value.trim().to_string() })
+            (!name.is_empty()).then(|| Cookie {
+                name: name.to_string(),
+                value: value.trim().to_string(),
+            })
         })
         .collect()
 }
@@ -96,7 +106,15 @@ pub struct WebRequest {
 impl WebRequest {
     /// A request with no query, headers, cookies or body.
     pub fn new(method: Method, path: &str, request_id: &str) -> WebRequest {
-        WebRequest { method, path: path.to_string(), query: Vec::new(), headers: Headers::default(), cookies: Vec::new(), body: Vec::new(), request_id: request_id.to_string() }
+        WebRequest {
+            method,
+            path: path.to_string(),
+            query: Vec::new(),
+            headers: Headers::default(),
+            cookies: Vec::new(),
+            body: Vec::new(),
+            request_id: request_id.to_string(),
+        }
     }
 
     /// Adds a header field.
@@ -125,7 +143,11 @@ impl WebRequest {
 
     /// The value of the query parameter `name` when the query has it exactly once; two answer `None`.
     pub fn query_param(&self, name: &str) -> Option<&str> {
-        let mut values = self.query.iter().filter(|(n, _)| n == name).map(|(_, v)| v.as_str());
+        let mut values = self
+            .query
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str());
         let first = values.next()?;
         values.next().is_none().then_some(first)
     }
@@ -159,7 +181,10 @@ mod tests {
         h.push("Origin", "https://a.example");
         h.push("origin", "https://b.example");
         assert_eq!(h.get("origin"), None);
-        assert_eq!(h.all("ORIGIN").collect::<Vec<_>>(), vec!["https://a.example", "https://b.example"]);
+        assert_eq!(
+            h.all("ORIGIN").collect::<Vec<_>>(),
+            vec!["https://a.example", "https://b.example"]
+        );
     }
 
     #[test]
@@ -172,14 +197,23 @@ mod tests {
     #[test]
     fn a_cookie_header_is_split_into_pairs_in_order() {
         let c = parse_cookie_header(" a=1 ;b = 2;  c=x=y ; d=\"q\"");
-        let pairs: Vec<(&str, &str)> = c.iter().map(|c| (c.name.as_str(), c.value.as_str())).collect();
-        assert_eq!(pairs, vec![("a", "1"), ("b", "2"), ("c", "x=y"), ("d", "\"q\"")]);
+        let pairs: Vec<(&str, &str)> = c
+            .iter()
+            .map(|c| (c.name.as_str(), c.value.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![("a", "1"), ("b", "2"), ("c", "x=y"), ("d", "\"q\"")]
+        );
     }
 
     #[test]
     fn pieces_without_a_name_or_an_equals_sign_are_no_cookie() {
         let c = parse_cookie_header("novalue; =orphan; ;  ; e=");
-        let pairs: Vec<(&str, &str)> = c.iter().map(|c| (c.name.as_str(), c.value.as_str())).collect();
+        let pairs: Vec<(&str, &str)> = c
+            .iter()
+            .map(|c| (c.name.as_str(), c.value.as_str()))
+            .collect();
         assert_eq!(pairs, vec![("e", "")]);
         assert!(parse_cookie_header("").is_empty());
     }
@@ -202,7 +236,10 @@ mod tests {
 
     #[test]
     fn a_query_parameter_is_read_only_when_it_is_there_once() {
-        let r = WebRequest::new(Method::Get, "/", "r").with_query("state", "a").with_query("code", "1").with_query("code", "2");
+        let r = WebRequest::new(Method::Get, "/", "r")
+            .with_query("state", "a")
+            .with_query("code", "1")
+            .with_query("code", "2");
         assert_eq!(r.query_param("state"), Some("a"));
         assert_eq!(r.query_param("code"), None);
         assert_eq!(r.query_param("missing"), None);

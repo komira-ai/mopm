@@ -231,6 +231,40 @@ fn testing(cx: *Cx) !void {
 
 const stand_in = "stand-in for the output of `mojo precompile`\n";
 
+/// The package metadata of a packed .conda (`lib/mojo/<import name>.mopm.json`), with its `source_sha256` apart from the
+/// rest. A .conda stores its entries and mopm's zstd frames are raw blocks, so the metadata's bytes are in the file as
+/// they are.
+const Metadata = struct { without_digest: []const u8, digest: []const u8 };
+
+fn metadataOf(a: Allocator, conda: []const u8) !?Metadata {
+    const start = std.mem.indexOf(u8, conda, "{\"deps\":[") orelse return null;
+    const tail = "\"version\":\"";
+    const version = std.mem.indexOfPos(u8, conda, start, tail) orelse return null;
+    const end = std.mem.indexOfPos(u8, conda, version + tail.len, "\"}") orelse return null;
+    const text = conda[start .. end + 2];
+    const key = ",\"source_sha256\":\"";
+    const at = std.mem.indexOf(u8, text, key) orelse return .{ .without_digest = text, .digest = "" };
+    const digest_end = at + key.len + 64;
+    if (digest_end >= text.len or text[digest_end] != '"') return null;
+    return .{ .without_digest = try std.mem.concat(a, u8, &.{ text[0..at], text[digest_end + 1 ..] }), .digest = text[at + key.len .. digest_end] };
+}
+
+fn isDigest(s: []const u8) bool {
+    if (s.len != 64) return false;
+    for (s) |c| {
+        if (!isHexLower(c)) return false;
+    }
+    return true;
+}
+
+/// The library directory of examples/publish in the variant `dir` of the copy: a package with no library directory
+/// carries no source digest, and the variants are compared with the example by what they say apart from that digest.
+fn withSources(cx: *Cx, dir: []const u8) !void {
+    try cx.put(try h.join(cx.a, &.{ dir, "src", "slug", "__init__.mojo" }), try cx.committed("publish/src/slug/__init__.mojo"));
+}
+
+const conda_path = "dist/linux-64/mojo-example.slug-1.2.0-mojo1.0.0_0.conda";
+
 fn publish(cx: *Cx) !void {
     try cx.put("publish/slug.mojoc", stand_in);
     const pack = try cx.run("publish", &.{ "pack", "--compiler", "1.0.0", "--mojoc", "linux-64=slug.mojoc", "-o", "dist" });
@@ -238,12 +272,19 @@ fn publish(cx: *Cx) !void {
     cx.rep.same("publish: mopm pack names the file and its digests", try cx.committed("publish/expected/pack.txt"), try scrub(cx.a, pack.stdout));
     const conda = try cx.copied("publish/dist/linux-64/mojo-example.slug-1.2.0-mojo1.0.0_0.conda");
     cx.rep.check("publish: the .conda is written where pack said", conda.len > 0, "empty");
+    const meta = try metadataOf(cx.a, conda);
+    cx.rep.check("publish: the package metadata carries the sha256 of the manifest and the sources", meta != null and isDigest(meta.?.digest), "no source_sha256 in the metadata");
+    for ([_][]const u8{ "Turn a title into a URL slug", "Apache-2.0", "https://github.com/example/slug" }) |shown| {
+        cx.rep.check(try cx.fmt("publish: the .conda does not hold the display field '{s}'", .{shown}), !h.contains(conda, shown), "the package file holds it");
+    }
 
     const dry = try cx.run("publish", &.{ "publish", "--compiler", "1.0.0", "--mojoc", "linux-64=slug.mojoc", "--dry-run", "--registry", dead_registry });
     cx.rep.check("publish: --dry-run exits 0 with no registry", dry.code == 0 and dry.stderr.len == 0, try cx.fmt("exit {d}: {s}", .{ dry.code, dry.stderr }));
     cx.rep.same("publish: --dry-run says what it would send", try cx.committed("publish/expected/publish-dry-run.txt"), try scrub(cx.a, dry.stdout));
 
-    // The display fields are not part of the package file: without description, license and repository, the same file.
+    // The display fields are not part of the package file: without description, license and repository, the same
+    // metadata (the same dependencies and natives) and a package file of the same size. The digest of the manifest and
+    // the sources is the one thing that differs, as the manifest is one of the files it covers.
     var plain = try cx.committed("publish/mopm.toml");
     for ([_][]const u8{ "description = \"Turn a title into a URL slug\"\n", "license = \"Apache-2.0\"\n", "repository = \"https://github.com/example/slug\"\n" }) |line| {
         if (!h.contains(plain, line)) cx.rep.check("publish: the manifest holds the display field line", false, line);
@@ -251,8 +292,13 @@ fn publish(cx: *Cx) !void {
     }
     try cx.put("publish_plain/mopm.toml", plain);
     try cx.put("publish_plain/slug.mojoc", stand_in);
+    try withSources(cx, "publish_plain");
     const bare = try cx.run("publish_plain", &.{ "pack", "--compiler", "1.0.0", "--mojoc", "linux-64=slug.mojoc", "-o", "dist" });
-    cx.rep.check("publish: pack does not send description, license or repository (the digests are the same without them)", bare.code == 0 and std.mem.eql(u8, bare.stdout, pack.stdout), try cx.fmt("exit {d}: {s}\n--- with\n{s}", .{ bare.code, bare.stdout, pack.stdout }));
+    const bare_conda = try cx.copied("publish_plain/" ++ conda_path);
+    const bare_meta = try metadataOf(cx.a, bare_conda);
+    cx.rep.check("publish: pack does not send description, license or repository (the same package metadata without them)", bare.code == 0 and bare.stderr.len == 0 and
+        meta != null and bare_meta != null and isDigest(bare_meta.?.digest) and std.mem.eql(u8, meta.?.without_digest, bare_meta.?.without_digest) and
+        bare_conda.len == conda.len and std.mem.eql(u8, try scrub(cx.a, bare.stdout), try scrub(cx.a, pack.stdout)), try cx.fmt("exit {d}: {s}{s}\n--- with\n{s}", .{ bare.code, bare.stdout, bare.stderr, pack.stdout }));
 
     // What pack refuses, each with the one change that makes the example refuse it.
     const args = [_][]const u8{ "pack", "--compiler", "1.0.0", "--mojoc", "linux-64=slug.mojoc", "-o", "dist" };
@@ -266,8 +312,14 @@ fn publish(cx: *Cx) !void {
     try cx.put("text_tools/mopm.toml", "[package]\nname = \"example/text_tools\"\nversion = \"0.3.4\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
     try cx.variant("publish_pathver", "publish/mopm.toml", "\"example/text_tools\" = \"0.3\"", "\"example/text_tools\" = { path = \"../text_tools\", version = \"0.3\" }");
     try cx.put("publish_pathver/slug.mojoc", stand_in);
+    try withSources(cx, "publish_pathver");
     const pathver = try cx.run("publish_pathver", &args);
-    cx.rep.check("publish: pack of a dependency with a path and a version makes the package of the version alone", pathver.code == 0 and pathver.stderr.len == 0 and std.mem.eql(u8, pathver.stdout, pack.stdout), try cx.fmt("exit {d}: {s}{s}\n--- version alone\n{s}", .{ pathver.code, pathver.stdout, pathver.stderr, pack.stdout }));
+    const pathver_conda = try cx.copied("publish_pathver/" ++ conda_path);
+    const pathver_meta = try metadataOf(cx.a, pathver_conda);
+    cx.rep.check("publish: pack of a dependency with a path and a version makes the package of the version alone", pathver.code == 0 and pathver.stderr.len == 0 and
+        meta != null and pathver_meta != null and isDigest(pathver_meta.?.digest) and std.mem.eql(u8, meta.?.without_digest, pathver_meta.?.without_digest) and
+        h.contains(pathver_meta.?.without_digest, "{\"name\":\"example/text_tools\",\"range\":\">=0.3,<0.4\"}") and
+        pathver_conda.len == conda.len and std.mem.eql(u8, try scrub(cx.a, pathver.stdout), try scrub(cx.a, pack.stdout)), try cx.fmt("exit {d}: {s}{s}\n--- version alone\n{s}", .{ pathver.code, pathver.stdout, pathver.stderr, pack.stdout }));
     // The package at the path must be a version the requirement accepts.
     try cx.variant("publish_pathver_old", "publish/mopm.toml", "\"example/text_tools\" = \"0.3\"", "\"example/text_tools\" = { path = \"../text_tools\", version = \"0.4\" }");
     try cx.put("publish_pathver_old/slug.mojoc", stand_in);
@@ -289,9 +341,9 @@ fn toolchain(cx: *Cx) !void {
     const plan = try cx.run("toolchain", &.{ "plan", "--unit-graph", "--locked" });
     cx.rep.check("toolchain: mopm plan prints the unit graph of the lock", plan.code == 0 and h.contains(plan.stdout, "\"unit_graph\": 6") and h.contains(plan.stdout, "\"id\": \"example/pinned@0.1.0#mojo1.0.0/lib\"") and h.contains(plan.stdout, "\"closure_sha256\": \""), try cx.fmt("exit {d}: {s}{s}", .{ plan.code, plan.stdout, plan.stderr }));
     // A Mojo version mopm pins no toolchain for cannot be listed.
-    try cx.variant("toolchain_unpinned", "toolchain/mopm.toml", "mojo = [\"1.0.0\"]", "mojo = [\"1.0.0\", \"1.1.0\"]");
+    try cx.variant("toolchain_unpinned", "toolchain/mopm.toml", "mojo = [\"1.0.0\"]", "mojo = [\"1.0.0\", \"1.3.0\"]");
     try cx.put("toolchain_unpinned/src/pinned/__init__.mojo", try cx.committed("toolchain/src/pinned/__init__.mojo"));
-    try cx.refuses("toolchain: a Mojo version with no pinned toolchain is refused at lock", "toolchain_unpinned", &.{ "lock", "--registry", dead_registry }, 1, "mopm has no pinned toolchain for mojo 1.1.0");
+    try cx.refuses("toolchain: a Mojo version with no pinned toolchain is refused at lock", "toolchain_unpinned", &.{ "lock", "--registry", dead_registry }, 1, "mopm has no pinned toolchain for mojo 1.3.0");
     // The two forms of the pin are not mixed.
     try cx.variant("toolchain_both", "toolchain/mopm.toml", "[targets]", "[toolchain]\nmojo = \"1.0.0\"\n\n[targets]");
     try cx.refuses("toolchain: [package] mojo and [toolchain] together are refused", "toolchain_both", &.{"metadata"}, 1, "mojo is set in [package] and in [toolchain]; keep [package] mojo");

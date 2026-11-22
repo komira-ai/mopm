@@ -444,6 +444,8 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     const mono_manifest = try h.join(a, &.{ work, "mono", "app", "mopm.toml" });
     try h.writeFile(mono_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\n\"example/util\" = { path = \"../util\", version = \"0.3\" }\n"));
     try h.writeFile(try h.join(a, &.{ work, "mono", "util", "mopm.toml" }), try tomlText(a, "util", "0.3.4", ""));
+    // The package has its library directory, so pack has a source digest to write and nothing to say about it.
+    try h.writeFile(try h.join(a, &.{ work, "mono", "app", "src", "pubdemo", "lib.mojo" }), "def f(): pass\n");
     r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", mono_manifest, "--registry", dead, "--config-dir", conf, "--dry-run" }, null);
     rep.check("a path dependency is read beside the manifest named, from any directory", r.code == 0 and h.contains(r.stdout, "would commit example/pubdemo 0.1.0") and r.stderr.len == 0, try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     const other_manifest = try h.join(a, &.{ work, "mono_other", "app", "mopm.toml" });

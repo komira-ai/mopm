@@ -481,6 +481,24 @@ describe.each(RIGS)('the group validator: %s', (_label, make) => {
       expect((await s.header())).toMatchObject({ status: 'failed', failure: { code: 'limit_exceeded', member: 'beta' } });
       expect((await s.row('alpha'))!.state).toBe('tombstoned');
     });
+
+    test('counts what a reader sees: the added build of a taken-down version is gone with it, so the group still commits', async () => {
+      const full = new GroupEnv(make(), { projectQuotaBytes: 1_000_000 });
+      const s = await new Scenario(full, [{ name: 'alpha' }, { name: 'beta' }]).start();
+      const put = full.objects.put.bind(full.objects);
+      full.objects.put = async (k, body, opts) => {
+        // While the files are copied, a version of beta that had an added build is taken down.
+        if (k === `noarch/${s.pkgs[1]!.filename}`) {
+          const at = { name: 'beta', ts: '2026-10-14T00:00:00Z', actor: 'test', action: 'seed' };
+          const file = (filename: string) => ({ subdir: 'noarch', filename, sha256: 'a'.repeat(64), size: 999_999 });
+          const base = { name: 'beta', version: '0.9.0', canonical: '0.9.0', build: 'mojo1.0.0_0', state: 'published' as const, published_at: '2026-10-14T00:00:00Z', requires_mojo: '==1.0.0', deps: [], native: [], files: [file('mojo-beta-0.9.0-mojo1.0.0_0.conda')], manifest_sha256: 'f'.repeat(64), rev: 0 };
+          await full.rig.store.createVersion({ ...base, state: 'tombstoned', files: [{ ...base.files[0]!, size: 1 }] }, { ...at, id: 'seed1' });
+          await full.rig.store.createVersion({ ...base, canonical: '0.9.0+mojo1.1.0_0', build: 'mojo1.1.0_0', requires_mojo: '==1.1.0', files: [file('mojo-beta-0.9.0-mojo1.1.0_0.conda')], rev: 1 }, { ...at, id: 'seed2' });
+        }
+        return put(k, body, opts);
+      };
+      expect(await s.runAll()).toEqual(['committed']);
+    });
   });
 });
 

@@ -1,0 +1,33 @@
+[package]
+name = "fn_tutorial_sandbox"
+description = "The tutorial-sandbox Lambda: POST /api/v2/tutorial/sandbox, a signed-in browser's sandbox on E2B (see README.md)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "fn_tutorial_sandbox"
+path = "src/main.rs"
+
+[dependencies]
+mopm_aws.workspace = true
+mopm_core.workspace = true
+mopm_e2b.workspace = true
+mopm_ports.workspace = true
+mopm_web.workspace = true
+aws_lambda_events.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-secretsmanager.workspace = true
+jiff.workspace = true
+lambda_runtime.workspace = true
+serde_dynamo.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+mopm_testing.workspace = true

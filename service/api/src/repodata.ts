@@ -1,3 +1,4 @@
+import { buildOfFile, requiresMojoOf } from './builds';
 import { canonicalJson } from './canonical-json';
 import { condaNameOf } from './names';
 import type { Subdir, VersionRecord } from './types';
@@ -33,13 +34,18 @@ interface Entry {
  */
 const depSpec = (d: { name: string; range?: string }) => (d.range ? `${condaNameOf(d.name)} ${d.range}` : condaNameOf(d.name));
 
-function dependsOf(r: VersionRecord): string[] {
+/**
+ * The conda requirements of one file: the compiler of the file's own build, then what every build of the version shares
+ * (the dependencies and the system libraries). `requires` is the compiler requirement of the file's build.
+ */
+function dependsOf(r: VersionRecord, requires: string): string[] {
   const specs = [
-    `${COMPILER_PACKAGE} ${r.requires_mojo}`,
+    `${COMPILER_PACKAGE} ${requires}`,
     ...r.deps.map(depSpec),
     // The system libraries the package loads, exactly as its index.json requires them. The libraries it ships (`native`) are
     // not conda packages and are never named here.
-    ...(r.native_depends ?? []),  ];
+    ...(r.native_depends ?? []),
+  ];
   return [...new Set(specs)].sort();
 }
 
@@ -48,7 +54,8 @@ function dependsOf(r: VersionRecord): string[] {
  * only (src/channel-paths.ts): a namespace's packages, or the flat names at the root. A pure function of the records: `published`
  * records of the subdir are listed under `packages.conda`; `yanked` ones leave it and are listed under
  * `removed` (the files stay downloadable), and so do `tombstoned` ones (their bytes are gone; the name
- * tells a client the file was withdrawn); `pending` records appear nowhere. The
+ * tells a client the file was withdrawn); `pending` records appear nowhere. A version with several builds (one per
+ * Mojo compiler) lists each file under its own build, which pins the compiler that build was made with. The
  * input order does not matter and nothing time-dependent is written.
  */
 export function buildRepodataJson(subdir: Subdir, records: readonly VersionRecord[]): string {
@@ -65,10 +72,12 @@ export function buildRepodataJson(subdir: Subdir, records: readonly VersionRecor
         removed.push(f.filename);
         continue;
       }
+      // The build of a file is the end of its name; the row's own build stands for a name that does not carry one.
+      const build = buildOfFile(r.name, r.version, f.filename) ?? r.build;
       conda.set(f.filename, {
-        build: r.build,
+        build,
         build_number: 0,
-        depends: dependsOf(r),
+        depends: dependsOf(r, build === r.build ? r.requires_mojo : requiresMojoOf(build)),
         name: condaNameOf(r.name),
         sha256: f.sha256,
         size: f.size,

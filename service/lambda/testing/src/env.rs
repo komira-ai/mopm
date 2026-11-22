@@ -10,7 +10,9 @@ pub struct FixedClock(Mutex<Timestamp>);
 
 impl FixedClock {
     pub fn at_millis(ms: i64) -> Self {
-        FixedClock(Mutex::new(Timestamp::from_millisecond(ms).expect("a representable time")))
+        FixedClock(Mutex::new(
+            Timestamp::from_millisecond(ms).expect("a representable time"),
+        ))
     }
 
     fn lock(&self) -> MutexGuard<'_, Timestamp> {

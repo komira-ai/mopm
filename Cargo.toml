@@ -13,7 +13,9 @@ members = [
     "service/lambda/aws",
     "service/lambda/core",
     "service/lambda/e2b",
+    "service/lambda/fn_tutorial_sandbox",
     "service/lambda/fn_web_login",
+    "service/lambda/fn_web_session",
     "service/lambda/ports",
     "service/lambda/testing",
     "service/lambda/validate",
@@ -83,6 +85,7 @@ unicode-normalization = "0.1"
 # The workspace's own crates.
 mopm_aws = { path = "service/lambda/aws" }
 mopm_core = { path = "service/lambda/core" }
+mopm_e2b = { path = "service/lambda/e2b" }
 mopm_ports = { path = "service/lambda/ports" }
 mopm_testing = { path = "service/lambda/testing" }
 mopm_web = { path = "service/lambda/web" }
@@ -106,8 +109,11 @@ strip = "debuginfo"
 [workspace.metadata.buildrules]
 default-action = "ci"
 
+# `//:ci` builds `//:fmt` (the pinned rustfmt with its defaults, as there is no rustfmt.toml: red on any difference),
+# `//:lint` (clippy over every lib, bin and test target, with `-D warnings`: red on any clippy or rustc warning) and
+# `//:test`. Build scripts are not linted (buildrules' `:lint`, like `cargo clippy`).
 [workspace.metadata.buildrules.actions]
-ci = ["lint", "test"]
+ci = ["fmt", "lint", "test"]
 
 [workspace.metadata.buildrules.lint]
-deny-warnings = false
+deny-warnings = true

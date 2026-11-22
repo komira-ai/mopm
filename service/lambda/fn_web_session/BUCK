@@ -1,0 +1,67 @@
+# fn_web_session: the website's web-session Lambda (GET /api/v2/auth/web/session and POST /api/v2/auth/web/logout), the
+# library and the executable `fn_web_session` (`bootstrap` in the deployment package). Built from Cargo.toml by buildrules'
+# cargo_package. See README.md.
+#
+#   :release   the function's executable
+#   :test      the unit tests of the library, and the integration tests (the process entry against fake Lambda runtime API,
+#              DynamoDB and Secrets Manager on loopback; the executable run as a process), one marker each
+#   :lint      clippy, -D warnings
+#   :fmt       rustfmt
+#
+# The cold-start test reads the stage_settings item as the API stack writes it (service/lambda/web/tests/fixtures/
+# stage_settings_item.json, which the stack's own test is held to) with `include_str!`; the tests read this package's token
+# and user rows (tests/fixtures) the same way. `extra_srcs` makes them inputs.
+load("@buildrules//rules/zig:zig.bzl", "zig_test")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("//:buildrules.bzl", "cargo_package")
+load("//tools/lambda:lambda.bzl", "lambda_zip")
+
+export_file(
+    name = "web_session_tokens.json",
+    src = "tests/fixtures/web_session_tokens.json",
+    mode = "reference",
+)
+
+export_file(
+    name = "web_session_users.json",
+    src = "tests/fixtures/web_session_users.json",
+    mode = "reference",
+)
+
+cargo_package(
+    path = ".",
+    extra_srcs = [
+        "//service/lambda/web:stage_settings_item.json",
+        ":web_session_tokens.json",
+        ":web_session_users.json",
+    ],
+)
+
+# ---- Packaging and end-to-end
+#
+#   :e2e_test   runs the release executable against a loopback server that plays the Lambda runtime API, DynamoDB and Secrets
+#               Manager, and holds its answer to one session event and the calls it made
+#   :zip        the deployment package; not built unless :test and :e2e_test passed on that binary
+zig_test(
+    name = "e2e_test",
+    src = "e2e_test.zig",
+    env_tools = {"BOOTSTRAP": ":release"},
+    busybox = "buildrules//rules/pins:busybox",
+    exec_compatible_with = LINUX_X86_64,
+    zig = "buildrules//rules/pins:zig",
+)
+
+lambda_zip(
+    name = "zip",
+    bootstrap = ":release",
+    welded_tests = [":e2e_test", ":test"],
+    visibility = ["PUBLIC"],
+)
+
+# This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"]) + [],
+    copy = True,
+    visibility = ["//:"],
+)

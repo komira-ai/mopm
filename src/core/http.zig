@@ -14,6 +14,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const tls_connect = @import("tls_connect.zig");
 
 /// The longest a connection may take to be made, and the longest a read or a write may wait for the server.
 pub const default_timeout_secs: u32 = 30;
@@ -99,10 +100,23 @@ fn requestOnce(arena: Allocator, method: std.http.Method, url: []const u8, optio
     if (options.timeout_secs > 0) try probeConnect(url, options.timeout_secs);
     var client = std.http.Client{ .allocator = arena };
     defer client.deinit();
+    return exchange(arena, &client, method, url, options);
+}
+
+/// One request on `client`. An `https` connection is made by tls_connect.zig, so the handshake's own error is kept; the
+/// client reads the system's certificates for it once.
+fn exchange(arena: Allocator, client: *std.http.Client, method: std.http.Method, url: []const u8, options: Options) !Answer {
     const uri = try std.Uri.parse(url);
     var header_buf: [16 * 1024]u8 = undefined;
     const authorization: ?[]const u8 = if (options.token) |t| try std.fmt.allocPrint(arena, "Bearer {s}", .{t}) else null;
-    var req = try client.open(method, uri, .{
+    // The scheme is compared as the client compares it (exactly), so a URL the client refuses makes no connection.
+    const tls_conn: ?*std.http.Client.Connection = if (std.mem.eql(u8, uri.scheme, "https")) blk: {
+        const hp = hostPort(url) orelse break :blk null;
+        try tls_connect.loadCertificates(client);
+        break :blk try tls_connect.connect(client, hp.host, hp.port);
+    } else null;
+    var req = client.open(method, uri, .{
+        .connection = tls_conn,
         .server_header_buffer = &header_buf,
         .keep_alive = false,
         .headers = .{
@@ -111,7 +125,12 @@ fn requestOnce(arena: Allocator, method: std.http.Method, url: []const u8, optio
             .user_agent = .{ .override = "mopm" },
         },
         .extra_headers = options.extra_headers,
-    });
+    }) catch |e| {
+        // A Request owns the connection from when `open` returns it; before that, nothing does, and the client must not
+        // be given back with a connection in use.
+        if (tls_conn) |c| tls_connect.release(client, c);
+        return e;
+    };
     defer req.deinit();
     if (options.timeout_secs > 0) try setSocketTimeouts(req.connection.?.stream.handle, options.timeout_secs);
     if (options.body) |b| req.transfer_encoding = .{ .content_length = b.len };
@@ -227,13 +246,18 @@ pub fn retryableAnswer(a: Answer) bool {
 }
 
 /// Whether a request that ended in `e` may succeed when repeated: the connection broke, was refused or reset, the
-/// name server failed for now, or the time limit ran out. An error of the request itself (a bad URL, a body too long) is not.
+/// name server failed for now, the time limit ran out, or TLS failed on the connection. An error of the request itself
+/// (a bad URL, a body too long) is not, and neither is a certificate the handshake rejected (tls_connect.zig: it
+/// keeps its own error, such as `CertificateHostMismatch` or `TlsCertificateNotVerified`, none of them listed here). Every
+/// other failure of the TLS handshake is `TlsInitializationFailed` (the peer closed or reset the connection, or sent
+/// something that could not be read), and a TLS record that could not be read after it is `TlsFailure`.
 pub fn retryableError(e: anyerror) bool {
     const name = @errorName(e);
     const transient = [_][]const u8{
-        "RequestTimedOut",        "ConnectTimedOut",      "ConnectionRefused",     "ConnectionResetByPeer", "ConnectionTimedOut",
-        "NetworkUnreachable",     "BrokenPipe",           "EndOfStream",           "TemporaryNameServerFailure", "UnexpectedConnectFailure",
-        "UnexpectedReadFailure",  "UnexpectedWriteFailure", "TlsConnectionTruncated", "TlsAlert",
+        "RequestTimedOut",       "ConnectTimedOut",        "ConnectionRefused",      "ConnectionResetByPeer",      "ConnectionTimedOut",
+        "NetworkUnreachable",    "BrokenPipe",             "EndOfStream",            "TemporaryNameServerFailure", "UnexpectedConnectFailure",
+        "UnexpectedReadFailure", "UnexpectedWriteFailure", "TlsConnectionTruncated", "TlsAlert",                   "TlsInitializationFailed",
+        "TlsFailure",
     };
     for (transient) |t| {
         if (std.mem.eql(u8, name, t)) return true;
@@ -470,6 +494,66 @@ test "a broken connection, a refusal and a timeout are retried; an error of the 
     try std.testing.expectEqual(@as(usize, 3), last.calls);
 }
 
+test "a TLS handshake that did not finish and a TLS record that could not be read are retried" {
+    var io = ScriptedIo{ .results = &.{ error.TlsInitializationFailed, error.TlsFailure, answerWith(200, null) } };
+    const got = try retrying(std.testing.allocator, &io, .PUT, "https://x/", .{}, .{ .retries = 3 });
+    try std.testing.expectEqual(@as(u16, 200), got.status);
+    try std.testing.expectEqual(@as(usize, 3), io.calls);
+    try std.testing.expectEqual(@as(usize, 2), io.pauses);
+
+    // Still bounded: a handshake that keeps failing comes back as itself after the last retry.
+    var always = ScriptedIo{ .results = &.{error.TlsInitializationFailed} };
+    try std.testing.expectError(error.TlsInitializationFailed, retrying(std.testing.allocator, &always, .PUT, "https://x/", .{}, .{ .retries = 2 }));
+    try std.testing.expectEqual(@as(usize, 3), always.calls);
+
+    // And never for a request that is not idempotent.
+    var post = ScriptedIo{ .results = &.{ error.TlsInitializationFailed, answerWith(200, null) } };
+    try std.testing.expectError(error.TlsInitializationFailed, retrying(std.testing.allocator, &post, .POST, "https://x/", .{}, .{}));
+    try std.testing.expectEqual(@as(usize, 1), post.calls);
+}
+
+test "a rejected certificate is reported at once: neither a wrong name nor an untrusted chain is retried" {
+    for ([_]anyerror{ error.CertificateHostMismatch, error.TlsCertificateNotVerified, error.CertificateExpired }) |rejected| {
+        var io = ScriptedIo{ .results = &.{ rejected, answerWith(200, null) } };
+        try std.testing.expectError(rejected, retrying(std.testing.allocator, &io, .PUT, "https://x/", .{}, .{ .retries = 3 }));
+        try std.testing.expectEqual(@as(usize, 1), io.calls);
+        try std.testing.expectEqual(@as(usize, 0), io.pauses);
+    }
+}
+
+test "an https request is sent on mopm's TLS connection and its answer read, over a handshake with a trusted certificate" {
+    const test_server = @import("tls_test_server.zig");
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const key = try test_server.testKey();
+    const cert = try test_server.certificate(a, key, "127.0.0.1");
+    var s: test_server.Server = undefined;
+    try s.start(cert, key, "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nx-mopm-request-id: r-1\r\n\r\nok");
+    // The client has read its certificates already (none), and trusts the test certificate only.
+    var client = std.http.Client{ .allocator = a, .next_https_rescan_certs = false };
+    try test_server.trust(&client, cert);
+    const url = try std.fmt.allocPrint(a, "https://127.0.0.1:{d}/v2/x", .{s.port()});
+    const got = exchange(a, &client, .GET, url, .{});
+    client.deinit();
+    s.stop();
+    try std.testing.expectEqual(@as(?anyerror, null), s.failed);
+    const answer = try got;
+    try std.testing.expectEqual(@as(u16, 200), answer.status);
+    try std.testing.expectEqualStrings("ok", answer.body);
+    try std.testing.expectEqualStrings("r-1", answer.request_id);
+    try std.testing.expect(std.mem.startsWith(u8, s.request[0..s.request_len], "GET /v2/x HTTP/1.1\r\n"));
+}
+
+test "a scheme the client does not know makes no connection: HTTPS in capitals is refused as it always was" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var client = std.http.Client{ .allocator = arena_state.allocator(), .next_https_rescan_certs = false };
+    defer client.deinit();
+    try std.testing.expectError(error.UnsupportedUriScheme, exchange(arena_state.allocator(), &client, .GET, "HTTPS://127.0.0.1:1/", .{}));
+    try std.testing.expect(client.connection_pool.used.first == null and client.connection_pool.free.first == null);
+}
+
 test "a 429 waits the Retry-After the server named, when it is short, and stops when it is long" {
     var io = ScriptedIo{ .results = &.{ answerWith(429, 7), answerWith(200, null) } };
     const got = try retrying(std.testing.allocator, &io, .PUT, "http://x/", .{}, .{});
@@ -523,6 +607,8 @@ test "which answers and errors are worth a second try" {
     try std.testing.expect(!retryableAnswer(answerWith(503, max_retry_after_secs + 1)));
     try std.testing.expect(retryableError(error.ConnectionRefused));
     try std.testing.expect(retryableError(error.RequestTimedOut));
+    try std.testing.expect(retryableError(error.TlsInitializationFailed));
+    try std.testing.expect(retryableError(error.TlsFailure));
     try std.testing.expect(!retryableError(error.OutOfMemory));
     try std.testing.expect(!retryableError(error.InvalidFormat));
     try std.testing.expect(idempotent(.PUT) and idempotent(.GET) and !idempotent(.POST) and !idempotent(.PATCH));

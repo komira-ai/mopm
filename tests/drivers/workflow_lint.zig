@@ -7,7 +7,8 @@
 //! variable, a step that runs cdk sets AWS_REGION or AWS_DEFAULT_REGION, and a
 //! syntax check of every `run:` script. `repoProblems` is the
 //! whole-repository half: the promotion chain, the guard jobs of deploy.yml and
-//! e2e.yml, and oidc-subject-check.yml.
+//! e2e.yml, oidc-subject-check.yml, and (function_zips_lint.zig) the one build of the Rust Lambda zips that promote.yml, function-zips.yml
+//! and deploy.yml share.
 //!
 //! One check is a stand-in: a shell has no place on the farm, so `run:` scripts are
 //! syntax-checked without bash. shell_syntax.zig is the stand-in
@@ -17,6 +18,7 @@ const std = @import("std");
 const c = @import("lint_common.zig");
 const rl = @import("release_lint.zig");
 const sh = @import("shell_syntax.zig");
+const fz = @import("function_zips_lint.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 const Out = c.Out;
@@ -24,9 +26,10 @@ const Out = c.Out;
 pub const prefix = "workflow-lint: ";
 
 const oidc_files = [_][]const u8{ "deploy.yml", "e2e.yml", "promote.yml", "oidc-subject-check.yml" };
-/// farm.yml (the linux farm build) and farm-macos.yml (the macOS checks on the farm's Mac workers) may also hold the id-token grant,
-/// and one action outside GitHub's own (komira's farm-connect, pinned by commit); hygiene.zig holds each to its conditions.
-const farm_files = [_][]const u8{ "farm.yml", "farm-macos.yml" };
+/// farm.yml (the linux farm build), farm-macos.yml (the macOS checks on the farm's Mac workers) and function-zips.yml (the one build of
+/// the Rust Lambda zips) may also hold the id-token grant, and one action outside GitHub's own (komira's farm-connect, pinned by
+/// commit); hygiene.zig holds each to its conditions.
+const farm_files = [_][]const u8{ "farm.yml", "farm-macos.yml", "function-zips.yml" };
 /// kpin-update.yml (the weekly pin update) holds the two write grants it needs to push its branch
 /// and open its pull request with the default token, nothing else, and only on a schedule or a
 /// manual run: checked below.
@@ -334,6 +337,8 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
             var it = js.object.iterator();
             while (it.next()) |e| {
                 if (!c.truthy(c.get(e.value_ptr.*, "uses"))) continue;
+                // The zip build reads no secret and passes none (function_zips_lint.zig holds that).
+                if (std.mem.eql(u8, e.key_ptr.*, fz.artifact)) continue;
                 if (!c.isStr(c.get(e.value_ptr.*, "secrets"), "inherit")) {
                     try c.problem(a, out, prefix ++ "{s}: job {s} must set secrets: inherit (the called workflow reads environment secrets)", .{ f, e.key_ptr.* });
                 }
@@ -604,9 +609,10 @@ pub fn advisoriesProblems(a: Allocator, f: []const u8, text: []const u8, out: *O
 
 const Step = struct { job: []const u8, needs: ?[]const u8, uses: []const u8, stage: []const u8 };
 
-/// promote.yml: beta deploy, e2e, gamma deploy, e2e, prod deploy, prod smoke; each needs the one before.
+/// promote.yml: the zip build, beta deploy, e2e, gamma deploy, e2e, prod deploy, prod smoke; each needs the one before (the zip build
+/// is the job `function-zips`, which function_zips_lint.zig holds to its own rules).
 const chain = [_]Step{
-    .{ .job = "beta-deploy", .needs = null, .uses = "deploy", .stage = "beta" },
+    .{ .job = "beta-deploy", .needs = fz.artifact, .uses = "deploy", .stage = "beta" },
     .{ .job = "beta-e2e", .needs = "beta-deploy", .uses = "e2e", .stage = "beta" },
     .{ .job = "gamma-deploy", .needs = "beta-e2e", .uses = "deploy", .stage = "gamma" },
     .{ .job = "gamma-e2e", .needs = "gamma-deploy", .uses = "e2e", .stage = "gamma" },
@@ -835,6 +841,7 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
         const pj = c.get(pdoc, "jobs");
         var expected = std.ArrayList([]const u8).init(a);
         for (chain) |s| try expected.append(s.job);
+        try expected.append(fz.artifact);
         std.mem.sort([]const u8, expected.items, {}, lessThan);
         const have = try sortedKeys(a, pj);
         if (!c.eqlList(have, expected.items)) {
@@ -866,6 +873,9 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
             }
         };
     }
+
+    // The one build of the Rust Lambda zips, and what promote.yml, function-zips.yml and deploy.yml do with it.
+    try fz.problems(a, ctx, out);
 
     // deploy.yml and e2e.yml: the guard job gates the credential job.
     for ([_][]const u8{ "deploy", "e2e" }) |w| {

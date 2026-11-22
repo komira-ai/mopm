@@ -1,6 +1,7 @@
 import type { Principal } from '../auth';
+import { splitRowKey } from '../builds';
 import type { GroupMembers } from '../group';
-import { API_VIEW } from '../group';
+import { API_ROWS_VIEW } from '../group';
 import { bitmapHas, commitRequestHash, type CommitInput, type GroupRecord, type GroupStore } from '../group-store';
 import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
@@ -21,6 +22,9 @@ import type { ValidateGroupMessage } from './types';
  * not publish anything. It checks that the group is ready, stores the request, moves the group from `open` to
  * `validating` and queues the group's validation (src/publish/group-validator.ts), which validates every member, copies the
  * files and commits the group, or ends it.
+ *
+ * A member that adds a build to a published version (its `canonical` is a build row's key, src/builds.ts) declares the manifest of the
+ * version: a different `manifest_sha256` refuses the commit, as does a version that is no longer published.
  *
  * Idempotent: the same request again while the group is validating queues the validation again (the queue drops a repeat
  * within its window, so it is one job), and for a group that has committed it answers as it is. A different request for a
@@ -129,7 +133,7 @@ export class GroupCommitter {
     const unreserved = members.members.filter((_m, i) => !bitmapHas(header.reserved, i)).length;
     if (unreserved > 0) throw groupCommitRefused(`${unreserved} of ${members.members.length} members are not reserved yet; repeat the create request until it answers without 'reserving'`);
 
-    await this.requireUploads(id, members);
+    await this.requireUploads(id, members, declared);
     const inputs = await completeReadmes(this.d.objects, id, members.members, declared, named);
     await reg.putCommitInputs(id, hash, inputs, Math.floor(Date.parse(header.deadline_at) / 1000) + ENDED_TAIL_SECONDS);
 
@@ -153,16 +157,28 @@ export class GroupCommitter {
     return { started: true, body: answer(after) };
   }
 
-  /** Every declared file of every member is in quarantine at its declared size. The first that is not is named. */
-  private async requireUploads(gid: string, members: GroupMembers): Promise<void> {
+  /**
+   * Every member's row is the group's, every declared file of it is in quarantine at its declared size, and a member that adds a build
+   * declares the manifest of its published version. The first that is not is named.
+   */
+  private async requireUploads(gid: string, members: GroupMembers, declared: readonly CommitInput[]): Promise<void> {
     const rows = await this.d.registry.versionsOf(
       members.members.map((m) => m.name),
-      API_VIEW,
+      API_ROWS_VIEW,
     );
     const files: Array<{ member: string; key: string; filename: string; size: number }> = [];
-    for (const m of members.members) {
+    for (const [i, m] of members.members.entries()) {
       const row = rows.get(m.name)?.find((r: VersionRecord) => r.canonical === m.canonical);
       if (!row || row.group_id !== gid || row.state !== 'pending') throw groupCommitRefused(`${m.name} ${m.version} is not reserved for this group`);
+      const { canonical, build } = splitRowKey(m.canonical);
+      if (build !== undefined) {
+        const base = rows.get(m.name)!.find((r: VersionRecord) => r.canonical === canonical);
+        if (base?.state !== 'published') throw groupCommitRefused(`${m.name} ${m.version} is not published, and a build is added to a published version only`);
+        const given = declared[i]!.manifest_sha256;
+        if (given !== undefined && given !== base.manifest_sha256) {
+          throw groupCommitRefused(`the manifest_sha256 of '${m.name}' is ${given}, but ${m.name} ${m.version} has ${base.manifest_sha256}: the ${build} build was built from other sources`);
+        }
+      }
       for (const f of row.files) {
         files.push({ member: m.name, key: quarantineKeyFor(uploadIdFor(gid, m, f), f.filename), filename: f.filename, size: f.size });
       }

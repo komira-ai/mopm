@@ -47,8 +47,14 @@ mod tests {
     #[test]
     fn serde_spells_each_code_as_the_contract_does() {
         for c in RejectionCode::ALL {
-            assert_eq!(serde_json::to_string(&c).unwrap(), format!("\"{}\"", c.as_str()));
-            assert_eq!(serde_json::from_str::<RejectionCode>(&format!("\"{}\"", c.as_str())).unwrap(), c);
+            assert_eq!(
+                serde_json::to_string(&c).unwrap(),
+                format!("\"{}\"", c.as_str())
+            );
+            assert_eq!(
+                serde_json::from_str::<RejectionCode>(&format!("\"{}\"", c.as_str())).unwrap(),
+                c
+            );
         }
         assert!(serde_json::from_str::<RejectionCode>("\"nope\"").is_err());
     }
@@ -56,7 +62,15 @@ mod tests {
     #[test]
     fn the_codes_are_the_typescript_registrys() {
         // service/api/src/validate/codes.ts RejectionCode.
-        let ts = ["archive_invalid", "path_not_allowed", "limit_exceeded", "manifest_invalid", "filename_mismatch", "sha256_mismatch", "dependency_not_allowed"];
+        let ts = [
+            "archive_invalid",
+            "path_not_allowed",
+            "limit_exceeded",
+            "manifest_invalid",
+            "filename_mismatch",
+            "sha256_mismatch",
+            "dependency_not_allowed",
+        ];
         assert_eq!(RejectionCode::ALL.map(RejectionCode::as_str), ts);
     }
 }

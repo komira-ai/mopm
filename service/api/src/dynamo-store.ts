@@ -31,7 +31,7 @@ import type { RawVersionPort } from './raw-port';
 import { applyEvent, IllegalTransition, publishesVersion, type GroupEvent, type UserEvent, type VersionEvent } from './state';
 import { auditSortKey, type RowDeleter, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
-import { canonicalVersion } from './version';
+import { keyOfRecord, rowKeyOf, rowLabel } from './builds';
 
 /** What the adapter needs from a DynamoDBDocumentClient; tests pass an in-process fake. */
 export interface DocClient {
@@ -82,7 +82,8 @@ type Item = Record<string, any>; // eslint-disable-line @typescript-eslint/no-ex
 /**
  * Version rows are keyed (name, version) where `version` holds the canonical form (today the version itself,
  * since a version has one spelling), so a conditional put cannot create the second one. The published
- * spelling is also kept in `version_spelling`, which older rows and readers rely on.
+ * spelling is also kept in `version_spelling`, which older rows and readers rely on. The row of a build added to a
+ * version later is keyed `<version>+<build>` (src/builds.ts), with the version's spelling in `version_spelling`.
  */
 const toItem = (r: VersionRecord): Item => {
   const { canonical, version, ...rest } = r;
@@ -267,7 +268,7 @@ export class DynamoStore implements Store, GroupStore, RowDeleter {
 
   /** One transaction: the version row, created only if the key is absent, and its audit row. No read first. */
   async createVersion(rec: VersionRecord, audit: AuditEntry): Promise<void> {
-    const canonical = canonicalVersion(rec.version);
+    const canonical = keyOfRecord(rec);
     try {
       await this.doc.send(
         new TransactWriteCommand({
@@ -293,8 +294,8 @@ export class DynamoStore implements Store, GroupStore, RowDeleter {
       );
     } catch (err) {
       if (cancelledByCondition(err, 0)) {
-        const existing = await this.getVersion(rec.name, rec.version);
-        throw versionExists(rec.name, rec.version, existing?.files[0]?.sha256 ?? existing?.manifest_sha256 ?? 'unknown');
+        const existing = await this.getVersion(rec.name, canonical);
+        throw versionExists(rec.name, rowLabel(rec), existing?.files[0]?.sha256 ?? existing?.manifest_sha256 ?? 'unknown');
       }
       throw err;
     }
@@ -304,7 +305,7 @@ export class DynamoStore implements Store, GroupStore, RowDeleter {
   }
   private async rowOf(name: string, version: string) {
     const r = await this.doc.send(
-      new GetCommand({ TableName: this.tables.versions, Key: { name, version: canonicalVersion(version) }, ConsistentRead: true }),
+      new GetCommand({ TableName: this.tables.versions, Key: { name, version: rowKeyOf(version) }, ConsistentRead: true }),
     );
     return r.Item ? fromItem(r.Item) : undefined;
   }
@@ -474,14 +475,14 @@ export class DynamoStore implements Store, GroupStore, RowDeleter {
     return this.adopt(rec, audit, free);
   }
   private async adopt(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
-    const fresh = { ...rec, canonical: canonicalVersion(rec.version) };
+    const fresh = { ...rec, canonical: keyOfRecord(rec) };
     try {
       await this.doc.send(new TransactWriteCommand({ TransactItems: [this.versionPut(fresh, 'attribute_not_exists(#n)', { '#n': 'name' }), this.auditPut(audit)] }));
       return { outcome: 'created', record: fresh };
     } catch (err) {
       if (!cancelledByCondition(err, 0)) throw err;
     }
-    const cur = (await this.rowOf(rec.name, rec.version))!; // rows are never deleted, so the one that stopped the create is still there
+    const cur = (await this.rowOf(rec.name, fresh.canonical))!; // rows are never deleted, so the one that stopped the create is still there
     if (cur.state !== 'pending' || !free(cur)) return { outcome: 'taken', existing: cur };
     const next = { ...fresh, rev: cur.rev + 1 };
     try {

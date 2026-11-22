@@ -9,7 +9,7 @@
 
 import type {
   Dep, FileRef, Health, NamespaceInfo, Native, PackageInfo, PackageList, PackageSummary, Provenance, Tombstone,
-  VersionDetail, VersionState, VersionSummary,
+  VersionBuild, VersionDetail, VersionState, VersionSummary,
 } from './types.js';
 
 export class DecodeError extends Error {
@@ -186,6 +186,16 @@ function decodeFile(v: unknown, path: string): FileRef {
   );
 }
 
+function decodeBuild(v: unknown, path: string): VersionBuild {
+  const o = obj(v, path);
+  return { build: str(o, 'build', path), requires_mojo: str(o, 'requires_mojo', path), files: arr(o, 'files', path, decodeFile) };
+}
+
+/** Optional: absent, or not an array, stays absent; each build of an array must be well formed. */
+function optBuilds(o: Obj, path: string): VersionBuild[] | undefined {
+  return Array.isArray(o.builds) ? arr(o, 'builds', path, decodeBuild) : undefined;
+}
+
 function decodeProvenance(v: unknown, path: string): Provenance {
   const o = obj(v, path);
   return withOptional<Provenance>(
@@ -219,6 +229,7 @@ export function decodeVersionDetail(v: unknown): VersionDetail {
       provenance: decodeProvenance(o.provenance, `${p}.provenance`),
     },
     {
+      builds: optBuilds(o, p),
       yank_reason: yankReason(o),
       tombstone: decodeTombstone(o),
       published_by: optStr(o, 'published_by'),

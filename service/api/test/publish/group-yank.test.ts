@@ -625,6 +625,19 @@ describe.each(RIGS)('the yank of a group: %s', (_label, make) => {
       expect((await header(s)).yank!.rows_done).toBeUndefined();
     });
 
+    test('the rows of a yank save the repodata directories of its hops with rows_done; a yank whose header has none (one begun before the field) takes its members\' own directories', async () => {
+      const s = await visible();
+      await yank(s);
+      expect(await chain.runYank(env.groupQueue.take()!)).toMatchObject({ outcome: 'done' });
+      expect((await header(s)).yank).toMatchObject({ rows_done: true, repodata_dirs: ['linux-64', 'noarch'] });
+      await rig.store.updateGroup(s.gid, (cur) => {
+        const { repodata_dirs: _dirs, ...rest } = cur.yank!;
+        return { ...cur, yank: rest };
+      });
+      await chain.drain();
+      expect((await header(s)).yank).toMatchObject({ state: 'yanked', repodata_done: ['linux-64', 'noarch'] });
+    });
+
     test('every message of a finished yank, delivered again, does nothing: no byte, no row, no audit row, no message', async () => {
       const s = await visible();
       await yank(s);

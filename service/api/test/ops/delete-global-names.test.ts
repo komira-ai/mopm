@@ -1,6 +1,7 @@
 import { authTablesFor, DynamoAuthStore } from '../../src/auth/dynamo-auth-store';
 import { MemoryAuthStore } from '../../src/auth/memory-auth-store';
 import type { AuthStore } from '../../src/auth/types';
+import { API_ROWS_VIEW } from '../../src/group';
 import { indexKey } from '../../src/index-files';
 import { main, realDeps, stageChecks } from '../../src/ops/delete-global-names/main';
 import { digestOf, listStage, parseDeleteArgs, runDelete, withoutName, type DeleteArgs, type DeleteDeps, type StageChecks } from '../../src/ops/delete-global-names/tool';
@@ -11,7 +12,7 @@ import type { VersionRecord } from '../../src/types';
 import { zstdFrame } from '../../src/zstd';
 import { FakeAuthDoc } from '../auth-fake-doc';
 import { RIGS, type Rig } from '../group-rig';
-import { hex, rec } from '../helpers';
+import { buildRow, hex, rec } from '../helpers';
 
 /**
  * The held tool that deletes the global names (src/ops/delete-global-names, docs/design/namespaces.md section 12.4), against
@@ -99,7 +100,7 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
   const deps = (): DeleteDeps => ({
     registry: {
       listPackageNames: () => rig.store.listPackageNames(),
-      listVersions: (n) => rig.store.listVersions(n),
+      versionsOf: (n, v) => rig.store.versionsOf(n, v),
       listOwners: (n) => rig.store.listOwners(n),
       appendAudit: async (e) => {
         await record(`audit ${e.name}`);
@@ -273,6 +274,23 @@ describe.each(RIGS)('the deletion: %s', (label, make) => {
       expect(await dryRunDigest()).toBe(d1);
       expect(await dryRunDigest({ stage: 'gamma' })).not.toBe(d1);
       expect(digestOf(await listStage('beta', deps()))).toBe(d1);
+    });
+
+    test('lists the row of a build added to a version as a row of its own, and the apply deletes it by its key', async () => {
+      const added = buildRow('json', '0.1.0', 'mojo1.1.0_0', { files: [{ subdir: 'linux-64', filename: 'mojo-json-0.1.0-mojo1.1.0_0.conda', sha256: hex('b'), size: 3, url: 'https://conda.example.invalid/linux-64/mojo-json-0.1.0-mojo1.1.0_0.conda' }] });
+      rig.writeRow(added);
+      await bucket.put('linux-64/mojo-json-0.1.0-mojo1.1.0_0.conda', Buffer.from('abc'), { contentType: 'application/octet-stream' });
+      const listed = (await listStage('beta', deps())).names.find((n) => n.name === 'json')!;
+      expect(listed.versions.map((v) => `${v.canonical} ${v.state}`)).toEqual(['0.1.0 published', '0.1.0+mojo1.1.0_0 published', '0.2.0 yanked']);
+
+      const digest = await dryRunDigest();
+      out = [];
+      ops = [];
+      expect(await run({ apply: digest })).toBe(0);
+      expect(ops).toContain('version json 0.1.0+mojo1.1.0_0');
+      expect(ops).toContain('delete linux-64/mojo-json-0.1.0-mojo1.1.0_0.conda');
+      expect(out.filter((l) => l.kind === 'deleted').map((l) => l.name)).toContain('json');
+      expect(await rig.store.versionsOf(['json'], API_ROWS_VIEW)).toEqual(new Map([['json', []]]));
     });
 
     test('runs whatever the stage checks say, and reports them', async () => {
@@ -558,7 +576,7 @@ describe('the stage checks over HTTP', () => {
 describe('the entry point', () => {
   const argv = ['--stage=beta', '--bucket=b', '--distribution=d', '--config-url=https://x.invalid/index/config.json'];
   const empty = (lines: Array<Record<string, unknown>>): DeleteDeps => ({
-    registry: { listPackageNames: async () => [], listVersions: async () => [], listOwners: async () => [], removeOwner: async () => undefined, appendAudit: async () => undefined, deleteVersionRow: async () => undefined, deletePackageRow: async () => undefined },
+    registry: { listPackageNames: async () => [], versionsOf: async () => new Map(), listOwners: async () => [], removeOwner: async () => undefined, appendAudit: async () => undefined, deleteVersionRow: async () => undefined, deletePackageRow: async () => undefined },
     publishers: { listTrustedPublishers: async () => [], removeTrustedPublisher: async () => undefined },
     bucket: new MemoryObjectStore(),
     invalidator: { invalidate: async () => undefined },

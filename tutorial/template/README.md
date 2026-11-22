@@ -9,8 +9,12 @@ The template holds:
 - mopm, the release named below: its `linux-x86_64` file downloaded from the GitHub release, checked against the
   sha256 the release's `SHA256SUMS` lists for it (read when the build runs, and written into the step), and its
   binary installed at `/usr/local/bin/mopm`;
-- every lesson under `tutorial/lessons/<id>/`: its `project/` copied to `/home/user/lessons/<id>/`, and
-  `mopm sync --locked` run there, so the lesson's pinned Mojo toolchain and locked packages are already installed;
+- `/etc/profile.d/mopm-tutorial.sh`, which sets `MODULAR_TELEMETRY_ENABLED=false` for every command run in the
+  sandbox (E2B runs them as `bash -l`). The sandbox has no internet, so the Mojo toolchain's telemetry can never be
+  sent, and with it on, every `mopm run` waited about 20 s after the program's output for the export to give up;
+- every lesson under `tutorial/lessons/<id>/`: its `project/` copied to `/home/user/lessons/<id>/`, that directory
+  and `/home/user/lessons` given to `user` (E2B's copy creates them as root), and `mopm sync --locked` run there as
+  `user`, so the lesson's pinned Mojo toolchain and locked packages are already installed;
 - `user` (E2B's default sandbox user) and `/home/user` as the sandbox's user and working directory.
 
 The definition is `src/definition.ts`, written with the `Template()` builder of the `e2b` package (pinned exactly in
@@ -62,6 +66,13 @@ Flags:
 
 Exit codes: 0 done, 1 failed (nothing built, or E2B's error printed), 2 usage.
 
+## The author's guide's code
+
+`guide/` holds the browser code of `docs/tutorial-author-guide.md`: a client of one sandbox from the tutorial
+endpoint's grant (`sandbox.ts`), the editor's file calls (`editor.ts`) and a terminal over the sandbox's pseudo-terminal
+(`terminal.ts`). It is here because this package pins `e2b`, so `npm run typecheck` checks it against the version the
+page will use. It is not part of the template.
+
 ## Tests
 
 `//tutorial/template:test` and `:typecheck` (`npm test`, `npm run typecheck`), with the coverage floor
@@ -70,3 +81,6 @@ Exit codes: 0 done, 1 failed (nothing built, or E2B's error printed), 2 usage.
 `fetch` and a fake E2B build: no network, no key. One test runs E2B's own file selection (`test/upload-hashes.ts`,
 in a child Node process, because it needs a dynamic import Jest cannot run) to check that a lesson's `.mopm/` is
 not uploaded.
+
+`test/guide-*.test.ts` run `guide/` against fakes of the SDK's files and pty modules, and `test/guide-doc.test.ts`
+holds each code block of `docs/tutorial-author-guide.md` equal to its file in `guide/`.

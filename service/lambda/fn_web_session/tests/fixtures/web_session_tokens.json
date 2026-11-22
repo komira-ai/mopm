@@ -1,0 +1,134 @@
+[
+  {
+    "all_current": {
+      "BOOL": false
+    },
+    "created_at": {
+      "S": "2026-11-18T11:06:40.000Z"
+    },
+    "expires_at": {
+      "N": "1795604800"
+    },
+    "expires_at_iso": {
+      "S": "2026-11-25T11:06:40.000Z"
+    },
+    "fresh_until": {
+      "S": "2026-11-18T11:06:40.000Z"
+    },
+    "github_id": {
+      "S": "42"
+    },
+    "github_id_num": {
+      "N": "42"
+    },
+    "id": {
+      "S": "tok-2"
+    },
+    "kind": {
+      "S": "session"
+    },
+    "name": {
+      "S": "web login"
+    },
+    "packages": {
+      "L": []
+    },
+    "prefix": {
+      "S": "mopm_aibaea"
+    },
+    "scopes": {
+      "L": []
+    },
+    "token_hash": {
+      "S": "21bc00149699c12bc7949668c988cf8d80a76ab3a20b71fcccc8786292752303"
+    }
+  },
+  {
+    "all_current": {
+      "BOOL": false
+    },
+    "created_at": {
+      "S": "2026-11-18T11:06:40.000Z"
+    },
+    "expires_at": {
+      "N": "1795604800"
+    },
+    "expires_at_iso": {
+      "S": "2026-11-25T11:06:40.000Z"
+    },
+    "fresh_until": {
+      "S": "2026-11-18T11:06:40.000Z"
+    },
+    "github_id": {
+      "S": "42"
+    },
+    "github_id_num": {
+      "N": "42"
+    },
+    "id": {
+      "S": "tok-1"
+    },
+    "kind": {
+      "S": "session"
+    },
+    "name": {
+      "S": "web login"
+    },
+    "packages": {
+      "L": []
+    },
+    "prefix": {
+      "S": "mopm_aeaqca"
+    },
+    "scopes": {
+      "L": []
+    },
+    "token_hash": {
+      "S": "400481e7d23917f69b2e9754916d3cd6ae51706a03e824651a92a1aa45f11d0d"
+    }
+  },
+  {
+    "all_current": {
+      "BOOL": false
+    },
+    "created_at": {
+      "S": "2026-11-18T11:06:40.000Z"
+    },
+    "expires_at": {
+      "N": "1795604800"
+    },
+    "expires_at_iso": {
+      "S": "2026-11-25T11:06:40.000Z"
+    },
+    "fresh_until": {
+      "S": "2026-11-18T11:06:40.000Z"
+    },
+    "github_id": {
+      "S": "42"
+    },
+    "github_id_num": {
+      "N": "42"
+    },
+    "id": {
+      "S": "tok-api"
+    },
+    "kind": {
+      "S": "api"
+    },
+    "name": {
+      "S": "cli"
+    },
+    "packages": {
+      "L": []
+    },
+    "prefix": {
+      "S": "mopm_ambqga"
+    },
+    "scopes": {
+      "L": []
+    },
+    "token_hash": {
+      "S": "c34770776d4b5b784125d531621eb0829ff1ef9801b0699c0a9e509383400f7d"
+    }
+  }
+]

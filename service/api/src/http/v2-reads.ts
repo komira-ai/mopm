@@ -138,7 +138,7 @@ export async function getVersionV2(deps: RouterDeps, namespace: string, name: st
   checkNamespace(namespace);
   checkName(name);
   canonicalVersion(version); // throws invalid_version before anything is read
-  return versionDetail(deps, await requirePackageV2(deps, namespace, name), version);
+  return versionDetail(deps, await requirePackageV2(deps, namespace, name), version, true);
 }
 
 /** `NamespaceInfo`, public. */

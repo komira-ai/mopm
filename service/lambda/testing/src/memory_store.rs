@@ -5,7 +5,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 
-use mopm_core::error::{already_owner, name_taken, owner_not_found, version_exists, version_not_found};
+use mopm_core::error::{
+    already_owner, name_taken, owner_not_found, version_exists, version_not_found,
+};
 use mopm_core::state::{apply_event, Applied, VersionEvent};
 use mopm_core::types::{AuditEntry, OwnerRecord, PackageRecord, VersionRecord};
 use mopm_core::version::canonical_version;
@@ -34,7 +36,9 @@ impl MemoryStore {
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
-        self.inner.lock().expect("the store's lock is never held across a panic")
+        self.inner
+            .lock()
+            .expect("the store's lock is never held across a panic")
     }
 
     /// Seeding writes rows as they are, with no audit entry and no check (see [`crate::seed`]).
@@ -43,7 +47,9 @@ impl MemoryStore {
     }
 
     pub(crate) fn seed_version(&self, v: VersionRecord) {
-        self.lock().versions.insert((v.name.clone(), v.canonical.clone()), v);
+        self.lock()
+            .versions
+            .insert((v.name.clone(), v.canonical.clone()), v);
     }
 
     pub(crate) fn seed_owner(&self, o: OwnerRecord) {
@@ -73,13 +79,23 @@ impl Store for MemoryStore {
         Ok(self.lock().packages.keys().cloned().collect())
     }
 
-    async fn search_packages(&self, prefix: &str, after: Option<&str>, limit: usize) -> PortResult<Vec<PackageSummary>> {
+    async fn search_packages(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> PortResult<Vec<PackageSummary>> {
         let g = self.lock();
         Ok(g.packages
             .values()
             .filter(|p| p.name.starts_with(prefix) && after.is_none_or(|a| p.name.as_str() > a))
             .take(limit)
-            .map(|p| PackageSummary { name: p.name.clone(), state: p.state, created_at: p.created_at.clone(), description: p.description.clone() })
+            .map(|p| PackageSummary {
+                name: p.name.clone(),
+                state: p.state,
+                created_at: p.created_at.clone(),
+                description: p.description.clone(),
+            })
             .collect())
     }
 
@@ -88,24 +104,47 @@ impl Store for MemoryStore {
         let mut g = self.lock();
         let key = (rec.name.clone(), canonical.clone());
         if let Some(existing) = g.versions.get(&key) {
-            let sha = existing.files.first().map_or(existing.manifest_sha256.as_str(), |f| f.sha256.as_str());
+            let sha = existing
+                .files
+                .first()
+                .map_or(existing.manifest_sha256.as_str(), |f| f.sha256.as_str());
             return Err(version_exists(&rec.name, &rec.version, sha).into());
         }
-        g.versions.insert(key, VersionRecord { canonical, ..rec.clone() });
+        g.versions.insert(
+            key,
+            VersionRecord {
+                canonical,
+                ..rec.clone()
+            },
+        );
         g.audit.push(audit.clone());
         Ok(())
     }
 
     async fn get_version(&self, name: &str, version: &str) -> PortResult<Option<VersionRecord>> {
         let canonical = canonical_version(version)?;
-        Ok(self.lock().versions.get(&(name.to_string(), canonical)).cloned())
+        Ok(self
+            .lock()
+            .versions
+            .get(&(name.to_string(), canonical))
+            .cloned())
     }
 
-    async fn update_version(&self, name: &str, version: &str, event: &VersionEvent, audit: &AuditEntry) -> PortResult<VersionRecord> {
+    async fn update_version(
+        &self,
+        name: &str,
+        version: &str,
+        event: &VersionEvent,
+        audit: &AuditEntry,
+    ) -> PortResult<VersionRecord> {
         let canonical = canonical_version(version)?;
         let mut g = self.lock();
         let key = (name.to_string(), canonical);
-        let cur = g.versions.get(&key).cloned().ok_or_else(|| version_not_found(name, version))?;
+        let cur = g
+            .versions
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| version_not_found(name, version))?;
         match apply_event(&cur, event)? {
             Applied::Unchanged => Ok(cur),
             Applied::Changed(next) => {
@@ -118,7 +157,12 @@ impl Store for MemoryStore {
 
     async fn list_versions(&self, name: &str) -> PortResult<Vec<VersionRecord>> {
         let g = self.lock();
-        let mut out: Vec<VersionRecord> = g.versions.iter().filter(|((n, _), _)| n == name).map(|(_, v)| v.clone()).collect();
+        let mut out: Vec<VersionRecord> = g
+            .versions
+            .iter()
+            .filter(|((n, _), _)| n == name)
+            .map(|(_, v)| v.clone())
+            .collect();
         out.sort_by(by_version);
         Ok(out)
     }
@@ -142,7 +186,13 @@ impl Store for MemoryStore {
 
     async fn list_owners(&self, name: &str) -> PortResult<Vec<OwnerRecord>> {
         // The map is keyed (name, github id), so its order is by id.
-        Ok(self.lock().owners.iter().filter(|((n, _), _)| n == name).map(|(_, o)| o.clone()).collect())
+        Ok(self
+            .lock()
+            .owners
+            .iter()
+            .filter(|((n, _), _)| n == name)
+            .map(|(_, o)| o.clone())
+            .collect())
     }
 
     async fn append_audit(&self, entry: &AuditEntry) -> PortResult<()> {
@@ -151,7 +201,13 @@ impl Store for MemoryStore {
     }
 
     async fn list_audit(&self, name: &str) -> PortResult<Vec<AuditEntry>> {
-        let mut out: Vec<AuditEntry> = self.lock().audit.iter().filter(|e| e.name == name).cloned().collect();
+        let mut out: Vec<AuditEntry> = self
+            .lock()
+            .audit
+            .iter()
+            .filter(|e| e.name == name)
+            .cloned()
+            .collect();
         out.sort_by_key(audit_sort_key);
         Ok(out)
     }

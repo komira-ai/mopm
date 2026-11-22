@@ -9,9 +9,14 @@ use aws_lambda_events::encodings::Body;
 use aws_lambda_events::http::{header, HeaderValue};
 use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 
-async fn handler(event: LambdaEvent<ApiGatewayV2httpRequest>) -> Result<ApiGatewayV2httpResponse, Error> {
+async fn handler(
+    event: LambdaEvent<ApiGatewayV2httpRequest>,
+) -> Result<ApiGatewayV2httpResponse, Error> {
     let request = event.payload;
-    let name = request.query_string_parameters.first("name").unwrap_or("world");
+    let name = request
+        .query_string_parameters
+        .first("name")
+        .unwrap_or("world");
     let body = serde_json::json!({
         "hello": name,
         "path": request.raw_path.as_deref().unwrap_or(""),
@@ -20,14 +25,21 @@ async fn handler(event: LambdaEvent<ApiGatewayV2httpRequest>) -> Result<ApiGatew
     // The response type is non_exhaustive: a default, then its public fields.
     let mut response = ApiGatewayV2httpResponse::default();
     response.status_code = 200;
-    response.headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    response.headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
     response.body = Some(Body::Text(body));
     Ok(response)
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Error> {
-    tracing_subscriber::fmt().json().with_max_level(tracing::Level::INFO).without_time().init();
+    tracing_subscriber::fmt()
+        .json()
+        .with_max_level(tracing::Level::INFO)
+        .without_time()
+        .init();
     run(service_fn(handler)).await
 }
 
@@ -61,7 +73,9 @@ mod tests {
     }
 
     async fn answer(query: &str) -> String {
-        let response = handler(LambdaEvent::new(request(query), Context::default())).await.unwrap();
+        let response = handler(LambdaEvent::new(request(query), Context::default()))
+            .await
+            .unwrap();
         serde_json::to_string(&response).unwrap()
     }
 
@@ -76,6 +90,9 @@ mod tests {
     #[tokio::test]
     async fn defaults_the_name_to_world() {
         let text = answer("").await;
-        assert!(text.contains(r#"{\"hello\":\"world\",\"path\":\"/hello\"}"#), "{text}");
+        assert!(
+            text.contains(r#"{\"hello\":\"world\",\"path\":\"/hello\"}"#),
+            "{text}"
+        );
     }
 }

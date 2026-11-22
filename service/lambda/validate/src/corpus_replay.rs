@@ -20,7 +20,11 @@ const CASES: &str = include_str!("../../../../tests/validator_corpus/cases.json"
 const VERDICTS: &str = include_str!("../../../../tests/validator_corpus/verdicts.json");
 
 fn archive(name: &str) -> &'static [u8] {
-    ARCHIVES.iter().find(|(n, _)| *n == name).map(|(_, b)| *b).unwrap_or_else(|| panic!("src/corpus_table.rs lacks the line for {name}"))
+    ARCHIVES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, b)| *b)
+        .unwrap_or_else(|| panic!("src/corpus_table.rs lacks the line for {name}"))
 }
 
 fn expectation(c: &Value) -> PublishExpectation {
@@ -32,14 +36,19 @@ fn expectation(c: &Value) -> PublishExpectation {
         subdir: s("subdir"),
         filename: s("filename"),
         sha256: e.get("sha256").and_then(Value::as_str).map(str::to_string),
-        manifest_sha256: e.get("manifest_sha256").and_then(Value::as_str).map(str::to_string),
+        manifest_sha256: e
+            .get("manifest_sha256")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     }
 }
 
 fn limits(c: &Value) -> Limits {
     let mut l = Limits::DEFAULT;
     for (k, v) in c["limits"].as_object().expect("limits is an object") {
-        let n = v.as_u64().unwrap_or_else(|| panic!("limit {k} is not a number"));
+        let n = v
+            .as_u64()
+            .unwrap_or_else(|| panic!("limit {k} is not a number"));
         match k.as_str() {
             "max_archive_bytes" => l.max_archive_bytes = n,
             "max_file_bytes" => l.max_file_bytes = n,
@@ -55,22 +64,37 @@ fn limits(c: &Value) -> Limits {
 }
 
 fn cases() -> Vec<Value> {
-    serde_json::from_str::<Value>(CASES).unwrap()["cases"].as_array().unwrap().clone()
+    serde_json::from_str::<Value>(CASES).unwrap()["cases"]
+        .as_array()
+        .unwrap()
+        .clone()
 }
 
 fn verdicts() -> Vec<Value> {
-    serde_json::from_str::<Value>(VERDICTS).unwrap()["verdicts"].as_array().unwrap().clone()
+    serde_json::from_str::<Value>(VERDICTS).unwrap()["verdicts"]
+        .as_array()
+        .unwrap()
+        .clone()
 }
 
 fn verdict_of(c: &Value) -> Value {
     // `allow_native` names what the conda-forge mirror lists for the case: it matters to the TypeScript (a name the mirror lacks is a
     // warning there), and this port neither has a mirror nor warns, so it reads nothing from it.
     let options = ValidatorOptions { limits: limits(c) };
-    validate_package(archive(c["archive"].as_str().unwrap()), &expectation(c), &options).to_json()
+    validate_package(
+        archive(c["archive"].as_str().unwrap()),
+        &expectation(c),
+        &options,
+    )
+    .to_json()
 }
 
 fn outcome(v: &Value) -> String {
-    if v["ok"] == true { "ok".into() } else { v["rule"].as_str().unwrap_or("?").to_string() }
+    if v["ok"] == true {
+        "ok".into()
+    } else {
+        v["rule"].as_str().unwrap_or("?").to_string()
+    }
 }
 
 #[test]
@@ -80,13 +104,27 @@ fn the_corpus_is_what_the_replay_expects() {
     let verdicts = verdicts();
     assert_eq!(verdicts.len(), cases.len());
     for (c, v) in cases.iter().zip(&verdicts) {
-        assert_eq!(c["id"], v["id"], "cases.json and verdicts.json are in the same order");
+        assert_eq!(
+            c["id"], v["id"],
+            "cases.json and verdicts.json are in the same order"
+        );
     }
     // The table lists exactly the archives the cases name.
-    let named: BTreeSet<&str> = cases.iter().map(|c| c["archive"].as_str().unwrap()).collect();
+    let named: BTreeSet<&str> = cases
+        .iter()
+        .map(|c| c["archive"].as_str().unwrap())
+        .collect();
     let tabled: BTreeSet<&str> = ARCHIVES.iter().map(|(n, _)| *n).collect();
-    assert_eq!(named.difference(&tabled).collect::<Vec<_>>(), Vec::<&&str>::new(), "add these to src/corpus_table.rs");
-    assert_eq!(tabled.difference(&named).collect::<Vec<_>>(), Vec::<&&str>::new(), "remove these from src/corpus_table.rs");
+    assert_eq!(
+        named.difference(&tabled).collect::<Vec<_>>(),
+        Vec::<&&str>::new(),
+        "add these to src/corpus_table.rs"
+    );
+    assert_eq!(
+        tabled.difference(&named).collect::<Vec<_>>(),
+        Vec::<&&str>::new(),
+        "remove these from src/corpus_table.rs"
+    );
     // Ids are unique.
     let ids: BTreeSet<&str> = cases.iter().map(|c| c["id"].as_str().unwrap()).collect();
     assert_eq!(ids.len(), cases.len());
@@ -100,10 +138,23 @@ fn every_case_gets_the_verdict_the_typescript_gave() {
     for (c, v) in cases.iter().zip(&verdicts) {
         let got = verdict_of(c);
         if got != v["verdict"] {
-            differ.push(format!("{}: want {} got {}\n  want {}\n  got  {}", c["id"], outcome(&v["verdict"]), outcome(&got), v["verdict"], got));
+            differ.push(format!(
+                "{}: want {} got {}\n  want {}\n  got  {}",
+                c["id"],
+                outcome(&v["verdict"]),
+                outcome(&got),
+                v["verdict"],
+                got
+            ));
         }
     }
-    assert!(differ.is_empty(), "{} of {} cases differ:\n{}", differ.len(), cases.len(), differ.join("\n"));
+    assert!(
+        differ.is_empty(),
+        "{} of {} cases differ:\n{}",
+        differ.len(),
+        cases.len(),
+        differ.join("\n")
+    );
 }
 
 #[test]
@@ -122,14 +173,21 @@ fn every_case_reaches_the_rule_it_was_written_to_hit() {
 #[test]
 fn the_corpus_covers_every_rule_the_validator_can_apply() {
     let seen: BTreeSet<String> = verdicts().iter().map(|v| outcome(&v["verdict"])).collect();
-    let missing: Vec<&str> = crate::RuleCode::ALL.iter().map(|r| r.as_str()).filter(|r| !seen.contains(*r)).collect();
+    let missing: Vec<&str> = crate::RuleCode::ALL
+        .iter()
+        .map(|r| r.as_str())
+        .filter(|r| !seen.contains(*r))
+        .collect();
     // The rules the TypeScript corpus does not reach are those that need a format the Lambda never accepts.
     assert_eq!(missing, Vec::<&str>::new(), "rules no corpus case reaches");
 }
 
 #[test]
 fn declared_hashes_are_compared_case_insensitively_and_a_wrong_one_is_refused() {
-    let case = cases().into_iter().find(|c| c["id"] == "ok_minimal").unwrap();
+    let case = cases()
+        .into_iter()
+        .find(|c| c["id"] == "ok_minimal")
+        .unwrap();
     let facts = verdict_of(&case)["facts"].clone();
     let manifest = facts["manifestSha256"].as_str().unwrap().to_string();
     let archive_sha = hex::encode(sha2::Sha256::digest(archive("ok_minimal.conda")));
@@ -137,11 +195,25 @@ fn declared_hashes_are_compared_case_insensitively_and_a_wrong_one_is_refused() 
         let mut e = expectation(&case);
         e.sha256 = sha;
         e.manifest_sha256 = manifest_sha;
-        let o = ValidatorOptions { limits: limits(&case) };
+        let o = ValidatorOptions {
+            limits: limits(&case),
+        };
         validate_package(archive("ok_minimal.conda"), &e, &o).to_json()
     };
-    assert_eq!(run(Some(archive_sha.to_uppercase()), Some(manifest.to_uppercase()))["ok"], true);
-    assert_eq!(run(Some(archive_sha.clone()), Some(manifest.clone()))["ok"], true);
+    assert_eq!(
+        run(
+            Some(archive_sha.to_uppercase()),
+            Some(manifest.to_uppercase())
+        )["ok"],
+        true
+    );
+    assert_eq!(
+        run(Some(archive_sha.clone()), Some(manifest.clone()))["ok"],
+        true
+    );
     assert_eq!(run(Some("0".repeat(64)), None)["rule"], "sha256_mismatch");
-    assert_eq!(run(None, Some("0".repeat(64)))["rule"], "manifest_sha256_mismatch");
+    assert_eq!(
+        run(None, Some("0".repeat(64)))["rule"],
+        "manifest_sha256_mismatch"
+    );
 }

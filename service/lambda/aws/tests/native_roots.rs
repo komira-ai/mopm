@@ -21,7 +21,9 @@ async fn the_client_trusts_the_system_roots_refuses_to_start_without_any_and_use
     std::env::remove_var("SSL_CERT_DIR");
 
     std::env::set_var("SSL_CERT_FILE", "tests/fixtures/absent.pem");
-    let e = HyperHttpClient::with_native_roots(1024).err().expect("no roots, no client");
+    let e = HyperHttpClient::with_native_roots(1024)
+        .err()
+        .expect("no roots, no client");
     assert!(e.to_string().starts_with("infrastructure fault: no root certificates to trust: no native root CA certificates found"), "{e}");
 
     std::env::set_var("SSL_CERT_FILE", "tests/fixtures/ca.pem");
@@ -33,7 +35,14 @@ async fn the_client_trusts_the_system_roots_refuses_to_start_without_any_and_use
         async {}
     })
     .await;
-    for name in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+    for name in [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
         std::env::set_var(name, format!("http://{proxy}"));
     }
     std::env::remove_var("NO_PROXY");
@@ -42,8 +51,18 @@ async fn the_client_trusts_the_system_roots_refuses_to_start_without_any_and_use
     let client = HyperHttpClient::with_native_roots(1024).unwrap();
     let fake = FakeHttp::start(vec![Reply::new(200).body("trusted")]);
     let addr = tls_front(&fake, trusted_cert()).await;
-    let req = HttpRequest { method: Method::Get, url: https(addr, "/"), headers: vec![], body: vec![], timeout: Duration::from_secs(30) };
+    let req = HttpRequest {
+        method: Method::Get,
+        url: https(addr, "/"),
+        headers: vec![],
+        body: vec![],
+        timeout: Duration::from_secs(30),
+    };
     assert_eq!(client.send(req).await.unwrap().body, b"trusted");
     assert_eq!(fake.requests().len(), 1);
-    assert_eq!(dialled.load(Ordering::SeqCst), 0, "a proxy variable was used");
+    assert_eq!(
+        dialled.load(Ordering::SeqCst),
+        0,
+        "a proxy variable was used"
+    );
 }

@@ -35,6 +35,16 @@ const UNPACK_DIR = '/opt/mopm-install';
  */
 export const MOPM_CACHE = `${SANDBOX_HOME}/.cache/mopm/pkgs`;
 
+/**
+ * The login profile that turns the Mojo toolchain's telemetry off in the sandbox. The sandbox has no internet, so the
+ * toolchain can never send it, and on E2B every `mopm run` then waited about 20 s after the program's output for the
+ * export to give up (a run took 0.55 s with it off). E2B runs every sandbox command as `/bin/bash -l -c`, so a file in
+ * /etc/profile.d reaches every command, for the sandbox user and root alike; `setEnvs` would not, as E2B's variables
+ * set there exist only during the build.
+ */
+export const TELEMETRY_PROFILE = '/etc/profile.d/mopm-tutorial.sh';
+const TELEMETRY_OFF = 'MODULAR_TELEMETRY_ENABLED=false';
+
 /** The mopm release the template installs. */
 export interface MopmRelease {
   /** X.Y.Z, already checked against VERSION (inputs.ts `releaseOf`). */
@@ -76,11 +86,23 @@ export function installCommand(mopm: MopmRelease): string {
 }
 
 /**
+ * Gives `/home/user/lessons` and the lesson's directory `dir`, with everything under it, to the sandbox user. E2B's
+ * `copy` with `user` owns the copied files by that user but creates the directories on the way (here `lessons` and
+ * `lessons/<id>`) as root, so without this `mopm sync` as the sandbox user cannot write the lesson's `.mopm/` (seen
+ * on E2B: `mopm sync: AccessDenied`), and neither could the lesson's own runs in the sandbox.
+ */
+function ownLessonCommand(dir: string): string {
+  return `chown ${SANDBOX_USER}:${SANDBOX_USER} ${LESSONS_DIR} && chown -R ${SANDBOX_USER}:${SANDBOX_USER} ${dir}`;
+}
+
+/**
  * The template definition. Steps, in order:
  * 1. E2B's base image (`e2bdev/base`, Debian with curl, tar and coreutils, which the install step needs).
  * 2. The install step (`installCommand`), as root: the release's binary at /usr/local/bin/mopm, sha256-checked.
- * 3. For each lesson: its project/ is copied to /home/user/lessons/<id>/, owned by the sandbox user, and
- *    `mopm sync --locked` runs there as that user, which installs the pinned Mojo toolchain and the locked
+ *    Then, as root, `TELEMETRY_PROFILE`, which turns the toolchain's telemetry off for every sandbox command.
+ * 3. For each lesson: its project/ is copied to /home/user/lessons/<id>/, then `/home/user/lessons` and the
+ *    lesson's directory are given to the sandbox user (`ownLessonCommand`), and `mopm sync --locked` runs there as
+ *    that user, which installs the pinned Mojo toolchain and the locked
  *    packages into the lesson's .mopm/env. It runs in the final place because mopm's environment records the
  *    project's absolute path.
  * 4. The sandbox user and its home become the sandbox's defaults.
@@ -88,11 +110,13 @@ export function installCommand(mopm: MopmRelease): string {
 export function templateDefinition(inputs: TemplateInputs): TemplateBuilder {
   let t = Template({ fileContextPath: inputs.repoRoot, fileIgnorePatterns: FILE_IGNORE_PATTERNS })
     .fromBaseImage()
-    .runCmd(installCommand(inputs.mopm), { user: 'root' });
+    .runCmd(installCommand(inputs.mopm), { user: 'root' })
+    .runCmd(`echo 'export ${TELEMETRY_OFF}' > ${TELEMETRY_PROFILE}`, { user: 'root' });
   for (const id of inputs.lessons) {
     const dir = `${LESSONS_DIR}/${id}`;
     t = t
       .copy(`tutorial/lessons/${id}/project`, `${dir}/`, { user: SANDBOX_USER })
+      .runCmd(ownLessonCommand(dir), { user: 'root' })
       .setWorkdir(dir)
       .runCmd(`mopm sync --locked --cache ${MOPM_CACHE}`, { user: SANDBOX_USER });
   }

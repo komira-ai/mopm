@@ -14,6 +14,9 @@ import type { FlipGroupMessage, GroupHop, IndexMessage, IndexPkgMessage } from '
  *   2. then one index hop per member, in the header's `write_order` (dependencies first),
  *   3. then the flip: every member row becomes `published`, and the header `visible`.
  *
+ * A member that adds a build to a published version is keyed by that build's row (its `canonical`, src/builds.ts), so the gates of the
+ * hops and the flip are the same for it: the repodata hops of its subdirs, the package's index hop, and the flip of the build's row.
+ *
  * A hop releases what it builds on the group's header first (`repodata_released`, `index_released`: the gates the builders'
  * views read, src/group.ts) and then builds, so a build that nobody asked for (a yank of another version, an operator's rebuild,
  * the chain of another publish) between two hops lists the members released so far and no others. The header, not the message,
@@ -218,7 +221,7 @@ export async function flipGroup(d: HopDeps & { indexQueue: Queue; groupQueue: Qu
         const m = members.members[i]!;
         return d.groups.applyGroupEvent(
           m.name,
-          m.version,
+          m.canonical,
           { type: 'group_publish', group_id: gid, attempt: msg.attempt, committed_at: committedAt },
           { name: m.name, ts: at, id: `${memberAuditId(gid, i)}_group_flip_${msg.attempt}`, actor: 'system', action: 'group_flip', version: m.version, detail: { group_id: gid } },
         );

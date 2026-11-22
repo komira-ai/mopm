@@ -56,7 +56,22 @@ fn parse_time(s: &str) -> Option<Timestamp> {
 
 impl<S: AuthStore, C: Clock> SessionAuth<S, C> {
     pub fn new(edge: EdgeCheck, csrf: CsrfCheck, store: S, clock: C) -> Self {
-        SessionAuth { edge, csrf, store, clock }
+        SessionAuth {
+            edge,
+            csrf,
+            store,
+            clock,
+        }
+    }
+
+    /// The auth store, for what a route does with a session it has checked (a logout revokes its row).
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
+    /// The clock the expiry check reads, for the time a route stamps on what it writes.
+    pub fn clock(&self) -> &C {
+        &self.clock
     }
 
     /// The session of a `GET` (`GET /api/v2/auth/web/session`): steps 1 to 3, 5 and 6.
@@ -79,15 +94,24 @@ impl<S: AuthStore, C: Clock> SessionAuth<S, C> {
         if req.headers.contains("authorization") {
             return Err(authorization_refused());
         }
-        let value = single(req, SESSION_COOKIE).map_err(|_| session_required("two session cookies"))?.ok_or_else(|| session_required("no session cookie"))?;
-        TokenSecret::parse(value).ok_or_else(|| session_required("the session cookie is not a token"))
+        let value = single(req, SESSION_COOKIE)
+            .map_err(|_| session_required("two session cookies"))?
+            .ok_or_else(|| session_required("no session cookie"))?;
+        TokenSecret::parse(value)
+            .ok_or_else(|| session_required("the session cookie is not a token"))
     }
 
     /// Steps 5 and 6.
     async fn lookup(&self, secret: TokenSecret) -> Result<WebSession, RegistryError> {
         let hash = secret.hash();
-        let token = self.store.get_token_by_hash(&hash).await.map_err(|e| internal(&e))?;
-        let token = token.filter(|t| bool::from(t.hash.as_bytes().ct_eq(hash.as_bytes()))).ok_or_else(|| session_required("no such session"))?;
+        let token = self
+            .store
+            .get_token_by_hash(&hash)
+            .await
+            .map_err(|e| internal(&e))?;
+        let token = token
+            .filter(|t| bool::from(t.hash.as_bytes().ct_eq(hash.as_bytes())))
+            .ok_or_else(|| session_required("no such session"))?;
         if token.kind != TokenKind::Session {
             return Err(session_required("the token is not a session"));
         }
@@ -99,13 +123,31 @@ impl<S: AuthStore, C: Clock> SessionAuth<S, C> {
         if parse_time(&token.expires_at).is_none_or(|expires| expires <= now) {
             return Err(session_required("the session expired"));
         }
-        let github_id = token.github_id.ok_or_else(|| session_required("the session names no account"))?;
-        let user = self.store.get_user(github_id).await.map_err(|e| internal(&e))?.ok_or_else(|| session_required("the session's account does not exist"))?;
-        let stale = token.last_used_at.as_deref().and_then(parse_time).is_none_or(|used| now.duration_since(used) >= TOUCH_EVERY);
+        let github_id = token
+            .github_id
+            .ok_or_else(|| session_required("the session names no account"))?;
+        let user = self
+            .store
+            .get_user(github_id)
+            .await
+            .map_err(|e| internal(&e))?
+            .ok_or_else(|| session_required("the session's account does not exist"))?;
+        let stale = token
+            .last_used_at
+            .as_deref()
+            .and_then(parse_time)
+            .is_none_or(|used| now.duration_since(used) >= TOUCH_EVERY);
         if stale {
-            self.store.touch_token(&hash, &iso_millis(now)).await.map_err(|e| internal(&e))?;
+            self.store
+                .touch_token(&hash, &iso_millis(now))
+                .await
+                .map_err(|e| internal(&e))?;
         }
-        Ok(WebSession { secret, token, user })
+        Ok(WebSession {
+            secret,
+            token,
+            user,
+        })
     }
 }
 

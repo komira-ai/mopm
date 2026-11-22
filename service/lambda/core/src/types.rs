@@ -200,8 +200,24 @@ mod tests {
         assert_eq!(back, r);
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
-        for absent in ["yank_reason", "tombstone", "published_by", "provenance", "description", "license", "repository", "homepage", "keywords", "readme", "group_id", "staged_attempt"] {
-            assert!(!keys.contains(&absent), "{absent} must be absent, not null: {text}");
+        for absent in [
+            "yank_reason",
+            "tombstone",
+            "published_by",
+            "provenance",
+            "description",
+            "license",
+            "repository",
+            "homepage",
+            "keywords",
+            "readme",
+            "group_id",
+            "staged_attempt",
+        ] {
+            assert!(
+                !keys.contains(&absent),
+                "{absent} must be absent, not null: {text}"
+            );
         }
         assert_eq!(v["state"], "published");
     }
@@ -223,14 +239,26 @@ mod tests {
     fn a_row_staged_by_a_group_keeps_its_group_fields_through_a_round_trip() {
         let text = r#"{"name":"p","version":"1.0.0","canonical":"1.0.0","build":"b","state":"pending","published_at":"t","requires_mojo":"==1","deps":[],"native":[],"files":[],"manifest_sha256":"f","group_id":"g1","staged_attempt":2,"rev":1}"#;
         let r: VersionRecord = serde_json::from_str(text).unwrap();
-        assert_eq!((r.group_id.as_deref(), r.staged_attempt, r.state), (Some("g1"), Some(2), VersionState::Pending));
+        assert_eq!(
+            (r.group_id.as_deref(), r.staged_attempt, r.state),
+            (Some("g1"), Some(2), VersionState::Pending)
+        );
         let v: serde_json::Value = serde_json::to_value(&r).unwrap();
-        assert_eq!((v["group_id"].as_str(), v["staged_attempt"].as_u64()), (Some("g1"), Some(2)));
+        assert_eq!(
+            (v["group_id"].as_str(), v["staged_attempt"].as_u64()),
+            (Some("g1"), Some(2))
+        );
         // A reserved row has the tag and no stamp yet: the stamp is absent, not null.
         let reserved = text.replace(r#""staged_attempt":2,"#, "");
         let r: VersionRecord = serde_json::from_str(&reserved).unwrap();
-        assert_eq!((r.group_id.as_deref(), r.staged_attempt), (Some("g1"), None));
-        assert!(serde_json::to_value(&r).unwrap().get("staged_attempt").is_none());
+        assert_eq!(
+            (r.group_id.as_deref(), r.staged_attempt),
+            (Some("g1"), None)
+        );
+        assert!(serde_json::to_value(&r)
+            .unwrap()
+            .get("staged_attempt")
+            .is_none());
     }
 
     #[test]

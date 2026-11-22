@@ -10,9 +10,18 @@ signed `x-amz-checksum-sha256` and an exact content length so the
 storage layer itself rejects any other bytes. The URL expires in at
 most five minutes.
 
+The version is new, or already published. A published version takes one
+more build, built with another Mojo: the files uploaded for it must be those
+of one build the version does not have, and the upload then fills that build.
+A file of a build the version has, a file for a yanked or taken-down version,
+and a file for a version that a group published (add its builds with
+`createGroup`) are `version_exists`. Once a build is committed its files are
+fixed: a file is never replaced.
+
 A file over the per-file limit is `payload_too_large` (413). A file
 that would take the package's live files (published and yanked
-versions; a takedown frees its bytes) over the 10 GB per-project limit
+versions, the builds added to them included; a takedown frees their
+bytes) over the 10 GB per-project limit
 is `limit_exceeded` (403), which is about the project, not the file:
 a smaller file may still fit.
 

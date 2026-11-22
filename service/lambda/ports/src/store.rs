@@ -26,28 +26,57 @@ use crate::types::PackageSummary;
 pub trait Store: Send + Sync {
     /// Create-once. `name_taken` when the package exists.
     fn create_package(&self, pkg: &PackageRecord) -> impl Future<Output = PortResult<()>> + Send;
-    fn get_package(&self, name: &str) -> impl Future<Output = PortResult<Option<PackageRecord>>> + Send;
+    fn get_package(
+        &self,
+        name: &str,
+    ) -> impl Future<Output = PortResult<Option<PackageRecord>>> + Send;
     fn list_package_names(&self) -> impl Future<Output = PortResult<Vec<String>>> + Send;
     /// Packages whose name starts with `prefix` (empty matches all), ordered by name, strictly after
     /// `after`, at most `limit`. This is the read path of search: the DynamoDB adapter answers it with
     /// one Query on the name index (never a Scan), so it can only return the attributes that index projects.
-    fn search_packages(&self, prefix: &str, after: Option<&str>, limit: usize) -> impl Future<Output = PortResult<Vec<PackageSummary>>> + Send;
+    fn search_packages(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> impl Future<Output = PortResult<Vec<PackageSummary>>> + Send;
 
     /// Create-once, with its audit entry. `invalid_version`, `version_exists`.
-    fn create_version(&self, rec: &VersionRecord, audit: &AuditEntry) -> impl Future<Output = PortResult<()>> + Send;
+    fn create_version(
+        &self,
+        rec: &VersionRecord,
+        audit: &AuditEntry,
+    ) -> impl Future<Output = PortResult<()>> + Send;
     /// `invalid_version` for anything that is not MAJOR.MINOR.PATCH.
-    fn get_version(&self, name: &str, version: &str) -> impl Future<Output = PortResult<Option<VersionRecord>>> + Send;
+    fn get_version(
+        &self,
+        name: &str,
+        version: &str,
+    ) -> impl Future<Output = PortResult<Option<VersionRecord>>> + Send;
     /// Apply an event through the state machine and persist it with its audit entry, retrying on a
     /// concurrent change. `version_not_found` when the version is missing; the state machine's error
     /// (`invalid_transition`, `invalid_request`) when it refuses the event.
-    fn update_version(&self, name: &str, version: &str, event: &VersionEvent, audit: &AuditEntry) -> impl Future<Output = PortResult<VersionRecord>> + Send;
+    fn update_version(
+        &self,
+        name: &str,
+        version: &str,
+        event: &VersionEvent,
+        audit: &AuditEntry,
+    ) -> impl Future<Output = PortResult<VersionRecord>> + Send;
     /// Oldest to newest by version order.
-    fn list_versions(&self, name: &str) -> impl Future<Output = PortResult<Vec<VersionRecord>>> + Send;
+    fn list_versions(
+        &self,
+        name: &str,
+    ) -> impl Future<Output = PortResult<Vec<VersionRecord>>> + Send;
 
     /// `already_owner`.
     fn add_owner(&self, owner: &OwnerRecord) -> impl Future<Output = PortResult<()>> + Send;
     /// `owner_not_found`.
-    fn remove_owner(&self, name: &str, github_id: u64) -> impl Future<Output = PortResult<()>> + Send;
+    fn remove_owner(
+        &self,
+        name: &str,
+        github_id: u64,
+    ) -> impl Future<Output = PortResult<()>> + Send;
     /// By github_id.
     fn list_owners(&self, name: &str) -> impl Future<Output = PortResult<Vec<OwnerRecord>>> + Send;
 
@@ -72,13 +101,54 @@ mod tests {
     use super::*;
 
     fn entry(ts: &str, id: &str) -> AuditEntry {
-        AuditEntry { name: "p".into(), ts: ts.into(), id: id.into(), actor: "a".into(), action: "x".into(), version: None, detail: None }
+        AuditEntry {
+            name: "p".into(),
+            ts: ts.into(),
+            id: id.into(),
+            actor: "a".into(),
+            action: "x".into(),
+            version: None,
+            detail: None,
+        }
+    }
+
+    fn version(v: &str) -> VersionRecord {
+        serde_json::from_value(serde_json::json!({
+            "name": "p", "version": v, "canonical": v, "build": "b", "state": "published", "published_at": "2026-11-20T12:00:00.000Z",
+            "requires_mojo": ">=25.1", "deps": [], "native": [], "files": [], "manifest_sha256": "0", "rev": 1
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn records_order_by_version_and_an_invalid_version_compares_equal() {
+        assert_eq!(
+            by_version(&version("1.2.0"), &version("1.10.0")),
+            Ordering::Less
+        );
+        assert_eq!(
+            by_version(&version("2.0.0"), &version("1.10.0")),
+            Ordering::Greater
+        );
+        assert_eq!(
+            by_version(&version("not a version"), &version("1.0.0")),
+            Ordering::Equal
+        );
     }
 
     #[test]
     fn the_audit_key_is_time_then_id() {
-        assert_eq!(audit_sort_key(&entry("2026-10-13T12:00:00Z", "id000001")), "2026-10-13T12:00:00Z#id000001");
-        assert!(audit_sort_key(&entry("2026-10-13T12:00:00Z", "id000002")) > audit_sort_key(&entry("2026-10-13T12:00:00Z", "id000001")));
-        assert!(audit_sort_key(&entry("2026-10-13T12:00:01Z", "a")) > audit_sort_key(&entry("2026-10-13T12:00:00Z", "z")));
+        assert_eq!(
+            audit_sort_key(&entry("2026-10-13T12:00:00Z", "id000001")),
+            "2026-10-13T12:00:00Z#id000001"
+        );
+        assert!(
+            audit_sort_key(&entry("2026-10-13T12:00:00Z", "id000002"))
+                > audit_sort_key(&entry("2026-10-13T12:00:00Z", "id000001"))
+        );
+        assert!(
+            audit_sort_key(&entry("2026-10-13T12:00:01Z", "a"))
+                > audit_sort_key(&entry("2026-10-13T12:00:00Z", "z"))
+        );
     }
 }

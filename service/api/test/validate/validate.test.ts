@@ -5,7 +5,7 @@ import fc from 'fast-check';
 import { DEFAULT_LIMITS } from '../../src/validate/limits';
 import { validatePackage, RULE_TO_REJECTION } from '../../src/validate';
 import type { PublishExpectation, RejectionCode, RuleCode, ValidatorOptions, Verdict } from '../../src/validate';
-import { FULL_NAME_SCHEMA_VERSION, METADATA_SCHEMA_VERSION, NATIVE_KINDS, NATIVE_MODES, SONAME_PATTERN, EXCLUSIVE_PATTERN } from '../../src/validate/metadata';
+import { FULL_NAME_SCHEMA_VERSION, METADATA_SCHEMA_VERSION, NATIVE_KINDS, NATIVE_MODES, SONAME_PATTERN, EXCLUSIVE_PATTERN, SOURCE_SHA256_PATTERN } from '../../src/validate/metadata';
 import { buildConda, buildTarBz2, bzip2, tar, zip, zst, zstdRleBomb } from './builder';
 import type { Built, Spec } from './builder';
 
@@ -524,7 +524,8 @@ describe('the verdict codes are the contract', () => {
     expect(native.properties.exclusive.type).toBe('string');
     expect(native.properties.exclusive.minLength).toBe(1);
     expect(new RegExp(native.properties.exclusive.pattern).source).toBe(EXCLUSIVE_PATTERN.source);
-    expect(Object.keys(schema.properties).sort()).toEqual(['deps', 'name', 'native', 'schema', 'version']);
+    expect(new RegExp(schema.properties.source_sha256.pattern).source).toBe(SOURCE_SHA256_PATTERN.source);
+    expect(Object.keys(schema.properties).sort()).toEqual(['deps', 'name', 'native', 'schema', 'source_sha256', 'version']);
   });
 });
 

@@ -6,17 +6,21 @@ tools are Zig, so no build or test action runs a shell of its own.
 | target | what it is |
 |---|---|
 | `:zip_pack` | `zip_pack <out.zip> [--sha256 <file>] bootstrap=<file>:755`: a deterministic zip. Entries stored, in the order given, the DOS time 1980-01-01 00:00, version-made-by host Unix, mode in the high 16 bits of the external attributes. Names Lambda would not find (`./x`, `/x`, `x/`, `..`, empty, backslash, NUL) and a name twice are refused. `--sha256` writes `sha256sum` lines for the zip and each entry. |
+| `:zip_bundle` | `zip_bundle <out_dir> <name>=<zip> ...`: creates `<out_dir>` (refused if it exists) holding each zip as `<name>.zip` byte for byte and `sums`, the `sha256sum` lines of those zips sorted by file name. Refused, exit 1, with a message: no pairs, an argument without `=`, a name that is not lower-case words joined by `-` (the stack's rule), a name twice, an unreadable zip. |
+| `:zip_bundle_cli_test` | runs the built `:zip_bundle` as a process: two zips give exit 0 and the exact bundle; each refusal gives exit 1, its exact message on stderr and no `<out_dir>`. |
 | `:zip_check` | reads the package back (end record, central directory, local header) and fails unless: exactly one entry named exactly `bootstrap`, stored, fixed time and date, host byte Unix, regular file mode 0755, no extra field or comment, no bytes outside, data equal to the executable, CRC-32 right. It shares no code with the writer. (The standard library's `std.zip` arrived after the pinned Zig, and does not return the host byte or the attributes.) |
 | `lambda_zip` (`lambda.bzl`) | a rule: `<name>.zip` from an executable, `[sha256]` the sums file, `[tests]` the welded test markers. The package is not built unless every `welded_tests` target passed, and `zip_check` is a validation of the target, so a build that holds the zip fails when it is wrong. |
+| `lambda_bundle` (`lambda.bzl`) | a rule: a directory of several `lambda_zip` outputs, named by function (`<name>.zip`), with `sums` from `zip_bundle`. |
 
-The sums file is what a deploy compares with the function's `CodeSha256` (base64 of the zip's sha256), so the
+The bundle's `sums` is what a deploy compares with each function's `CodeSha256` (base64 of the zip's sha256), so the
 same bytes go through every stage.
 
 ## The canary
 
 A function built from the pinned crates (`Cargo.toml`, `Cargo.lock`, `third_party/buildrules`) with buildrules' Rust rules to
 hold the foundation. Nothing deploys it. This directory is the Cargo package `mopm_canary` (`cargo_package` in `BUCK`), so
-its targets are `:release` (the executable), `:test` (one marker per test binary), `:lint`.
+its targets are `:release` (the executable), `:test` (one marker per test binary), `:lint` (clippy, `-D warnings`) and `:fmt`
+(rustfmt).
 
 | target | what it proves |
 |---|---|

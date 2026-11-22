@@ -174,6 +174,9 @@ pub const Version = struct {
     state: VersionState = .pending,
     files: []const File,
     manifest_sha256: []const u8,
+    /// The `manifest_sha256` a commit request stated, or "" when it stated none (a group publish keeps the sha256 of its first file in
+    /// `manifest_sha256` whatever its commit said). A build added to the version later must state this one.
+    manifest_stated: []const u8 = "",
     published_at: i64 = 0,
     published_by: []const u8,
     yank_reason: ?[]const u8 = null,
@@ -217,6 +220,9 @@ pub const Publish = struct {
     user: *User,
     version: *Version,
     upload_ids: []const []const u8,
+    /// The files of a build this publish adds to a version that is already published, appended when it is published; empty for the
+    /// publish of a new version, whose files the version holds from the commit.
+    add: []const File = &.{},
     /// 0 pending, 1 validating, 2 indexing, 3 published; each status poll
     /// moves one step.
     stage: u8 = 0,
@@ -261,6 +267,9 @@ pub const GroupMember = struct {
     readme: ?GroupReadme = null,
     /// The readme text of this member in the commit request, copied to its row when the group is visible.
     readme_text: ?[]const u8 = null,
+    /// The member's files are a build added to a version that is already published: the group never reserves the version, appends the
+    /// files when it is visible, and its yank leaves the version as it is.
+    add: bool = false,
     /// Set when the group's yank changed this member: an unyank restores these and no others.
     yanked_by_group: bool = false,
 };

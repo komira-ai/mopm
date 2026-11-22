@@ -63,10 +63,10 @@ export const BUILTINS: readonly string[] = [
  */
 export const STD_MODULES: readonly string[] = [
   'algorithm', 'atomic', 'base64', 'benchmark', 'bit', 'builtin', 'collections', 'compile',
-  'complex', 'documentation', 'ffi', 'format', 'gpu', 'hashlib', 'io', 'iter',
-  'itertools', 'logger', 'math', 'memory', 'origin', 'os', 'pathlib', 'prelude',
-  'pwd', 'python', 'random', 'reflection', 'runtime', 'stat', 'subprocess', 'sys',
-  'tempfile', 'testing', 'time', 'traits', 'utils',
+  'complex', 'documentation', 'ffi', 'format', 'gpu', 'hash', 'hashlib', 'io',
+  'iter', 'itertools', 'logger', 'math', 'memory', 'net', 'origin', 'os',
+  'pathlib', 'prelude', 'pwd', 'python', 'random', 'reflection', 'runtime', 'simd',
+  'stat', 'subprocess', 'sys', 'tempfile', 'testing', 'time', 'traits', 'utils',
 ]; // prettier-ignore
 
 const KEYWORD_SET = new Set(KEYWORDS);

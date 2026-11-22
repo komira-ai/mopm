@@ -4,7 +4,18 @@
   "title": "mopm sparse index record, version 2 (one line of /index/v2/<aa>/<bb>/<namespace>/<name>)",
   "description": "One published version of one package. A package file is newline-delimited JSON: one record per line, every line with the same name, the full name <namespace>/<name> of the file. Unknown keys are ignored; a v this reader does not know is refused.",
   "$defs": {
-    "FullName": { "type": "string", "maxLength": 104, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*/[a-z][a-z0-9_]{1,63}$" }
+    "FullName": { "type": "string", "maxLength": 104, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*/[a-z][a-z0-9_]{1,63}$" },
+    "File": {
+      "type": "object",
+      "required": ["subdir", "filename", "sha256", "size"],
+      "properties": {
+        "subdir": { "enum": ["linux-64", "linux-aarch64", "osx-arm64", "noarch"] },
+        "filename": { "description": "mojo-<namespace>.<name>-<version>-<build>.conda: the conda name of the record's name, then its version and build.", "type": "string", "pattern": "^mojo-[a-z0-9]+(-[a-z0-9]+)*\\.[a-z][a-z0-9_]{1,63}-[0-9][0-9a-z.]*-[A-Za-z0-9_.]+\\.conda$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "minimum": 1 },
+        "url": { "description": "<channel_url><namespace>/<subdir>/<filename>.", "type": "string", "format": "uri" }
+      }
+    }
   },
   "type": "object",
   "required": ["v", "name", "version", "build", "state", "published_at", "requires_mojo", "deps", "files", "manifest_sha256"],
@@ -52,17 +63,22 @@
       }
     },
     "files": {
+      "description": "The files of the primary build (the first of `builds`: the lowest compiler), which a reader that does not know `builds` reads as the version's files.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/File" }
+    },
+    "builds": {
+      "description": "Every build of the version, one per Mojo compiler, sorted by compiler version (numerically, part by part: 1.2.0 before 1.10.0). A build is the files built with one compiler; its `build` is mojo<compiler>_0, which ends each of its file names, and no build and no compiler repeats. The first is the primary build: `build`, `requires_mojo` and `files` above are its. A reader that knows `builds` uses it and ignores those three; one that does not ignores this key and sees the primary build only. `deps`, `native`, `manifest_sha256`, `state`, `published_at` and the rest are the version's and are the same for every build. The registry writes `builds` on every record, also for a version with one build. Absent: the version has the one build that `build`, `requires_mojo` and `files` describe.",
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["subdir", "filename", "sha256", "size"],
+        "required": ["build", "requires_mojo", "files"],
         "properties": {
-          "subdir": { "enum": ["linux-64", "linux-aarch64", "osx-arm64", "noarch"] },
-          "filename": { "description": "mojo-<namespace>.<name>-<version>-<build>.conda: the conda name of the record's name, then its version and build.", "type": "string", "pattern": "^mojo-[a-z0-9]+(-[a-z0-9]+)*\\.[a-z][a-z0-9_]{1,63}-[0-9][0-9a-z.]*-[A-Za-z0-9_.]+\\.conda$" },
-          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "size": { "type": "integer", "minimum": 1 },
-          "url": { "description": "<channel_url><namespace>/<subdir>/<filename>.", "type": "string", "format": "uri" }
+          "build": { "type": "string", "pattern": "^mojo[0-9]+(\\.[0-9]+)*_0$" },
+          "requires_mojo": { "type": "string", "minLength": 1 },
+          "files": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/File" } }
         }
       }
     },
@@ -85,7 +101,12 @@
     {
       "if": { "properties": { "state": { "const": "tombstoned" } }, "required": ["state"] },
       "then": { "required": ["tombstone"] },
-      "else": { "properties": { "files": { "items": { "required": ["url"] } } } }
+      "else": {
+        "properties": {
+          "files": { "items": { "required": ["url"] } },
+          "builds": { "items": { "properties": { "files": { "items": { "required": ["url"] } } } } }
+        }
+      }
     }
   ]
 }

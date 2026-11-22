@@ -292,6 +292,12 @@ export const REQUIRED: Record<string, Needs> = {
     ),
     ...each(['secretsmanager:GetRandomPassword'], '*'),
   ],
+  // The E2B secret's resource policy (lib/api-stack.ts): CloudFormation puts it on the secret and removes it with the secret; blockPublicPolicy is checked with ValidateResourcePolicy.
+  'AWS::SecretsManager::ResourcePolicy': (r, _id, c) =>
+    each(
+      ['secretsmanager:PutResourcePolicy', 'secretsmanager:DeleteResourcePolicy', 'secretsmanager:GetResourcePolicy', 'secretsmanager:DescribeSecret', 'secretsmanager:ValidateResourcePolicy'],
+      `arn:aws:secretsmanager:${REGION}:${c.account}:secret:${physical(c, logicalId(r.Properties.SecretId), 'Name')}-AbCdEf`,
+    ),
   'AWS::ApiGatewayV2::Api': apigw('/apis/abc123'),
   'AWS::ApiGatewayV2::Stage': apigw('/apis/abc123/stages/$default'),
   'AWS::ApiGatewayV2::Integration': apigw('/apis/abc123/integrations/def456'),

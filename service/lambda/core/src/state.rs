@@ -38,11 +38,17 @@ pub struct PublishFill {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VersionEvent {
     Publish(Option<Box<PublishFill>>),
-    Yank { reason: String },
+    Yank {
+        reason: String,
+    },
     Unyank,
     /// `unpublished`: a pending version being burned by a rejected publish; no file was ever published,
     /// so none is kept.
-    Tombstone { reason_code: String, date: String, unpublished: bool },
+    Tombstone {
+        reason_code: String,
+        date: String,
+        unpublished: bool,
+    },
 }
 
 impl VersionEvent {
@@ -58,6 +64,9 @@ impl VersionEvent {
 }
 
 /// The result of an event.
+// Returned by value once per event and matched at once, never stored in a collection: the size of `Changed` costs nothing,
+// and a `Box` would add an allocation to every changed record.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Applied {
     /// The event changes nothing; the record stands (and keeps its `rev`).
@@ -80,11 +89,23 @@ impl Applied {
 fn illegal_transition(rec: &VersionRecord, ev: &VersionEvent) -> RegistryError {
     let action = ev.name();
     let state = rec.state.as_str();
-    let detail: Detail = [("action", action), ("name", rec.name.as_str()), ("version", rec.version.as_str()), ("state", state)]
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    RegistryError::new(ErrorCode::InvalidTransition, format!("Cannot {action} '{}' {}: it is {state}.", rec.name, rec.version), detail)
+    let detail: Detail = [
+        ("action", action),
+        ("name", rec.name.as_str()),
+        ("version", rec.version.as_str()),
+        ("state", state),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    RegistryError::new(
+        ErrorCode::InvalidTransition,
+        format!(
+            "Cannot {action} '{}' {}: it is {state}.",
+            rec.name, rec.version
+        ),
+        detail,
+    )
 }
 
 fn changed(rec: &VersionRecord, patch: impl FnOnce(&mut VersionRecord)) -> Applied {
@@ -99,11 +120,20 @@ fn tombstoned(rec: &VersionRecord, reason_code: &str, date: &str, unpublished: b
     let files = if rec.state == VersionState::Pending && unpublished {
         Vec::new()
     } else {
-        rec.files.iter().map(|f| FileRef { url: None, ..f.clone() }).collect()
+        rec.files
+            .iter()
+            .map(|f| FileRef {
+                url: None,
+                ..f.clone()
+            })
+            .collect()
     };
     changed(rec, |r| {
         r.state = VersionState::Tombstoned;
-        r.tombstone = Some(Tombstone { reason_code: reason_code.to_string(), date: date.to_string() });
+        r.tombstone = Some(Tombstone {
+            reason_code: reason_code.to_string(),
+            date: date.to_string(),
+        });
         r.files = files;
         r.yank_reason = None;
     })
@@ -158,7 +188,14 @@ pub fn apply_event(rec: &VersionRecord, ev: &VersionEvent) -> Result<Applied, Re
                 fill(r, f);
             }
         })),
-        (S::Pending, E::Tombstone { reason_code, date, unpublished }) => Ok(tombstoned(rec, reason_code, date, *unpublished)),
+        (
+            S::Pending,
+            E::Tombstone {
+                reason_code,
+                date,
+                unpublished,
+            },
+        ) => Ok(tombstoned(rec, reason_code, date, *unpublished)),
         (S::Pending, _) => Err(illegal_transition(rec, ev)),
 
         (S::Published, E::Publish(_)) => Ok(Applied::Unchanged),
@@ -168,7 +205,9 @@ pub fn apply_event(rec: &VersionRecord, ev: &VersionEvent) -> Result<Applied, Re
                 return Err(RegistryError::new(
                     ErrorCode::InvalidRequest,
                     "A yank needs a reason.",
-                    [("detail".to_string(), "a yank needs a reason".to_string())].into_iter().collect(),
+                    [("detail".to_string(), "a yank needs a reason".to_string())]
+                        .into_iter()
+                        .collect(),
                 ));
             }
             Ok(changed(rec, |r| {
@@ -176,14 +215,28 @@ pub fn apply_event(rec: &VersionRecord, ev: &VersionEvent) -> Result<Applied, Re
                 r.yank_reason = Some(reason.clone());
             }))
         }
-        (S::Published, E::Tombstone { reason_code, date, unpublished }) => Ok(tombstoned(rec, reason_code, date, *unpublished)),
+        (
+            S::Published,
+            E::Tombstone {
+                reason_code,
+                date,
+                unpublished,
+            },
+        ) => Ok(tombstoned(rec, reason_code, date, *unpublished)),
 
         (S::Yanked, E::Yank { .. }) => Ok(Applied::Unchanged),
         (S::Yanked, E::Unyank) => Ok(changed(rec, |r| {
             r.state = S::Published;
             r.yank_reason = None;
         })),
-        (S::Yanked, E::Tombstone { reason_code, date, unpublished }) => Ok(tombstoned(rec, reason_code, date, *unpublished)),
+        (
+            S::Yanked,
+            E::Tombstone {
+                reason_code,
+                date,
+                unpublished,
+            },
+        ) => Ok(tombstoned(rec, reason_code, date, *unpublished)),
         (S::Yanked, E::Publish(_)) => Err(illegal_transition(rec, ev)),
     }
 }
@@ -195,13 +248,19 @@ mod tests {
     use VersionState as S;
 
     fn yank() -> VersionEvent {
-        VersionEvent::Yank { reason: "broken".to_string() }
+        VersionEvent::Yank {
+            reason: "broken".to_string(),
+        }
     }
     fn publish() -> VersionEvent {
         VersionEvent::Publish(None)
     }
     fn tomb() -> VersionEvent {
-        VersionEvent::Tombstone { reason_code: "malware".to_string(), date: "2026-10-12".to_string(), unpublished: false }
+        VersionEvent::Tombstone {
+            reason_code: "malware".to_string(),
+            date: "2026-10-12".to_string(),
+            unpublished: false,
+        }
     }
     fn at(state: S) -> VersionRecord {
         let mut r = rec("p", "1.0.0");
@@ -237,8 +296,18 @@ mod tests {
         for (from, ev, to) in table {
             let r = at(from);
             match to {
-                None => assert_eq!(apply_event(&r, &ev).unwrap_err().code, ErrorCode::InvalidTransition, "{from:?} + {}", ev.name()),
-                Some(to) => assert_eq!(apply_event(&r, &ev).unwrap().into_record(&r).state, to, "{from:?} + {}", ev.name()),
+                None => assert_eq!(
+                    apply_event(&r, &ev).unwrap_err().code,
+                    ErrorCode::InvalidTransition,
+                    "{from:?} + {}",
+                    ev.name()
+                ),
+                Some(to) => assert_eq!(
+                    apply_event(&r, &ev).unwrap().into_record(&r).state,
+                    to,
+                    "{from:?} + {}",
+                    ev.name()
+                ),
             }
         }
     }
@@ -254,23 +323,45 @@ mod tests {
         let y = at(S::Yanked);
         assert_eq!(apply_event(&y, &yank()).unwrap(), Applied::Unchanged);
         // The first reason stands.
-        assert_eq!(apply_event(&y, &yank()).unwrap().into_record(&y).yank_reason.as_deref(), Some("old"));
+        assert_eq!(
+            apply_event(&y, &yank())
+                .unwrap()
+                .into_record(&y)
+                .yank_reason
+                .as_deref(),
+            Some("old")
+        );
     }
 
     #[test]
     fn unyank_drops_the_reason_and_yank_sets_it() {
         let y = at(S::Yanked);
-        let un = apply_event(&y, &VersionEvent::Unyank).unwrap().into_record(&y);
+        let un = apply_event(&y, &VersionEvent::Unyank)
+            .unwrap()
+            .into_record(&y);
         assert_eq!(un.yank_reason, None);
         assert_eq!(un.rev, y.rev + 1);
         let p = at(S::Published);
-        assert_eq!(apply_event(&p, &yank()).unwrap().into_record(&p).yank_reason.as_deref(), Some("broken"));
+        assert_eq!(
+            apply_event(&p, &yank())
+                .unwrap()
+                .into_record(&p)
+                .yank_reason
+                .as_deref(),
+            Some("broken")
+        );
     }
 
     #[test]
     fn a_yank_needs_a_reason() {
         let p = at(S::Published);
-        let err = apply_event(&p, &VersionEvent::Yank { reason: String::new() }).unwrap_err();
+        let err = apply_event(
+            &p,
+            &VersionEvent::Yank {
+                reason: String::new(),
+            },
+        )
+        .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidRequest);
         assert_eq!(err.status(), 400);
         assert_eq!(err.message, "A yank needs a reason.");
@@ -283,7 +374,13 @@ mod tests {
         assert!(y.files.iter().all(|f| f.url.is_some()));
         let t = apply_event(&y, &tomb()).unwrap().into_record(&y);
         assert_eq!(t.state, S::Tombstoned);
-        assert_eq!(t.tombstone, Some(Tombstone { reason_code: "malware".to_string(), date: "2026-10-12".to_string() }));
+        assert_eq!(
+            t.tombstone,
+            Some(Tombstone {
+                reason_code: "malware".to_string(),
+                date: "2026-10-12".to_string()
+            })
+        );
         assert_eq!(t.yank_reason, None);
         assert!(!t.files.is_empty());
         for f in &t.files {
@@ -295,15 +392,27 @@ mod tests {
     #[test]
     fn burning_a_pending_version_keeps_no_file_only_when_it_was_never_published() {
         let pending = at(S::Pending);
-        let burned = VersionEvent::Tombstone { reason_code: "rejected".to_string(), date: "2026-10-12".to_string(), unpublished: true };
-        assert!(apply_event(&pending, &burned).unwrap().into_record(&pending).files.is_empty());
+        let burned = VersionEvent::Tombstone {
+            reason_code: "rejected".to_string(),
+            date: "2026-10-12".to_string(),
+            unpublished: true,
+        };
+        assert!(apply_event(&pending, &burned)
+            .unwrap()
+            .into_record(&pending)
+            .files
+            .is_empty());
         // The same flag on a published version does not drop its files.
         let published = at(S::Published);
-        let t = apply_event(&published, &burned).unwrap().into_record(&published);
+        let t = apply_event(&published, &burned)
+            .unwrap()
+            .into_record(&published);
         assert_eq!(t.files.len(), 1);
         assert_eq!(t.files[0].url, None);
         // And a pending tombstone without the flag keeps them, without urls.
-        let kept = apply_event(&pending, &tomb()).unwrap().into_record(&pending);
+        let kept = apply_event(&pending, &tomb())
+            .unwrap()
+            .into_record(&pending);
         assert_eq!(kept.files.len(), 1);
         assert_eq!(kept.files[0].url, None);
     }
@@ -315,7 +424,10 @@ mod tests {
             version: "1.0.0".to_string(),
             build: "mojo1.1.0_0".to_string(),
             requires_mojo: "==1.1.0".to_string(),
-            deps: vec![Dep { name: "q".to_string(), range: None }],
+            deps: vec![Dep {
+                name: "q".to_string(),
+                range: None,
+            }],
             native: vec![],
             native_depends: vec!["zstd".to_string()],
             files: vec![],
@@ -329,10 +441,19 @@ mod tests {
             keywords: Some(vec!["k".to_string()]),
             readme: None,
         };
-        let p = apply_event(&pending, &VersionEvent::Publish(Some(Box::new(f.clone())))).unwrap().into_record(&pending);
+        let p = apply_event(&pending, &VersionEvent::Publish(Some(Box::new(f.clone()))))
+            .unwrap()
+            .into_record(&pending);
         assert_eq!(p.state, S::Published);
         assert_eq!(p.rev, 1);
-        assert_eq!((p.build.as_str(), p.requires_mojo.as_str(), p.manifest_sha256.as_str()), ("mojo1.1.0_0", "==1.1.0", hex('9').as_str()));
+        assert_eq!(
+            (
+                p.build.as_str(),
+                p.requires_mojo.as_str(),
+                p.manifest_sha256.as_str()
+            ),
+            ("mojo1.1.0_0", "==1.1.0", hex('9').as_str())
+        );
         assert_eq!(p.published_by.as_deref(), Some("octocat"));
         assert_eq!(p.description.as_deref(), Some("d"));
         assert_eq!(p.keywords, Some(vec!["k".to_string()]));
@@ -342,7 +463,9 @@ mod tests {
         let mut with_license = at(S::Pending);
         with_license.license = Some("MIT".to_string());
         f.published_by = None;
-        let q = apply_event(&with_license, &VersionEvent::Publish(Some(Box::new(f)))).unwrap().into_record(&with_license);
+        let q = apply_event(&with_license, &VersionEvent::Publish(Some(Box::new(f))))
+            .unwrap()
+            .into_record(&with_license);
         assert_eq!(q.license.as_deref(), Some("MIT"));
         assert_eq!(q.published_by, None);
     }
@@ -352,12 +475,36 @@ mod tests {
         // service/api/test/state.test.ts `refused`.
         let cases: Vec<(S, VersionEvent, &str)> = vec![
             (S::Pending, yank(), "Cannot yank 'p' 1.0.0: it is pending."),
-            (S::Tombstoned, yank(), "Cannot yank 'p' 1.0.0: it is tombstoned."),
-            (S::Published, VersionEvent::Unyank, "Cannot unyank 'p' 1.0.0: it is published."),
-            (S::Pending, VersionEvent::Unyank, "Cannot unyank 'p' 1.0.0: it is pending."),
-            (S::Tombstoned, VersionEvent::Unyank, "Cannot unyank 'p' 1.0.0: it is tombstoned."),
-            (S::Tombstoned, publish(), "Cannot publish 'p' 1.0.0: it is tombstoned."),
-            (S::Yanked, publish(), "Cannot publish 'p' 1.0.0: it is yanked."),
+            (
+                S::Tombstoned,
+                yank(),
+                "Cannot yank 'p' 1.0.0: it is tombstoned.",
+            ),
+            (
+                S::Published,
+                VersionEvent::Unyank,
+                "Cannot unyank 'p' 1.0.0: it is published.",
+            ),
+            (
+                S::Pending,
+                VersionEvent::Unyank,
+                "Cannot unyank 'p' 1.0.0: it is pending.",
+            ),
+            (
+                S::Tombstoned,
+                VersionEvent::Unyank,
+                "Cannot unyank 'p' 1.0.0: it is tombstoned.",
+            ),
+            (
+                S::Tombstoned,
+                publish(),
+                "Cannot publish 'p' 1.0.0: it is tombstoned.",
+            ),
+            (
+                S::Yanked,
+                publish(),
+                "Cannot publish 'p' 1.0.0: it is yanked.",
+            ),
         ];
         for (from, ev, message) in cases {
             let err = apply_event(&at(from), &ev).unwrap_err();
@@ -405,7 +552,10 @@ mod tests {
         // Reserved (no stamp), staged now, and staged at an attempt that has since moved on: none is the single path's to publish.
         for stamp in [None, Some(1), Some(7)] {
             let row = group_row(at(S::Pending), "g1", stamp);
-            for ev in [VersionEvent::Publish(None), VersionEvent::Publish(Some(Box::new(fill_for("1.0.0"))))] {
+            for ev in [
+                VersionEvent::Publish(None),
+                VersionEvent::Publish(Some(Box::new(fill_for("1.0.0")))),
+            ] {
                 let err = apply_event(&row, &ev).unwrap_err();
                 assert_eq!(err.code, ErrorCode::InvalidTransition, "stamp {stamp:?}");
                 assert_eq!(err.status(), 409);
@@ -418,24 +568,59 @@ mod tests {
     fn a_pending_row_without_a_group_still_publishes() {
         // The guard is the group tag and nothing else: a stamp alone (it cannot occur without the tag) does not make a group row.
         let mut row = at(S::Pending);
-        assert_eq!(apply_event(&row, &publish()).unwrap().into_record(&row).state, S::Published);
+        assert_eq!(
+            apply_event(&row, &publish())
+                .unwrap()
+                .into_record(&row)
+                .state,
+            S::Published
+        );
         row.staged_attempt = Some(1);
-        assert_eq!(apply_event(&row, &publish()).unwrap().into_record(&row).state, S::Published);
+        assert_eq!(
+            apply_event(&row, &publish())
+                .unwrap()
+                .into_record(&row)
+                .state,
+            S::Published
+        );
     }
 
     #[test]
     fn a_group_row_can_be_burned_and_a_published_one_is_changed_without_losing_its_group() {
         // The group's own failure path burns its numbers: a tombstone is not refused, and it keeps the tag.
         let staged = group_row(at(S::Pending), "g1", Some(2));
-        let burned = VersionEvent::Tombstone { reason_code: "rejected".to_string(), date: "2026-10-12".to_string(), unpublished: true };
+        let burned = VersionEvent::Tombstone {
+            reason_code: "rejected".to_string(),
+            date: "2026-10-12".to_string(),
+            unpublished: true,
+        };
         let t = apply_event(&staged, &burned).unwrap().into_record(&staged);
-        assert_eq!((t.state, t.group_id.as_deref(), t.staged_attempt), (S::Tombstoned, Some("g1"), Some(2)));
+        assert_eq!(
+            (t.state, t.group_id.as_deref(), t.staged_attempt),
+            (S::Tombstoned, Some("g1"), Some(2))
+        );
         // A row the group flipped ignores its group: single events act on it as on any published row, and the tag survives.
-        let flipped = VersionRecord { state: S::Published, ..group_row(at(S::Pending), "g1", Some(2)) };
-        assert_eq!(apply_event(&flipped, &publish()).unwrap(), Applied::Unchanged);
-        let y = apply_event(&flipped, &yank()).unwrap().into_record(&flipped);
-        assert_eq!((y.state, y.group_id.as_deref(), y.staged_attempt), (S::Yanked, Some("g1"), Some(2)));
-        let u = apply_event(&y, &VersionEvent::Unyank).unwrap().into_record(&y);
-        assert_eq!((u.state, u.group_id.as_deref(), u.staged_attempt), (S::Published, Some("g1"), Some(2)));
+        let flipped = VersionRecord {
+            state: S::Published,
+            ..group_row(at(S::Pending), "g1", Some(2))
+        };
+        assert_eq!(
+            apply_event(&flipped, &publish()).unwrap(),
+            Applied::Unchanged
+        );
+        let y = apply_event(&flipped, &yank())
+            .unwrap()
+            .into_record(&flipped);
+        assert_eq!(
+            (y.state, y.group_id.as_deref(), y.staged_attempt),
+            (S::Yanked, Some("g1"), Some(2))
+        );
+        let u = apply_event(&y, &VersionEvent::Unyank)
+            .unwrap()
+            .into_record(&y);
+        assert_eq!(
+            (u.state, u.group_id.as_deref(), u.staged_attempt),
+            (S::Published, Some("g1"), Some(2))
+        );
     }
 }

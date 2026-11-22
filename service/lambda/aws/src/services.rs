@@ -13,7 +13,10 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use mopm_ports::env::Clock;
 use mopm_ports::error::{PortError, PortResult};
-use mopm_ports::publish::{Invalidator, ObjectInfo, ObjectStore, PresignRequest, PresignedPut, Presigner, PutOptions, PutOutcome, Queue, QueueMessage};
+use mopm_ports::publish::{
+    Invalidator, ObjectInfo, ObjectStore, PresignRequest, PresignedPut, Presigner, PutOptions,
+    PutOutcome, Queue, QueueMessage,
+};
 use mopm_ports::secrets::SecretReader;
 use sha2::{Digest, Sha256};
 
@@ -34,7 +37,10 @@ pub struct S3Channel {
 
 impl S3Channel {
     pub fn new(client: aws_sdk_s3::Client, bucket: impl Into<String>) -> Self {
-        S3Channel { client, bucket: bucket.into() }
+        S3Channel {
+            client,
+            bucket: bucket.into(),
+        }
     }
 }
 
@@ -45,17 +51,37 @@ fn absent(status: Option<u16>) -> bool {
 
 impl ObjectStore for S3Channel {
     async fn head(&self, key: &str) -> PortResult<Option<ObjectInfo>> {
-        match self.client.head_object().bucket(&self.bucket).key(key).send().await {
-            Ok(o) => Ok(Some(ObjectInfo { size: u64::try_from(o.content_length().unwrap_or(0)).unwrap_or(0) })),
+        match self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(o) => Ok(Some(ObjectInfo {
+                size: u64::try_from(o.content_length().unwrap_or(0)).unwrap_or(0),
+            })),
             Err(e) if absent(status_of(&e)) => Ok(None),
             Err(e) => Err(fault(&format!("s3 HEAD {key}"), e)),
         }
     }
 
     async fn get(&self, key: &str) -> PortResult<Option<Vec<u8>>> {
-        match self.client.get_object().bucket(&self.bucket).key(key).send().await {
+        match self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
             Ok(o) => {
-                let bytes = o.body.collect().await.map_err(|e| PortError::fault(format!("s3 GET {key}: {e}")))?;
+                let bytes = o
+                    .body
+                    .collect()
+                    .await
+                    .map_err(|e| PortError::fault(format!("s3 GET {key}: {e}")))?;
                 Ok(Some(bytes.to_vec()))
             }
             Err(e) if absent(status_of(&e)) => Ok(None),
@@ -86,7 +112,14 @@ impl ObjectStore for S3Channel {
     }
 
     async fn delete(&self, key: &str) -> PortResult<()> {
-        match self.client.delete_object().bucket(&self.bucket).key(key).send().await {
+        match self
+            .client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
             Ok(_) => Ok(()),
             Err(e) if status_of(&e) == Some(404) => Ok(()),
             Err(e) => Err(fault(&format!("s3 DELETE {key}"), e)),
@@ -104,14 +137,23 @@ pub struct S3Presigner {
 }
 
 impl S3Presigner {
-    pub fn new(client: aws_sdk_s3::Client, bucket: impl Into<String>, clock: Arc<dyn Clock>) -> Self {
-        S3Presigner { client, bucket: bucket.into(), clock }
+    pub fn new(
+        client: aws_sdk_s3::Client,
+        bucket: impl Into<String>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        S3Presigner {
+            client,
+            bucket: bucket.into(),
+            clock,
+        }
     }
 }
 
 impl Presigner for S3Presigner {
     async fn presign_put(&self, key: &str, req: &PresignRequest<'_>) -> PortResult<PresignedPut> {
-        let digest = hex::decode(req.sha256).map_err(|e| PortError::fault(format!("sha256 is not hex: {e}")))?;
+        let digest = hex::decode(req.sha256)
+            .map_err(|e| PortError::fault(format!("sha256 is not hex: {e}")))?;
         let size = i64::try_from(req.size).map_err(|_| PortError::fault("size does not fit"))?;
         let config = PresigningConfig::builder()
             .start_time(self.clock.now().into())
@@ -128,8 +170,14 @@ impl Presigner for S3Presigner {
             .presigned(config)
             .await
             .map_err(|e| fault("s3 presign", e))?;
-        let headers: BTreeMap<String, String> = presigned.headers().map(|(k, v)| (k.to_ascii_lowercase(), v.to_string())).collect();
-        Ok(PresignedPut { url: presigned.uri().to_string(), headers })
+        let headers: BTreeMap<String, String> = presigned
+            .headers()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v.to_string()))
+            .collect();
+        Ok(PresignedPut {
+            url: presigned.uri().to_string(),
+            headers,
+        })
     }
 }
 
@@ -143,7 +191,10 @@ pub struct SqsFifoQueue {
 
 impl SqsFifoQueue {
     pub fn new(client: aws_sdk_sqs::Client, queue_url: impl Into<String>) -> Self {
-        SqsFifoQueue { client, queue_url: queue_url.into() }
+        SqsFifoQueue {
+            client,
+            queue_url: queue_url.into(),
+        }
     }
 }
 
@@ -172,15 +223,25 @@ pub struct CloudFrontInvalidator {
 
 impl CloudFrontInvalidator {
     pub fn new(client: aws_sdk_cloudfront::Client, distribution_id: impl Into<String>) -> Self {
-        CloudFrontInvalidator { client, distribution_id: distribution_id.into() }
+        CloudFrontInvalidator {
+            client,
+            distribution_id: distribution_id.into(),
+        }
     }
 }
 
 impl Invalidator for CloudFrontInvalidator {
     async fn invalidate(&self, paths: &[String], reference: &str) -> PortResult<()> {
-        let quantity = i32::try_from(paths.len()).map_err(|_| PortError::fault("too many paths"))?;
+        let quantity =
+            i32::try_from(paths.len()).map_err(|_| PortError::fault("too many paths"))?;
         let batch = InvalidationBatch::builder()
-            .paths(Paths::builder().quantity(quantity).set_items(Some(paths.to_vec())).build().map_err(PortError::fault)?)
+            .paths(
+                Paths::builder()
+                    .quantity(quantity)
+                    .set_items(Some(paths.to_vec()))
+                    .build()
+                    .map_err(PortError::fault)?,
+            )
             .caller_reference(reference)
             .build()
             .map_err(PortError::fault)?;
@@ -210,9 +271,20 @@ impl SecretsManagerReader {
 
 impl SecretReader for SecretsManagerReader {
     async fn read(&self, secret_id: &str) -> PortResult<Option<String>> {
-        match self.client.get_secret_value().secret_id(secret_id).send().await {
+        match self
+            .client
+            .get_secret_value()
+            .secret_id(secret_id)
+            .send()
+            .await
+        {
             Ok(o) => Ok(o.secret_string().map(str::to_string)),
-            Err(e) if e.as_service_error().is_some_and(|s| s.is_resource_not_found_exception()) => Ok(None),
+            Err(e)
+                if e.as_service_error()
+                    .is_some_and(|s| s.is_resource_not_found_exception()) =>
+            {
+                Ok(None)
+            }
             Err(e) => Err(fault("secretsmanager GetSecretValue", e)),
         }
     }
