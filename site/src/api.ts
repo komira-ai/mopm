@@ -1,7 +1,9 @@
 // The read API client. One call per page: getPackage, getVersion or searchPackages, plus getHealth for the banner.
 //
-// Every request is a simple CORS GET with no headers and no credentials, so the browser sends no preflight and no
-// cookies. fetch is injected: tests replay the contract fixtures through it and never reach the network.
+// Every request is a same-origin GET under the relative base host.ts gives (`/api/v2`, which the site distribution
+// sends to the stage's API), with no headers and no body. `mode: 'same-origin'` makes the browser refuse a request that
+// would leave the page's origin. fetch is injected: tests replay the contract fixtures through it and never reach the
+// network.
 
 import { decodeHealth, decodePackageInfo, decodePackageList, decodeVersionDetail } from './decode.js';
 import { type ApiError, fromResponse, networkError, timeoutError, unreadable } from './errors.js';
@@ -45,7 +47,10 @@ const REAL_TIMERS: Timers = {
   clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
-/** `base` is apiBase(location.hostname), e.g. 'https://api.mopm.dev/api/v2'. */
+/** Every read: a GET that stays on the page's origin, no headers, no body. */
+const READ: RequestInit = { method: 'GET', mode: 'same-origin', credentials: 'same-origin' };
+
+/** `base` is apiBase(location.hostname): the relative '/api/v2'. */
 export function client(
   fetchFn: FetchFn,
   base: string,
@@ -58,7 +63,7 @@ export function client(
     try {
       let res: Response;
       try {
-        res = await fetchFn(base + path, { method: 'GET', mode: 'cors', credentials: 'omit', signal: ctl.signal });
+        res = await fetchFn(base + path, { ...READ, signal: ctl.signal });
       } catch {
         return ctl.signal.aborted ? timeoutError() : networkError();
       }

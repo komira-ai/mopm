@@ -2,8 +2,8 @@
 //
 // The page branches on the error envelope's `code` (spec: `{"error":{"code","message","hint"}}`). A code this build
 // does not know, and an answer that is not an envelope (the gateway's own 404 for an unrouted path, say), fall back to
-// the generic failure of the status class. `retry-after` is not readable from a page (the API's CORS exposes only
-// x-mopm-request-id), so a busy registry gets a generic "try again shortly".
+// the generic failure of the status class. The page does not use `retry-after`: a busy registry gets a generic "try
+// again shortly".
 
 export type ErrorKind = 'notFound' | 'invalid' | 'busy' | 'server' | 'network' | 'timeout';
 

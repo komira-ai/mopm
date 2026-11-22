@@ -14,8 +14,8 @@ Account ids come from the CDK environment at deploy time and are never committed
   validates against CloudFormation. The first beta deploy is the proof: if CloudFormation rejects the `Resource`
   or `Principal` form, the data stack fails there and the policy shape needs adjusting.
 - **API host.** The API is served at `api.<site host>` (three hosts beyond the site and conda hosts, with their
-  own certificates and DNS records). Routing `/api/*` through CloudFront on the site host is the alternative;
-  this is a pending CEO decision.
+  own certificates and DNS records) for the CLI and CI. The site's pages read it as `/api/*` on the site host,
+  which the site distribution sends to the same API (Site, below).
 - **Site.** The site stack serves the site build (`site/dist`; deploy.yml builds it before `cdk deploy`, and synth
   refuses to run without it). Hashed assets are uploaded first and never pruned, then the pages, pruned and invalidated
   (`/*`), so a rollback is a deploy of the earlier commit: its pages find their assets still in the bucket (which is

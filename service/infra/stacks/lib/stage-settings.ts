@@ -17,6 +17,11 @@ export const DEFAULT_E2B_DOMAIN = 'e2b.app';
 /** The sandbox timeout E2B is asked for when the stage's `tutorial` block names none: E2B's cleanup of an abandoned sandbox. */
 export const DEFAULT_SANDBOX_TIMEOUT_S = 1800;
 
+/** E2B's domain for a stage: its `tutorial` block's `e2bDomain`, else the default. The site's CSP names its sandboxes. */
+export function e2bDomain(c: StageConfig): string {
+  return c.tutorial?.e2bDomain ?? DEFAULT_E2B_DOMAIN;
+}
+
 /** The item, attribute by attribute, as the functions read it. */
 export interface StageSettings {
   key: typeof STAGE_SETTINGS_KEY;
@@ -41,7 +46,7 @@ export function stageSettings(c: StageConfig, require2fa: boolean): StageSetting
     site_origin: `https://${c.siteDomain}`,
     require_2fa: require2fa,
     ...(t.e2bTemplateId !== undefined ? { e2b_template_id: t.e2bTemplateId } : {}),
-    e2b_domain: t.e2bDomain ?? DEFAULT_E2B_DOMAIN,
+    e2b_domain: e2bDomain(c),
     sandbox_timeout_s: t.sandboxTimeoutS ?? DEFAULT_SANDBOX_TIMEOUT_S,
   };
 }
