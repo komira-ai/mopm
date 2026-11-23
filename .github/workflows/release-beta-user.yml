@@ -38,6 +38,8 @@ jobs:
         include:
           - { target: linux-x86_64, os: ubuntu-24.04 }
           - { target: linux-aarch64, os: ubuntu-24.04-arm }
+          # macos-15 stays hosted: no macos-farm target runs the walk, which takes the candidate artifact of this run and talks to
+          # a fake registry over loopback (untried on the Mac workers).
           - { target: macos-arm64, os: macos-15 }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
