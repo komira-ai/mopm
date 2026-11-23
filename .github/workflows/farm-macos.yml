@@ -15,7 +15,8 @@
 # them, so while the macOS variables are not all set the job does nothing, says so, and is green. `true` drops those macos-15 legs
 # from ci.yml, and this job is then the only macOS run of those checks: with the macOS variables not all set it fails, as farm.yml's
 # does with no workers, instead of skipping. The macOS legs of release-build.yml and release-beta-user.yml and the beta tier of ci.yml
-# are not Buck2 targets and stay on macos-15 either way. tests/drivers/release_lint.zig holds the switch (`farmMacosSwitchProblems`).
+# have no `macos-farm` target and stay on macos-15 either way; each says why in a comment at its matrix entry.
+# tests/drivers/release_lint.zig holds the switch (`farmMacosSwitchProblems`).
 # The hygiene and workflow lints allow the id-token grant and farm-connect in this file and farm.yml only, and release.yml's
 # beta-macos job (the one job there that calls a workflow with an id-token grant) to call this file alone.
 name: farm-macos

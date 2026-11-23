@@ -20,8 +20,8 @@
 # Mac workers. The repository variable MACOS_ON_FARM switches between the two: unset (or anything but `true`), these jobs keep their
 # macos-15 leg; `true` drops it on every trigger, and farm-macos.yml then fails instead of skipping when the macOS workers are not
 # configured, so no merge goes unbuilt on macOS. farm-macos.yml runs on a push to main and in the release only: with the switch on, the
-# nightly and manual runs of these two jobs have no macOS leg (a commit on main was built on macOS when it was pushed). The beta tier's macOS legs (`mojo-e2e`, `pixi-channels`, `installer`) are not Buck2 targets and stay on
-# macos-15 either way. tests/drivers/release_lint.zig holds the switch (`ciSwitchProblems`, `farmMacosSwitchProblems`).
+# nightly and manual runs of these two jobs have no macOS leg (a commit on main was built on macOS when it was pushed). The beta tier's macOS legs (`mojo-e2e`, `pixi-channels`, `installer`) have no `macos-farm` target and stay on
+# macos-15 either way; each says why in a comment at its matrix. tests/drivers/release_lint.zig holds the switch (`ciSwitchProblems`, `farmMacosSwitchProblems`).
 name: ci
 
 on:
@@ -68,7 +68,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-15 stays hosted: komira's pinned Mojo toolchain (Mojo's one Buck2 action input) is linux-x86_64 only, and native-workspace starts the fake registry on a loopback port, which the farm's Mac sandbox (no network, loopback included) refuses.
+        # macos-15 stays hosted: these drivers have no macos-farm form, as komira's mojo_compiler, the Mojo of their Buck2 targets,
+        # is pinned for linux-x86_64 only (and native-workspace talks to the fake registry over loopback, untried on the Mac workers).
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -168,7 +169,7 @@ jobs:
   # pixi installs packages `mopm pack` wrote from one conda channel per namespace (docs/design/namespaces.md, section 5):
   # the documented `pixi workspace channel add` and `pixi add`, a closure over two namespaces, a dependency's channel
   # missing, and two packages with one import name. The test builds the channels and serves them on loopback with a
-  # stand-in mojo-compiler (tests/drivers/pixi_channels_test.zig).
+  # stand-in mojo-compiler (tests/drivers/pixi_channels_test.zig); the farm has no pixi, so only a hosted runner runs it.
   pixi-channels:
     name: pixi channels (${{ matrix.os }})
     # Beta tier: never on a pull request.
@@ -178,7 +179,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-15 stays hosted: pixi, a separate process, fetches the channels from a loopback HTTP server, which the farm's Mac sandbox refuses, and file:// channels would not test the documented https channel add.
+        # macos-15 stays hosted: no Buck2 target gives the test a pixi, and pixi, a separate process, fetches the channels from a
+        # loopback HTTP server (untried on the Mac workers); file:// channels would not test the documented `pixi workspace channel add <url>`.
         os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,7 +204,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-15 stays hosted: install.sh runs the Mac's curl against a loopback HTTP server (the 302 of /latest, the paths requested, none on a refused platform), which the farm's Mac sandbox refuses, and no socket-free form keeps those checks.
+        # macos-15 stays hosted: no Buck2 target runs it; install.sh runs the Mac's curl against a loopback HTTP server (the 302 of
+        # /latest, the paths requested, none on a refused platform), and loopback is untried on the Mac workers.
         os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
