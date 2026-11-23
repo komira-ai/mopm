@@ -68,6 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # macos-15 stays hosted: komira's pinned Mojo toolchain (Mojo's one Buck2 action input) is linux-x86_64 only, and native-workspace starts the fake registry on a loopback port, which the farm's Mac sandbox (no network, loopback included) refuses.
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -167,7 +168,7 @@ jobs:
   # pixi installs packages `mopm pack` wrote from one conda channel per namespace (docs/design/namespaces.md, section 5):
   # the documented `pixi workspace channel add` and `pixi add`, a closure over two namespaces, a dependency's channel
   # missing, and two packages with one import name. The test builds the channels and serves them on loopback with a
-  # stand-in mojo-compiler (tests/drivers/pixi_channels_test.zig); the farm has no pixi, so only a hosted runner runs it.
+  # stand-in mojo-compiler (tests/drivers/pixi_channels_test.zig).
   pixi-channels:
     name: pixi channels (${{ matrix.os }})
     # Beta tier: never on a pull request.
@@ -177,6 +178,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # macos-15 stays hosted: pixi, a separate process, fetches the channels from a loopback HTTP server, which the farm's Mac sandbox refuses, and file:// channels would not test the documented https channel add.
         os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -200,6 +202,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # macos-15 stays hosted: install.sh runs the Mac's curl against a loopback HTTP server (the 302 of /latest, the paths requested, none on a refused platform), which the farm's Mac sandbox refuses, and no socket-free form keeps those checks.
         os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
