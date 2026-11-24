@@ -13,6 +13,7 @@
 //  - the JavaScript and CSS stay small: each module at most JS_MAX_BYTES, all of them at most JS_TOTAL_MAX_BYTES (tsc
 //    output is not minified; the edge is to compress it); the shared stylesheet at most SHARED_CSS_MAX_BYTES, each area
 //    stylesheet at most AREA_CSS_MAX_BYTES, and the stylesheets one page links at most PAGE_CSS_MAX_BYTES together.
+// checkHeld holds the pages the build writes beside dist/ (the held tree, tools/build.ts) to the same page rules.
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, posix, relative, sep } from 'path';
@@ -175,6 +176,41 @@ export function isScriptUrl(raw: string): boolean {
   return /^(?:javascript|data|vbscript):/i.test(s);
 }
 
+/**
+ * The rules of one page `f` (its text): no inline script or style, no handler or script URL, every '<' read, every
+ * /assets/ reference a file of `have`, and the stylesheets it links (sizes from `cssSize`) within the page budget.
+ */
+function pageProblems(f: string, text: string, have: ReadonlySet<string>, cssSize: ReadonlyMap<string, number>): string[] {
+  const problems: string[] = [];
+  // A script's content runs whatever its attributes say; every one must be empty (an unclosed one runs to the end).
+  for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)(?:<\/script\s*>|$)/gi)) {
+    if (m[1] !== '') problems.push(`${f}: an inline <script>`);
+  }
+  if (/<style\b/i.test(text)) problems.push(`${f}: a <style> element`);
+  const { tags, problems: unread } = readTags(text);
+  for (const p of unread) problems.push(`${f}: ${p}`);
+  let pageCss = 0;
+  for (const [tag, attrs] of tags) {
+    if (tag === 'link' && attrs.some(([k, v]) => k === 'rel' && v === 'stylesheet')) {
+      const href = attrs.find(([k]) => k === 'href')?.[1] ?? '';
+      pageCss += cssSize.get(href.replace(/^\//, '')) ?? 0;
+    }
+    if (tag === 'script') {
+      const src = attrs.filter(([name]) => name === 'src');
+      if (src.length !== 1 || !src[0][1].startsWith('/assets/')) problems.push(`${f}: a <script> without one src under /assets/`);
+    }
+    for (const [name, value] of attrs) {
+      if (name === 'style') problems.push(`${f}: a style attribute on <${tag}>`);
+      if (name.startsWith('on')) problems.push(`${f}: an event-handler attribute ${name} on <${tag}>`);
+      if (isUrlAttr(name) && isScriptUrl(value)) problems.push(`${f}: a script URL (or an unknown character reference) in ${name} on <${tag}>`);
+      const asset = (name === 'href' || name === 'src') && /^\/(assets\/[^#?]+)/.exec(value);
+      if (asset && !have.has(asset[1])) problems.push(`${f}: references /${asset[1]}, which is not in dist`);
+    }
+  }
+  if (pageCss > PAGE_CSS_MAX_BYTES) problems.push(`${f} links ${pageCss} bytes of CSS; the limit for one page is ${PAGE_CSS_MAX_BYTES}`);
+  return problems;
+}
+
 /** Throws a DistError listing every problem found. */
 export function checkDist(dir: string): void {
   const files = listFiles(dir);
@@ -213,34 +249,29 @@ export function checkDist(dir: string): void {
       if (n > max) problems.push(`${f} is ${n} bytes; the limit for ${shared ? 'the shared' : 'an area'} stylesheet is ${max}`);
       if (!f.startsWith('assets/')) problems.push(`${f}: a stylesheet outside assets/`);
     }
-    if (ext !== '.html') continue;
-    // A script's content runs whatever its attributes say; every one must be empty (an unclosed one runs to the end).
-    for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)(?:<\/script\s*>|$)/gi)) {
-      if (m[1] !== '') problems.push(`${f}: an inline <script>`);
-    }
-    if (/<style\b/i.test(text)) problems.push(`${f}: a <style> element`);
-    const { tags, problems: unread } = readTags(text);
-    for (const p of unread) problems.push(`${f}: ${p}`);
-    let pageCss = 0;
-    for (const [tag, attrs] of tags) {
-      if (tag === 'link' && attrs.some(([k, v]) => k === 'rel' && v === 'stylesheet')) {
-        const href = attrs.find(([k]) => k === 'href')?.[1] ?? '';
-        pageCss += cssSize.get(href.replace(/^\//, '')) ?? 0;
-      }
-      if (tag === 'script') {
-        const src = attrs.filter(([name]) => name === 'src');
-        if (src.length !== 1 || !src[0][1].startsWith('/assets/')) problems.push(`${f}: a <script> without one src under /assets/`);
-      }
-      for (const [name, value] of attrs) {
-        if (name === 'style') problems.push(`${f}: a style attribute on <${tag}>`);
-        if (name.startsWith('on')) problems.push(`${f}: an event-handler attribute ${name} on <${tag}>`);
-        if (isUrlAttr(name) && isScriptUrl(value)) problems.push(`${f}: a script URL (or an unknown character reference) in ${name} on <${tag}>`);
-        const asset = (name === 'href' || name === 'src') && /^\/(assets\/[^#?]+)/.exec(value);
-        if (asset && !have.has(asset[1])) problems.push(`${f}: references /${asset[1]}, which is not in dist`);
-      }
-    }
-    if (pageCss > PAGE_CSS_MAX_BYTES) problems.push(`${f} links ${pageCss} bytes of CSS; the limit for one page is ${PAGE_CSS_MAX_BYTES}`);
+    if (ext === '.html') problems.push(...pageProblems(f, text, have, cssSize));
   }
   if (js > JS_TOTAL_MAX_BYTES) problems.push(`JavaScript is ${js} bytes in all; the limit is ${JS_TOTAL_MAX_BYTES}`);
+  if (problems.length > 0) throw new DistError(problems);
+}
+
+/**
+ * Checks the held tree (pages the build writes but dist/ does not ship until their routes exist, tools/build.ts): only
+ * .html pages, each held to every rule of a page in dist/, its /assets/ references and stylesheet sizes read from the
+ * built dist/ beside it (`distDir`), where they will be served from. Throws a DistError naming each page `held/<path>`.
+ */
+export function checkHeld(heldDir: string, distDir: string): void {
+  const have = new Set(listFiles(distDir));
+  const cssSize = new Map<string, number>();
+  for (const f of have) if (posix.extname(f) === '.css') cssSize.set(f, statSync(join(distDir, f)).size);
+  const problems: string[] = [];
+  for (const f of listFiles(heldDir)) {
+    const name = `held/${f}`;
+    if (posix.extname(f) !== '.html') {
+      problems.push(`${name}: only .html pages are held`);
+      continue;
+    }
+    problems.push(...pageProblems(name, readFileSync(join(heldDir, f), 'utf8'), have, cssSize));
+  }
   if (problems.length > 0) throw new DistError(problems);
 }
