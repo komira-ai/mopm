@@ -26,6 +26,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/main.ts` | the page script: connects `app.ts`, `mount.ts` and `enhance.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
 | `src/tutorial/gate.ts` | the tutorial's gate: the session, a sandbox and sign-out over the site's own `/api/v2` routes (`credentials: 'same-origin'`, the CSRF header), the sign-in link, and `replayGate`, a fake that replays recorded answers; no page imports it yet |
+| `src/tutorial/page.ts` | the tutorial page's logic with no DOM and no SDK: what the page shows signed out, signed in and while running, each gate error as its message, the in-memory sandbox grant (replaced near its `expires_at` or when the `Runner` port says it is gone), output with control and bidi characters as `[U+XXXX]` markers, and the draft in `localStorage` (`mopm.tutorial.1`); no page imports it yet |
 | `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
 
 ## Rules
