@@ -55,3 +55,11 @@ filegroup(
     copy = True,
     visibility = ["//:"],
 )
+
+# The constants docs/what-mopm-stores.md states (site/test/docs-stores.test.ts reads them).
+export_file(
+    name = "site_log.rs",
+    src = "src/log.rs",
+    mode = "reference",
+    visibility = ["//site:"],
+)

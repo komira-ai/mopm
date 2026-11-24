@@ -14,9 +14,9 @@ function render(source: string) {
   return mdFull(src, { idPrefix: '', headingShift: 0, links: { mode: 'docs', source } });
 }
 
-test('the published docs are the seven the plan names: why and design, getting started, configuration, examples, mopm.toml, mopm test, publishing a workspace', () => {
-  expect(DOC_PAGES.map((d) => d.source)).toEqual(['docs/why-and-design.md', 'docs/getting-started.md', 'docs/configuration.md', 'docs/examples.md', 'spec/mopm-toml.md', 'docs/mopm-test.md', 'docs/publishing-a-workspace.md']);
-  expect(DOC_PAGES.map((d) => d.slug)).toEqual(['why', 'getting-started', 'configuration', 'examples', 'mopm-toml', 'mopm-test', 'publish-workspace']);
+test('the published docs are the eight the plan names: why and design, getting started, configuration, examples, mopm.toml, mopm test, publishing a workspace, what mopm.dev stores', () => {
+  expect(DOC_PAGES.map((d) => d.source)).toEqual(['docs/why-and-design.md', 'docs/getting-started.md', 'docs/configuration.md', 'docs/examples.md', 'spec/mopm-toml.md', 'docs/mopm-test.md', 'docs/publishing-a-workspace.md', 'docs/what-mopm-stores.md']);
+  expect(DOC_PAGES.map((d) => d.slug)).toEqual(['why', 'getting-started', 'configuration', 'examples', 'mopm-toml', 'mopm-test', 'publish-workspace', 'what-mopm-stores']);
 });
 
 test.each(DOC_PAGES.map((d) => [d.source] as const))('%s renders with no literal fallback and unique ids', (source) => {

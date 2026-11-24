@@ -13,6 +13,7 @@
     "/docs/mopm-test/index.html",
     "/docs/mopm-toml/index.html",
     "/docs/publish-workspace/index.html",
+    "/docs/what-mopm-stores/index.html",
     "/docs/why/index.html",
     "/index.html",
     "/install.sh"
@@ -591,6 +592,16 @@
       "view": null
     },
     {
+      "path": "/docs/what-mopm-stores",
+      "edge": "/docs/what-mopm-stores/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/what-mopm-stores/",
+      "edge": "/docs/what-mopm-stores/index.html",
+      "view": null
+    },
+    {
       "path": "/docs/Bad_Slug",
       "edge": "/404.html",
       "view": null
@@ -772,6 +783,11 @@
     },
     {
       "path": "/docs/publish-workspace/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/what-mopm-stores/index.html",
       "edge": "pass",
       "view": null
     },

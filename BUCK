@@ -1252,6 +1252,12 @@ export_file(
 )
 
 export_file(
+    name = "site.docs.what-mopm-stores.md",
+    src = "docs/what-mopm-stores.md",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.spec.channel.md",
     src = "spec/channel.md",
     visibility = ["//site:"],
