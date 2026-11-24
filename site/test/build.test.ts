@@ -44,7 +44,9 @@ describe('a build', () => {
     expect(REQUIRED).toEqual(expect.arrayContaining(['index.html', 'app.html', '404.html', 'docs/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html']));
     const assets = files.filter((f) => f.startsWith('assets/'));
     const css = ['docs.css', 'home.css', 'package.css', 'search.css', 'site.css'];
-    expect(assets.sort()).toEqual(['a.js', 'lazy/b.js', 'lazy/c.js', 'main.js', ...css].map((p) => `assets/${id}/${p}`).sort());
+    // The entry's modules, the stylesheets and the tutorial bundle (tests in tutorial-bundle.test.ts); not tutorial/r.js,
+    // which is inside the bundle, nor unused.js.
+    expect(assets.sort()).toEqual(['a.js', 'lazy/b.js', 'lazy/c.js', 'main.js', 'tutorial.js', ...css].map((p) => `assets/${id}/${p}`).sort());
   });
 
   test('the installer ships at the root, byte for byte what static/install.sh says', () => {
