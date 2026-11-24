@@ -433,12 +433,20 @@ describe('the site build', () => {
   });
 
   // The site's local preview (site/tools/preview.ts) and its E2B call are never deployed: no file of the build names
-  // E2B's create call or the key's variable.
+  // E2B's create call or the key's variable. The one exception is the tutorial bundle, assets/<id>/tutorial.js (site
+  // README, rule 1): it is E2B's SDK, which names its own key variable and platform routes (read from `process.env`,
+  // which a browser does not have, and called only by Sandbox.create and the like, which the runner never calls). It is
+  // held instead to carrying none of the preview's own text: its flags, its create body's metadata, its fixed CSRF
+  // value, and the host of its create call.
   test('the real build holds nothing of the local preview', () => {
-    for (const f of files(DEFAULT_SITE_DIR)) {
+    const bundle = (f: string) => /^assets\/[^/]+\/tutorial\.js$/.test(f.split(path.sep).join('/'));
+    const all = files(DEFAULT_SITE_DIR);
+    expect(all.filter(bundle)).toHaveLength(1);
+    for (const f of all) {
       const text = fs.readFileSync(path.join(DEFAULT_SITE_DIR, f), 'utf8');
-      expect([f, /E2B_API_KEY|api\.e2b\.app|\/v2\/sandboxes/.test(text)]).toEqual([f, false]);
+      const preview = bundle(f) ? /mopm_stage|mopm_request|--e2b-template|--scenario|mopm-csrf-example-value|api\.e2b\.app/ : /E2B_API_KEY|api\.e2b\.app|\/v2\/sandboxes/;
+      expect([f, preview.test(text)]).toEqual([f, false]);
     }
-    expect(files(DEFAULT_SITE_DIR).filter((f) => /preview/.test(f))).toEqual([]);
+    expect(all.filter((f) => /preview/.test(f))).toEqual([]);
   });
 });
