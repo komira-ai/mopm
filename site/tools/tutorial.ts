@@ -1,8 +1,11 @@
 // The tutorial's pages, prerendered from the lessons (tools/lessons.ts): /tutorial, the lessons in order, and
 // /tutorial/<lesson>, a lesson's text rendered by the same restricted Markdown renderer as the docs (raw HTML stays
-// text, every link is checked), its title and its place in the tutorial, and an empty mount point, #lesson-runner,
-// for the editor and the Run button the tutorial's page script adds. Nothing on them needs a session: the pages work
-// without scripts and without signing in, and the header is every page's (no login, no "Sign out").
+// text, every link is checked), its title and its place in the tutorial, and the mount point, #lesson-runner
+// (data-lesson="<lesson>"), holding the lesson's editable files and its commands (src/tutorial/view.ts lessonSource).
+// The tutorial's page script (src/tutorial/main.ts, the bundle a lesson's page loads after main.js) reads the lesson
+// from there and replaces it with the sign-in card or the editor and the Run button. Nothing on them needs a session:
+// the pages work without scripts and without signing in (the files and commands are on the page to read), and the
+// header is every page's (no login, no "Sign out").
 //
 // The build writes them to the held tree (tools/build.ts, BuildOptions.heldDir), not to dist/: the edge router serves
 // every file of dist/ as it is, and the tutorial is not to be reachable before its routes and its header link exist.
@@ -10,13 +13,14 @@
 import { h, type SElement, type SNode } from '../src/doc';
 import { internalHref } from '../src/links';
 import { renderMarkdown } from '../src/markdown/render';
+import { lessonSource, RUNNER_ID } from '../src/tutorial/view';
 import { doc, type PageSpec } from './layout';
 import type { Lesson } from './lessons';
 
 /** The prefix of every heading id and in-page link of a lesson's text, so none can take an id the page uses. */
 export const LESSON_ID_PREFIX = 'lesson-';
 /** The id of the element the tutorial's page script fills with the editor, the buttons and the output. */
-export const RUNNER_ID = 'lesson-runner';
+export { RUNNER_ID };
 
 /** The routes of the tutorial's pages (src/routes.ts does not route them yet). */
 export const TUTORIAL_PATH = '/tutorial';
@@ -56,8 +60,14 @@ export function lessonPage(l: Lesson, position: number, count: number): PageSpec
       h(doc, 'p', { class: 'lesson-place muted small' }, `Lesson ${position} of ${count}`),
       h(doc, 'h1', null, l.title),
       lessonArticle(l).node,
-      h(doc, 'section', { id: RUNNER_ID, class: 'lesson-runner', 'aria-label': 'Try it' }),
+      h(
+        doc,
+        'section',
+        { id: RUNNER_ID, class: 'lesson-runner', 'aria-label': 'Try it', 'data-lesson': l.id },
+        ...lessonSource(doc, { id: l.id, files: l.files, actions: l.actions }),
+      ),
     ],
+    tutorialScript: true,
   };
 }
 

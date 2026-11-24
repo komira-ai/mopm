@@ -20,7 +20,8 @@ tutorial/lessons/<id>/
   - `title` and `summary`, for the index and the page;
   - `order`, the lesson's place from 1, one lesson per number;
   - `editable`, the files the page shows in an editor, as paths relative to `project/` (no `..`, no absolute path,
-    no backslash); each must be a file under `project/`;
+    no backslash); each must be a file under `project/`, UTF-8 text with LF line ends and no NUL (the lesson's page
+    carries its text as HTML, which would read a CR as a newline; the site build refuses one, `site/tools/lessons.ts`);
   - `actions`: `run` always, and `test` when the lesson has tests: the command each button runs in the lesson's
     directory. `run` names the program, as `mopm run` requires (`mopm run src/main.mojo`); `test` is `mopm test ...`.
 - `project/mopm.lock` is what `mopm lock` writes for `project/mopm.toml`: after changing the manifest, run

@@ -9,6 +9,7 @@ import { join } from 'path';
 import { TAGS } from '../src/doc';
 import { DOC_PAGES } from '../src/links';
 import { tagsIn } from '../tools/check-dist';
+import { renderPage } from '../tools/layout';
 import { ASSET_PATTERN, INSTALL_COMMAND, OPENING_SENTENCE, PLANNED, RELEASE_SERIES, TARGETS, VERIFY, WORKING_TODAY } from '../tools/pages';
 import { cleanup, type Fixture, fixture, REPO_ROOT } from './build-fixture';
 
@@ -582,5 +583,21 @@ describe('the home page says what the repository says', () => {
     const home = read('index.html');
     expect(home).toContain('<code>pixi add mojo-&lt;namespace&gt;.&lt;name&gt;</code>');
     expect(home).toContain('<code id="conda-channel">https://conda.mopm.dev/</code>');
+  });
+});
+
+// The tutorial bundle's script tag (tools/layout.ts, PageSpec.tutorialScript and Assets.tutorial): a lesson's page
+// loads it after main.js; a page that does not ask for it, or a build that gives no bundle, has main.js alone.
+// Defect caught: the bundle on every page (300 KB the other pages do not need), or before main.js.
+describe('the tutorial bundle script', () => {
+  const spec = { title: 'T', description: 'd', kind: 'tutorial' as const, main: [] };
+  const assets = { base: '/assets/0123456789abcdef/', entry: 'main.js', preload: [], tutorial: 'tutorial.js' };
+  const scripts = (html: string) => html.match(/<script\b[^>]*><\/script>/g);
+  test.each([
+    ['asked for and given', { ...spec, tutorialScript: true }, assets, ['main.js', 'tutorial.js']],
+    ['given, not asked for', spec, assets, ['main.js']],
+    ['asked for, not given', { ...spec, tutorialScript: true }, { ...assets, tutorial: undefined }, ['main.js']],
+  ])('%s', (_what, s, a, files) => {
+    expect(scripts(renderPage(s, a))).toEqual(files.map((m) => `<script type="module" src="/assets/0123456789abcdef/${m}"></script>`));
   });
 });

@@ -10,15 +10,15 @@ export const TAGS = [
   'a', 'article', 'aside', 'blockquote', 'br', 'button', 'caption', 'code', 'dd', 'details', 'div', 'dl', 'dt', 'em',
   'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'input', 'kbd', 'label', 'li', 'main', 'meta',
   'nav', 'ol', 'option', 'p', 'pre', 'section', 'select', 'small', 'span', 'strong', 'table', 'tbody', 'td', 'th',
-  'summary', 'thead', 'time', 'tr', 'ul',
+  'summary', 'textarea', 'thead', 'time', 'tr', 'ul',
 ] as const;
 export type Tag = (typeof TAGS)[number];
 
 export const ATTRS = [
   'action', 'aria-busy', 'aria-current', 'aria-describedby', 'aria-hidden', 'aria-label', 'aria-labelledby',
-  'aria-live', 'autocomplete', 'class', 'colspan', 'content', 'data-page', 'datetime', 'disabled', 'enterkeyhint',
-  'for', 'hidden', 'href', 'id', 'lang', 'maxlength', 'method', 'name', 'placeholder', 'rel', 'role', 'scope',
-  'selected', 'spellcheck', 'start', 'tabindex', 'title', 'type', 'value',
+  'aria-live', 'autocomplete', 'class', 'colspan', 'content', 'data-lesson', 'data-page', 'datetime', 'disabled',
+  'enterkeyhint', 'for', 'hidden', 'href', 'id', 'lang', 'maxlength', 'method', 'name', 'placeholder', 'rel', 'role',
+  'rows', 'scope', 'selected', 'spellcheck', 'start', 'tabindex', 'title', 'type', 'value',
 ] as const;
 export type AttrName = (typeof ATTRS)[number];
 

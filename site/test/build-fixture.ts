@@ -1,6 +1,6 @@
 // Test helper: runs buildSite on a small stand-in for tsc's browser output (the real one exists only after
 // `npm run build`, and the tests run before it), with the real stylesheet, the real repository docs and, unless a test
-// gives its own (lessonTree), the real lessons. The stand-in's tutorial/runner.js imports only a small module of its
+// gives its own (lessonTree), the real lessons. The stand-in's tutorial/main.js imports only a small module of its
 // own, not e2b, so the tutorial bundle esbuild makes of it is small; realBrowserFiles() is the whole of src/ as tsc
 // would write it, for the tests of the real bundle.
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
@@ -19,7 +19,7 @@ export const BROWSER_FILES: Record<string, string> = {
   'lazy/b.js': 'export const b = 2;\n',
   'lazy/c.js': 'export const c = 3;\n',
   'unused.js': 'export const u = 4;\n',
-  'tutorial/runner.js': "import { r } from './r.js';\nexport const runner = r;\n",
+  'tutorial/main.js': "import { r } from './r.js';\nexport const runner = r;\n",
   'tutorial/r.js': 'export const r = 5;\n',
   'tutorial/node-stub.js': '"use strict";\n',
 };

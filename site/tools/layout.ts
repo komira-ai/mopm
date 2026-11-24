@@ -20,6 +20,8 @@ export interface Assets {
   entry: string;
   /** Modules the entry imports, for modulepreload. */
   preload: readonly string[];
+  /** The tutorial bundle (TUTORIAL_BUNDLE), loaded after the entry by a page whose spec asks for it (tutorialScript). */
+  tutorial?: string;
 }
 
 export type PageKind = 'home' | 'docs' | 'app' | 'error' | 'tutorial';
@@ -59,6 +61,8 @@ export interface PageSpec {
   current?: 'packages' | 'docs';
   /** This page is that entry's own target (aria-current="page"); otherwise it is below it (aria-current="true"). */
   currentIsTarget?: boolean;
+  /** The page loads the tutorial bundle (Assets.tutorial) after main.js: a lesson's page, whose script fills its runner. */
+  tutorialScript?: boolean;
 }
 
 function siteSearch(): SNode {
@@ -149,6 +153,7 @@ export function renderPage(spec: PageSpec, assets: Assets): string {
     ...stylesheetsFor(spec.kind).map((css) => `<link rel="stylesheet" href="${a(css)}">`),
     ...assets.preload.map((m) => `<link rel="modulepreload" href="${a(m)}">`),
     `<script type="module" src="${a(assets.entry)}"></script>`,
+    spec.tutorialScript === true && assets.tutorial !== undefined ? `<script type="module" src="${a(assets.tutorial)}"></script>` : '',
   ].filter((l) => l !== '');
   // <noscript> is not a tag views may build: it goes in here, around serialized (escaped) nodes.
   const noscript = spec.noscript ? `<noscript><div class="notice">${serialize(spec.noscript)}</div></noscript>` : '';

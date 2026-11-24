@@ -47,7 +47,7 @@ export function importsOf(path: string, source: string): string[] {
 
 export const JS_MAX_BYTES = 64 * 1024;
 export const JS_TOTAL_MAX_BYTES = 128 * 1024;
-/** The tutorial's one bundled asset (tools/build.ts): src/tutorial/runner.ts with the e2b SDK. */
+/** The tutorial's one bundled asset (tools/build.ts): src/tutorial/main.ts, the page script, with the e2b SDK. */
 export const TUTORIAL_BUNDLE = 'tutorial.js';
 /**
  * The tutorial bundle's budget. Set from its first measurement, 309,160 bytes minified (e2b 2.64.0 with the runner;

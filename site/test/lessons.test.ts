@@ -243,6 +243,28 @@ describe('a bad lesson is refused, naming the lesson and the field', () => {
     expect(lessons[0].source).toBe('tutorial/lessons/b/lesson.md');
   });
 
+  test("each editable file's text is read, in editable's order, as the page will carry it", () => {
+    const t = tree({ hello: { ...goodLesson(1), json: lessonJson(1, { editable: ['src/main.mojo', 'b.mojo'] }), project: ['src/main.mojo', 'b.mojo'] } });
+    writeFileSync(join(t, 'hello', 'project', 'b.mojo'), '\n\tfn b(): pass  # é <&>\n');
+    expect(loadLessons(t, SCHEMA)[0].files).toEqual([
+      { path: 'src/main.mojo', text: '# src/main.mojo\n' },
+      { path: 'b.mojo', text: '\n\tfn b(): pass  # é <&>\n' },
+    ]);
+  });
+
+  // Defect caught: a lesson page whose editor starts from text other than the project's (a browser reads a CR in the
+  // page's HTML as a newline and replaces a NUL; bytes that are not UTF-8 would be decoded into replacement characters).
+  test.each([
+    ['a CRLF line end', Buffer.from('fn main():\r\n    pass\r\n'), 'holds a carriage return (the page would read it as a newline); use LF line ends'],
+    ['a lone CR', Buffer.from('a\rb'), 'holds a carriage return (the page would read it as a newline); use LF line ends'],
+    ['a NUL', Buffer.from('a\u0000b'), 'holds a NUL character, which the page cannot carry'],
+    ['bytes that are not UTF-8', Buffer.from([0x66, 0x6e, 0xff, 0x0a]), 'is not UTF-8 text'],
+  ])('an editable file with %s is refused', (_what, bytes, problem) => {
+    const t = tree({ hello: goodLesson(1) });
+    writeFileSync(join(t, 'hello', 'project', 'src', 'main.mojo'), bytes);
+    expect(problems(t)).toEqual([`tutorial/lessons/hello: project/src/main.mojo: ${problem}`]);
+  });
+
   test('an editable path that does not exist under project/', () => {
     const t = tree({ hello: { ...goodLesson(1), json: lessonJson(1, { editable: ['src/main.mojo', 'src/gone.mojo'] }) } });
     expect(problems(t)).toEqual(['tutorial/lessons/hello: lesson.json: /editable: src/gone.mojo is not a file under project/']);

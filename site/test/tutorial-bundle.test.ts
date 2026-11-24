@@ -1,5 +1,6 @@
 // The tutorial bundle (tools/build.ts bundleTutorial, TUTORIAL_BUNDLE) and what checkDist holds it to:
-//  - the real bundle, built from all of src/ as tsc writes it, is one minified ES module with the e2b SDK in it, within
+//  - the real bundle, built from all of src/ as tsc writes it, is one minified ES module with the e2b SDK and the page
+//    script (src/tutorial/main.ts) in it, within
 //    TUTORIAL_JS_MAX_BYTES, with no source map, no path of this machine, no import left and no eval; the same inputs
 //    give the same bytes; and no page of the build loads it;
 //  - e2b's six node:* imports get the empty stub, any other node:* module fails the build, and so do an esbuild warning
@@ -40,11 +41,16 @@ describe('the real bundle', () => {
     expect(tutorialBytes).toBeLessThanOrEqual(TUTORIAL_JS_MAX_BYTES);
   });
 
-  test('holds the e2b SDK and the runner, and exports the runner', () => {
+  test('holds the e2b SDK and the page script (src/tutorial/main.ts, its entry), and exports nothing', () => {
     // The headers the SDK's client sends the agent, which only its code carries.
     expect(bundle).toContain('X-Access-Token');
     expect(bundle).toContain('E2b-Sandbox-Id');
-    expect(bundle).toMatch(/export\{[^}]*\bas e2bRunner\b[^}]*\};?\s*(\/\*[\s\S]*\*\/\s*)?$/);
+    // The page script's mount point, the gate's route and the draft's key: main.ts and what it imports are in it.
+    expect(bundle).toContain('"lesson-runner"');
+    expect(bundle).toContain('/api/v2/tutorial/sandbox');
+    expect(bundle).toContain('mopm.tutorial.1');
+    // An entry with no export: nothing on the page can reach into it.
+    expect(bundle).not.toMatch(/\bexport\s*\{/);
   });
 
   test('is minified and names no source map and no path of this machine', () => {
