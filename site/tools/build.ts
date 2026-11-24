@@ -3,14 +3,14 @@
 //   dist/index.html, app.html, 404.html, docs/index.html, docs/<slug>/index.html
 //   dist/install.sh    static/install.sh as it is: the installer, served at https://mopm.dev/install.sh
 //   dist/assets/<id>/  the browser modules (build/browser, from tsc) and the stylesheets of static/ (layout.ts says
-//                      which page loads which), and tutorial.js (TUTORIAL_BUNDLE): the tutorial's runner bundled with
-//                      the e2b SDK, the one asset not loaded as tsc wrote it
+//                      which page loads which), and tutorial.js (TUTORIAL_BUNDLE): the tutorial's page script bundled
+//                      with the e2b SDK, the one asset not loaded as tsc wrote it
 //
-// tutorial.js is esbuild's bundle of tsc's tutorial/runner.js and what it imports, e2b included: one minified ES module,
+// tutorial.js is esbuild's bundle of tsc's tutorial/main.js and what it imports, e2b included: one minified ES module,
 // no source map, no path of this machine in it. e2b 2.64.0 imports six node:* modules at the top of its ES module, used
 // only by its template builder, so the bundle gives each the empty tutorial/node-stub.js (NODE_STUBS); a new one, or any
-// esbuild warning, fails the build. No page of this build loads it: only the tutorial page will (check-dist.ts refuses
-// any other page that does), and the tsc modules the other pages load are as they were.
+// esbuild warning, fails the build. No page of dist/ loads it: the held lesson pages do, after main.js (check-dist.ts
+// refuses any other page that does), and the tsc modules the other pages load are as they were.
 //
 // and, beside dist/, the held tree (build/held/): pages built and checked like those of dist/ that dist/ does not ship
 // yet, because the edge router serves every file of dist/ as it is and their routes do not exist yet:
@@ -50,7 +50,7 @@ export interface BuildOptions {
 
 export const ENTRY = 'main.js';
 /** The module of tsc's browser output that TUTORIAL_BUNDLE is built from. */
-export const TUTORIAL_ENTRY = 'tutorial/runner.js';
+export const TUTORIAL_ENTRY = 'tutorial/main.js';
 /** The empty module (src/tutorial/node-stub.ts) the bundle gives each of NODE_STUBS. */
 export const NODE_STUB = 'tutorial/node-stub.js';
 /** The node:* modules e2b 2.64.0 imports at the top of its ES module; esbuild for the browser cannot resolve them. */
@@ -152,7 +152,9 @@ export function buildSite(opts: BuildOptions): { id: string; files: string[]; he
   write(join(opts.outDir, INSTALLER), readFileSync(join(opts.staticDir, INSTALLER)));
 
   rmSync(opts.heldDir, { recursive: true, force: true });
-  for (const [path, spec] of tutorialPages(lessons)) write(join(opts.heldDir, path), renderPage(spec, refs));
+  // A lesson's page loads the bundle too (PageSpec.tutorialScript): its script fills the runner (src/tutorial/main.ts).
+  const tutorialRefs: Assets = { ...refs, tutorial: TUTORIAL_BUNDLE };
+  for (const [path, spec] of tutorialPages(lessons)) write(join(opts.heldDir, path), renderPage(spec, tutorialRefs));
 
   checkDist(opts.outDir);
   checkHeld(opts.heldDir, opts.outDir);

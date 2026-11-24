@@ -6,9 +6,9 @@
 import vectors from './fixtures/routes.json';
 import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { serialize } from '../src/doc';
+import { escapeText, serialize } from '../src/doc';
 import { parseRoute } from '../src/routes';
-import { checkHeld, DistError, tagsIn } from '../tools/check-dist';
+import { checkHeld, DistError, tagsIn, TUTORIAL_BUNDLE } from '../tools/check-dist';
 import { LESSON_SCHEMA, loadLessons, readLessonSchema } from '../tools/lessons';
 import { LESSON_ID_PREFIX, lessonArticle, RUNNER_ID, TUTORIAL_PATH } from '../tools/tutorial';
 import { cleanup, type Fixture, fixture, goodLesson, LESSONS_DIR, lessonJson, lessonTree, REPO_ROOT } from './build-fixture';
@@ -33,6 +33,10 @@ function built(lessonsDir?: string): { f: Fixture; id: string; files: string[]; 
 
 const real = built();
 
+/** Every <script> of a page as the page rules' tag scanner reads it (any case, any spacing), as its attributes. */
+const scriptsOf = (html: string) => tagsIn(html).filter(([t]) => t === 'script').map(([, attrs]) => attrs);
+const moduleScript = (src: string) => [['type', 'module'], ['src', src]];
+
 /** <main>'s inner HTML. */
 const mainOf = (html: string): string => {
   const m = /<main id="main" class="wrap" tabindex="-1">([\s\S]*)<\/main>/.exec(html);
@@ -45,7 +49,7 @@ describe('the held tree of a build of the repository', () => {
     expect(real.held).toEqual(['tutorial/index.html', ...LESSONS.map((l) => `tutorial/${l.id}/index.html`)].sort());
   });
 
-  test('every lesson renders: its title as the h1, its place, its text, and the empty runner mount', () => {
+  test("every lesson renders: its title as the h1, its place, its text, and the runner mount holding its files and commands", () => {
     LESSONS.forEach((l, i) => {
       const html = real.page(`tutorial/${l.id}/index.html`);
       const main = mainOf(html);
@@ -53,7 +57,11 @@ describe('the held tree of a build of the repository', () => {
       expect(main.match(/<h1>/g)).toHaveLength(1);
       expect(main).toContain(`<h1>${l.title}</h1>`);
       expect(main).toContain(`<p class="lesson-place muted small">Lesson ${i + 1} of ${LESSONS.length}</p>`);
-      expect(main).toContain(`<section id="${RUNNER_ID}" class="lesson-runner" aria-label="Try it"></section>`);
+      const files = l.files.map((f) => `<div class="lesson-file"><p class="lesson-path"><code>${f.path}</code></p><pre class="lesson-text"><code>${escapeText(f.text)}</code></pre></div>`);
+      const commands = `<dl class="lesson-commands"><dt>Run</dt><dd class="lesson-command-run"><code>${l.actions.run}</code></dd>${l.actions.test === undefined ? '' : `<dt>Test</dt><dd class="lesson-command-test"><code>${l.actions.test}</code></dd>`}</dl>`;
+      expect(main).toContain(`<section id="${RUNNER_ID}" class="lesson-runner" aria-label="Try it" data-lesson="${l.id}"><div class="lesson-files">${files.join('')}</div>${commands}</section>`);
+      expect(l.files.map((f) => f.path)).toEqual(l.editable);
+      for (const f of l.files) expect(f.text).toBe(readFileSync(join(LESSONS_DIR, l.id, 'project', f.path), 'utf8'));
       expect(main).toContain(`<a href="${TUTORIAL_PATH}">Tutorial</a>`);
       expect(main).toContain(serialize(lessonArticle(l).node));
     });
@@ -72,13 +80,15 @@ describe('the held tree of a build of the repository', () => {
     expect(main).toContain(`<ol class="lesson-list">${items.join('')}</ol>`);
   });
 
-  test('the pages are the shell every page has, with no sign-in, the shared stylesheet only and the page script', () => {
+  test("the pages are the shell every page has, with no sign-in, the shared stylesheet only and the page script; a lesson's page loads the tutorial bundle after it, the index does not", () => {
     for (const p of real.held) {
       const html = real.page(p);
       expect(html).toContain('<body data-page="tutorial">');
       expect(html).toContain(`<link rel="stylesheet" href="/assets/${real.id}/site.css">`);
       expect(html.match(/rel="stylesheet"/g)).toHaveLength(1);
-      expect(html).toContain(`<script type="module" src="/assets/${real.id}/main.js"></script>`);
+      const scripts = [moduleScript(`/assets/${real.id}/main.js`)];
+      if (p !== 'tutorial/index.html') scripts.push(moduleScript(`/assets/${real.id}/${TUTORIAL_BUNDLE}`));
+      expect([p, scriptsOf(html)]).toEqual([p, scripts]);
       expect(html).not.toMatch(/sign[ -]?in|sign out|log ?in|\/api\//i);
       expect(html).toContain('<nav class="site-nav" aria-label="Site"><ul><li><a href="/search">Packages</a></li><li><a href="/docs/">Docs</a></li>');
     }
@@ -202,7 +212,8 @@ describe('hostile Markdown in a lesson renders inert', () => {
       expect(['img', 'svg', 'iframe', 'style', 'object', 'embed']).not.toContain(tag);
       for (const [k] of attrs) expect(k).not.toMatch(/^(on|style$)/i);
     }
-    expect(html.match(/<script\b/g)).toHaveLength(1);
+    // main.js and the tutorial bundle, the layout's two module scripts, and nothing the lesson wrote.
+    expect(scriptsOf(html)).toEqual([moduleScript(`/assets/${b.id}/main.js`), moduleScript(`/assets/${b.id}/${TUTORIAL_BUNDLE}`)]);
   };
 
   test.each(cases.map(([name], i) => [name, ids[i]] as const))('%s', (_name, id) => check(id));

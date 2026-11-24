@@ -15,6 +15,8 @@
 //  - lesson.md is a file that is not empty, and lesson.json a file holding JSON that passes the schema;
 //  - each editable path names a file under project/ (the schema has already refused '..', absolute paths and
 //    backslashes; a symbolic link is followed, as the template's copy does);
+//  - (this check's own) each editable file is UTF-8 text with no carriage return and no NUL, since the lesson's page
+//    carries it as HTML text, which a browser reads back with a CR as a newline and a NUL replaced;
 //  - no two lessons share an order;
 //  - a file directly under tutorial/lessons is refused, and so is a tree with no lesson.
 // One rule of the driver is left to it: an order written as 1.0 or 1e30 (the schema's integer takes both). JSON.parse
@@ -39,6 +41,8 @@ export interface Lesson {
   summary: string;
   order: number;
   editable: readonly string[];
+  /** Each editable file's path and its text under project/, in `editable`'s order. */
+  files: readonly { path: string; text: string }[];
   actions: { run: string; test?: string };
   /** lesson.md as it is. */
   markdown: string;
@@ -182,6 +186,24 @@ function readFile(path: string): string | null {
 }
 
 /**
+ * An editable file's text, null when there is no file there, or a problem when the lesson page cannot carry it as it is:
+ * the page holds it as HTML text (src/tutorial/view.ts lessonSource), which a browser reads back with every CR turned
+ * into a newline and every NUL replaced, and as UTF-8.
+ */
+function editableText(path: string): string | { problem: string } | null {
+  if (!isA(path, false)) return null;
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(path));
+  } catch {
+    return { problem: 'is not UTF-8 text' };
+  }
+  if (text.includes('\r')) return { problem: 'holds a carriage return (the page would read it as a newline); use LF line ends' };
+  if (text.includes('\0')) return { problem: 'holds a NUL character, which the page cannot carry' };
+  return text;
+}
+
+/**
  * Every lesson under `dir` (the repository's tutorial/lessons), in order; throws a LessonError listing every problem.
  * `label` is how messages name `dir` (its repository path).
  */
@@ -224,9 +246,13 @@ export function loadLessons(dir: string, schema: Json, label = LESSONS_DIR): Les
     const errs = schemaErrors(schema, schema, doc);
     for (const e of errs) problems.push(`${where}: lesson.json: ${e}`);
     if (errs.length > 0) continue;
-    const l = doc as unknown as Omit<Lesson, 'id' | 'source' | 'markdown'>;
+    const l = doc as unknown as Omit<Lesson, 'id' | 'source' | 'markdown' | 'files'>;
+    const files: { path: string; text: string }[] = [];
     for (const p of l.editable) {
-      if (!isA(join(lessonDir, 'project', p), false)) problems.push(`${where}: lesson.json: /editable: ${p} is not a file under project/`);
+      const text = editableText(join(lessonDir, 'project', p));
+      if (text === null) problems.push(`${where}: lesson.json: /editable: ${p} is not a file under project/`);
+      else if (typeof text !== 'string') problems.push(`${where}: project/${p}: ${text.problem}`);
+      else files.push({ path: p, text });
     }
     const other = byOrder.get(l.order);
     if (other !== undefined) problems.push(`${where}: lesson.json: /order: ${l.order} is also the order of the lesson ${other}`);
@@ -239,6 +265,7 @@ export function loadLessons(dir: string, schema: Json, label = LESSONS_DIR): Les
         summary: l.summary,
         order: l.order,
         editable: l.editable,
+        files,
         actions: { ...l.actions },
         markdown,
       });

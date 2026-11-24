@@ -25,10 +25,13 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/enhance.ts` | what the page script adds once a page is on screen: the copy buttons and the home page's recently updated list, against a small DOM port |
 | `src/main.ts` | the page script: connects `app.ts`, `mount.ts` and `enhance.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
-| `src/tutorial/gate.ts` | the tutorial's gate: the session, a sandbox and sign-out over the site's own `/api/v2` routes (`credentials: 'same-origin'`, the CSRF header), the sign-in link, and `replayGate`, a fake that replays recorded answers; no page imports it yet |
-| `src/tutorial/runner.ts` | the tutorial's runner, `page.ts`'s `Runner` for one lesson over E2B's SDK, from each run's sandbox grant alone (the `Sandbox` constructor with the sandbox's access token, no API key): writes its edited files into the lesson's directory and runs its command, giving the exit code and output, or `{kind: 'SandboxNotRunning'}` / `{kind: 'SandboxUnreachable'}`; bundled with `e2b` into `tutorial.js`, which no page loads yet |
+| `src/tutorial/gate.ts` | the tutorial's gate: the session, a sandbox and sign-out over the site's own `/api/v2` routes (`credentials: 'same-origin'`, the CSRF header), the sign-in link, and `replayGate`, a fake that replays recorded answers |
+| `src/tutorial/runner.ts` | the tutorial's runner, `page.ts`'s `Runner` for one lesson over E2B's SDK, from each run's sandbox grant alone (the `Sandbox` constructor with the sandbox's access token, no API key): writes its edited files into the lesson's directory and runs its command, giving the exit code and output, or `{kind: 'SandboxNotRunning'}` / `{kind: 'SandboxUnreachable'}`; bundled with `e2b` into `tutorial.js` |
 | `src/tutorial/node-stub.ts` | the empty module the bundle gives `e2b`'s six `node:*` imports, which only its template builder uses |
-| `src/tutorial/page.ts` | the tutorial page's logic with no DOM and no SDK: what the page shows signed out, signed in and while running, each gate error as its message, the in-memory sandbox grant (replaced near its `expires_at` or when the `Runner` port says it is gone), output with control and bidi characters as `[U+XXXX]` markers, and the draft in `localStorage` (`mopm.tutorial.1`); no page imports it yet |
+| `src/tutorial/page.ts` | the tutorial page's logic with no DOM and no SDK: what the page shows signed out, signed in and while running, each gate error as its message, the in-memory sandbox grant (replaced near its `expires_at` or when the `Runner` port says it is gone), output with control and bidi characters as `[U+XXXX]` markers, and the draft in `localStorage` (`mopm.tutorial.1`) |
+| `src/tutorial/view.ts` | the tutorial page's nodes, a pure function of `page.ts`'s `PageView` through a `Doc`: the sign-in card, a `<textarea>` per editable file, Run and Test (disabled while running), each error's message, the exit code and the output as text nodes in a `<pre>`; and the lesson's files and commands as the build prerenders them into the lesson page's `#lesson-runner` (`lessonSource`) and the page script reads them back (`readLesson`) |
+| `src/tutorial/start.ts` | starting the tutorial page against a small DOM port: reads the lesson from `#lesson-runner`, starts `page.ts`'s controller, puts each new view there (not again while the reader only types, so the editor keeps its caret), keeps focus on the same control, and forwards clicks and typing |
+| `src/tutorial/main.ts` | the tutorial page's script, the entry of `tutorial.js`: connects `start.ts` to the real document, the gate (same-origin), the e2b runner, `localStorage` (looked up on each call) and the clock |
 | `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them, held out of `dist/` (see below); `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
 
 ## Rules
@@ -36,7 +39,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 1. **No runtime dependencies, with one exception.** Everything shipped to a browser is code in `src/`, except E2B's SDK:
    - **which package:** `e2b`, pinned exactly (`2.64.0`), the one entry of `dependencies`;
    - **which file:** it ships only inside `assets/<id>/tutorial.js`, the bundle `tools/build.ts` makes with esbuild (a
-     pinned dev dependency) of `src/tutorial/runner.ts`, and only the tutorial pages may load it (`tools/check-dist.ts`
+     pinned dev dependency) of `src/tutorial/main.ts` (the page script, with `runner.ts`), and only the tutorial pages may load it (`tools/check-dist.ts`
      refuses any other page that does). Every other page loads the `tsc` modules of `main.js`, as before;
    - **why:** the tutorial runs a lesson's code in an E2B sandbox that the browser talks to directly, with the sandbox's
      own access token (`docs/design/tutorial-sign-in.md`, sections 4 and 7). If an upgrade of `e2b` breaks the
@@ -66,7 +69,10 @@ The build also reads every lesson of `tutorial/lessons/` (`tutorial/README.md`),
 tutorial's pages from them: `/tutorial` and `/tutorial/<lesson>`, as `tutorial/index.html` and
 `tutorial/<lesson>/index.html`. They are written to `build/held/`, not to `dist/`, and checked by the same page rules:
 the edge router serves every file of `dist/` as it is, and the tutorial is not to be reachable before its routes
-(`src/routes.ts`, the route vectors) and its header link exist.
+(`src/routes.ts`, the route vectors) and its header link exist. A lesson's page holds, in its `#lesson-runner`, the
+lesson's editable files (their text from `project/`) and its commands, readable without scripts, and loads `tutorial.js`
+after `main.js`, which reads the lesson from there and puts the sign-in card or the editor in its place. An editable file
+holding a carriage return or a NUL, or bytes that are not UTF-8, fails the build: the page's HTML cannot carry it as it is.
 
 On the build farm the same commands are Buck2 targets (`site/BUCK`, run from the repository root), over
 `node_modules` laid out from `package-lock.json` and the pinned tarballs of `buildrules.lock.bzl` (buildrules' `npm_package`;
