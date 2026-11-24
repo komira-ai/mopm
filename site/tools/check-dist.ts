@@ -11,8 +11,8 @@
 //  - only .html, .js and .css files, and the installer at the root, install.sh, a shell script (the bucket is to serve
 //    nothing else);
 //  - the JavaScript and CSS stay small: each module at most JS_MAX_BYTES, all of them at most JS_TOTAL_MAX_BYTES (tsc
-//    output is not minified; the edge is to compress it); the tutorial bundle (TUTORIAL_BUNDLE, the e2b SDK with the
-//    runner, minified) apart from those, at most TUTORIAL_JS_MAX_BYTES; the shared stylesheet at most
+//    output is not minified; the edge is to compress it); the tutorial bundle (TUTORIAL_BUNDLE, the e2b SDK with the page
+//    script, minified) apart from those, at most TUTORIAL_JS_MAX_BYTES; the shared stylesheet at most
 //    SHARED_CSS_MAX_BYTES, each area stylesheet at most AREA_CSS_MAX_BYTES, and the stylesheets one page links at most
 //    PAGE_CSS_MAX_BYTES together;
 //  - no page but a tutorial page (one under tutorial/) loads the tutorial bundle;
