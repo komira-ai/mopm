@@ -164,7 +164,7 @@ enough to build every state of the page except a real run.
 ## What exists today
 
 - The site is static: plain TypeScript compiled by `tsc` to ES modules, no framework, no bundler, no runtime
-  dependencies (`site/README.md`, rule 1). One CloudFront distribution has a private S3 bucket as its only origin and
+  dependencies (`site/README.md`, rule 1; it has since one exception, the `e2b` bundle of section 7). One CloudFront distribution has a private S3 bucket as its only origin and
   one default behaviour (`service/infra/stacks/lib/site-stack.ts`). An edge router (a CloudFront Function generated from
   `site/src/routes.ts`) maps `/`, `/search`, `/packages/...` and `/docs/...` to files. The site reads
   `https://api.<site>/api/v2` with `credentials: 'omit'` (`site/src/api.ts`, `site/src/host.ts`). There is no cookie,

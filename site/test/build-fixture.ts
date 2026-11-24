@@ -1,8 +1,11 @@
 // Test helper: runs buildSite on a small stand-in for tsc's browser output (the real one exists only after
 // `npm run build`, and the tests run before it), with the real stylesheet, the real repository docs and, unless a test
-// gives its own (lessonTree), the real lessons.
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+// gives its own (lessonTree), the real lessons. The stand-in's tutorial/runner.js imports only a small module of its
+// own, not e2b, so the tutorial bundle esbuild makes of it is small; realBrowserFiles() is the whole of src/ as tsc
+// would write it, for the tests of the real bundle.
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { dirname, join, relative, sep } from 'path';
+import { ModuleKind, ScriptTarget, transpileModule } from 'typescript';
 import { buildSite } from '../tools/build';
 
 const SITE = join(__dirname, '..');
@@ -16,7 +19,28 @@ export const BROWSER_FILES: Record<string, string> = {
   'lazy/b.js': 'export const b = 2;\n',
   'lazy/c.js': 'export const c = 3;\n',
   'unused.js': 'export const u = 4;\n',
+  'tutorial/runner.js': "import { r } from './r.js';\nexport const runner = r;\n",
+  'tutorial/r.js': 'export const r = 5;\n',
+  'tutorial/node-stub.js': '"use strict";\n',
 };
+
+/** Every module of src/ as tsc -p tsconfig.browser.json writes it (types erased, ES2022 modules), by path under it. */
+export function realBrowserFiles(): Record<string, string> {
+  const src = join(SITE, 'src');
+  const out: Record<string, string> = {};
+  const walk = (d: string): void => {
+    for (const f of readdirSync(d)) {
+      const p = join(d, f);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (f.endsWith('.ts')) {
+        const js = transpileModule(readFileSync(p, 'utf8'), { compilerOptions: { module: ModuleKind.ES2022, target: ScriptTarget.ES2022, removeComments: true } });
+        out[relative(src, p).split(sep).join('/').replace(/\.ts$/, '.js')] = js.outputText;
+      }
+    }
+  };
+  walk(src);
+  return out;
+}
 
 export interface Fixture {
   root: string;
@@ -25,7 +49,7 @@ export interface Fixture {
   lessonsDir: string;
   outDir: string;
   heldDir: string;
-  build(): { id: string; files: string[]; held: string[] };
+  build(): { id: string; files: string[]; held: string[]; tutorialBytes: number };
 }
 
 /** A fresh scratch directory under site/build/test-scratch. */

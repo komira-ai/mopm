@@ -8,6 +8,7 @@ module.exports = {
   moduleFileExtensions: ['ts', 'js', 'json'],
   transform: { '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json' }] },
   // Sources import each other as './x.js' (what the browser loads); under Jest those resolve to the .ts files.
-  moduleNameMapper: { '^(\\.{1,2}/.*)\\.js$': '$1' },
+  // e2b's CommonJS build requires chalk, an ES module only; test/stubs/chalk.ts says why a stand-in is enough.
+  moduleNameMapper: { '^(\\.{1,2}/.*)\\.js$': '$1', '^chalk$': '<rootDir>/test/stubs/chalk.ts' },
   setupFiles: ['<rootDir>/test/setup.ts'],
 };

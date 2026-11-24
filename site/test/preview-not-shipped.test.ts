@@ -1,7 +1,9 @@
-// Nothing of the local preview reaches a deployed stage. dist/ ships only src/main.ts and the modules it imports
-// (tools/build.ts, moduleGraph), compiled by tsconfig.browser.json from src/ alone: so the preview (tools/preview.ts)
-// is never compiled for the browser, and the tutorial gate is not shipped until a page imports it. The site stack's test
-// checks the real build too (service/infra/stacks/test/site.test.ts: no file of dist/ names E2B or its key).
+// Nothing of the local preview reaches a deployed stage. dist/ ships src/main.ts and the modules it imports
+// (tools/build.ts, moduleGraph), and the tutorial bundle of src/tutorial/runner.ts with what it imports and E2B's SDK
+// (tools/build.ts, bundleTutorial), all compiled by tsconfig.browser.json from src/ alone: so the preview
+// (tools/preview.ts) is never compiled for the browser, and main.js's modules do not include the tutorial gate. The site stack's test
+// checks the real build too (service/infra/stacks/test/site.test.ts: no file of dist/ names E2B or its key, and the
+// tutorial bundle, E2B's SDK, carries none of the preview's own text).
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { ENTRY, moduleGraph } from '../tools/build';

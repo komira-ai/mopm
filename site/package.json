@@ -2,7 +2,7 @@
   "name": "mopm-site",
   "version": "0.0.0",
   "private": true,
-  "description": "The mopm.dev web site: prerendered pages and a small read-only client of the registry API, with no runtime dependencies",
+  "description": "The mopm.dev web site: prerendered pages, a small read-only client of the registry API, and the tutorial's runner over the e2b SDK (its one runtime dependency, bundled for the tutorial pages only)",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.browser.json",
     "test": "jest --ci",
@@ -12,6 +12,7 @@
   "devDependencies": {
     "@types/jest": "29.5.14",
     "@types/node": "20.19.43",
+    "esbuild": "0.28.2",
     "fast-check": "3.23.2",
     "jest": "29.7.0",
     "ts-jest": "29.4.15",
@@ -26,5 +27,8 @@
         "build"
       ]
     }
+  },
+  "dependencies": {
+    "e2b": "2.64.0"
   }
 }

@@ -11,8 +11,12 @@
 //  - only .html, .js and .css files, and the installer at the root, install.sh, a shell script (the bucket is to serve
 //    nothing else);
 //  - the JavaScript and CSS stay small: each module at most JS_MAX_BYTES, all of them at most JS_TOTAL_MAX_BYTES (tsc
-//    output is not minified; the edge is to compress it); the shared stylesheet at most SHARED_CSS_MAX_BYTES, each area
-//    stylesheet at most AREA_CSS_MAX_BYTES, and the stylesheets one page links at most PAGE_CSS_MAX_BYTES together.
+//    output is not minified; the edge is to compress it); the tutorial bundle (TUTORIAL_BUNDLE, the e2b SDK with the
+//    runner, minified) apart from those, at most TUTORIAL_JS_MAX_BYTES; the shared stylesheet at most
+//    SHARED_CSS_MAX_BYTES, each area stylesheet at most AREA_CSS_MAX_BYTES, and the stylesheets one page links at most
+//    PAGE_CSS_MAX_BYTES together;
+//  - no page but a tutorial page (one under tutorial/) loads the tutorial bundle;
+//  - no JavaScript names a source map (none is published, and a map would carry this machine's paths).
 // checkHeld holds the pages the build writes beside dist/ (the held tree, tools/build.ts) to the same page rules.
 
 import { readdirSync, readFileSync, statSync } from 'fs';
@@ -43,6 +47,14 @@ export function importsOf(path: string, source: string): string[] {
 
 export const JS_MAX_BYTES = 64 * 1024;
 export const JS_TOTAL_MAX_BYTES = 128 * 1024;
+/** The tutorial's one bundled asset (tools/build.ts): src/tutorial/runner.ts with the e2b SDK. */
+export const TUTORIAL_BUNDLE = 'tutorial.js';
+/**
+ * The tutorial bundle's budget. Set from its first measurement, 309,160 bytes minified (e2b 2.64.0 with the runner;
+ * docs/design/tutorial-sign-in.md, section 4.1, measured 306,542 for the SDK calls alone), with about 6% of room.
+ */
+export const TUTORIAL_JS_MAX_BYTES = 320 * 1024;
+
 /** The design note's budgets: the shared stylesheet (site.css) and each area stylesheet. */
 export const SHARED_CSS_MAX_BYTES = 24 * 1024;
 export const AREA_CSS_MAX_BYTES = 16 * 1024;
@@ -176,11 +188,18 @@ export function isScriptUrl(raw: string): boolean {
   return /^(?:javascript|data|vbscript):/i.test(s);
 }
 
+/** assets/<id>/tutorial.js. */
+export const isTutorialBundle = (f: string): boolean => /^assets\/[^/]+\/[^/]+$/.test(f) && posix.basename(f) === TUTORIAL_BUNDLE;
+
+/** The tutorial's pages (tools/tutorial.ts): tutorial/index.html and tutorial/<lesson>/index.html, any page under tutorial/. */
+export const isTutorialPage = (f: string): boolean => f.startsWith('tutorial/');
+
 /**
- * The rules of one page `f` (its text): no inline script or style, no handler or script URL, every '<' read, every
- * /assets/ reference a file of `have`, and the stylesheets it links (sizes from `cssSize`) within the page budget.
+ * The rules of one page `f` (its text; `page`, its path in its own tree, as the site will serve it): no inline script or
+ * style, no handler or script URL, every '<' read, every /assets/ reference a file of `have`, the tutorial bundle only on
+ * a tutorial page, and the stylesheets it links (sizes from `cssSize`) within the page budget.
  */
-function pageProblems(f: string, text: string, have: ReadonlySet<string>, cssSize: ReadonlyMap<string, number>): string[] {
+function pageProblems(f: string, text: string, have: ReadonlySet<string>, cssSize: ReadonlyMap<string, number>, page: string = f): string[] {
   const problems: string[] = [];
   // A script's content runs whatever its attributes say; every one must be empty (an unclosed one runs to the end).
   for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)(?:<\/script\s*>|$)/gi)) {
@@ -205,6 +224,7 @@ function pageProblems(f: string, text: string, have: ReadonlySet<string>, cssSiz
       if (isUrlAttr(name) && isScriptUrl(value)) problems.push(`${f}: a script URL (or an unknown character reference) in ${name} on <${tag}>`);
       const asset = (name === 'href' || name === 'src') && /^\/(assets\/[^#?]+)/.exec(value);
       if (asset && !have.has(asset[1])) problems.push(`${f}: references /${asset[1]}, which is not in dist`);
+      if (asset && isTutorialBundle(asset[1]) && !isTutorialPage(page)) problems.push(`${f}: loads /${asset[1]}; only the tutorial pages do`);
     }
   }
   if (pageCss > PAGE_CSS_MAX_BYTES) problems.push(`${f} links ${pageCss} bytes of CSS; the limit for one page is ${PAGE_CSS_MAX_BYTES}`);
@@ -237,8 +257,13 @@ export function checkDist(dir: string): void {
     const text = readFileSync(join(dir, f), 'utf8');
     if (ext === '.js') {
       const n = Buffer.byteLength(text);
-      js += n;
-      if (n > JS_MAX_BYTES) problems.push(`${f} is ${n} bytes; the limit for one module is ${JS_MAX_BYTES}`);
+      if (isTutorialBundle(f)) {
+        if (n > TUTORIAL_JS_MAX_BYTES) problems.push(`${f} is ${n} bytes; the limit for the tutorial bundle is ${TUTORIAL_JS_MAX_BYTES}`);
+      } else {
+        js += n;
+        if (n > JS_MAX_BYTES) problems.push(`${f} is ${n} bytes; the limit for one module is ${JS_MAX_BYTES}`);
+      }
+      if (/^\/[/*][#@] sourceMappingURL=/m.test(text)) problems.push(`${f}: names a source map`);
       if (!f.startsWith('assets/')) problems.push(`${f}: a script outside assets/`);
       for (const dep of importsOf(f, text)) if (!have.has(dep)) problems.push(`${f}: imports ${dep}, which is not in dist`);
     }
@@ -271,7 +296,7 @@ export function checkHeld(heldDir: string, distDir: string): void {
       problems.push(`${name}: only .html pages are held`);
       continue;
     }
-    problems.push(...pageProblems(name, readFileSync(join(heldDir, f), 'utf8'), have, cssSize));
+    problems.push(...pageProblems(name, readFileSync(join(heldDir, f), 'utf8'), have, cssSize, f));
   }
   if (problems.length > 0) throw new DistError(problems);
 }

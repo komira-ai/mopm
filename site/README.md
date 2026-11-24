@@ -1,7 +1,7 @@
 # site
 
-The mopm.dev web site: plain TypeScript compiled by `tsc` to ES modules the browser loads directly. No framework, no
-bundler, no runtime dependencies.
+The mopm.dev web site: plain TypeScript compiled by `tsc` to ES modules the browser loads directly. No framework, and no
+bundler or runtime dependency outside the one exception of rule 1, the tutorial's bundle of E2B's SDK.
 
 The prerendered pages (`/`, `/docs/`, `/docs/<slug>/`, `404.html`) work without scripts; the home page's "Recently
 updated" list is the one part a script fills (one `searchPackages?sort=updated` call), and without scripts it
@@ -26,12 +26,22 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/main.ts` | the page script: connects `app.ts`, `mount.ts` and `enhance.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
 | `src/tutorial/gate.ts` | the tutorial's gate: the session, a sandbox and sign-out over the site's own `/api/v2` routes (`credentials: 'same-origin'`, the CSRF header), the sign-in link, and `replayGate`, a fake that replays recorded answers; no page imports it yet |
+| `src/tutorial/runner.ts` | the tutorial's runner, `page.ts`'s `Runner` for one lesson over E2B's SDK, from each run's sandbox grant alone (the `Sandbox` constructor with the sandbox's access token, no API key): writes its edited files into the lesson's directory and runs its command, giving the exit code and output, or `{kind: 'SandboxNotRunning'}` / `{kind: 'SandboxUnreachable'}`; bundled with `e2b` into `tutorial.js`, which no page loads yet |
+| `src/tutorial/node-stub.ts` | the empty module the bundle gives `e2b`'s six `node:*` imports, which only its template builder uses |
 | `src/tutorial/page.ts` | the tutorial page's logic with no DOM and no SDK: what the page shows signed out, signed in and while running, each gate error as its message, the in-memory sandbox grant (replaced near its `expires_at` or when the `Runner` port says it is gone), output with control and bidi characters as `[U+XXXX]` markers, and the draft in `localStorage` (`mopm.tutorial.1`); no page imports it yet |
 | `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them, held out of `dist/` (see below); `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
 
 ## Rules
 
-1. **No runtime dependencies.** `dependencies` stays empty; everything shipped to a browser is code in `src/`.
+1. **No runtime dependencies, with one exception.** Everything shipped to a browser is code in `src/`, except E2B's SDK:
+   - **which package:** `e2b`, pinned exactly (`2.64.0`), the one entry of `dependencies`;
+   - **which file:** it ships only inside `assets/<id>/tutorial.js`, the bundle `tools/build.ts` makes with esbuild (a
+     pinned dev dependency) of `src/tutorial/runner.ts`, and only the tutorial pages may load it (`tools/check-dist.ts`
+     refuses any other page that does). Every other page loads the `tsc` modules of `main.js`, as before;
+   - **why:** the tutorial runs a lesson's code in an E2B sandbox that the browser talks to directly, with the sandbox's
+     own access token (`docs/design/tutorial-sign-in.md`, sections 4 and 7). If an upgrade of `e2b` breaks the
+     constructor the runner uses, the design's fallback is a small client of the sandbox agent's API in `src/tutorial/`,
+     and this exception goes.
 2. **No HTML sinks.** Markup is built only through `h()` and a `Doc`; no string of HTML reaches the DOM and no string
    runs as code. `test/no-sinks.test.ts` checks the source.
 3. **No inline script or style.** The site stack sends a Content-Security-Policy that allows scripts, styles and
@@ -73,13 +83,16 @@ the farm"). The steps are the scripts of `package.json`; the `buildrules` key th
 | `//site:dist_has_pages` | the job's `test -f dist/<page>` checks (`check_dist.js`) |
 
 `dist/` holds `index.html`, `app.html`, `404.html`, `docs/index.html`, `docs/<slug>/index.html` and
-`assets/<id>/`: the modules `main.js` loads and the stylesheets, where `<id>` is a hash of their contents (no clock, no
+`assets/<id>/`: the modules `main.js` loads, the stylesheets and `tutorial.js` (rule 1's bundle: one minified ES module, no
+source map), where `<id>` is a hash of their contents (no clock, no
 commit), so the same sources give the same tree and a changed asset gets a new URL. `tools/check-dist.ts` refuses a
 tree with a missing page, a dangling asset or import, markup its tag scanner cannot read as a browser does (a
 comment, a `<` inside a tag, an unclosed tag), a script that is not an empty `<script src="/assets/...">`, a
 style element or attribute, an event-handler attribute, a `javascript:`, `data:` or `vbscript:` URL, a file
-other than `.html`, `.js` or `.css`, or JavaScript or CSS over its size budget (64 KiB a module and 128 KiB in all for
-JavaScript; for CSS, the design note's 24 KiB for the shared `site.css`, 16 KiB for each area stylesheet, and 30 KiB for
+other than `.html`, `.js` or `.css`, JavaScript that names a source map, `tutorial.js` loaded by a page that is not a
+tutorial page (one under `tutorial/`, as the held tutorial pages are), or JavaScript or CSS over its size budget (64 KiB a module and
+128 KiB in all for the `tsc` modules; 320 KiB for `tutorial.js`, `TUTORIAL_JS_MAX_BYTES`, set from its first measurement
+of 309,160 bytes; for CSS, the design note's 24 KiB for the shared `site.css`, 16 KiB for each area stylesheet, and 30 KiB for
 the stylesheets one page links together, down from the 32 KiB the single stylesheet had).
 
 Each page links `site.css` and then only its own area's sheet: the home page `home.css`, the docs pages `docs.css`, the
