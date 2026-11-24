@@ -7,13 +7,15 @@ editable files there and runs the lesson's actions.
 
 ```text
 tutorial/lessons/<id>/
-  lesson.md      the lesson's text (Markdown, rendered by the site's restricted renderer)
+  lesson.md      the lesson's text (Markdown, rendered by the site's restricted renderer under the title)
   lesson.json    title, summary, order, editable files and actions (spec/tutorial-lesson.schema.json)
   project/       a mopm project: mopm.toml, mopm.lock (written by `mopm lock`), its sources
 ```
 
 - `<id>` is lower-case letters and digits in words joined by single hyphens (`hello`, `structs-2`): it is the
   route of the page.
+- `lesson.md` is the text below the page's heading, which is `lesson.json`'s `title`: it starts with the text, not
+  with a `#` title, and its own headings sit one level below the page's (`#` is shown as a second-level heading).
 - `lesson.json` follows `spec/tutorial-lesson.schema.json`, which is the contract between the two builds:
   - `title` and `summary`, for the index and the page;
   - `order`, the lesson's place from 1, one lesson per number;

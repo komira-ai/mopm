@@ -12,6 +12,12 @@
 // esbuild warning, fails the build. No page of this build loads it: only the tutorial page will (check-dist.ts refuses
 // any other page that does), and the tsc modules the other pages load are as they were.
 //
+// and, beside dist/, the held tree (build/held/): pages built and checked like those of dist/ that dist/ does not ship
+// yet, because the edge router serves every file of dist/ as it is and their routes do not exist yet:
+//
+//   held/tutorial/index.html, held/tutorial/<lesson>/index.html   the tutorial (tools/tutorial.ts), from the lessons
+//                      of tutorial/lessons/, which tools/lessons.ts checks first: a bad lesson fails the build
+//
 // <id> is the first 16 hex digits of a sha256 over the assets' sorted (path, bytes): the same inputs give the same id
 // and the same bytes everywhere, with no clock or commit in them, so every stage deploys one artifact and an asset URL
 // never serves two contents (the site stack is to cache assets as immutable once it serves this build).
@@ -20,20 +26,26 @@ import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { buildSync } from 'esbuild';
-import { checkDist, importsOf, INSTALLER, listFiles, TUTORIAL_BUNDLE } from './check-dist';
+import { checkDist, checkHeld, importsOf, INSTALLER, listFiles, TUTORIAL_BUNDLE } from './check-dist';
 import { buildDocPages, docsIndexPage } from './docs';
 import { AREA_STYLESHEETS, type Assets, renderPage, SHARED_STYLESHEET } from './layout';
+import { LESSON_SCHEMA, loadLessons, readLessonSchema } from './lessons';
 import { appShell, homePage, notFoundPage } from './pages';
+import { tutorialPages } from './tutorial';
 
 export interface BuildOptions {
   /** tsc's browser output (build/browser): main.js and the modules it imports. */
   browserDir: string;
   /** site/static: the stylesheets. */
   staticDir: string;
-  /** The repository root: the docs are read from it. */
+  /** The repository root: the docs and the lesson schema are read from it. */
   repoRoot: string;
+  /** The lessons: the repository's tutorial/lessons. */
+  lessonsDir: string;
   /** Emptied and rewritten. */
   outDir: string;
+  /** The held tree: emptied and rewritten. */
+  heldDir: string;
 }
 
 export const ENTRY = 'main.js';
@@ -107,7 +119,9 @@ function write(path: string, data: string | Buffer): void {
   writeFileSync(path, data);
 }
 
-export function buildSite(opts: BuildOptions): { id: string; files: string[]; tutorialBytes: number } {
+export function buildSite(opts: BuildOptions): { id: string; files: string[]; held: string[]; tutorialBytes: number } {
+  // The lessons first: a bad one fails the build before anything is written.
+  const lessons = loadLessons(opts.lessonsDir, readLessonSchema(join(opts.repoRoot, LESSON_SCHEMA)));
   const compiled = new Map<string, Buffer>();
   for (const f of listFiles(opts.browserDir)) {
     if (f.endsWith('.js')) compiled.set(f, readFileSync(join(opts.browserDir, f)));
@@ -137,18 +151,25 @@ export function buildSite(opts: BuildOptions): { id: string; files: string[]; tu
   for (const [path, html] of pages) write(join(opts.outDir, path), html);
   write(join(opts.outDir, INSTALLER), readFileSync(join(opts.staticDir, INSTALLER)));
 
+  rmSync(opts.heldDir, { recursive: true, force: true });
+  for (const [path, spec] of tutorialPages(lessons)) write(join(opts.heldDir, path), renderPage(spec, refs));
+
   checkDist(opts.outDir);
-  return { id, files: listFiles(opts.outDir), tutorialBytes: (assets.get(TUTORIAL_BUNDLE) as Buffer).length };
+  checkHeld(opts.heldDir, opts.outDir);
+  return { id, files: listFiles(opts.outDir), held: listFiles(opts.heldDir), tutorialBytes: (assets.get(TUTORIAL_BUNDLE) as Buffer).length };
 }
 
 if (require.main === module) {
   // Compiled to site/build/tools/tools/build.js.
   const site = resolve(__dirname, '..', '..', '..');
-  const { id, files, tutorialBytes } = buildSite({
+  const repoRoot = resolve(site, '..');
+  const { id, files, held, tutorialBytes } = buildSite({
     browserDir: join(site, 'build', 'browser'),
     staticDir: join(site, 'static'),
-    repoRoot: resolve(site, '..'),
+    repoRoot,
+    lessonsDir: join(repoRoot, 'tutorial', 'lessons'),
     outDir: join(site, 'dist'),
+    heldDir: join(site, 'build', 'held'),
   });
-  process.stdout.write(`dist: ${files.length} files, assets/${id}/, ${TUTORIAL_BUNDLE} ${tutorialBytes} bytes\n`);
+  process.stdout.write(`dist: ${files.length} files, assets/${id}/, ${TUTORIAL_BUNDLE} ${tutorialBytes} bytes; held: ${held.length} pages\n`);
 }

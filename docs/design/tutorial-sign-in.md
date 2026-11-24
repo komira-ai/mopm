@@ -507,6 +507,11 @@ address. The site distribution's standard logs stay off.
   `site/src/routes.ts`, and from there into the edge router.
 - **Lesson text** is prerendered from `tutorial/lessons/<id>/lesson.md` by the site's restricted Markdown renderer, so
   it works without scripts and without a session.
+  - The site build checks every lesson against the schema and its rules first (`site/tools/lessons.ts`), and fails on
+    a bad one. It then writes `/tutorial` (the lessons in order) and `/tutorial/<lesson>` (the text under the title,
+    the lesson's place and the runner's mount point) as `tutorial/index.html` and `tutorial/<lesson>/index.html`.
+  - Until tu-S3 they are written to `site/build/held/`, not `dist/`. The edge router serves every file of `dist/` as
+    it is, so pages in `dist/` would be reachable before their routes exist. tu-S3 writes them to `dist/`.
 - **The E2B SDK** is the site's first runtime dependency. `site/README.md` rule 1 gains one written exception: `e2b`,
   pinned exactly, on the tutorial pages only.
   - A pinned `esbuild` dev dependency bundles `site/src/tutorial/main.ts` with it into one hashed asset, which only
@@ -676,7 +681,8 @@ Operator:
 
 Go-live:
 
-- **tu-S3 (S)** The edge router routes `/tutorial` and `/tutorial/<lesson>`; the header gets its "Tutorial" link; the
+- **tu-S3 (S)** The edge router routes `/tutorial` and `/tutorial/<lesson>`, and the build writes the tutorial's held
+  pages to `dist/` (section 7); the header gets its "Tutorial" link; the
   docs page "What mopm.dev stores", from section 6, names E2B and what it sees. This is the step users see.
   - Tests: the route fixtures (`site/test/fixtures/routes.json`) and the site-router test; the layout test for the
     header.

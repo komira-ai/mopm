@@ -22,7 +22,7 @@ export interface Assets {
   preload: readonly string[];
 }
 
-export type PageKind = 'home' | 'docs' | 'app' | 'error';
+export type PageKind = 'home' | 'docs' | 'app' | 'error' | 'tutorial';
 
 /** The stylesheet every page loads: tokens, header, footer, buttons, code, cards, notices, tables, prose. */
 export const SHARED_STYLESHEET = 'site.css';
@@ -31,13 +31,14 @@ export const SHARED_STYLESHEET = 'site.css';
  * The area stylesheets each kind of page loads after the shared one, and no others. The app shell is one page for
  * /search, /packages/<namespace>/<name> and /packages/<namespace>/<name>/<version> (main.ts picks the view after load), so it loads both of
  * their areas: a sheet per view would mean a script-inserted <link> and a flash of unstyled view on every load.
- * The 404 page needs only the shared sheet.
+ * The 404 page needs only the shared sheet, and so do the tutorial's pages until the tutorial has its own (tools/tutorial.ts).
  */
 export const AREA_STYLESHEETS: Readonly<Record<PageKind, readonly string[]>> = {
   home: ['home.css'],
   docs: ['docs.css'],
   app: ['package.css', 'search.css'],
   error: [],
+  tutorial: [],
 };
 
 /** The stylesheets a page of this kind loads, in order. */

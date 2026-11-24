@@ -5,11 +5,12 @@
 //  - e2b's six node:* imports get the empty stub, any other node:* module fails the build, and so do an esbuild warning
 //    and a missing entry or stub;
 //  - checkDist refuses the bundle over its budget (and passes it at the budget), keeps it out of the tsc modules'
-//    budgets, refuses it on a page that is not a tutorial page, and refuses JavaScript that names a source map.
+//    budgets, refuses it on a page that is not a tutorial page (in dist/ or held), and refuses JavaScript that names a
+//    source map.
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { bundleTutorial, NODE_STUB, NODE_STUBS, TUTORIAL_ENTRY } from '../tools/build';
-import { checkDist, DistError, isTutorialBundle, isTutorialPage, JS_MAX_BYTES, JS_TOTAL_MAX_BYTES, TUTORIAL_BUNDLE, TUTORIAL_JS_MAX_BYTES } from '../tools/check-dist';
+import { checkDist, checkHeld, DistError, isTutorialBundle, isTutorialPage, JS_MAX_BYTES, JS_TOTAL_MAX_BYTES, TUTORIAL_BUNDLE, TUTORIAL_JS_MAX_BYTES } from '../tools/check-dist';
 import { cleanup, type Fixture, fixture, realBrowserFiles, REPO_ROOT } from './build-fixture';
 
 const made: Fixture[] = [];
@@ -147,11 +148,26 @@ describe('checkDist and the tutorial bundle', () => {
     const { f, id } = built();
     const script = `<script type="module" src="/assets/${id}/${TUTORIAL_BUNDLE}"></script>`;
     const home = readFileSync(join(f.outDir, 'index.html'), 'utf8');
-    write(f, 'tutorial.html', home.replace('</head>', `${script}\n</head>`));
+    write(f, 'tutorial/index.html', home.replace('</head>', `${script}\n</head>`));
     write(f, 'tutorial/hello/index.html', home.replace('</head>', `${script}\n</head>`));
     expect(() => checkDist(f.outDir)).not.toThrow();
+    // A page at the root named after the tutorial is not one of its pages.
+    write(f, 'tutorial.html', home.replace('</head>', `${script}\n</head>`));
+    expectRefusal(f, `tutorial.html: loads /assets/${id}/${TUTORIAL_BUNDLE}; only the tutorial pages do`);
+    unlinkSync(join(f.outDir, 'tutorial.html'));
     write(f, 'index.html', home.replace('</head>', `<link rel="modulepreload" href="/assets/${id}/${TUTORIAL_BUNDLE}">\n</head>`));
     expectRefusal(f, `index.html: loads /assets/${id}/${TUTORIAL_BUNDLE}; only the tutorial pages do`);
+  });
+
+  test('a held tutorial page may load the bundle; a held page outside tutorial/ may not', () => {
+    const { f, id } = built();
+    const script = `<script type="module" src="/assets/${id}/${TUTORIAL_BUNDLE}"></script>`;
+    const page = readFileSync(join(f.heldDir, 'tutorial', 'index.html'), 'utf8').replace('</head>', `${script}\n</head>`);
+    writeFileSync(join(f.heldDir, 'tutorial', 'index.html'), page);
+    expect(() => checkHeld(f.heldDir, f.outDir)).not.toThrow();
+    mkdirSync(join(f.heldDir, 'other'));
+    writeFileSync(join(f.heldDir, 'other', 'index.html'), page);
+    expect(() => checkHeld(f.heldDir, f.outDir)).toThrow(`held/other/index.html: loads /assets/${id}/${TUTORIAL_BUNDLE}; only the tutorial pages do`);
   });
 
   test.each(['//# sourceMappingURL=main.js.map', '//@ sourceMappingURL=main.js.map', '/*# sourceMappingURL=main.js.map */'])(
@@ -171,6 +187,6 @@ describe('checkDist and the tutorial bundle', () => {
 
   test('isTutorialBundle and isTutorialPage', () => {
     expect([`assets/0123456789abcdef/${TUTORIAL_BUNDLE}`, `assets/x/lazy/${TUTORIAL_BUNDLE}`, TUTORIAL_BUNDLE, 'assets/x/tutorial.css'].map(isTutorialBundle)).toEqual([true, false, false, false]);
-    expect(['tutorial.html', 'tutorial/hello/index.html', 'index.html', 'docs/tutorial.html', 'tutorials.html'].map(isTutorialPage)).toEqual([true, true, false, false, false]);
+    expect(['tutorial/index.html', 'tutorial/hello/index.html', 'tutorial.html', 'index.html', 'docs/tutorial/index.html', 'tutorials/index.html'].map(isTutorialPage)).toEqual([true, true, false, false, false, false]);
   });
 });

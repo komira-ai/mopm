@@ -28,7 +28,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/tutorial/gate.ts` | the tutorial's gate: the session, a sandbox and sign-out over the site's own `/api/v2` routes (`credentials: 'same-origin'`, the CSRF header), the sign-in link, and `replayGate`, a fake that replays recorded answers; no page imports it yet |
 | `src/tutorial/runner.ts` | the tutorial's runner: from a sandbox grant alone (E2B's `Sandbox` constructor with the sandbox's access token, no API key), writes a lesson's edited files into its directory and runs the lesson's command, giving the exit code and output, or `sandbox_not_running` / `sandbox_unreachable`; bundled with `e2b` into `tutorial.js`, which no page loads yet |
 | `src/tutorial/node-stub.ts` | the empty module the bundle gives `e2b`'s six `node:*` imports, which only its template builder uses |
-| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
+| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them, held out of `dist/` (see below); `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
 
 ## Rules
 
@@ -57,8 +57,15 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 npm ci --ignore-scripts --no-audit --no-fund
 npm run typecheck   # src, test (Node + DOM types), then src alone with no Node types
 npm test            # jest
-npm run build       # compiles src and tools to build/, then writes dist/ (and checks it)
+npm run build       # compiles src and tools to build/, then writes dist/ and build/held/ (and checks both)
 ```
+
+The build also reads every lesson of `tutorial/lessons/` (`tutorial/README.md`), fails on one that breaks
+`spec/tutorial-lesson.schema.json` or its rules (each problem names the lesson and the field), and renders the
+tutorial's pages from them: `/tutorial` and `/tutorial/<lesson>`, as `tutorial/index.html` and
+`tutorial/<lesson>/index.html`. They are written to `build/held/`, not to `dist/`, and checked by the same page rules:
+the edge router serves every file of `dist/` as it is, and the tutorial is not to be reachable before its routes
+(`src/routes.ts`, the route vectors) and its header link exist.
 
 On the build farm the same commands are Buck2 targets (`site/BUCK`, run from the repository root), over
 `node_modules` laid out from `package-lock.json` and the pinned tarballs of `buildrules.lock.bzl` (buildrules' `npm_package`;
@@ -82,7 +89,7 @@ tree with a missing page, a dangling asset or import, markup its tag scanner can
 comment, a `<` inside a tag, an unclosed tag), a script that is not an empty `<script src="/assets/...">`, a
 style element or attribute, an event-handler attribute, a `javascript:`, `data:` or `vbscript:` URL, a file
 other than `.html`, `.js` or `.css`, JavaScript that names a source map, `tutorial.js` loaded by a page that is not a
-tutorial page (`tutorial.html` or one under `tutorial/`), or JavaScript or CSS over its size budget (64 KiB a module and
+tutorial page (one under `tutorial/`, as the held tutorial pages are), or JavaScript or CSS over its size budget (64 KiB a module and
 128 KiB in all for the `tsc` modules; 320 KiB for `tutorial.js`, `TUTORIAL_JS_MAX_BYTES`, set from its first measurement
 of 309,160 bytes; for CSS, the design note's 24 KiB for the shared `site.css`, 16 KiB for each area stylesheet, and 30 KiB for
 the stylesheets one page links together, down from the 32 KiB the single stylesheet had).

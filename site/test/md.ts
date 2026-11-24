@@ -24,9 +24,10 @@ export const MD_ATTRS = new Set(['href', 'rel', 'id', 'class', 'start', 'scope',
 
 /**
  * Every opening tag in serialized output, with its attributes. Throws if a '<' does not start a well-formed opening
- * or closing tag, so a text '<' that escaped escaping is caught.
+ * or closing tag (a closing tag of `allowed`, the renderer's tags unless given), so a text '<' that escaped escaping is
+ * caught.
  */
-export function tagsOf(html: string): { tag: string; attrs: [string, string][] }[] {
+export function tagsOf(html: string, allowed: ReadonlySet<string> = MD_TAGS): { tag: string; attrs: [string, string][] }[] {
   const out: { tag: string; attrs: [string, string][] }[] = [];
   let i = 0;
   while ((i = html.indexOf('<', i)) >= 0) {
@@ -35,7 +36,7 @@ export function tagsOf(html: string): { tag: string; attrs: [string, string][] }
       throw new Error(`a '<' that is not a tag at ${i}: ${JSON.stringify(html.slice(i, i + 40))}`);
     }
     if (m[1] === '/') {
-      if (!MD_TAGS.has(m[2])) throw new Error(`closing tag </${m[2]}> outside the allowlist`);
+      if (!allowed.has(m[2])) throw new Error(`closing tag </${m[2]}> outside the allowlist`);
     } else {
       const attrs = [...m[3].matchAll(/ ([a-z-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]] as [string, string]);
       out.push({ tag: m[2], attrs });
