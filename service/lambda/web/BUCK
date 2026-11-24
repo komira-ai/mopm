@@ -32,3 +32,17 @@ filegroup(
     copy = True,
     visibility = ["//:"],
 )
+
+# The constants docs/what-mopm-stores.md states (site/test/docs-stores.test.ts reads them).
+export_file(
+    name = "site_cookie.rs",
+    src = "src/cookie.rs",
+    mode = "reference",
+    visibility = ["//site:"],
+)
+export_file(
+    name = "site_session.rs",
+    src = "src/session.rs",
+    mode = "reference",
+    visibility = ["//site:"],
+)
