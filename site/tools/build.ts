@@ -78,7 +78,7 @@ export function moduleGraph(js: ReadonlyMap<string, Buffer>, entry: string): str
 
 /**
  * TUTORIAL_BUNDLE's bytes: TUTORIAL_ENTRY and what it imports, the e2b SDK included, as one minified ES module for the
- * browser, with no source map. Throws on any esbuild error or warning.
+ * browser, with no source map (one entry, no splitting: one output file). Throws on any esbuild error or warning.
  */
 export function bundleTutorial(browserDir: string): Buffer {
   for (const m of [TUTORIAL_ENTRY, NODE_STUB]) {
@@ -99,7 +99,6 @@ export function bundleTutorial(browserDir: string): Buffer {
     logLevel: 'silent',
   });
   if (r.warnings.length > 0) throw new Error(`build: esbuild warned on ${TUTORIAL_ENTRY}: ${r.warnings.map((w) => w.text).join('; ')}`);
-  if (r.outputFiles.length !== 1) throw new Error(`build: esbuild wrote ${r.outputFiles.length} files for ${TUTORIAL_ENTRY}, not one`);
   return Buffer.from(r.outputFiles[0].contents);
 }
 

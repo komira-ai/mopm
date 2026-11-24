@@ -64,7 +64,7 @@ only. The CLI is Zig and has no `search`, `add` or `doc` command (`add` is liste
 with (`.buckconfig` `commit_hash`) has Rust 1.85.0, and komira now pins 1.99.0, both for x86_64 Linux only. Each
 version record already holds `requires_mojo`, `provenance`, the description, keywords and the README.
 
-The five site rules bind everything below: (1) no runtime dependencies; (2) no HTML sinks, markup only through `h()`;
+The five site rules bind everything below: (1) no runtime dependencies (one exception since, the tutorial's bundle of `e2b`: `site/README.md`, rule 1); (2) no HTML sinks, markup only through `h()`;
 (3) no inline script or style, CSP `'self'` with Trusted Types; (4) one artifact for every stage, nothing
 stage-specific compiled in or fetched at build time; (5) no live calls in tests, which replay `tests/contract/`.
 

@@ -49,7 +49,7 @@ export const JS_TOTAL_MAX_BYTES = 128 * 1024;
 /** The tutorial's one bundled asset (tools/build.ts): src/tutorial/runner.ts with the e2b SDK. */
 export const TUTORIAL_BUNDLE = 'tutorial.js';
 /**
- * The tutorial bundle's budget. Set from its first measurement, 309,148 bytes minified (e2b 2.64.0 with the runner;
+ * The tutorial bundle's budget. Set from its first measurement, 309,160 bytes minified (e2b 2.64.0 with the runner;
  * docs/design/tutorial-sign-in.md, section 4.1, measured 306,542 for the SDK calls alone), with about 6% of room.
  */
 export const TUTORIAL_JS_MAX_BYTES = 320 * 1024;

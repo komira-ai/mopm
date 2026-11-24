@@ -29,7 +29,10 @@ Object.defineProperty(process, 'release', { value: release, configurable: true }
 delete (globalThis as { window?: unknown }).window;
 
 const GRANT = load('tutorial-sandbox').find((c) => c.operationId === 'createTutorialSandbox' && c.response.status === 201)?.response.body as SandboxGrant;
-const AGENT = `https://49983-${GRANT.sandbox_id}.${GRANT.domain}`;
+const agentOf = (g: SandboxGrant): string => `https://49983-${g.sandbox_id}.${g.domain}`;
+const AGENT = agentOf(GRANT);
+/** The origin the seam lets through: the agent of the grant a test runs with. */
+let agent = AGENT;
 /** Where the SDK would read a team key from; set so the test shows it is never sent. */
 const KEY = 'e2b_0000000000000000000000000000000000000000';
 
@@ -127,7 +130,7 @@ async function seam(input: RequestInfo | URL, init?: RequestInit): Promise<Respo
   req.headers.forEach((v, k) => (headers[k] = v));
   seen.push({ method: req.method, url: req.url, headers });
   const url = new URL(req.url);
-  if (url.origin !== AGENT) throw new TypeError(`request to ${url.origin}, not the grant's sandbox`);
+  if (url.origin !== agent) throw new TypeError(`request to ${url.origin}, not the grant's sandbox`);
   const payload = req.method === 'GET' ? undefined : Buffer.from(await req.arrayBuffer());
   return new Promise((resolve, reject) => {
     const out = httpRequest({ host: '127.0.0.1', port, method: req.method, path: url.pathname + url.search, headers }, (res) => {
@@ -165,6 +168,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
+  agent = AGENT;
   script = { files: WROTE, start: exited(0, 'Hello, world!\n', '') };
   seen = [];
   written = [];
@@ -209,6 +213,15 @@ describe('a run', () => {
     const s = sandboxOf(GRANT);
     expect(s).toBeInstanceOf(e2b.Sandbox);
     expect([s.sandboxId, s.sandboxDomain]).toEqual([GRANT.sandbox_id, GRANT.domain]);
+  });
+
+  test('a grant on another domain: the client and every request use that domain, not the SDK\'s default', async () => {
+    const other: SandboxGrant = { ...GRANT, sandbox_id: 'z9y8x7w6v5u4t3s2r1q0', domain: 'sbx.example.test' };
+    agent = agentOf(other);
+    expect(sandboxOf(other).sandboxDomain).toBe('sbx.example.test');
+    expect(await e2bRunner.run(other, 'hello', FILES, 'mopm run src/main.mojo')).toEqual({ exit_code: 0, stdout: 'Hello, world!\n', stderr: '' });
+    expect(seen.map((s) => new URL(s.url).origin)).toEqual([agent, agent]);
+    expect(seen.map((s) => s.headers['e2b-sandbox-id'])).toEqual([other.sandbox_id, other.sandbox_id]);
   });
 
   test('a non-zero exit is the program\'s: its code and output, not an error', async () => {
