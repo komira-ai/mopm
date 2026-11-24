@@ -7,10 +7,11 @@
 //    key (`X-API-Key`) or `Authorization`, even with E2B_API_KEY set where the SDK reads it;
 //  - the edited files are written in one upload into the lesson's directory, then the command runs there;
 //  - exit 0 and a non-zero exit (the SDK's CommandExitError) both give the exit code and the output;
-//  - the agent's proxy saying the sandbox was not found (on the write or the run) is `sandbox_not_running`, and its port
-//    not open is `sandbox_unreachable`;
+//  - the agent's proxy saying the sandbox was not found (on the write or the run) is `{kind: 'SandboxNotRunning'}`, and
+//    its port not open is `{kind: 'SandboxUnreachable'}` (page.ts's RunnerError);
 //  - any other failure (a refused token) is thrown as the SDK's own error;
-//  - a lesson id, file path or command outside the lesson grammar is refused before any request.
+//  - a lesson id outside the lesson grammar is refused when the runner is built, a file path or command by the run,
+//    before any request.
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'http';
 import type { AddressInfo } from 'net';
 import { Readable } from 'stream';
@@ -176,8 +177,8 @@ beforeEach(() => {
 });
 
 const FILES = [
-  { path: 'src/main.mojo', content: 'def main():\n    print("Hello, world!")\n' },
-  { path: 'mopm.toml', content: '[package]\nname = "hello"\n' },
+  { path: 'src/main.mojo', text: 'def main():\n    print("Hello, world!")\n' },
+  { path: 'mopm.toml', text: '[package]\nname = "hello"\n' },
 ];
 const DIR = `${LESSONS_DIR}/hello`;
 
@@ -185,11 +186,11 @@ const DIR = `${LESSONS_DIR}/hello`;
 
 describe('a run', () => {
   test('writes the files in one upload into the lesson directory, runs the command there, and gives exit 0 with the output', async () => {
-    const r = await e2bRunner.run(GRANT, 'hello', FILES, 'mopm run src/main.mojo');
+    const r = await e2bRunner('hello').run(GRANT, FILES, 'mopm run src/main.mojo');
     expect(r).toEqual({ exit_code: 0, stdout: 'Hello, world!\n', stderr: '' });
     expect(written).toEqual([
-      { path: `${DIR}/src/main.mojo`, content: FILES[0].content },
-      { path: `${DIR}/mopm.toml`, content: FILES[1].content },
+      { path: `${DIR}/src/main.mojo`, content: FILES[0].text },
+      { path: `${DIR}/mopm.toml`, content: FILES[1].text },
     ]);
     expect(started).toEqual([{ cmd: '/bin/bash', args: ['-l', '-c', 'mopm run src/main.mojo'], cwd: DIR }]);
     // The upload first, then the command: the run sees the edited files.
@@ -197,7 +198,7 @@ describe('a run', () => {
   });
 
   test('every request goes to the grant\'s sandbox with its access token, and none carries an API key or Authorization', async () => {
-    await e2bRunner.run(GRANT, 'hello', FILES, 'mopm test');
+    await e2bRunner('hello').run(GRANT, FILES, 'mopm test');
     expect(seen.length).toBe(2);
     for (const s of seen) {
       expect(new URL(s.url).origin).toBe(AGENT);
@@ -219,23 +220,23 @@ describe('a run', () => {
     const other: SandboxGrant = { ...GRANT, sandbox_id: 'z9y8x7w6v5u4t3s2r1q0', domain: 'sbx.example.test' };
     agent = agentOf(other);
     expect(sandboxOf(other).sandboxDomain).toBe('sbx.example.test');
-    expect(await e2bRunner.run(other, 'hello', FILES, 'mopm run src/main.mojo')).toEqual({ exit_code: 0, stdout: 'Hello, world!\n', stderr: '' });
+    expect(await e2bRunner('hello').run(other, FILES, 'mopm run src/main.mojo')).toEqual({ exit_code: 0, stdout: 'Hello, world!\n', stderr: '' });
     expect(seen.map((s) => new URL(s.url).origin)).toEqual([agent, agent]);
     expect(seen.map((s) => s.headers['e2b-sandbox-id'])).toEqual([other.sandbox_id, other.sandbox_id]);
   });
 
   test('a non-zero exit is the program\'s: its code and output, not an error', async () => {
     script.start = exited(3, 'partial\n', 'error: no main\n');
-    expect(await e2bRunner.run(GRANT, 'hello', FILES, 'mopm run src/main.mojo')).toEqual({ exit_code: 3, stdout: 'partial\n', stderr: 'error: no main\n' });
+    expect(await e2bRunner('hello').run(GRANT, FILES, 'mopm run src/main.mojo')).toEqual({ exit_code: 3, stdout: 'partial\n', stderr: 'error: no main\n' });
   });
 
   test('no files: nothing is uploaded and the command still runs', async () => {
-    expect(await e2bRunner.run(GRANT, 'hello', [], 'mopm run src/main.mojo')).toEqual({ exit_code: 0, stdout: 'Hello, world!\n', stderr: '' });
+    expect(await e2bRunner('hello').run(GRANT, [], 'mopm run src/main.mojo')).toEqual({ exit_code: 0, stdout: 'Hello, world!\n', stderr: '' });
     expect(seen.map((s) => new URL(s.url).pathname)).toEqual(['/process.Process/Start']);
   });
 
   test('the command timeout is passed to the agent', async () => {
-    await e2bRunner.run(GRANT, 'hello', FILES, 'mopm run src/main.mojo');
+    await e2bRunner('hello').run(GRANT, FILES, 'mopm run src/main.mojo');
     const start = seen.find((s) => s.url.endsWith('/process.Process/Start'));
     expect(start?.headers['connect-timeout-ms']).toBe(String(RUN_TIMEOUT_MS));
   });
@@ -245,25 +246,25 @@ describe('a sandbox that is gone', () => {
   const GONE = `The sandbox ${GRANT.sandbox_id} was not found`;
   const CLOSED = `The sandbox ${GRANT.sandbox_id} is running but port is not open`;
 
-  test('not found on the run: sandbox_not_running', async () => {
+  test('not found on the run: SandboxNotRunning', async () => {
     script.start = proxy(GONE);
-    expect(await e2bRunner.run(GRANT, 'hello', FILES, 'mopm run src/main.mojo')).toEqual({ error: 'sandbox_not_running' });
+    expect(await e2bRunner('hello').run(GRANT, FILES, 'mopm run src/main.mojo')).toEqual({ kind: 'SandboxNotRunning' });
   });
 
-  test('not found on the upload: sandbox_not_running, and the command is not run', async () => {
+  test('not found on the upload: SandboxNotRunning, and the command is not run', async () => {
     script.files = proxy(GONE);
-    expect(await e2bRunner.run(GRANT, 'hello', FILES, 'mopm run src/main.mojo')).toEqual({ error: 'sandbox_not_running' });
+    expect(await e2bRunner('hello').run(GRANT, FILES, 'mopm run src/main.mojo')).toEqual({ kind: 'SandboxNotRunning' });
     expect(started).toEqual([]);
   });
 
-  test('its port not open: sandbox_unreachable', async () => {
+  test('its port not open: SandboxUnreachable', async () => {
     script.start = proxy(CLOSED);
-    expect(await e2bRunner.run(GRANT, 'hello', FILES, 'mopm run src/main.mojo')).toEqual({ error: 'sandbox_unreachable' });
+    expect(await e2bRunner('hello').run(GRANT, FILES, 'mopm run src/main.mojo')).toEqual({ kind: 'SandboxUnreachable' });
   });
 
-  test('its port not open on the upload: sandbox_unreachable', async () => {
+  test('its port not open on the upload: SandboxUnreachable', async () => {
     script.files = proxy(CLOSED);
-    expect(await e2bRunner.run(GRANT, 'hello', FILES, 'mopm run src/main.mojo')).toEqual({ error: 'sandbox_unreachable' });
+    expect(await e2bRunner('hello').run(GRANT, FILES, 'mopm run src/main.mojo')).toEqual({ kind: 'SandboxUnreachable' });
   });
 });
 
@@ -273,7 +274,7 @@ describe('any other failure is thrown as the SDK raised it', () => {
       res.writeHead(401, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ code: 401, message: 'invalid access token' }));
     };
-    const r = e2bRunner.run(GRANT, 'hello', FILES, 'mopm run src/main.mojo');
+    const r = e2bRunner('hello').run(GRANT, FILES, 'mopm run src/main.mojo');
     await expect(r).rejects.toBeInstanceOf(e2b.AuthenticationError);
     await expect(r).rejects.toThrow('invalid access token');
     expect(started).toEqual([]);
@@ -282,19 +283,24 @@ describe('any other failure is thrown as the SDK raised it', () => {
 
 describe('the lesson grammar, checked before any request', () => {
   test.each([
-    ['a lesson id with a capital', 'Hello', FILES, 'mopm run src/main.mojo', 'not a lesson id: "Hello"'],
-    ['a lesson id that climbs', '../x', FILES, 'mopm run src/main.mojo', 'not a lesson id: "../x"'],
-    ['a lesson id over 64 characters', 'a'.repeat(65), FILES, 'mopm run src/main.mojo', `not a lesson id: "${'a'.repeat(65)}"`],
-    ['an absolute file path', 'hello', [{ path: '/etc/passwd', content: '' }], 'mopm run src/main.mojo', 'not a lesson file path: "/etc/passwd"'],
-    ['a file path that climbs', 'hello', [{ path: 'src/../../x', content: '' }], 'mopm run src/main.mojo', 'not a lesson file path: "src/../../x"'],
-    ['an empty file path', 'hello', [{ path: '', content: '' }], 'mopm run src/main.mojo', 'not a lesson file path: ""'],
-    ['a file path over 255 characters', 'hello', [{ path: 'a'.repeat(256), content: '' }], 'mopm run src/main.mojo', `not a lesson file path: "${'a'.repeat(256)}"`],
+    ['a lesson id with a capital', 'Hello', 'not a lesson id: "Hello"'],
+    ['a lesson id that climbs', '../x', 'not a lesson id: "../x"'],
+    ['a lesson id over 64 characters', 'a'.repeat(65), `not a lesson id: "${'a'.repeat(65)}"`],
+  ])('%s: building the runner is a RangeError', (_, lesson, message) => {
+    expect(() => e2bRunner(lesson)).toThrow(new RangeError(message));
+  });
+
+  test.each([
+    ['an absolute file path', 'hello', [{ path: '/etc/passwd', text: '' }], 'mopm run src/main.mojo', 'not a lesson file path: "/etc/passwd"'],
+    ['a file path that climbs', 'hello', [{ path: 'src/../../x', text: '' }], 'mopm run src/main.mojo', 'not a lesson file path: "src/../../x"'],
+    ['an empty file path', 'hello', [{ path: '', text: '' }], 'mopm run src/main.mojo', 'not a lesson file path: ""'],
+    ['a file path over 255 characters', 'hello', [{ path: 'a'.repeat(256), text: '' }], 'mopm run src/main.mojo', `not a lesson file path: "${'a'.repeat(256)}"`],
     ['a command a shell would read', 'hello', FILES, 'mopm run src/main.mojo; curl x', 'not a lesson command: "mopm run src/main.mojo; curl x"'],
     ['mopm run with no program', 'hello', FILES, 'mopm run', 'not a lesson command: "mopm run"'],
     ['a command that is not mopm run or mopm test', 'hello', FILES, 'mopm sync', 'not a lesson command: "mopm sync"'],
     ['a command over 200 characters', 'hello', FILES, `mopm test ${'a'.repeat(191)}`, `not a lesson command: "mopm test ${'a'.repeat(191)}"`],
   ])('%s is a RangeError', async (_, lesson, files, command, message) => {
-    const r = e2bRunner.run(GRANT, lesson, files, command);
+    const r = e2bRunner(lesson).run(GRANT, files, command);
     await expect(r).rejects.toThrow(new RangeError(message));
     expect(seen).toEqual([]);
   });
@@ -304,12 +310,12 @@ describe('the lesson grammar, checked before any request', () => {
     const path = 'a'.repeat(255);
     const command = `mopm test ${'a'.repeat(190)}`;
     expect(command.length).toBe(200);
-    expect(await e2bRunner.run(GRANT, id, [{ path, content: 'x' }], command)).toEqual({ exit_code: 0, stdout: 'Hello, world!\n', stderr: '' });
+    expect(await e2bRunner(id).run(GRANT, [{ path, text: 'x' }], command)).toEqual({ exit_code: 0, stdout: 'Hello, world!\n', stderr: '' });
     expect(written).toEqual([{ path: `${LESSONS_DIR}/${id}/${path}`, content: 'x' }]);
   });
 
   test('a dotfile path and mopm test with no arguments are lesson grammar', async () => {
-    await e2bRunner.run(GRANT, 'hello', [{ path: '.mopm/x', content: '' }], 'mopm test');
+    await e2bRunner('hello').run(GRANT, [{ path: '.mopm/x', text: '' }], 'mopm test');
     expect(written.map((w) => w.path)).toEqual([`${DIR}/.mopm/x`]);
   });
 

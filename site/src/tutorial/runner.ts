@@ -1,5 +1,6 @@
-// The lesson runner: it writes a lesson's edited files into the sandbox of a grant and runs the lesson's command there,
-// with E2B's SDK (docs/design/tutorial-sign-in.md, section 4, "What E2B lacks", and section 7).
+// The lesson runner: page.ts's `Runner` port over E2B's SDK. Built for one lesson, it writes the lesson's edited files
+// into the lesson's directory in the sandbox of a grant and runs the lesson's command there
+// (docs/design/tutorial-sign-in.md, section 4, "What E2B lacks", and section 7).
 //
 // The client is the SDK's `Sandbox` constructor over the grant alone: the sandbox id, its access token, the agent's
 // version and the sandbox's domain. It talks only to that sandbox's agent (`https://49983-<sandbox_id>.<domain>` in a
@@ -11,49 +12,25 @@
 // What a run gives the page:
 //  - the command's exit code and output; a non-zero exit is the program's own (the SDK's CommandExitError), not an
 //    error of the page;
-//  - `sandbox_not_running` (SandboxNotRunningError: killed or timed out) or `sandbox_unreachable`
+//  - `{kind: 'SandboxNotRunning'}` (SandboxNotRunningError: killed or timed out) or `{kind: 'SandboxUnreachable'}`
 //    (SandboxUnreachableError): the sandbox is gone, so the page asks the gate for a new one and runs again, once;
 //  - anything else (a refused token, a write the agent refused, a command past RUN_TIMEOUT_MS) is thrown as the SDK
 //    raised it.
-// A lesson id, a file path or a command outside the lesson grammar (spec/tutorial-lesson.schema.json) is refused with a
-// RangeError before any request.
+// A lesson id outside the lesson grammar (spec/tutorial-lesson.schema.json) is refused with a RangeError when the runner
+// is built; a file path or a command outside it, by the run, before any request.
 //
 // This module and what it imports are bundled with the SDK by esbuild into the one asset the tutorial page loads
 // (tools/build.ts, TUTORIAL_BUNDLE); no other page loads it.
 
 import { CommandExitError, Sandbox, SandboxNotRunningError, SandboxUnreachableError } from 'e2b';
 import { LESSON, type SandboxGrant } from './gate.js';
+import type { LessonFile, Runner, RunnerError, RunResult } from './page.js';
 
 /** Where the template puts each lesson's project (tutorial/README.md): `/home/user/lessons/<id>/`. */
 export const LESSONS_DIR = '/home/user/lessons';
 
 /** How long a command may run before the SDK ends it (a TimeoutError, thrown): a lesson's build and run of Mojo. */
 export const RUN_TIMEOUT_MS = 120_000;
-
-/** A file of the lesson's project as the editor holds it; `path` is relative to the lesson's directory. */
-export interface LessonFile {
-  path: string;
-  content: string;
-}
-
-/** A finished command: its exit code (0 or not) and what it wrote. */
-export interface RunOutput {
-  exit_code: number;
-  stdout: string;
-  stderr: string;
-}
-
-/** The sandbox is gone: ask the gate for a new grant and run again, once. */
-export type RunnerErrorKind = 'sandbox_not_running' | 'sandbox_unreachable';
-
-export interface RunnerError {
-  error: RunnerErrorKind;
-}
-
-export interface Runner {
-  /** Writes `files` into the lesson's directory of the grant's sandbox, then runs `command` there. */
-  run(grant: SandboxGrant, lesson: string, files: readonly LessonFile[], command: string): Promise<RunOutput | RunnerError>;
-}
 
 /** spec/tutorial-lesson.schema.json's ProjectPath: relative, '/'-separated, no empty, '.' or '..' segment. */
 const PROJECT_PATH = /^\.?[A-Za-z0-9_-][A-Za-z0-9_.-]*(\/\.?[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$/;
@@ -86,23 +63,25 @@ export function sandboxOf(grant: SandboxGrant): Sandbox {
   });
 }
 
-async function run(grant: SandboxGrant, lesson: string, files: readonly LessonFile[], command: string): Promise<RunOutput | RunnerError> {
-  const dir = lessonDir(lesson);
+async function run(dir: string, grant: SandboxGrant, files: readonly LessonFile[], command: string): Promise<RunResult | RunnerError> {
   files.forEach((f) => checkPath(f.path));
   checkCommand(command);
   const sandbox = sandboxOf(grant);
   try {
     // One upload for every file; an empty list sends nothing.
-    await sandbox.files.write(files.map((f) => ({ path: `${dir}/${f.path}`, data: f.content })));
+    await sandbox.files.write(files.map((f) => ({ path: `${dir}/${f.path}`, data: f.text })));
     const r = await sandbox.commands.run(command, { cwd: dir, timeoutMs: RUN_TIMEOUT_MS });
     return { exit_code: r.exitCode, stdout: r.stdout, stderr: r.stderr };
   } catch (e) {
     if (e instanceof CommandExitError) return { exit_code: e.exitCode, stdout: e.stdout, stderr: e.stderr };
-    if (e instanceof SandboxNotRunningError) return { error: 'sandbox_not_running' };
-    if (e instanceof SandboxUnreachableError) return { error: 'sandbox_unreachable' };
+    if (e instanceof SandboxNotRunningError) return { kind: 'SandboxNotRunning' };
+    if (e instanceof SandboxUnreachableError) return { kind: 'SandboxUnreachable' };
     throw e;
   }
 }
 
-/** The runner the tutorial page uses: E2B's SDK, from each run's grant. */
-export const e2bRunner: Runner = { run };
+/** The runner the tutorial page uses for `lesson`: E2B's SDK, from each run's grant. Throws a RangeError for a bad id. */
+export function e2bRunner(lesson: string): Runner {
+  const dir = lessonDir(lesson);
+  return { run: (grant, files, command) => run(dir, grant, files, command) };
+}
