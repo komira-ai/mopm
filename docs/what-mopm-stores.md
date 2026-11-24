@@ -13,7 +13,7 @@ This page says what mopm.dev keeps when you sign in with GitHub and run a lesson
 
 ## Signing in with GitHub
 
-Sign-in uses GitHub's OAuth web flow with the scope `read:user`, which gives read access to your GitHub profile and nothing else. mopm.dev reads one thing with it, `GET https://api.github.com/user`, and keeps three fields of the answer: your numeric id, your login and whether two-factor authentication is on. Then it discards GitHub's access token; it is never stored or logged. A sign-in is refused when GitHub does not report two-factor authentication as on, and no account is stored for it.
+Sign-in uses GitHub's OAuth web flow with the scope `read:user`, which gives read access to your GitHub profile and nothing else. mopm.dev reads one thing with it, `GET https://api.github.com/user`, and keeps three fields of the answer: your numeric id, your login and whether two-factor authentication is on. Then it discards GitHub's access token; it is never stored or logged. mopm.dev requires two-factor authentication on the GitHub account: a sign-in is refused when GitHub does not report it as on, and no account is stored for it.
 
 GitHub itself records that you authorized the mopm OAuth app, under [GitHub's privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
 
@@ -24,12 +24,12 @@ The account is the same one `mopm login` creates on the command line: the same r
 | where | what | how long |
 |---|---|---|
 | `users` table | your GitHub numeric id, your GitHub login (`handle`), when the account was created (`created_at`) and when you last signed in (`last_login_at`), and whether GitHub reported two-factor authentication as on | no expiry |
-| `namespaces` table | your user namespace: your login in lower case, your GitHub id and when it was created. A sign-in creates it the first time, as `mopm login` does. | no expiry |
-| `tokens` table | your session: the SHA-256 of the session token (never the token itself), its first 11 characters (`mopm_` and six more), the kind `session`, the name `web login`, your GitHub id, when it was created, when it expires, when it was last used (written at most once every 60 seconds while you use the tutorial) and, once you sign out, when it was revoked | 7 days |
+| `namespaces` table | your user namespace: your login in lower case, your GitHub id and when it was created. A sign-in creates it the first time, as `mopm login` does, when your login can be a namespace (it is not reserved or taken). | no expiry |
+| `tokens` table | your session: the SHA-256 of the session token (never the token itself), its first 11 characters (`mopm_` and six more), the kind `session`, the name `web login`, your GitHub id, when it was created, when it expires, the empty lists of scopes and packages an API token would have, when it was last used (written at most once every 60 seconds while you use the tutorial) and, once you sign out, when it was revoked | 7 days |
 | `web_logins` table | a sign-in in progress: the SHA-256 of its id, the SHA-256 of the `state` sent to GitHub, the PKCE code verifier, the page to return to, when it expires and when it was used | 10 minutes |
 | logs | one line per request to the sign-in and sandbox routes, described under "The log lines" below | one month |
 
-"How long" is the time after which a row stops working: the service checks the expiry on every request, so an expired session or sign-in is refused at once. DynamoDB then deletes the row through its time-to-live setting, which AWS says usually happens within a few days of the expiry ([DynamoDB TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html)). No code of the service deletes a row: signing out marks the session revoked, and the row stays, unusable, until its 7 days are over.
+"How long" is the time after which a row stops working: the service checks the expiry on every request, so an expired session or sign-in is refused at once. DynamoDB then deletes the row through its time-to-live setting, which AWS says usually happens within a few days of the expiry ([DynamoDB TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html)). No code of the service deletes a row of these tables: signing out marks the session revoked, and the row stays, unusable, until its 7 days are over.
 
 Every table has point-in-time recovery on, so DynamoDB keeps a deleted row restorable for a further 35 days, AWS's window, which mopm.dev does not change ([point-in-time recovery](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/PointInTimeRecovery.html)). The tables are encrypted at rest.
 
@@ -59,9 +59,7 @@ The tutorial runs your code in a sandbox on [E2B](https://e2b.dev), a separate c
 2. mopm.dev creates a sandbox on E2B with internet access off and answers the sandbox's id and its access token, which opens that one sandbox and nothing else.
 3. The page writes your files into the sandbox and runs the lesson's command there, talking to E2B directly, and reads the output from E2B.
 
-So your code and its output go from your browser to E2B and back, and never through mopm.dev.
-
-The page says the same beside Run: "Your code runs on E2B's servers, which see your IP address. mopm.dev does not see or store your code."
+So your code and its output go from your browser to E2B and back, and never through mopm.dev. In one sentence: your code runs on E2B's servers, which see your IP address; mopm.dev does not see or store your code.
 
 **What E2B sees**: the files you write and run, the commands, their output, and, because your browser connects to E2B, your IP address and your browser's request headers on each call, as any site your browser connects to does. From mopm.dev it gets the stage name and the request id, and nothing that names you. What E2B keeps, and for how long, is set by [E2B's terms](https://e2b.dev/terms) and [E2B's privacy policy](https://e2b.dev/privacy).
 
@@ -82,6 +80,6 @@ The site sets no other cookie and uses no other browser storage.
 
 ## Signing out
 
-Signing out on the tutorial page (`POST /api/v2/auth/web/logout`) marks this browser's session revoked and clears its cookie. From then on the session opens nothing, though its row stays until its 7 days are over. Signing in again revokes the session the browser held before. Your other browsers, and the command line's sessions and API tokens, are not signed out.
+Signing out (`POST /api/v2/auth/web/logout`, which the tutorial page sends) marks this browser's session revoked and clears its cookie. From then on the session opens nothing, though its row stays until its 7 days are over. Signing in again revokes the session the browser held before. Your other browsers, and the command line's sessions and API tokens, are not signed out.
 
 A sandbox you already have keeps running until E2B ends it, at most 30 minutes after it was created. Signing out leaves the draft in place: to remove it, clear the site's data in your browser's settings.

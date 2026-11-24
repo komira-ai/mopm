@@ -38,7 +38,8 @@ _LESSONS = {
 # test/docs-facts.test.ts requires on the configuration page (src/core/manifest.zig, lock.zig, credentials.zig), the
 # sources of the sizes, registries, allowed values, variables and platforms test/docs-values.test.ts reads, and the
 # worked examples test/docs-examples.test.ts holds the examples page to (and the driver that runs them, tests/drivers/examples_test.zig),
-# and the lifetimes, retention, log line and timeout test/docs-stores.test.ts holds docs/what-mopm-stores.md to.
+# and the lifetimes, retention, log line, timeout, cookie attributes, scope and table settings test/docs-stores.test.ts
+# holds docs/what-mopm-stores.md to (with the stage configs, which must not override the sandbox timeout).
 _TEST_DATA = _DOCS | _LESSONS | {
     "README.md": "//:site.README.md",
     "RELEASING.md": "//:site.RELEASING.md",
@@ -66,10 +67,17 @@ _TEST_DATA = _DOCS | _LESSONS | {
     ".github/workflows/e2e.yml": "//:site.workflows.e2e.yml",
     "service/infra/stacks/lib/config.ts": "//service/infra/stacks:site_config.ts",
     "service/infra/stacks/lib/publish-stack.ts": "//service/infra/stacks:site_publish-stack.ts",
+    "service/config/beta.json": "//service/config:beta.json",
+    "service/config/gamma.json": "//service/config:gamma.json",
+    "service/config/prod.json": "//service/config:prod.json",
+    "service/infra/stacks/lib/api-stack.ts": "//service/infra/stacks:site_api-stack.ts",
+    "service/infra/stacks/lib/app.ts": "//service/infra/stacks:site_app.ts",
+    "service/infra/stacks/lib/data-stack.ts": "//service/infra/stacks:site_data-stack.ts",
     "service/infra/stacks/lib/rust-function.ts": "//service/infra/stacks:site_rust-function.ts",
     "service/infra/stacks/lib/stage-settings.ts": "//service/infra/stacks:site_stage-settings.ts",
     "service/lambda/core/src/token.rs": "//service/lambda/core:site_token.rs",
     "service/lambda/fn_tutorial_sandbox/src/log.rs": "//service/lambda/fn_tutorial_sandbox:site_log.rs",
+    "service/lambda/fn_web_login/src/github.rs": "//service/lambda/fn_web_login:site_github.rs",
     "service/lambda/fn_web_login/src/login.rs": "//service/lambda/fn_web_login:site_login.rs",
     "service/lambda/web/src/cookie.rs": "//service/lambda/web:site_cookie.rs",
     "service/lambda/web/src/session.rs": "//service/lambda/web:site_session.rs",

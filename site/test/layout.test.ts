@@ -47,7 +47,7 @@ function byId(html: string, id: string): string {
 const DOC_HTML = ['docs/why/index.html', 'docs/getting-started/index.html', 'docs/configuration/index.html', 'docs/examples/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html', 'docs/publish-workspace/index.html', 'docs/what-mopm-stores/index.html'];
 const ALL_PAGES = ['404.html', 'app.html', 'docs/index.html', ...DOC_HTML, 'index.html'];
 
-test('the eleven pages are built', () => {
+test('the twelve pages are built', () => {
   expect([...pages].sort()).toEqual([...ALL_PAGES].sort());
 });
 

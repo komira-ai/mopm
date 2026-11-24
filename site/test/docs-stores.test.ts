@@ -71,6 +71,11 @@ const login = read('service/lambda/fn_web_login/src/login.rs');
 const rustFunction = read('service/infra/stacks/lib/rust-function.ts');
 const stageSettings = read('service/infra/stacks/lib/stage-settings.ts');
 const sandboxLog = read('service/lambda/fn_tutorial_sandbox/src/log.rs');
+const github = read('service/lambda/fn_web_login/src/github.rs');
+const dataStack = read('service/infra/stacks/lib/data-stack.ts');
+const apiStack = read('service/infra/stacks/lib/api-stack.ts');
+const app = read('service/infra/stacks/lib/app.ts');
+const stages = ['beta', 'gamma', 'prod'].map((s) => [s, JSON.parse(read(`service/config/${s}.json`))] as const);
 
 const sessionSeconds = int(found(token, /WEB_SESSION_LIFETIME: SignedDuration = SignedDuration::from_hours\((\d+) \* 24\);/, 'WEB_SESSION_LIFETIME')) * 86_400;
 const sessionMaxAge = int(found(cookie, /pub const SESSION_MAX_AGE: u64 = ([\d_]+);/, 'SESSION_MAX_AGE'));
@@ -157,9 +162,39 @@ describe('docs/what-mopm-stores.md', () => {
     expect(row(page, `\`${loginCookie}\``)[1]).toContain('a cookie with the same attributes');
   });
 
+  test('the sandbox timeout the page states is every stage\'s: no stage config overrides the default', () => {
+    for (const [stage, c] of stages) expect([stage, c.tutorial?.sandboxTimeoutS]).toEqual([stage, undefined]);
+  });
+
+  test("the cookies' attributes: the page names each attribute every cookie carries", () => {
+    const attrs = found(cookie, /const ATTRIBUTES: &str = "([^"]+)";/, 'ATTRIBUTES').split('; ');
+    expect(attrs).toEqual(['Secure', 'HttpOnly', 'Path=/', 'SameSite=Lax']);
+    const cell = row(page, `\`${sessionCookie}\``)[1];
+    for (const a of attrs.filter((x) => x !== 'Path=/')) expect(cell).toContain(`\`${a}\``);
+    expect(cell).toContain("for the site's own host only");
+  });
+
+  test('the GitHub scope the page names is the one the sign-in asks for', () => {
+    const scope = found(github, /pub const SCOPE: &str = "([^"]+)";/, 'SCOPE');
+    expect(page).toContain(`OAuth web flow with the scope \`${scope}\``);
+  });
+
+  test('two-factor authentication: required unless a stage turns it off, and no stage does', () => {
+    expect(apiStack).toContain('this.addRustFunctions(c, props.rustZipDir, props.require2fa ?? true)');
+    expect(app).not.toContain('require2fa');
+    expect(page).toContain('mopm.dev requires two-factor authentication on the GitHub account');
+  });
+
+  test('backups and encryption: every table has point-in-time recovery and is encrypted at rest, as the page says', () => {
+    expect(dataStack).toContain('pointInTimeRecovery: true,');
+    expect(dataStack).toContain('encryption: dynamodb.TableEncryption.AWS_MANAGED,');
+    expect(dataStack).not.toMatch(/recoveryPeriodInDays/);
+    expect(page).toContain('Every table has point-in-time recovery on, so DynamoDB keeps a deleted row restorable for a further 35 days');
+    expect(page).toContain('The tables are encrypted at rest.');
+  });
+
   test('names E2B and links its terms and privacy policy', () => {
-    expect(page).toContain('[E2B\'s terms](https://e2b.dev/terms)');
+    expect(page).toContain("[E2B's terms](https://e2b.dev/terms)");
     expect(page).toContain("[E2B's privacy policy](https://e2b.dev/privacy)");
-    expect(page).toContain('Your code runs on E2B\'s servers, which see your IP address. mopm.dev does not see or store your code.');
   });
 });
