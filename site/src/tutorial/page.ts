@@ -306,7 +306,8 @@ export function tutorialPage(opts: PageOptions): TutorialPage {
       if ('error' in s) {
         show({ state: 'unavailable', lesson: lesson.id, message: message(s.error) });
       } else if (!s.signed_in) {
-        show(signedOut(null, null));
+        // Still signed out after the session ended: the editor and its files stay, with the sign-in message.
+        show(signedOut(files, files === null ? null : message('session_required')));
       } else {
         login = s.login;
         // Files the editor already holds (the session ended and came back) win over the draft.

@@ -9,6 +9,7 @@ import { MESSAGES, type PageView, RENEW_BEFORE_MS } from '../src/tutorial/page';
 import {
   CSRF_FAILED, GRANT, GRANT_2, GRANT_2_ANSWER, GRANT_ANSWER, GRANT_END, HTML_504, INVALID, LESSON, LESSON_WITH_TEST, LOGIN,
   MAIN, OK, SANDBOX_SESSION_REQUIRED, SIGNED_IN, SIGNED_OUT, UNAVAILABLE, answer, fakeRunner, harness, heldRunner,
+  memoryStorage,
 } from './page-fakes';
 
 const GET_SESSION = `GET ${SESSION_PATH}`;
@@ -349,7 +350,7 @@ describe("the endpoint's errors", () => {
 
   test('session_required: signed out with the sign-in link, the edited code kept and still editable', async () => {
     const runner = fakeRunner(OK);
-    const h = harness({ getWebSession: [SIGNED_IN, SIGNED_IN], createTutorialSandbox: [SANDBOX_SESSION_REQUIRED, GRANT_ANSWER] }, { runner });
+    const h = harness({ getWebSession: [SIGNED_IN, SIGNED_OUT, SIGNED_IN], createTutorialSandbox: [SANDBOX_SESSION_REQUIRED, GRANT_ANSWER] }, { runner });
     await h.page.load();
     h.page.edit('src/main.mojo', EDITED);
     await h.page.run('run');
@@ -364,6 +365,15 @@ describe("the endpoint's errors", () => {
     h.page.edit('src/main.mojo', `${EDITED}# more\n`);
     const v = h.page.view();
     expect(v.state === 'signed_out' && v.files).toEqual([{ path: 'src/main.mojo', text: `${EDITED}# more\n` }]);
+    // load() again while still signed out: the editor, its files and the message stay.
+    await h.page.load();
+    expect(h.page.view()).toEqual({
+      state: 'signed_out',
+      lesson: 'hello',
+      sign_in: SIGN_IN_HELLO,
+      files: [{ path: 'src/main.mojo', text: `${EDITED}# more\n` }],
+      message: msg('session_required'),
+    });
     // Signed in again (another tab): the editor's files win over the lesson's.
     await h.page.load();
     expect(h.page.view()).toEqual(signedInView({ files: [{ path: 'src/main.mojo', text: `${EDITED}# more\n` }] }));
@@ -432,6 +442,18 @@ describe('sign-out', () => {
     await h.page.run('run');
     expect(runner.calls.map((c) => c.grant)).toEqual([GRANT, GRANT_2]);
     expect(h.requests()).toEqual([GET_SESSION, POST_SANDBOX, POST_LOGOUT, GET_SESSION, POST_SANDBOX]);
+  });
+
+  test("forgets the editor's files: signing in again with no draft shows the lesson's text", async () => {
+    const h = harness(
+      { getWebSession: [SIGNED_IN, SIGNED_IN], webLogout: [answer('sign out answers 204 and clears the session cookie')] },
+      { storage: memoryStorage({}, true) },
+    );
+    await h.page.load();
+    h.page.edit('src/main.mojo', EDITED);
+    await h.page.signOut();
+    await h.page.load();
+    expect(h.page.view()).toEqual(signedInView());
   });
 
   test('refused: its message, still signed in, the last output kept', async () => {
