@@ -1,7 +1,8 @@
-# The per-stage configuration the infra stacks' tests read (config-files.test.ts).
+# The per-stage configuration the infra stacks' tests read (config-files.test.ts), and the site's test of
+# docs/what-mopm-stores.md (site/test/docs-stores.test.ts: no stage overrides the sandbox timeout).
 [export_file(
     name = stage + ".json",
-    visibility = ["//service/infra/stacks:"],
+    visibility = ["//service/infra/stacks:", "//site:"],
 ) for stage in ["beta", "gamma", "prod"]]
 
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a

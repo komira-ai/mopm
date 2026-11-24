@@ -25,6 +25,7 @@ on:
       - 'docs/configuration.md'
       - 'docs/examples.md'
       - 'docs/publishing-a-workspace.md'
+      - 'docs/what-mopm-stores.md'
       - '.github/workflows/promote.yml'
       - '.github/workflows/deploy.yml'
       - '.github/workflows/e2e.yml'
