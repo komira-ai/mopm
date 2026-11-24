@@ -16,12 +16,12 @@ function fresh(files?: Record<string, string>): Fixture {
 }
 afterAll(() => made.forEach(cleanup));
 
-function tree(f: Fixture, files: string[]): Record<string, string> {
-  return Object.fromEntries(files.map((p) => [p, readFileSync(join(f.outDir, p), 'utf8')]));
+function tree(f: Fixture, files: string[], dir: string = f.outDir): Record<string, string> {
+  return Object.fromEntries(files.map((p) => [p, readFileSync(join(dir, p), 'utf8')]));
 }
 
 describe('a build', () => {
-  test('two builds of the same inputs give the same tree, byte for byte', () => {
+  test('two builds of the same inputs give the same trees, dist/ and the held one, byte for byte', () => {
     jest.useFakeTimers({ now: new Date('2026-01-01T00:00:00Z') });
     try {
       const a = fresh();
@@ -32,6 +32,10 @@ describe('a build', () => {
       expect(rb.id).toBe(ra.id);
       expect(rb.files).toEqual(ra.files);
       expect(tree(b, rb.files)).toEqual(tree(a, ra.files));
+      // The held tree too (the tutorial's pages, rendered from the lessons).
+      expect(ra.held.length).toBeGreaterThan(1);
+      expect(rb.held).toEqual(ra.held);
+      expect(tree(b, rb.held, b.heldDir)).toEqual(tree(a, ra.held, a.heldDir));
     } finally {
       jest.useRealTimers();
     }

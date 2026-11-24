@@ -26,7 +26,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/main.ts` | the page script: connects `app.ts`, `mount.ts` and `enhance.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
 | `src/tutorial/gate.ts` | the tutorial's gate: the session, a sandbox and sign-out over the site's own `/api/v2` routes (`credentials: 'same-origin'`, the CSRF header), the sign-in link, and `replayGate`, a fake that replays recorded answers; no page imports it yet |
-| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
+| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them, held out of `dist/` (see below); `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
 
 ## Rules
 
@@ -47,8 +47,15 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 npm ci --ignore-scripts --no-audit --no-fund
 npm run typecheck   # src, test (Node + DOM types), then src alone with no Node types
 npm test            # jest
-npm run build       # compiles src and tools to build/, then writes dist/ (and checks it)
+npm run build       # compiles src and tools to build/, then writes dist/ and build/held/ (and checks both)
 ```
+
+The build also reads every lesson of `tutorial/lessons/` (`tutorial/README.md`), fails on one that breaks
+`spec/tutorial-lesson.schema.json` or its rules (each problem names the lesson and the field), and renders the
+tutorial's pages from them: `/tutorial` and `/tutorial/<lesson>`, as `tutorial/index.html` and
+`tutorial/<lesson>/index.html`. They are written to `build/held/`, not to `dist/`, and checked by the same page rules:
+the edge router serves every file of `dist/` as it is, and the tutorial is not to be reachable before its routes
+(`src/routes.ts`, the route vectors) and its header link exist.
 
 On the build farm the same commands are Buck2 targets (`site/BUCK`, run from the repository root), over
 `node_modules` laid out from `package-lock.json` and the pinned tarballs of `buildrules.lock.bzl` (buildrules' `npm_package`;

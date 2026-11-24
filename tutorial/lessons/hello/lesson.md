@@ -1,5 +1,3 @@
-# Hello, world
-
 This is a whole mopm project: `mopm.toml` names the package and the Mojo version it is built with, `mopm.lock` pins
 that toolchain, and `src/main.mojo` is the program.
 

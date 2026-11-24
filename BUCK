@@ -1269,6 +1269,13 @@ export_file(
     visibility = ["//site:"],
 )
 
+# The lessons' schema, which the site build interprets to check every lesson before it renders the tutorial's pages.
+export_file(
+    name = "site.spec.tutorial-lesson.schema.json",
+    src = "spec/tutorial-lesson.schema.json",
+    visibility = ["//site:"],
+)
+
 export_file(
     name = "site.src.core.credentials.zig",
     src = "src/core/credentials.zig",
@@ -1405,6 +1412,13 @@ export_file(
 filegroup(
     name = "site_examples",
     srcs = {f[len("examples/"):]: f for f in glob(["examples/**"])},
+    visibility = ["//site:"],
+)
+
+# The tutorial's lessons, staged as `tutorial/lessons`: the site build checks them and renders the tutorial's pages.
+filegroup(
+    name = "site_tutorial_lessons",
+    srcs = {f[len("tutorial/lessons/"):]: f for f in glob(["tutorial/lessons/**"])},
     visibility = ["//site:"],
 )
 
