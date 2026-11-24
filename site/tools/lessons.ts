@@ -17,6 +17,8 @@
 //    backslashes; a symbolic link is followed, as the template's copy does);
 //  - no two lessons share an order;
 //  - a file directly under tutorial/lessons is refused, and so is a tree with no lesson.
+// One rule of the driver is left to it: an order written as 1.0 or 1e30 (the schema's integer takes both). JSON.parse
+// reads either as a number, so this check cannot see the spelling.
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
@@ -151,7 +153,7 @@ export function schemaErrors(root: Json, schema: Json, value: Json, at = ''): st
     }
     for (const k of Object.keys(value).sort()) {
       if (Object.prototype.hasOwnProperty.call(props, k)) out.push(...schemaErrors(root, props[k], value[k], `${at}/${k}`));
-      else if (s.additionalProperties === false) out.push(`${at}/${k}: is not a field of a lesson`);
+      else if (s.additionalProperties === false) out.push(`${at}/${k}: is not a field the schema allows`);
     }
   }
   return out;
@@ -189,7 +191,7 @@ export function loadLessons(dir: string, schema: Json, label = LESSONS_DIR): Les
   try {
     names = readdirSync(dir).sort();
   } catch {
-    throw new LessonError([`${label}: not a directory`]);
+    throw new LessonError([`${label}: there is no such directory`]);
   }
   const idSchema = defs(schema).LessonId;
   const lessons: Lesson[] = [];

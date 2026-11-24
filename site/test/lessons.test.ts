@@ -71,8 +71,8 @@ describe('the schema check, on the schema itself', () => {
   test('a missing run action, and an unknown action or field', () => {
     expect(errs(lessonJson(1, { actions: {} }))).toEqual(['/actions/run: is required and missing']);
     expect(errs(lessonJson(1, { actions: { test: 'mopm test' } }))).toEqual(['/actions/run: is required and missing']);
-    expect(errs(lessonJson(1, { actions: { run: 'mopm run x', build: 'mopm build' } }))).toEqual(['/actions/build: is not a field of a lesson']);
-    expect(errs(lessonJson(1, { hint: 'x' }))).toEqual(['/hint: is not a field of a lesson']);
+    expect(errs(lessonJson(1, { actions: { run: 'mopm run x', build: 'mopm build' } }))).toEqual(['/actions/build: is not a field the schema allows']);
+    expect(errs(lessonJson(1, { hint: 'x' }))).toEqual(['/hint: is not a field the schema allows']);
   });
 
   test('each type, wrong', () => {
@@ -177,7 +177,7 @@ describe('the schema check, on the schema itself', () => {
       '/summary: is required and missing',
       '/actions/run: is required and missing',
       '/editable: must hold at least 1 item',
-      '/extra: is not a field of a lesson',
+      '/extra: is not a field the schema allows',
       '/order: must be at least 1',
       '/title: must be at least 1 characters',
     ]);
@@ -325,7 +325,7 @@ describe('a bad lesson is refused, naming the lesson and the field', () => {
     expect(problems(tree({}))).toEqual(['tutorial/lessons: no lesson; the tutorial needs at least one']);
     const gone = join(dirname(t), 'nothing');
     expect(existsSync(gone)).toBe(false);
-    expect(problems(gone)).toEqual(['tutorial/lessons: not a directory']);
+    expect(problems(gone)).toEqual(['tutorial/lessons: there is no such directory']);
   });
 
   test('every problem of every lesson is reported at once', () => {
