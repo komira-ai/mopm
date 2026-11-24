@@ -592,12 +592,13 @@ describe('the home page says what the repository says', () => {
 describe('the tutorial bundle script', () => {
   const spec = { title: 'T', description: 'd', kind: 'tutorial' as const, main: [] };
   const assets = { base: '/assets/0123456789abcdef/', entry: 'main.js', preload: [], tutorial: 'tutorial.js' };
-  const scripts = (html: string) => html.match(/<script\b[^>]*><\/script>/g);
+  // Every <script> as the page's tag scanner reads it (any case, any spacing), as its attributes.
+  const scripts = (html: string) => tagsIn(html).filter(([t]) => t === 'script').map(([, attrs]) => attrs);
   test.each([
     ['asked for and given', { ...spec, tutorialScript: true }, assets, ['main.js', 'tutorial.js']],
     ['given, not asked for', spec, assets, ['main.js']],
     ['asked for, not given', { ...spec, tutorialScript: true }, { ...assets, tutorial: undefined }, ['main.js']],
   ])('%s', (_what, s, a, files) => {
-    expect(scripts(renderPage(s, a))).toEqual(files.map((m) => `<script type="module" src="/assets/0123456789abcdef/${m}"></script>`));
+    expect(scripts(renderPage(s, a))).toEqual(files.map((m) => [['type', 'module'], ['src', `/assets/0123456789abcdef/${m}`]]));
   });
 });

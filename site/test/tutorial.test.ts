@@ -33,6 +33,10 @@ function built(lessonsDir?: string): { f: Fixture; id: string; files: string[]; 
 
 const real = built();
 
+/** Every <script> of a page as the page rules' tag scanner reads it (any case, any spacing), as its attributes. */
+const scriptsOf = (html: string) => tagsIn(html).filter(([t]) => t === 'script').map(([, attrs]) => attrs);
+const moduleScript = (src: string) => [['type', 'module'], ['src', src]];
+
 /** <main>'s inner HTML. */
 const mainOf = (html: string): string => {
   const m = /<main id="main" class="wrap" tabindex="-1">([\s\S]*)<\/main>/.exec(html);
@@ -82,9 +86,9 @@ describe('the held tree of a build of the repository', () => {
       expect(html).toContain('<body data-page="tutorial">');
       expect(html).toContain(`<link rel="stylesheet" href="/assets/${real.id}/site.css">`);
       expect(html.match(/rel="stylesheet"/g)).toHaveLength(1);
-      const scripts = [`<script type="module" src="/assets/${real.id}/main.js"></script>`];
-      if (p !== 'tutorial/index.html') scripts.push(`<script type="module" src="/assets/${real.id}/${TUTORIAL_BUNDLE}"></script>`);
-      expect([p, html.match(/<script\b[^>]*><\/script>/g)]).toEqual([p, scripts]);
+      const scripts = [moduleScript(`/assets/${real.id}/main.js`)];
+      if (p !== 'tutorial/index.html') scripts.push(moduleScript(`/assets/${real.id}/${TUTORIAL_BUNDLE}`));
+      expect([p, scriptsOf(html)]).toEqual([p, scripts]);
       expect(html).not.toMatch(/sign[ -]?in|sign out|log ?in|\/api\//i);
       expect(html).toContain('<nav class="site-nav" aria-label="Site"><ul><li><a href="/search">Packages</a></li><li><a href="/docs/">Docs</a></li>');
     }
@@ -209,7 +213,7 @@ describe('hostile Markdown in a lesson renders inert', () => {
       for (const [k] of attrs) expect(k).not.toMatch(/^(on|style$)/i);
     }
     // main.js and the tutorial bundle, the layout's two module scripts, and nothing the lesson wrote.
-    expect(html.match(/<script\b[^>]*>/g)).toEqual([`<script type="module" src="/assets/${b.id}/main.js">`, `<script type="module" src="/assets/${b.id}/${TUTORIAL_BUNDLE}">`]);
+    expect(scriptsOf(html)).toEqual([moduleScript(`/assets/${b.id}/main.js`), moduleScript(`/assets/${b.id}/${TUTORIAL_BUNDLE}`)]);
   };
 
   test.each(cases.map(([name], i) => [name, ids[i]] as const))('%s', (_name, id) => check(id));
