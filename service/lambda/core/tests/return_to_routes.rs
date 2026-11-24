@@ -1,8 +1,8 @@
 //! `return_to` against the site's own route vectors (site/test/fixtures/routes.json, which `parseRoute` and the edge
 //! router are tested against): a path is kept exactly when the edge router serves a page for it (the home page, the
 //! app shell or a docs page), and every other vector, a redirect, a search or a pass to the bucket, falls back.
-//! The vectors have no tutorial route yet (the site does not serve one), so `/tutorial` and `/tutorial/<lesson>` are
-//! held by the unit tests of `return_to.rs` only.
+//! The vectors have no tutorial route yet (the site does not serve one; its tutorial vectors are 404s of paths
+//! `return_to` refuses), so `/tutorial` and `/tutorial/<lesson>` are held by the unit tests of `return_to.rs` only.
 
 use mopm_core::return_to::{validate_return_to, RETURN_TO_FALLBACK};
 use serde_json::Value;

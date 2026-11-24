@@ -22,7 +22,14 @@ _DOCS = {
     "spec/mopm-toml.md": "//:site.spec.mopm-toml.md",
 }
 
-# The tests read files outside site/ by relative path (test/build-fixture.ts's REPO_ROOT,
+# The tutorial's lessons and their schema: tools/lessons.ts checks every lesson against them and tools/tutorial.ts
+# renders the tutorial's pages from them (held out of dist/ until the tutorial is routed, tools/build.ts).
+_LESSONS = {
+    "spec/tutorial-lesson.schema.json": "//:site.spec.tutorial-lesson.schema.json",
+    "tutorial/lessons": "//:site_tutorial_lessons",
+}
+
+# The tests read files outside site/ by relative path (test/build-fixture.ts's REPO_ROOT and LESSONS_DIR,
 # test/fixtures.ts's CONTRACT_DIR, test/docs-render.test.ts): the API contract cases, the
 # published docs, spec/channel.md, README.md, src/cli/main.zig and the scaffold golden
 # tests/new/lib (test/layout.test.ts holds the home page copy to them), the validator's limits.ts, the two
@@ -30,7 +37,7 @@ _DOCS = {
 # test/docs-facts.test.ts requires on the configuration page (src/core/manifest.zig, lock.zig, credentials.zig), the
 # sources of the sizes, registries, allowed values, variables and platforms test/docs-values.test.ts reads, and the
 # worked examples test/docs-examples.test.ts holds the examples page to (and the driver that runs them, tests/drivers/examples_test.zig).
-_TEST_DATA = _DOCS | {
+_TEST_DATA = _DOCS | _LESSONS | {
     "README.md": "//:site.README.md",
     "RELEASING.md": "//:site.RELEASING.md",
     "VERSION": "//:site.VERSION",
@@ -85,7 +92,7 @@ npm_package(
     step_data = {
         "test": _TEST_DATA,
         # tools/build.js renders the pages from them.
-        "build": _DOCS,
+        "build": _DOCS | _LESSONS,
     },
     # The site stack deploys dist/ (service/infra/stacks/BUCK, its tests and synths).
     visibility = ["//service/infra/stacks:", "//site:"],

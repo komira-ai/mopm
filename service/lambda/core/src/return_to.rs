@@ -11,8 +11,10 @@
 //! * `/docs`, `/docs/`, `/docs/<slug>` and `/docs/<slug>/`, the pages the site's edge router serves;
 //! * `/tutorial` and `/tutorial/<lesson>`, the lesson `^[a-z0-9]+(-[a-z0-9]+)*$`.
 //!
-//! The site does not serve the tutorial routes yet (the edge router and `site/test/fixtures/routes.json` have none); they
-//! are the pages the tutorial will add, held here by this module's own tests until the site's vectors carry them.
+//! The site does not serve the tutorial routes yet: the edge router answers them with the 404 page, and
+//! `site/test/fixtures/routes.json` has 404 vectors only for tutorial paths this module refuses (`/tutorial/`, the
+//! files of the pages the site build holds back). `/tutorial` and `/tutorial/<lesson>` are the pages the tutorial will
+//! add, held here by this module's own tests until the site's vectors carry them as served pages.
 //!
 //! Anything else becomes [`RETURN_TO_FALLBACK`]. A `%` is in no route (a valid segment needs no encoding), so a
 //! value that is still encoded (`/%2F%2Fx`) falls back too and is never decoded a second time.
