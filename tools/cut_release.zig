@@ -6,7 +6,9 @@
 //!
 //! Every step is one invocation, and every one takes `gh` (the GitHub CLI, with GH_TOKEN) as its only
 //! way to reach GitHub. `--gh <path>` names another program (the tests give a fake `gh`) and
-//! `--repo <owner/name>` another repository. A release is made by release.yml alone, on a push to main
+//! `--repo <owner/name>` another repository. A `gh api` call that GitHub answers with a server error (HTTP 5xx, or an error
+//! answer with an empty body) is tried up to three times, waiting 2000 ms and then 4000 ms (`--gh-retry-ms <n>` sets the first
+//! wait); any other failure stops the step at once. A release is made by release.yml alone, on a push to main
 //! (RELEASING.md); nobody runs `plan`, `tag` or `publish` by hand.
 //!
 //!   cut_release plan [--sha <commit>] [--version-file VERSION] [--out <file>] [--held-dir <dir>]
@@ -76,7 +78,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: cut_release [--gh <path>] [--cosign <path>] [--cosign-retry-ms <n>] [--cosign-wait-budget-ms <n>] [--repo <owner/name>] plan [--sha <commit>] [--held-dir <dir>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> [--asset <stem>] --workdir <dir> [--git <path>]", .{});
+    die("usage: cut_release [--gh <path>] [--cosign <path>] [--cosign-retry-ms <n>] [--cosign-wait-budget-ms <n>] [--gh-retry-ms <n>] [--repo <owner/name>] plan [--sha <commit>] [--held-dir <dir>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> [--asset <stem>] --workdir <dir> [--git <path>]", .{});
 }
 
 fn out(comptime fmt: []const u8, args: anytype) void {
@@ -97,6 +99,8 @@ const Gh = struct {
     cosign_retry_ms: u32 = default_cosign_retry_ms,
     /// The most that all the retries of one verification wait in total (`--cosign-wait-budget-ms`).
     cosign_wait_budget_ms: u64 = max_cosign_wait_ms,
+    /// The delay before the second try of a `gh api` call that GitHub answered with a server error; the third waits twice as long (`--gh-retry-ms`).
+    gh_retry_ms: u32 = default_gh_retry_ms,
     /// The directory of the .deb metadata (`--packaging <dir>`), which verify uses to rebuild each .deb from its tarball.
     packaging: []const u8 = release_debs.default_packaging,
     /// `--packaging` was given.
@@ -118,17 +122,57 @@ const Gh = struct {
         return .{ .ok = r.term == .Exited and r.term.Exited == 0, .stdout = r.stdout, .stderr = r.stderr };
     }
 
-    /// Standard output of a gh call that must succeed, without the trailing newline.
+    /// Standard output of a gh call that must succeed, without the trailing newline. A `gh api` call that GitHub answered with a
+    /// server error (`isServerFailure`) is tried again, up to `gh_tries` times in all, waiting `gh_retry_ms` times the try number
+    /// before each new try; any other failure, and every failure of a call that is not `gh api`, is final at once. The one POST that
+    /// comes here is the tag object (git/tags): a try that GitHub made but answered with an error leaves an extra tag object that no
+    /// ref names, which nothing reads. The tag ref itself (git/refs) does not come here.
     fn must(g: Gh, args: []const []const u8) []const u8 {
-        const r = g.run(args);
-        if (!r.ok) die("gh {s} failed: {s}", .{ args[0], std.mem.trim(u8, r.stderr, " \r\n") });
-        return std.mem.trimRight(u8, r.stdout, "\r\n");
+        var attempt: u32 = 1;
+        while (true) : (attempt += 1) {
+            const r = g.run(args);
+            if (r.ok) return std.mem.trimRight(u8, r.stdout, "\r\n");
+            const err = std.mem.trim(u8, r.stderr, " \r\n");
+            if (!std.mem.eql(u8, args[0], "api") or !isServerFailure(r.stderr)) die("gh {s} failed: {s}", .{ args[0], err });
+            if (attempt >= gh_tries) die("gh api failed in {d} tries, GitHub answering {s} with a server error each time: {s}", .{ attempt, apiPath(args), err });
+            const wait_ms = @as(u64, g.gh_retry_ms) * attempt;
+            std.debug.print("cut_release: GitHub answered gh api {s} with a server error (try {d} of {d}); retrying in {d} ms: {s}\n", .{ apiPath(args), attempt, gh_tries, wait_ms, err });
+            std.time.sleep(wait_ms * std.time.ns_per_ms);
+        }
     }
 
     fn api(g: Gh, comptime fmt: []const u8, args: anytype) []const u8 {
         return std.fmt.allocPrint(g.a, "repos/{s}/" ++ fmt, .{g.repo} ++ args) catch @panic("oom");
     }
 };
+
+/// Tries of a `gh api` call that GitHub answers with a server error.
+const gh_tries: u32 = 3;
+
+/// The default delay (ms) before the second try; the third waits twice as long, so a call that never works costs 6000 ms of waiting.
+const default_gh_retry_ms: u32 = 2000;
+
+/// The REST path a `gh api` call names (its argument that starts with `repos/`), for the messages.
+fn apiPath(args: []const []const u8) []const u8 {
+    for (args) |x| {
+        if (std.mem.startsWith(u8, x, "repos/")) return x;
+    }
+    return "?";
+}
+
+/// gh's stderr says GitHub answered with a server error, which says nothing about the request: an HTTP status 5xx (gh writes
+/// `(HTTP 502)` or `HTTP 502:`), or `unexpected end of JSON input`, which is what gh prints when the error answer's body is empty
+/// or cut off, so it could not even read the status's message. Anything else (a 404, a 422, a refusal) is a verdict, not retried.
+fn isServerFailure(stderr: []const u8) bool {
+    if (std.mem.indexOf(u8, stderr, "unexpected end of JSON input") != null) return true;
+    var at: usize = 0;
+    while (std.mem.indexOfPos(u8, stderr, at, "HTTP ")) |i| {
+        at = i + 1;
+        const code = stderr[i + 5 .. @min(i + 8, stderr.len)];
+        if (code.len == 3 and code[0] == '5' and allDigits(code)) return true;
+    }
+    return false;
+}
 
 // ---- versions --------------------------------------------------------------------------
 
@@ -430,9 +474,8 @@ fn tagCmd(gh: Gh, sha: []const u8, expect_version: ?[]const u8, version_file: []
         const object = gh.must(&.{ "api", "-X", "POST", gh.api("git/tags", .{}), "-f", tag_arg, "-f", message, "-f", object_arg, "-f", "type=commit", "--jq", ".sha" });
         if (!isHex40(object)) die("the tag object for {s} is '{s}', not a 40-character sha", .{ tag, object });
         const made = gh.run(&.{
-            "api", "-X", "POST", gh.api("git/refs", .{}),
-            "-f",  std.fmt.allocPrint(a, "ref=refs/tags/{s}", .{tag}) catch @panic("oom"),
-            "-f",  std.fmt.allocPrint(a, "sha={s}", .{object}) catch @panic("oom"),
+            "api", "-X",                                                                   "POST", gh.api("git/refs", .{}),
+            "-f",  std.fmt.allocPrint(a, "ref=refs/tags/{s}", .{tag}) catch @panic("oom"), "-f",   std.fmt.allocPrint(a, "sha={s}", .{object}) catch @panic("oom"),
         });
         if (made.ok) {
             appendOut(out_path, "version={s}\ntag={s}\n", .{ version, tag });
@@ -620,7 +663,6 @@ fn isTrustedRootFetchFailure(stderr: []const u8) bool {
     }
     return false;
 }
-
 
 /// Each .deb is the one that the binary inside its tarball makes, byte for byte (release_debs.rebuild with the metadata in
 /// `packaging`): a .deb with other bytes than the tarball's binary, or other metadata than the repository's, is refused.
@@ -936,6 +978,7 @@ pub fn main() !void {
     var cosign: []const u8 = "cosign";
     var cosign_retry_ms: u32 = default_cosign_retry_ms;
     var cosign_wait_budget_ms: u64 = max_cosign_wait_ms;
+    var gh_retry_ms: u32 = default_gh_retry_ms;
     var packaging: []const u8 = release_debs.default_packaging;
     var packaging_given = false;
     var git_exe: []const u8 = "git";
@@ -964,6 +1007,8 @@ pub fn main() !void {
                 cosign_retry_ms = std.fmt.parseInt(u32, v, 10) catch usage();
             } else if (std.mem.eql(u8, arg, "--cosign-wait-budget-ms")) {
                 cosign_wait_budget_ms = std.fmt.parseInt(u64, v, 10) catch usage();
+            } else if (std.mem.eql(u8, arg, "--gh-retry-ms")) {
+                gh_retry_ms = std.fmt.parseInt(u32, v, 10) catch usage();
             } else if (std.mem.eql(u8, arg, "--packaging")) {
                 packaging = v;
                 packaging_given = true;
@@ -1013,7 +1058,7 @@ pub fn main() !void {
         } else try pos.append(arg);
     }
     if (pos.items.len == 0) usage();
-    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign, .cosign_retry_ms = cosign_retry_ms, .cosign_wait_budget_ms = cosign_wait_budget_ms, .packaging = packaging, .packaging_given = packaging_given };
+    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign, .cosign_retry_ms = cosign_retry_ms, .cosign_wait_budget_ms = cosign_wait_budget_ms, .gh_retry_ms = gh_retry_ms, .packaging = packaging, .packaging_given = packaging_given };
     const cmd = pos.items[0];
     const n = pos.items.len;
     if (std.mem.eql(u8, cmd, "plan")) {

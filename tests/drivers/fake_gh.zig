@@ -24,6 +24,10 @@
 //!   attest_refuse  a file name: `attestation verify` of that file fails
 //!   release_error  `release view` fails with HTTP 500 (not a 404)
 //!   upload_fail    `release upload` fails
+//!   api_fail       `<count> <path part>` on the first line, optionally the error text on the following ones (default
+//!                  `unexpected end of JSON input`, what gh says when GitHub's error answer has an empty body): the next
+//!                  <count> `api` calls whose path holds <path part> fail with that text, each counting one down; the file
+//!                  is removed when the count reaches 0. A call that fails this way changes nothing.
 //!
 //! For cut_release bump-internal (the pull requests of komira-ai/komira-internal):
 //!   prs            one line per pull request, `<number> <OPEN|CLOSED|MERGED> <head branch> <auto-merge 0|1>`;
@@ -80,6 +84,25 @@ fn appendFile(dir: std.fs.Dir, name: []const u8, line: []const u8) !void {
     try f.writer().print("{s}\n", .{line});
 }
 
+/// The `api_fail` file (see the header): fails this call, before it does anything, while its count lasts.
+fn apiFail(a: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !void {
+    const text = fileText(a, dir, "api_fail") orelse return;
+    const nl = std.mem.indexOfScalar(u8, text, '\n') orelse text.len;
+    const head = text[0..nl];
+    const sp = std.mem.indexOfScalar(u8, head, ' ') orelse @panic("api_fail: <count> <path part>");
+    if (std.mem.indexOf(u8, path, head[sp + 1 ..]) == null) return;
+    const count = try std.fmt.parseInt(usize, head[0..sp], 10);
+    const rest = std.mem.trim(u8, text[nl..], "\n");
+    const msg = if (rest.len == 0) "unexpected end of JSON input" else rest;
+    if (count <= 1) {
+        try dir.deleteFile("api_fail");
+    } else {
+        try dir.writeFile("api_fail", try std.fmt.allocPrint(a, "{d} {s}\n{s}", .{ count - 1, head[sp + 1 ..], rest }));
+    }
+    std.io.getStdErr().writer().print("{s}\n", .{msg}) catch {};
+    std.process.exit(1);
+}
+
 /// The file arguments of `release create|upload <tag> <files...> [flags]`.
 fn fileArgs(args: []const []const u8) []const []const u8 {
     var end: usize = 3;
@@ -107,6 +130,7 @@ pub fn main() !void {
         for (args) |x| {
             if (std.mem.startsWith(u8, x, "repos/")) path = x;
         }
+        try apiFail(a, dir, path);
         if (std.mem.indexOf(u8, line, "-X POST") != null) {
             if (std.mem.eql(u8, path, repo ++ "git/tags")) {
                 try dir.writeFile("pending_tag", try std.fmt.allocPrint(a, "{s} {s}", .{ field(args, "tag"), field(args, "object") }));
@@ -228,7 +252,7 @@ pub fn main() !void {
         }
         const state = std.mem.trim(u8, fileText(a, dir, "release_state") orelse "false false", " \n");
         if (want_json) {
-            try w.print("{{\"isDraft\":{s},\"isPrerelease\":{s},\"assets\":[", .{ state[0 .. std.mem.indexOfScalar(u8, state, ' ').?], state[std.mem.indexOfScalar(u8, state, ' ').? + 1 ..] });
+            try w.print("{{\"isDraft\":{s},\"isPrerelease\":{s},\"assets\":[", .{ state[0..std.mem.indexOfScalar(u8, state, ' ').?], state[std.mem.indexOfScalar(u8, state, ' ').? + 1 ..] });
             var assets = try dir.openDir("assets", .{ .iterate = true });
             defer assets.close();
             var it = assets.iterate();

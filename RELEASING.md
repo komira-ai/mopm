@@ -306,6 +306,9 @@ next release would get. It creates no tag and publishes nothing (`tag`, `publish
 ## A re-run and a failure
 
 - A red `beta`, `lint`, `build` or `beta-user` stops everything: nothing is tagged. Fix main; the next push releases.
+- `plan`, `tag`, `verify` and `publish` read GitHub through `gh api`. A call that GitHub answers with a server error (an HTTP 5xx, or an
+  error answer with an empty body, which gh reports as `unexpected end of JSON input`) is tried up to three times, waiting 2 s and then
+  4 s; any other failure stops the job at once. A job that still fails that way is re-run with "Re-run failed jobs".
 - A red `attest` or `verify` leaves no tag (the tag job comes after verify). If `publish` fails after the tag exists, the tag stays. Re-running the failed run reuses the
   tag (it is the highest and names this commit; `plan` reports its version). If a newer release exists by then, the
   re-run stops with `superseded` and the old tag stays as a gap.

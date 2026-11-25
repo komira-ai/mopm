@@ -316,6 +316,147 @@ test "cut_release: plan says whether the release of a tagged commit is already c
     try rep.finish();
 }
 
+/// A scenario where `tag --sha <sha>` makes v0.0.5: v0.0.1..v0.0.4 name `other`, and `sha` descends from it. Every `gh api` path of the
+/// step is read: the tag list, the release list, compare with main, the commit of v0.0.4, compare with it, then the two POSTs.
+fn retryScenario(a: Allocator, tools: Tools, tmp: *std.testing.TmpDir, name: []const u8) !World {
+    const w = try fresh(a, tools, tmp, name);
+    try w.put("tags", try tagLines(a, 1, 4, other));
+    try w.put("compare_tag_" ++ other, "ahead\n");
+    return w;
+}
+
+/// `tag --sha <sha>` with a 1 ms first wait.
+fn tagFast(w: World) !h.Ran {
+    return w.runV(&.{ "tag", "--sha", sha, "--gh-retry-ms", "1" });
+}
+
+/// The tag was made: v0.0.5 at `sha`, by exactly one ref POST.
+fn madeV5(w: World, r: h.Ran) bool {
+    return r.code == 0 and h.contains(r.text, "version=0.0.5\ntag=v0.0.5\n") and h.contains(w.read("tags"), "v0.0.5 " ++ sha) and w.calls("api -X POST repos/komira-ai/mopm/git/refs") == 1;
+}
+
+/// Nothing was written: the tag list is the one the scenario began with, and no ref was posted.
+fn untagged(a: Allocator, w: World) bool {
+    const want = tagLines(a, 1, 4, other) catch return false;
+    return std.mem.eql(u8, w.read("tags"), want) and w.calls("api -X POST repos/komira-ai/mopm/git/refs") == 0;
+}
+
+test "cut_release: a gh api call that GitHub answers with a server error is tried again, three times at most; any other failure is final" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tools = Tools{
+        .cut = try h.toolPath(a, "MOPM_CUT_RELEASE"),
+        .gh = try h.toolPath(a, "MOPM_FAKE_GH"),
+        .release = try h.toolPath(a, "MOPM_RELEASE_TOOL"),
+        .cosign = try h.toolPath(a, "MOPM_FAKE_COSIGN"),
+        .channels = try h.toolPath(a, "MOPM_CHANNELS"),
+    };
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var rep = h.Report{};
+
+    // The number of gh calls of a clean run, measured, not typed in.
+    const clean = try retryScenario(a, tools, &tmp, "retry_clean");
+    const ok = try tagFast(clean);
+    const base = clean.calls("api ");
+    rep.check("retry: the clean scenario tags v0.0.5 and retries nothing", madeV5(clean, ok) and !h.contains(ok.text, "retrying"), ok.text);
+
+    // The failure of the release run this exists for: gh could not read GitHub's error answer, whose body was empty.
+    {
+        const w = try retryScenario(a, tools, &tmp, "retry_empty_body");
+        try w.put("api_fail", "1 compare/main...\n");
+        const r = try tagFast(w);
+        rep.check("retry: 'unexpected end of JSON input' (an error answer with an empty body) is tried again once, then the tag is made", madeV5(w, r) and w.calls("api ") == base + 1 and h.contains(r.text, "retrying in 1 ms: unexpected end of JSON input"), r.text);
+        rep.check("retry: the retry names the path GitHub failed to answer", h.contains(r.text, "gh api repos/komira-ai/mopm/compare/main..." ++ sha ++ " with a server error (try 1 of 3)"), r.text);
+    }
+
+    // Every read of the step, and both ways gh writes a 5xx, retry the same way.
+    {
+        const parts = [_][]const u8{ "tags?", "releases?", "compare/main...", "commits/v0.0.4", "compare/" ++ other ++ "..." };
+        const texts = [_][]const u8{ "gh: Server Error (HTTP 500)", "HTTP 502: Bad Gateway (https://api.github.com/repos/komira-ai/mopm/tags)", "HTTP 503: Service Unavailable", "gh: Gateway Timeout (HTTP 504)", "HTTP 599" };
+        for (parts, 0..) |part, i| {
+            const w = try retryScenario(a, tools, &tmp, try h.fmt(a, "retry_read_{d}", .{i}));
+            try w.put("api_fail", try h.fmt(a, "1 {s}\n{s}\n", .{ part, texts[i] }));
+            const r = try tagFast(w);
+            rep.check(try h.fmt(a, "retry: a read of {s} answered '{s}' is tried again once, then the tag is made", .{ part, texts[i] }), madeV5(w, r) and w.calls("api ") == base + 1, r.text);
+        }
+    }
+
+    // The tag object POST: a failed try leaves no ref, and the ref is made once, naming the object of the try that worked.
+    {
+        const w = try retryScenario(a, tools, &tmp, "retry_tag_object");
+        try w.put("api_fail", "1 git/tags\ngh: Server Error (HTTP 502)\n");
+        const r = try tagFast(w);
+        rep.check("retry: the tag object POST answered with a 5xx is posted again, and the ref is created once", madeV5(w, r) and w.calls("api -X POST repos/komira-ai/mopm/git/tags") == 2, w.log());
+    }
+
+    // Boundaries of the count: two failures then an answer passes, waiting 1 ms then 2 ms; three failures stop after exactly three tries.
+    {
+        const w = try retryScenario(a, tools, &tmp, "retry_twice");
+        try w.put("api_fail", "2 compare/main...\n");
+        const r = try tagFast(w);
+        rep.check("retry: failing twice, then answering, makes the tag at the cost of two more calls, waiting 1 ms then 2 ms", madeV5(w, r) and w.calls("api ") == base + 2 and h.contains(r.text, "retrying in 1 ms") and h.contains(r.text, "retrying in 2 ms") and !h.contains(r.text, "retrying in 3 ms"), r.text);
+    }
+    {
+        const w = try retryScenario(a, tools, &tmp, "retry_thrice");
+        try w.put("api_fail", "3 compare/main...\n");
+        const r = try tagFast(w);
+        rep.check("retry: failing three times stops after exactly three tries, saying so, and creates nothing", r.code == 1 and w.calls("api repos/komira-ai/mopm/compare/main...") == 3 and h.contains(r.text, "gh api failed in 3 tries, GitHub answering repos/komira-ai/mopm/compare/main..." ++ sha ++ " with a server error each time: unexpected end of JSON input") and untagged(a, w) and w.calls("api -X POST") == 0, r.text);
+    }
+    {
+        const w = try retryScenario(a, tools, &tmp, "retry_tag_object_thrice");
+        try w.put("api_fail", "3 git/tags\ngh: Server Error (HTTP 502)\n");
+        const r = try tagFast(w);
+        rep.check("retry: the tag object POST failing three times stops with no ref created", r.code == 1 and w.calls("api -X POST repos/komira-ai/mopm/git/tags") == 3 and untagged(a, w) and h.contains(r.text, "in 3 tries"), r.text);
+    }
+
+    // A verdict is never retried: a 404, a 422, a 429, a 4xx-looking text and a cut-off status are failures at once.
+    {
+        const Case = struct { part: []const u8, text: []const u8 };
+        const cases = [_]Case{
+            .{ .part = "compare/main...", .text = "gh: Not Found (HTTP 404)" },
+            .{ .part = "git/tags", .text = "gh: Validation Failed (HTTP 422)" },
+            .{ .part = "tags?", .text = "gh: API rate limit exceeded (HTTP 429)" },
+            .{ .part = "releases?", .text = "HTTP 499" },
+            .{ .part = "commits/v0.0.4", .text = "HTTP 50" },
+            .{ .part = "compare/main...", .text = "HTTP 5x0: not a status" },
+        };
+        for (cases, 0..) |c, i| {
+            const w = try retryScenario(a, tools, &tmp, try h.fmt(a, "retry_final_{d}", .{i}));
+            try w.put("api_fail", try h.fmt(a, "1 {s}\n{s}\n", .{ c.part, c.text }));
+            const r = try tagFast(w);
+            const calls = w.calls(if (std.mem.eql(u8, c.part, "git/tags")) "api -X POST repos/komira-ai/mopm/git/tags" else try h.fmt(a, "api repos/komira-ai/mopm/{s}", .{c.part}));
+            rep.check(try h.fmt(a, "retry: '{s}' on {s} fails at once (one call), with gh's text, and creates nothing", .{ c.text, c.part }), r.code == 1 and calls == 1 and h.contains(r.text, try h.fmt(a, "gh api failed: {s}", .{c.text})) and !h.contains(r.text, "retrying") and untagged(a, w), r.text);
+        }
+    }
+
+    // Only `gh api` retries: a `gh release view` answered with HTTP 500 fails at once.
+    {
+        const w = try goodVerify(a, tools, &tmp, "retry_not_api", "1.2.3");
+        try w.put("release_error", "");
+        const r = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl"), "--gh-retry-ms", "1" });
+        rep.check("retry: a failing gh call that is not gh api (release view, HTTP 500) is not tried again", r.code == 1 and w.calls("release view") == 1 and h.contains(r.text, "gh release failed: gh: Server Error (HTTP 500)") and !h.contains(r.text, "retrying"), r.text);
+    }
+
+    // plan reads through the same calls.
+    {
+        const w = try retryScenario(a, tools, &tmp, "retry_plan");
+        try w.put("api_fail", "1 tags?\n");
+        const r = try w.runV(&.{ "plan", "--sha", sha, "--gh-retry-ms", "1" });
+        rep.check("retry: plan's read of the tag list is tried again once and the plan prints 0.0.5", r.code == 0 and h.contains(r.text, "version=0.0.5\n") and h.contains(r.text, "retrying in 1 ms"), r.text);
+    }
+
+    // The default first wait is 2000 ms.
+    {
+        const w = try retryScenario(a, tools, &tmp, "retry_default");
+        try w.put("api_fail", "1 compare/main...\n");
+        const r = try w.runV(&.{ "tag", "--sha", sha });
+        rep.check("retry: without --gh-retry-ms the wait before the second try is 2000 ms", madeV5(w, r) and h.contains(r.text, "retrying in 2000 ms"), r.text);
+    }
+    try rep.finish();
+}
+
 test "cut_release: plan, tag, verify-dir, publish, verify, and every known defect is refused" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
