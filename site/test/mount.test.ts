@@ -1,9 +1,9 @@
 // T14 (putting a view on the page, mount.ts): with a fake <main>, document and history, each thing main.ts relies on
 // mount for is checked: the title and nodes, focus kept on <main>, the noindex meta, the canonical address (with the
-// hash), the header search text, and the Retry button calling back. And the home page's conda channel follows the host.
+// hash), the header search text, and the Retry button calling back.
 import { type SNode, serialize } from '../src/doc';
 import { networkError } from '../src/errors';
-import { type MainElement, mount, type MountTarget, showChannel } from '../src/mount';
+import { type MainElement, mount, type MountTarget } from '../src/mount';
 import { errorView, loadingView, type View } from '../src/views/common';
 import { sdoc } from './view-helpers';
 
@@ -119,23 +119,5 @@ describe('mount', () => {
     const loading = page({ pathname: '/packages/x' });
     mount(loading.t, loadingView(sdoc), () => undefined);
     expect(loading.rec.listeners).toEqual([]);
-  });
-});
-
-describe('showChannel', () => {
-  test.each([
-    ['mopm.dev', 'https://conda.mopm.dev/'],
-    ['beta.mopm.dev', 'https://conda.beta.mopm.dev/'],
-  ])('on %s the home page shows %s', (host, want) => {
-    const el = { textContent: 'https://conda.mopm.dev/' as string | null };
-    showChannel(el, host);
-    expect(el.textContent).toBe(want);
-  });
-
-  test('a host outside the table keeps the prerendered channel; a page without the element is left alone', () => {
-    const el = { textContent: 'https://conda.mopm.dev/' as string | null };
-    showChannel(el, 'localhost');
-    expect(el.textContent).toBe('https://conda.mopm.dev/');
-    expect(() => showChannel(null, 'beta.mopm.dev')).not.toThrow();
   });
 });

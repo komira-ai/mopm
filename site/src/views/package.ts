@@ -1,28 +1,29 @@
 // /packages/<namespace>/<name>: one package (getPackage).
 //
 // The page reads top to bottom: the full name, latest version, description and a line of facts; then the install
-// commands with a Copy button each (pixi: add the namespace's conda channel, then the package; the other ways, the
-// channel and the mopm.toml line with its quoted full-name key, sit in a closed <details>); then the readme and the
-// versions table. A side panel holds the links, license, keywords, the namespace (the package's owner) with its GitHub
-// account, and the newest versions with their state. The GitHub link is what tells a look-alike namespace from the real
-// one (docs/design/namespaces.md, section 1), so the panel shows the account's login as GitHub has it now.
+// card, mopm first, as cargo's pages lead with cargo: 'mopm add <namespace>/<name>' and the mopm.toml line with its
+// quoted full-name key, a Copy button each, and a link to install mopm itself; then the readme and the versions table.
+// A side panel holds the links, license, keywords, the namespace (the package's owner) with its GitHub account, and the newest
+// versions with their state. The GitHub link is what tells a look-alike namespace from the real one
+// (docs/design/namespaces.md, section 1), so the panel shows the account's login as GitHub has it now.
 //
 // The shapes: a claimed name with nothing published; a package state this page does not know, or an active package
-// with no published version (every one yanked or tombstoned), with no install lines; an active package whose
-// latest the page cannot show (null, or a string outside the version grammar: no mopm.toml line, and the page says
-// why); and the normal page. Every value from the API is shown as text; the repository
-// and homepage are links only when links.ts accepts them as http(s); versions link only when they match the grammar.
+// with no published version (every one yanked or tombstoned), with no install lines; an active package whose latest
+// the page cannot show (null, or a string outside the version grammar: 'mopm add' still picks the newest version that
+// fits, but there is no mopm.toml line, and the page says why); and the normal page. Every value from the API is shown
+// as text; the repository and homepage are links only when links.ts accepts them as http(s); versions link only when
+// they match the grammar.
 // The readme is untrusted Markdown, rendered by the restricted renderer with 'readme-' ids (the page's own ids never
 // start with 'readme-', so no readme heading can take one), its headings two levels down: a readme '# Title' is an h3
 // under the section's 'Readme' h2.
 
 import { type Doc, h, type SafeHref } from '../doc.js';
 import { formatDate, stateLabel } from '../format.js';
-import { condaBase } from '../host.js';
+import { registryFlag } from '../host.js';
 import { anchorHref, internalHref, webHref } from '../links.js';
 import { renderMarkdown } from '../markdown/render.js';
 import { type FullName, fullName, isNamespace, isVersion, namespaceSearchPath, packagePath, searchPath, versionPath } from '../routes.js';
-import { manifestSnippet, namespaceChannel, pixiCommands, refusalSentence } from '../snippet.js';
+import { addCommand, manifestSnippet, refusalSentence } from '../snippet.js';
 import type { NamespaceInfo, PackageInfo, VersionSummary } from '../types.js';
 import { details, snippetBlock, timeEl, type View } from './common.js';
 import { glyphClass, initials } from './recent.js';
@@ -31,7 +32,7 @@ import { glyphClass, initials } from './recent.js';
 export const README_MAX_BYTES = 65_536;
 
 export interface PageContext {
-  /** location.hostname: picks the conda channel shown and accepted for downloads. */
+  /** location.hostname: picks the `--registry` the commands name, and (version page) the channel of download links. */
   host: string;
 }
 
@@ -93,13 +94,10 @@ function versionsTable<N>(doc: Doc<N>, f: FullName, versions: readonly VersionSu
   );
 }
 
-/** What the install commands do, naming the namespace's channel on this host (one artifact serves every stage). */
-export const INSTALL_NOTE = 'in a pixi workspace: add the conda channel of the namespace, ';
-/** The package page knows no dependencies (getPackage has none), so it says where their channels are listed. */
-export const CHANNELS_NOTE = 'A dependency in another namespace needs that namespace’s channel as well; the page of each version adds those channels.';
-/** A version page with dependencies in other namespaces: what the extra channel lines are, and what they do not cover. */
-export const DEP_CHANNELS_NOTE = 'The other channels are the namespaces of this version’s dependencies. A dependency of a dependency may need one more; its own version page lists it.';
-
+/** What the mopm command does: the first line of the install card, beside its heading. */
+export const INSTALL_NOTE = 'in a project with a mopm.toml: writes the dependency into it and locks it, as cargo add does';
+/** Where the mopm command line itself is installed from: the home page's install block (tools/pages.ts, id 'install'). */
+export const MOPM_INSTALL_PATH = '/#install';
 /** How many versions the side panel lists; the table below the readme has them all. */
 export const SIDE_VERSIONS = 5;
 
@@ -114,51 +112,43 @@ function commandRow<N>(doc: Doc<N>, cmd: string, label: string, describedBy: str
   );
 }
 
+/** What an install card shows besides the package's name. */
+export interface InstallParts {
+  /** The version `mopm add` pins with '=' (a published version's page), or null: mopm picks the newest that fits. */
+  pin: string | null;
+  /** The mopm.toml lines, or null when there are none. */
+  manifest: string | null;
+  /** Why there is no mopm.toml line, when the reader should be told. */
+  noManifestWhy: string | null;
+  /** A line under the mopm command (a yanked version's page: it adds the newest version, not that one). */
+  addCaveat?: string | null;
+}
+
 /**
- * The install card: the pixi commands, a Copy button each, when this host has a channel (add the namespace's channel,
- * add the channel of each other namespace `deps` names, then add the package); then the namespace's conda channel and
- * the mopm.toml lines under "Other ways to install". Without a channel (a host outside host.ts's table) there is no
- * command to lead with, and the mopm.toml lines (or why there are none) are shown as they are. `caveat` is a line under
- * the commands (a version page: they install the newest version, not that one). `deps` is null on the package page,
- * which knows no dependencies, and a version's direct dependencies on a version page.
+ * The install card, as cargo's own pages lead with cargo: `mopm add` with a Copy button (the version-pinned spelling on a
+ * version page); the mopm.toml lines with a Copy button and "then run mopm sync" (or why there are none); a link to
+ * install mopm itself. A name outside the grammar gets no command (snippet.ts refuses it), only the reason. On a stage
+ * other than prod both commands name its `--registry`.
  */
-export function installCard<N>(
-  doc: Doc<N>,
-  f: FullName,
-  manifest: string | null,
-  ctx: PageContext,
-  noManifestWhy: string | null,
-  caveat: string | null = null,
-  deps: readonly string[] | null = null,
-): N {
-  const base = condaBase(ctx.host);
-  const cmds = base !== null ? pixiCommands(base, f, deps ?? []) : null;
+export function installCard<N>(doc: Doc<N>, f: FullName, ctx: PageContext, parts: InstallParts): N {
+  const registry = registryFlag(ctx.host);
+  const add = addCommand(f, parts.pin === null ? null : { pin: parts.pin }, registry);
   const card = h(doc, 'section', { class: 'install-card', 'aria-labelledby': 'install-heading' });
   const headRow = h(doc, 'div', { class: 'install-head' }, h(doc, 'h2', { id: 'install-heading' }, 'Install'));
   doc.append(card, headRow);
-  const others: N[] = [];
-  if (manifest !== null) {
-    others.push(snippetBlock(doc, 'mopm.toml', manifest, 'snippet-manifest'));
-    others.push(h(doc, 'p', { class: 'muted small' }, h(doc, 'code', null, 'mopm add'), ' writes a dependency line like this one and locks it; ', h(doc, 'code', null, 'mopm metadata'), ' checks this table.'));
-  } else if (noManifestWhy !== null) {
-    others.push(h(doc, 'p', { class: 'muted small' }, noManifestWhy));
+  if (add !== null) {
+    doc.append(headRow, h(doc, 'p', { class: 'install-note', id: 'install-note' }, INSTALL_NOTE));
+    doc.append(card, commandRow(doc, add, 'install command', parts.addCaveat ? 'install-note install-caveat' : 'install-note'));
+    if (parts.addCaveat) doc.append(card, h(doc, 'p', { class: 'install-caveat', id: 'install-caveat' }, parts.addCaveat));
   }
-  if (base === null || cmds === null) {
-    for (const n of others) doc.append(card, n);
-    return card;
+  if (parts.manifest !== null) {
+    const sync = registry === null ? 'mopm sync' : `mopm sync --registry ${registry}`;
+    doc.append(card, snippetBlock(doc, 'mopm.toml', parts.manifest, 'snippet-manifest'));
+    doc.append(card, h(doc, 'p', { class: 'muted small' }, 'Or write this line into mopm.toml yourself, then run ', h(doc, 'code', null, sync), '.'));
+  } else if (parts.noManifestWhy !== null) {
+    doc.append(card, h(doc, 'p', { class: 'muted small' }, parts.noManifestWhy));
   }
-  const channel = namespaceChannel(base, f.namespace);
-  doc.append(headRow, h(doc, 'p', { class: 'install-note', id: 'install-note' }, INSTALL_NOTE, h(doc, 'code', null, channel), ', then the package'));
-  const describedBy = caveat ? 'install-note install-caveat' : 'install-note';
-  // The last command adds the package; the ones before it add channels: the namespace's, then its dependencies'.
-  cmds.forEach((cmd, i) => doc.append(card, commandRow(doc, cmd, i === cmds.length - 1 ? 'install command' : i === 0 ? 'channel command' : `channel command ${i + 1}`, describedBy)));
-  if (caveat) doc.append(card, h(doc, 'p', { class: 'install-caveat', id: 'install-caveat' }, caveat));
-  if (deps === null) doc.append(card, h(doc, 'p', { class: 'muted small' }, CHANNELS_NOTE));
-  else if (cmds.length > 2) doc.append(card, h(doc, 'p', { class: 'muted small' }, DEP_CHANNELS_NOTE));
-  doc.append(
-    card,
-    h(doc, 'details', { class: 'other-ways' }, h(doc, 'summary', null, 'Other ways to install'), h(doc, 'div', { class: 'alt' }, snippetBlock(doc, 'conda channel', channel, 'snippet-channel'), ...others)),
-  );
+  doc.append(card, h(doc, 'p', { class: 'small install-mopm' }, 'New to mopm? ', h(doc, 'a', { href: internalHref(MOPM_INSTALL_PATH) }, 'Install it'), ' with one command.'));
   return card;
 }
 
@@ -328,8 +318,8 @@ export function packageView<N>(doc: Doc<N>, name: FullName, info: PackageInfo, c
     // As the version page treats a version state it does not know: nothing to install.
     doc.append(main, h(doc, 'p', { class: 'notice' }, 'The registry reports a package state this page does not know. Treat this package as not installable.'));
   } else if (!info.versions.some((v) => v.state === 'published')) {
-    // spec/channel.md: a yanked version leaves packages.conda and a tombstoned one loses its files, so neither the
-    // channel nor `pixi add` has anything to install.
+    // New resolution skips a yanked version (src/core/resolve.zig) and a tombstoned one has no files, so mopm has
+    // nothing to add.
     const why = info.versions.length === 0 ? 'Nothing can be installed: no version is published.' : 'Nothing can be installed: every version is yanked or its files were removed.';
     doc.append(main, h(doc, 'p', { class: 'notice' }, why));
   } else {
@@ -340,7 +330,7 @@ export function packageView<N>(doc: Doc<N>, name: FullName, info: PackageInfo, c
         : latest === null
           ? 'The registry names no latest version this page can show, so there is no mopm.toml line.'
           : refusalSentence(`The latest version, ${latest},`, latest);
-    doc.append(main, installCard(doc, name, manifest, ctx, why));
+    doc.append(main, installCard(doc, name, ctx, { pin: null, manifest, noManifestWhy: why }));
   }
   if (readme) doc.append(main, readme);
   if (info.state !== 'claimed') {

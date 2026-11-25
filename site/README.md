@@ -21,7 +21,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/copy.ts` | the Copy button the page script adds to each command block (`.copy-box`), with a live "Copied" status |
 | `src/views/` | the search, package and version views, the home page's recently updated list, and the shared ones (loading, error, not found), built through a `Doc` |
 | `src/app.ts` | the app shell's routing: the API call an address makes and the view its answer gives (no DOM) |
-| `src/mount.ts` | putting a view on the page (title, focus, noindex, canonical address, Retry) and the home page's conda channel, against the few DOM members it uses |
+| `src/mount.ts` | putting a view on the page (title, focus, noindex, canonical address, Retry), against the few DOM members it uses |
 | `src/enhance.ts` | what the page script adds once a page is on screen: the copy buttons and the home page's recently updated list, against a small DOM port |
 | `src/main.ts` | the page script: connects `app.ts`, `mount.ts` and `enhance.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
