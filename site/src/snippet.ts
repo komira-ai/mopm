@@ -11,14 +11,12 @@
 // The command a page leads with is mopm's own: 'mopm add <namespace>/<name>' (src/cli/install_cmd.zig) writes the
 // dependency line and locks it, as `cargo add` does; on a version page it is 'mopm add <namespace>/<name>@=<version>',
 // the '<package>@<requirement>' spelling docs/configuration.md gives, which writes that exact pin. A page served by a
-// stage other than prod adds that stage's '--registry' (docs/configuration.md), as its conda channel is that stage's.
+// stage other than prod adds that stage's '--registry' (docs/configuration.md): the page shows that stage's registry.
 //
-// The conda channel works for any conda client (spec/channel.md): one channel per namespace,
-// 'https://conda.<site>/<namespace>/', where the package '<namespace>/<name>' is 'mojo-<namespace>.<name>'. A pixi
-// project adds the channel and then the package, so the pixi lines are those commands; a version whose dependencies are
-// in other namespaces needs their channels too, and its page adds one line for each.
+// A version's files are in its namespace's conda channel, 'https://conda.<site>/<namespace>/' (spec/channel.md); the
+// version page links each file there, and nowhere else.
 
-import { type FullName, fullName, isCanonicalName, isNamespace, isVersion, splitFullName } from './routes.js';
+import { type FullName, fullName, isCanonicalName, isNamespace, isVersion } from './routes.js';
 import type { Stage } from './host.js';
 import type { VersionState } from './types.js';
 
@@ -76,41 +74,7 @@ export function addCommand(f: FullName, requirement: { pin: string } | null, reg
   return registry === null ? `mopm add ${spec}` : `mopm add ${spec} --registry ${registry}`;
 }
 
-/** The conda package name of a mopm package: 'mojo-<namespace>.<name>' (spec/channel.md, Package naming). */
-export function condaName(f: FullName): string {
-  return `mojo-${f.namespace}.${f.name}`;
-}
-
 /** A namespace's conda channel under a stage's channel root (host.ts condaBase, which ends in '/'). */
 export function namespaceChannel(base: string, namespace: string): string {
   return `${base}${namespace}/`;
-}
-
-/** The pixi command that adds a namespace's channel to the current pixi workspace (pixi 0.79). */
-export function channelAddCommand(channel: string): string {
-  return `pixi workspace channel add ${channel}`;
-}
-
-/**
- * The channels a version's dependencies need besides the package's own: the namespaces of `deps` (full names; one outside
- * the grammar is skipped, as the page shows it as text), each once, sorted, `own` left out.
- */
-export function otherChannels(base: string, own: string, deps: readonly string[]): string[] {
-  const out = new Set<string>();
-  for (const d of deps) {
-    const f = splitFullName(d);
-    if (f !== null && f.namespace !== own) out.add(f.namespace);
-  }
-  return [...out].sort().map((ns) => namespaceChannel(base, ns));
-}
-
-/**
- * The pixi commands spec/channel.md documents for `f`, one per line: add its namespace's channel, then the channel of
- * each other namespace `deps` names (a version's direct dependencies), then add the package. Null when the name is outside
- * the grammar.
- */
-export function pixiCommands(base: string, f: FullName, deps: readonly string[] = []): string[] | null {
-  if (!valid(f)) return null;
-  const channels = [namespaceChannel(base, f.namespace), ...otherChannels(base, f.namespace, deps)];
-  return [...channels.map(channelAddCommand), `pixi add ${condaName(f)}`];
 }

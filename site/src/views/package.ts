@@ -2,9 +2,8 @@
 //
 // The page reads top to bottom: the full name, latest version, description and a line of facts; then the install
 // card, mopm first, as cargo's pages lead with cargo: 'mopm add <namespace>/<name>' and the mopm.toml line with its
-// quoted full-name key, a Copy button each, and a link to install mopm itself; the other tools (the pixi commands and
-// the namespace's conda channel) sit in a closed <details>; then the readme and the versions table. A side panel
-// holds the links, license, keywords, the namespace (the package's owner) with its GitHub account, and the newest
+// quoted full-name key, a Copy button each, and a link to install mopm itself; then the readme and the versions table.
+// A side panel holds the links, license, keywords, the namespace (the package's owner) with its GitHub account, and the newest
 // versions with their state. The GitHub link is what tells a look-alike namespace from the real one
 // (docs/design/namespaces.md, section 1), so the panel shows the account's login as GitHub has it now.
 //
@@ -20,11 +19,11 @@
 
 import { type Doc, h, type SafeHref } from '../doc.js';
 import { formatDate, stateLabel } from '../format.js';
-import { condaBase, registryFlag } from '../host.js';
+import { registryFlag } from '../host.js';
 import { anchorHref, internalHref, webHref } from '../links.js';
 import { renderMarkdown } from '../markdown/render.js';
 import { type FullName, fullName, isNamespace, isVersion, namespaceSearchPath, packagePath, searchPath, versionPath } from '../routes.js';
-import { addCommand, manifestSnippet, namespaceChannel, pixiCommands, refusalSentence } from '../snippet.js';
+import { addCommand, manifestSnippet, refusalSentence } from '../snippet.js';
 import type { NamespaceInfo, PackageInfo, VersionSummary } from '../types.js';
 import { details, snippetBlock, timeEl, type View } from './common.js';
 import { glyphClass, initials } from './recent.js';
@@ -99,15 +98,6 @@ function versionsTable<N>(doc: Doc<N>, f: FullName, versions: readonly VersionSu
 export const INSTALL_NOTE = 'in a project with a mopm.toml: writes the dependency into it and locks it, as cargo add does';
 /** Where the mopm command line itself is installed from: the home page's install block (tools/pages.ts, id 'install'). */
 export const MOPM_INSTALL_PATH = '/#install';
-/** What the pixi commands do, naming the namespace's channel on this host (one artifact serves every stage). */
-export const PIXI_NOTE = 'In a pixi workspace: add the conda channel of the namespace, ';
-/** The package page knows no dependencies (getPackage has none), so it says where their channels are listed. */
-export const CHANNELS_NOTE = 'A dependency in another namespace needs that namespace’s channel as well; the page of each version adds those channels.';
-/** A version page with dependencies in other namespaces: what the extra channel lines are, and what they do not cover. */
-export const DEP_CHANNELS_NOTE = 'The other channels are the namespaces of this version’s dependencies. A dependency of a dependency may need one more; its own version page lists it.';
-/** The summary of the closed section that holds the pixi and conda lines. */
-export const OTHER_TOOLS = 'Other tools (pixi, conda)';
-
 /** How many versions the side panel lists; the table below the readme has them all. */
 export const SIDE_VERSIONS = 5;
 
@@ -132,19 +122,13 @@ export interface InstallParts {
   noManifestWhy: string | null;
   /** A line under the mopm command (a yanked version's page: it adds the newest version, not that one). */
   addCaveat?: string | null;
-  /** A line under the pixi commands (a version page: they install the newest version). */
-  pixiCaveat?: string | null;
-  /** A version's direct dependencies (full names); null on the package page, which knows none. */
-  deps?: readonly string[] | null;
 }
 
 /**
- * The install card, mopm first, as cargo's pages lead with cargo: `mopm add` with a Copy button (the version-pinned
- * spelling on a version page); the mopm.toml lines with a Copy button and "then run mopm sync" (or why there are
- * none); a link to install mopm itself. Then, in a closed <details>, the other tools: the pixi commands, a Copy button
- * each, when this host has a channel (add the namespace's channel, add the channel of each other namespace `deps`
- * names, then add the package), and the namespace's conda channel. A host outside host.ts's table has no channel, so
- * the card has no <details>. A name outside the grammar gets no command at all (snippet.ts refuses it), only the reason.
+ * The install card, as a crate's page is cargo's: `mopm add` with a Copy button (the version-pinned spelling on a
+ * version page); the mopm.toml lines with a Copy button and "then run mopm sync" (or why there are none); a link to
+ * install mopm itself. A name outside the grammar gets no command (snippet.ts refuses it), only the reason. On a stage
+ * other than prod both commands name its `--registry`.
  */
 export function installCard<N>(doc: Doc<N>, f: FullName, ctx: PageContext, parts: InstallParts): N {
   const registry = registryFlag(ctx.host);
@@ -165,21 +149,6 @@ export function installCard<N>(doc: Doc<N>, f: FullName, ctx: PageContext, parts
     doc.append(card, h(doc, 'p', { class: 'muted small' }, parts.noManifestWhy));
   }
   doc.append(card, h(doc, 'p', { class: 'small install-mopm' }, 'New to mopm? ', h(doc, 'a', { href: internalHref(MOPM_INSTALL_PATH) }, 'Install it'), ' with one command.'));
-  const base = condaBase(ctx.host);
-  const cmds = base !== null ? pixiCommands(base, f, parts.deps ?? []) : null;
-  if (base === null || cmds === null) return card;
-  const channel = namespaceChannel(base, f.namespace);
-  const alt = h(doc, 'div', { class: 'alt' }, h(doc, 'p', { class: 'install-note', id: 'pixi-note' }, PIXI_NOTE, h(doc, 'code', null, channel), ', then the package.'));
-  const describedBy = parts.pixiCaveat ? 'pixi-note pixi-caveat' : 'pixi-note';
-  // The last command adds the package; the ones before it add channels: the namespace's, then its dependencies'.
-  cmds.forEach((cmd, i) =>
-    doc.append(alt, commandRow(doc, cmd, i === cmds.length - 1 ? 'pixi install command' : i === 0 ? 'pixi channel command' : `pixi channel command ${i + 1}`, describedBy)),
-  );
-  if (parts.pixiCaveat) doc.append(alt, h(doc, 'p', { class: 'install-caveat', id: 'pixi-caveat' }, parts.pixiCaveat));
-  if (parts.deps === null || parts.deps === undefined) doc.append(alt, h(doc, 'p', { class: 'muted small' }, CHANNELS_NOTE));
-  else if (cmds.length > 2) doc.append(alt, h(doc, 'p', { class: 'muted small' }, DEP_CHANNELS_NOTE));
-  doc.append(alt, snippetBlock(doc, 'conda channel', channel, 'snippet-channel'));
-  doc.append(card, h(doc, 'details', { class: 'other-ways' }, h(doc, 'summary', null, OTHER_TOOLS), alt));
   return card;
 }
 
@@ -349,8 +318,8 @@ export function packageView<N>(doc: Doc<N>, name: FullName, info: PackageInfo, c
     // As the version page treats a version state it does not know: nothing to install.
     doc.append(main, h(doc, 'p', { class: 'notice' }, 'The registry reports a package state this page does not know. Treat this package as not installable.'));
   } else if (!info.versions.some((v) => v.state === 'published')) {
-    // spec/channel.md: a yanked version leaves packages.conda and a tombstoned one loses its files, so neither mopm's
-    // resolver, the channel nor `pixi add` has anything to install.
+    // New resolution skips a yanked version (src/core/resolve.zig) and a tombstoned one has no files, so mopm has
+    // nothing to add.
     const why = info.versions.length === 0 ? 'Nothing can be installed: no version is published.' : 'Nothing can be installed: every version is yanked or its files were removed.';
     doc.append(main, h(doc, 'p', { class: 'notice' }, why));
   } else {
