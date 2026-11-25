@@ -32,7 +32,7 @@ import { glyphClass, initials } from './recent.js';
 export const README_MAX_BYTES = 65_536;
 
 export interface PageContext {
-  /** location.hostname: picks the conda channel shown and accepted for downloads. */
+  /** location.hostname: picks the `--registry` the commands name, and (version page) the channel of download links. */
   host: string;
 }
 
@@ -125,7 +125,7 @@ export interface InstallParts {
 }
 
 /**
- * The install card, as a crate's page is cargo's: `mopm add` with a Copy button (the version-pinned spelling on a
+ * The install card, as cargo's own pages lead with cargo: `mopm add` with a Copy button (the version-pinned spelling on a
  * version page); the mopm.toml lines with a Copy button and "then run mopm sync" (or why there are none); a link to
  * install mopm itself. A name outside the grammar gets no command (snippet.ts refuses it), only the reason. On a stage
  * other than prod both commands name its `--registry`.

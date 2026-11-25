@@ -452,7 +452,7 @@ export function appShell(): PageSpec {
     kind: 'app',
     main: loading,
     noscript: [
-      h(doc, 'p', null, 'This page reads the registry API and needs JavaScript. Packages are also served as a conda channel; see the ', h(doc, 'a', { href: internalHref('/') }, 'home page'), '.'),
+      h(doc, 'p', null, 'This page reads the registry API and needs JavaScript. To add a package without it, see the ', h(doc, 'a', { href: internalHref('/') }, 'home page'), ': mopm add <namespace>/<name>.'),
     ],
   };
 }
