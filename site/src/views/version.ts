@@ -10,9 +10,9 @@
 // card. On a published version it is 'mopm add <namespace>/<name>@=<version>' and the mopm.toml line pinning that
 // version ('=<version>'); a yanked one cannot be pinned (new resolution skips it, src/core/resolve.zig), so its card
 // has 'mopm add <namespace>/<name>' and a line saying it adds the newest version, and no mopm.toml line. Under "Other
-// tools" are the pixi commands, plus a channel line for each other namespace its dependencies are in, with a line saying
-// they install the newest version (spec/channel.md documents no version-pinned spelling), and the channel. Each
-// file's SHA-256 is a .copy-box, so the page script gives it a Copy button.
+// tools" are the pixi commands, plus a channel line for each other namespace its dependencies are in, with a line
+// saying they install the newest version (spec/channel.md documents no version-pinned spelling), and the channel.
+// Each file's SHA-256 is a .copy-box, so the page script gives it a Copy button.
 
 import { type Doc, h } from '../doc.js';
 import { formatBytes, stateLabel } from '../format.js';

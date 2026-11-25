@@ -3,15 +3,17 @@
 // The page reads top to bottom: the full name, latest version, description and a line of facts; then the install
 // card, mopm first, as cargo's pages lead with cargo: 'mopm add <namespace>/<name>' and the mopm.toml line with its
 // quoted full-name key, a Copy button each, and a link to install mopm itself; the other tools (the pixi commands and
-// the namespace's conda channel) sit in a closed <details>; then the readme and the versions table. A side panel holds the links, license, keywords, the namespace (the package's owner) with its GitHub
-// account, and the newest versions with their state. The GitHub link is what tells a look-alike namespace from the real
-// one (docs/design/namespaces.md, section 1), so the panel shows the account's login as GitHub has it now.
+// the namespace's conda channel) sit in a closed <details>; then the readme and the versions table. A side panel
+// holds the links, license, keywords, the namespace (the package's owner) with its GitHub account, and the newest
+// versions with their state. The GitHub link is what tells a look-alike namespace from the real one
+// (docs/design/namespaces.md, section 1), so the panel shows the account's login as GitHub has it now.
 //
 // The shapes: a claimed name with nothing published; a package state this page does not know, or an active package
-// with no published version (every one yanked or tombstoned), with no install lines; an active package whose
-// latest the page cannot show (null, or a string outside the version grammar: 'mopm add' still picks the newest
-// version that fits, but there is no mopm.toml line, and the page says why); and the normal page. Every value from the API is shown as text; the repository
-// and homepage are links only when links.ts accepts them as http(s); versions link only when they match the grammar.
+// with no published version (every one yanked or tombstoned), with no install lines; an active package whose latest
+// the page cannot show (null, or a string outside the version grammar: 'mopm add' still picks the newest version that
+// fits, but there is no mopm.toml line, and the page says why); and the normal page. Every value from the API is shown
+// as text; the repository and homepage are links only when links.ts accepts them as http(s); versions link only when
+// they match the grammar.
 // The readme is untrusted Markdown, rendered by the restricted renderer with 'readme-' ids (the page's own ids never
 // start with 'readme-', so no readme heading can take one), its headings two levels down: a readme '# Title' is an h3
 // under the section's 'Readme' h2.
