@@ -7,8 +7,8 @@
 //! variable, a step that runs cdk sets AWS_REGION or AWS_DEFAULT_REGION, and a
 //! syntax check of every `run:` script. `repoProblems` is the
 //! whole-repository half: the promotion chain, the guard jobs of deploy.yml and
-//! e2e.yml, oidc-subject-check.yml, and (function_zips_lint.zig) the one build of the Rust Lambda zips that promote.yml, function-zips.yml
-//! and deploy.yml share.
+//! e2e.yml (and, in signin_e2e_lint.zig, its read-only sign-in checks), oidc-subject-check.yml, and (function_zips_lint.zig) the one
+//! build of the Rust Lambda zips that promote.yml, function-zips.yml and deploy.yml share.
 //!
 //! One check is a stand-in: a shell has no place on the farm, so `run:` scripts are
 //! syntax-checked without bash. shell_syntax.zig is the stand-in
@@ -19,6 +19,7 @@ const c = @import("lint_common.zig");
 const rl = @import("release_lint.zig");
 const sh = @import("shell_syntax.zig");
 const fz = @import("function_zips_lint.zig");
+const se = @import("signin_e2e_lint.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 const Out = c.Out;
@@ -904,6 +905,7 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
         if (std.mem.eql(u8, w, "e2e")) {
             try indexGateProblems(a, doc, out);
             try groupE2eProblems(a, doc, wf_text, out);
+            try se.problems(a, doc, out);
         }
     }
 

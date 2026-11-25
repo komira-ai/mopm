@@ -65,6 +65,9 @@ Two builds describe the same program, and both stay.
   with a stand-in compiler (`tests/drivers/fake_toolchain.zig`) and a stand-in toolchain closure for `mopm sync --toolchain`
   (`tests/drivers/conda_pkg.zig`) it is a unit test; `//:group_e2e_mojo` is the same file
   with the real Mojo 1.0.0 (beta tier, not built for a pull request).
+  `//:signin_e2e` is the check that the smoke-linux job of `e2e.yml` runs after every deploy against the website's sign-in and
+  sandbox routes (`tests/drivers/signin_e2e.zig`, `mopm-signin-e2e`), here against a loopback site host and API host that answer
+  correctly and then wrong in each way the check names.
   `//:native_static` (farm only, with `tests/drivers/mojo_compile_shim.zig` as the toolchain's `mojo_compile`) takes a
   static archive in an empty-module package from `mopm pack` and `mopm lock` to a test linked by `mopm unit test`.
   `//:native_workspace` is the walk of a user whose workspace member ships its own C library (`[native.<id>]` with `srcs`, fixture

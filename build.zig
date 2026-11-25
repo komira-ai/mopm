@@ -78,6 +78,17 @@ pub fn build(b: *std.Build) void {
     group_e2e.root_module.addImport("mopm_core", core);
     b.installArtifact(group_e2e);
 
+    // The read-only sign-in checks the smoke-linux job of .github/workflows/e2e.yml runs after every deploy
+    // (tests/drivers/signin_e2e.zig says what they assert). `zig build signin-e2e` builds and installs this program alone.
+    const signin_e2e = b.addExecutable(.{
+        .name = "mopm-signin-e2e",
+        .root_source_file = b.path("tests/drivers/signin_e2e.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    b.installArtifact(signin_e2e);
+    b.step("signin-e2e", "Build and install mopm-signin-e2e alone").dependOn(&b.addInstallArtifact(signin_e2e, .{}).step);
+
     // `zig build test` is run from the repository root: the golden tests read
     // tests/fixtures and tests/golden relative to the cwd, unless
     // MOPM_SOURCE_ROOT names the root (src/core/testroot.zig), for a runner

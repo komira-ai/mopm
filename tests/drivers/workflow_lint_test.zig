@@ -12,9 +12,10 @@ const wl = @import("workflow_lint.zig");
 const sh = @import("shell_syntax.zig");
 const Allocator = std.mem.Allocator;
 
-// The rules for the one build of the Rust Lambda zips are tested in their own file.
+// The rules for the one build of the Rust Lambda zips, and for e2e.yml's sign-in checks, are tested in their own files.
 test {
     _ = @import("function_zips_lint_test.zig");
+    _ = @import("signin_e2e_lint_test.zig");
 }
 
 // ---- the repository's workflows ---------------------------------------------------
@@ -77,7 +78,7 @@ test "deploy.yml and e2e.yml: the guard gates the one credential job" {
     try expectRepo("deploy.yml", "      id-token: write\n", "      id-token: read\n", &.{"deploy.yml: expected exactly one job with id-token"});
     try expectRepo("e2e.yml", "    needs: guard\n", "    needs: other\n", &.{ "e2e.yml: smoke-linux must need the guard job", "e2e.yml: index-gate must need the guard job", "e2e.yml: group-e2e must need the guard job" });
     try expectRepo("e2e.yml", "    environment: ${{ inputs.stage }}\n", "", &.{"e2e.yml: smoke-linux must declare an environment"});
-    try expectRepo("e2e.yml", "      id-token: write\n", "      id-token: read\n", &.{"e2e.yml: expected exactly one job with id-token"});
+    try expectRepo("e2e.yml", "      id-token: write\n", "      id-token: read\n", &.{ "e2e.yml: expected exactly one job with id-token", "e2e.yml: smoke-linux must grant exactly id-token write and contents read" });
 }
 
 test "e2e.yml: the index gate stays curl only, guarded, and asserts its three answers exactly" {
