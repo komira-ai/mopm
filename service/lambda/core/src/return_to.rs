@@ -6,8 +6,9 @@
 //! [`RETURN_TO_MAX`] characters, and is one of these routes:
 //!
 //! * `/` and `/search` (no query string, no fragment);
-//! * `/packages/<namespace>/<name>` and `/packages/<namespace>/<name>/<version>`, the app routes of
-//!   `site/src/routes.ts` (`parseRoute`): a namespace, a canonical name and a version as that file spells them;
+//! * `/packages/<namespace>/<name>`, `/packages/<namespace>/<name>/versions` and
+//!   `/packages/<namespace>/<name>/<version>`, the app routes of `site/src/routes.ts` (`parseRoute`): a namespace, a
+//!   canonical name and a version as that file spells them;
 //! * `/docs`, `/docs/`, `/docs/<slug>` and `/docs/<slug>/`, the pages the site's edge router serves;
 //! * `/tutorial` and `/tutorial/<lesson>`, the lesson `^[a-z0-9]+(-[a-z0-9]+)*$`.
 //!
@@ -26,6 +27,8 @@ pub const RETURN_TO_FALLBACK: &str = "/tutorial";
 /// The most characters a kept value has.
 pub const RETURN_TO_MAX: usize = 256;
 
+/// `routes.ts` VERSIONS_SEGMENT: the last segment of a package's full version list.
+const VERSIONS_SEGMENT: &str = "versions";
 /// `routes.ts` NAMESPACE_MAX.
 const NAMESPACE_MAX: usize = 39;
 /// `routes.ts` DOC_SLUG's bound.
@@ -57,8 +60,10 @@ fn is_site_route(v: &str) -> bool {
         ["tutorial", lesson] => is_hyphenated(lesson),
         ["docs", slug] | ["docs", slug, ""] => is_doc_slug(slug),
         ["packages", ns, name] => is_namespace(ns) && is_canonical_name(name),
-        ["packages", ns, name, version] => {
-            is_namespace(ns) && is_canonical_name(name) && is_valid_version(version)
+        ["packages", ns, name, last] => {
+            is_namespace(ns)
+                && is_canonical_name(name)
+                && (last == VERSIONS_SEGMENT || is_valid_version(last))
         }
         _ => false,
     }
@@ -135,6 +140,8 @@ mod tests {
             "/packages/a/ab",
             "/packages/komira-ai/http_client/1.0.0",
             "/packages/komira-ai/http_client/10.20.300",
+            "/packages/komira-ai/http_client/versions",
+            "/packages/a/versions/versions",
         ] {
             kept(v);
         }
@@ -242,6 +249,12 @@ mod tests {
             "/packages/komira-ai/http_client/1.0",
             "/packages/komira-ai/http_client/01.0.0",
             "/packages/komira-ai/http_client/1.0.0/x",
+            "/packages/komira-ai/http_client/Versions",
+            "/packages/komira-ai/http_client/version",
+            "/packages/komira-ai/http_client/versions/",
+            "/packages/komira-ai/http_client/versions/1.0.0",
+            "/packages/komira-ai/Http_client/versions",
+            "/packages/Komira-AI/http_client/versions",
             "/packages/Komira-AI/http_client",
             "/packages/komira--ai/http_client",
             "/packages/komira-ai/Http_client",

@@ -497,7 +497,7 @@ policy, docs, shortcuts. A theme toggle sets `data-theme` from `main.ts`; a forc
 |---|---|---|
 | `/` | prerendered | search hero; the one-line CLI install (Q7); a search preview; Featured and Recent from `GET /api/v1/home` in fixed-height placeholders; a three-step stepper; "Status: early" |
 | `/search?q=` | shell | one row per package: name, latest version, version count, other lines (at most 2), summary, why it matched, up to three matched symbols linking to the reference, a "New" badge where set (3.6); the ranking explained beside; ten per page, "Show more" up to 200 |
-| `/packages/<n>` | shell | metadata; **`mopm add <namespace>/<name>` with copy first**, then the `mopm.toml` line with copy ("then run `mopm sync`") and a link to install mopm, and no other installer; README; tabs (README, API reference, Versions); side panel with links, licence, keywords, owners, the five newest versions |
+| `/packages/<n>` | shell | metadata; **`mopm add <namespace>/<name>` with copy first**, then the `mopm.toml` line with copy ("then run `mopm sync`") and a link to install mopm, and no other installer; README; tabs (README, API reference, Versions); versions as one row per release line (1.5), the full list at `.../versions`; side panel with links, licence, keywords, owners, the five newest release lines |
 | `/packages/<n>/<v>`, `.../versions` | shell | the version page; versions grouped by line (1.5); yanked, tombstoned and outdated-version banners |
 | `.../api/...`, `/account`, `/login` | shell | sections 2.4 and 4.4 |
 | `/docs/...`, `/llms.txt` | prerendered | docs, the docstring guide, search help, the agent guide (3.4) |

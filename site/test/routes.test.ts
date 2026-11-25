@@ -5,7 +5,7 @@ import vectors from './fixtures/routes.json';
 import { DOC_PAGES } from '../src/links';
 import {
   DOC_SLUG, flatSearchPath, fullName, isCanonicalName, isName, isNamespace, isVersion, namespaceSearchPath, NAMESPACE_MAX,
-  normaliseName, packagePath, parseRoute, searchPath, splitFullName, VERSION_MAX, versionPath,
+  normaliseName, packagePath, parseRoute, searchPath, splitFullName, VERSION_MAX, versionPath, versionsPath,
 } from '../src/routes';
 
 type Vector = { path: string; edge: string; view: ReturnType<typeof parseRoute> };
@@ -80,6 +80,12 @@ test('the vectors cover the edge cases the plan names', () => {
     '/packages/-komira/json', '/packages/komira-/json', '/packages/komira_ai/json', '/packages/komira.ai/json',
     '/packages/komira-ai%2Fjson', '/packages/komira-ai/json%2F1.0.0', '/packages/komira-ai/json/0.1.0',
     '/packages/komira-ai/Json', '/packages/komira-ai/json/1.0.0/extra',
+    // The full version list: the one word after a package, not another spelling of it, nothing after it, and a package
+    // named 'versions' (its list is '/packages/ab/versions/versions').
+    '/packages/komira-ai/json/versions', '/packages/komira-ai/json/Versions', '/packages/komira-ai/json/version',
+    '/packages/komira-ai/json/versions/', '/packages/komira-ai/json/versions/1.0.0', '/packages/komira-ai/Json/versions',
+    '/packages/komira-ai/foo__bar/versions', '/packages/Komira-AI/json/versions', '/packages/ab/versions/versions',
+    '/packages/json/versions', '/packages/json/1.0.0/versions',
   ];
   for (const p of named) {
     expect(paths).toContain(p);
@@ -154,6 +160,9 @@ test('path builders encode every segment', () => {
   expect(versionPath(f, '1.0.0')).toBe('/packages/komira-ai/http_client/1.0.0');
   expect(versionPath({ namespace: 'ab', name: 'cd' }, '1.0/../x')).toBe('/packages/ab/cd/1.0%2F..%2Fx');
   expect(parseRoute(versionPath(f, '1.2.3'))).toEqual({ kind: 'version', ...f, version: '1.2.3' });
+  expect(versionsPath(f)).toBe('/packages/komira-ai/http_client/versions');
+  expect(versionsPath({ namespace: 'a/b', name: 'c?d' })).toBe('/packages/a%2Fb/c%3Fd/versions');
+  expect(parseRoute(versionsPath(f))).toEqual({ kind: 'versions', ...f });
   expect(namespaceSearchPath('komira-ai')).toBe('/search?q=komira-ai%2F');
   expect(searchPath()).toBe('/search');
   expect(searchPath({ q: 'a&b=c', sort: 'updated', cursor: 'x/y' })).toBe('/search?q=a%26b%3Dc&sort=updated&cursor=x%2Fy');
@@ -174,6 +183,7 @@ test('flatSearchPath: a name, a namespace or a spelling of a name searches; anyt
     '/packages/_ab', '/packages/a%2Fb', '/packages/%68ttp_client', '/packages/' + 'a'.repeat(65), // no name, no namespace
     '/packages/ab/1.0', '/packages/Foo/1.0.0', '/packages/foo__bar/1.0.0', '/packages/9lives/1.0.0', // flat but not a flat version
     '/packages/ab/1.0.0/extra', '/packages/komira-ai/json', '/packages/komira-ai/json/1.0.0', // deeper paths
+    '/packages/komira-ai/json/versions', '/packages/json/1.0.0/versions',
     '/packages', '/packages/', '/search', '/', '/docs/why', '//packages/ab', '/other/ab',
   ]) {
     expect([none, flatSearchPath(none)]).toEqual([none, null]);

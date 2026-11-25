@@ -89,8 +89,9 @@ describe('a published version (fixture: version detail)', () => {
     expect(view.canonicalPath).toBe('/packages/komira-ai/json/1.1.0');
   });
 
-  test('the side panel links to all versions of the full name', () => {
-    expect(out).toContain('<a href="/packages/komira-ai/json#versions-heading">All versions of komira-ai/json</a>');
+  // The package page's versions section lists release lines only; every version is on the versions page.
+  test('the side panel links to the page of every version of the full name', () => {
+    expect(out).toContain('<a href="/packages/komira-ai/json/versions">All versions of komira-ai/json</a>');
   });
 
   test('the caption of the files table names the full name and the version', () => {
@@ -240,6 +241,9 @@ describe('native libraries', () => {
 });
 
 describe('names, spellings and unknown values', () => {
+  // The version page's own links to its package (the crumb, the package page, its version list) are not dependencies.
+  const OWN_PAGES = new Set(['/packages/komira-ai/json', '/packages/komira-ai/json/versions']);
+
   test.each([
     ['a flat name', 'http_core'],
     ['an uppercase name', 'acme/Http'],
@@ -251,14 +255,14 @@ describe('names, spellings and unknown values', () => {
   ])('a dependency that is %s is text, not a link', (_what, name) => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { deps: [{ name }] }))));
     expect(out).toContain(`<li><span>${name}</span></li>`);
-    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h.split('#')[0] !== '/packages/komira-ai/json')).toEqual([]);
+    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && !OWN_PAGES.has(h.split('#')[0]))).toEqual([]);
   });
 
   test('a dependency name that is not a package name is text', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { deps: [{ name: 'Bad-Name' }, { name: 'javascript:x' }] }))));
     expect(out).toContain('<span>Bad-Name</span>');
     expect(out).toContain('<span>javascript:x</span>');
-    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h.split('#')[0] !== '/packages/komira-ai/json')).toEqual([]);
+    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && !OWN_PAGES.has(h.split('#')[0]))).toEqual([]);
   });
 
   test('the address is the version the registry returned', () => {

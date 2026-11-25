@@ -2,9 +2,9 @@
 // name, no latest release, a latest mopm cannot name, an unknown state, a hostile readme or repository URL). Every
 // value is shown as text; only checked URLs become links; the state of a version is words, not only a class. The page
 // leads with mopm's own install lines (`mopm add <namespace>/<name>`, then the mopm.toml line and "then run mopm
-// sync") and a link to install mopm, and names no other tool; then the readme; the side panel lists the newest
-// versions with their state.
-import { INSTALL_NOTE, MOPM_INSTALL_PATH, packageView, README_MAX_BYTES, SIDE_VERSIONS } from '../src/views/package';
+// sync") and a link to install mopm, and names no other tool; then the readme and the versions section, one row per
+// release line with a link to the full list; the side panel lists the same release lines with their state.
+import { INSTALL_NOTE, MOPM_INSTALL_PATH, packageView, README_MAX_BYTES, SIDE_LINES } from '../src/views/package';
 import { PLANNED, WORKING_TODAY } from '../tools/pages';
 import { hrefs, html, packageFixture, sdoc, text, uniqueIds } from './view-helpers';
 
@@ -90,11 +90,14 @@ describe('an active package (fixture: package info)', () => {
     expect(text(out)).toContain('2 versions');
   });
 
-  test('the side panel lists versions with their state in words and links to the full table', () => {
+  // The fixture's two versions, 1.1.0 and a yanked 1.0.0, are one release line: the panel lists the line once.
+  test('the side panel lists each release line by its newest published version and links to the full list', () => {
     const side = out.slice(out.indexOf('<aside'));
-    expect(side).toContain('<li class="state-published"><a href="/packages/komira-ai/json/1.1.0">1.1.0</a><span>2026-11-10</span></li>');
-    expect(side).toContain('<li class="state-yanked"><a href="/packages/komira-ai/json/1.0.0">1.0.0</a><span>yanked</span></li>');
-    expect(side).toContain('<a href="#versions-heading">All 2 versions</a>');
+    expect(side).toContain(
+      '<h2 id="side-versions">Release lines</h2><ul class="vers"><li class="state-published"><a href="/packages/komira-ai/json/1.1.0">1.1.0</a><span>2026-11-10</span></li></ul>',
+    );
+    expect(side).not.toContain('1.0.0');
+    expect(side).toContain('<p class="small"><a href="/packages/komira-ai/json/versions">All 2 versions</a></p>');
   });
 
   // The note names only commands README.md says work today or src/cli/main.zig still plans (layout.test.ts pins
@@ -107,12 +110,18 @@ describe('an active package (fixture: package info)', () => {
     for (const cmd of named) expect([...WORKING_TODAY, ...PLANNED]).toContain(cmd);
   });
 
-  test('the versions table has a caption with the full name, column headers and the state as text', () => {
-    expect(out).toContain('<caption>Versions of komira-ai/json, newest first</caption>');
-    expect(out).toContain('<th scope="col">State</th>');
-    expect(out).toContain('<td>yanked: wrong license text</td>');
-    expect(out).toContain('<td>published</td>');
-    expect(hrefs(out)).toEqual(expect.arrayContaining(['/packages/komira-ai/json/1.1.0', '/packages/komira-ai/json/1.0.0']));
+  test('the versions section: the count, one row per release line with its newest version, and a link to all of them', () => {
+    const section = out.slice(out.indexOf('<section class="versions"'), out.indexOf('</section>', out.indexOf('<section class="versions"')));
+    expect(section).toContain('<p class="muted small">2 versions in 1 release line; each line shows its newest published version.</p>');
+    expect(section).toContain('<caption>Release lines of komira-ai/json, newest first</caption>');
+    expect(section).toContain(
+      '<thead><tr><th scope="col">Line</th><th scope="col">Newest</th><th scope="col">State</th><th scope="col">Published</th><th scope="col">Versions</th></tr></thead>',
+    );
+    expect(section).toContain(
+      '<tbody><tr class="state-published"><th scope="row">1.x</th><td><a href="/packages/komira-ai/json/1.1.0">1.1.0</a></td><td>published</td><td><time datetime="2026-11-10T08:30:00.000Z">2026-11-10 08:30 UTC</time></td><td>2</td></tr></tbody>',
+    );
+    expect(section).not.toContain('1.0.0');
+    expect(section).toContain('<p class="small"><a href="/packages/komira-ai/json/versions">All 2 versions</a></p>');
   });
 
   test('the repository is a nofollow link', () => {
@@ -373,34 +382,90 @@ describe('package shapes the fixtures do not cover', () => {
     expect(out).toContain('<table>');
   });
 
-  test('every version state is shown as words in the versions table', () => {
+  // Each line here has nothing published but the 0.4.x one, so each shows its own state; the yanked 0.5.1 above the
+  // published 0.5.0 shows nothing, as 0.5.0 shows its line.
+  test('a line with nothing published shows its newest version in its state, in words', () => {
+    const at = '2026-10-13T12:00:00Z';
+    const out = render(
+      packageFixture((r) =>
+        Object.assign(r, {
+          latest: '0.5.0',
+          versions: [
+            { version: '0.7.0', state: 'quarantined', published_at: at },
+            { version: '0.6.0', state: 'tombstoned', published_at: at },
+            { version: '0.5.1', state: 'yanked', yank_reason: null, published_at: at },
+            { version: '0.5.0', state: 'published', published_at: at },
+            { version: '0.4.0', state: 'yanked', yank_reason: 'broken build', published_at: at },
+          ],
+        }),
+      ),
+    );
+    const body = out.slice(out.indexOf('<tbody>'), out.indexOf('</tbody>'));
+    const cells = [...body.matchAll(/<tr class="([^"]+)"><th scope="row">([^<]+)<\/th><td>(.*?)<\/td><td>(.*?)<\/td><td>.*?<\/td><td>(\d+)<\/td><\/tr>/g)].map((m) => [m[1], m[2], text(m[3]), m[4], m[5]]);
+    expect(cells).toEqual([
+      ['state-unknown', '0.7.x', '0.7.0', 'unknown (quarantined)', '1'],
+      ['state-tombstoned', '0.6.x', '0.6.0', 'tombstoned (files removed by an administrator)', '1'],
+      ['state-published', '0.5.x', '0.5.0', 'published', '2'],
+      ['state-yanked', '0.4.x', '0.4.0', 'yanked: broken build', '1'],
+    ]);
+    expect(text(out)).toContain('5 versions in 4 release lines; each line shows its newest published version.');
+  });
+
+  // Every komira release publishes all its packages at one group version, so an unchanged package gains a patch per
+  // release: the page shows one row for them, not one each.
+  test('twelve patch releases of one major and two older majors are three rows, the link naming all fifteen', () => {
+    const at = '2026-10-13T12:00:00Z';
+    const patches = Array.from({ length: 12 }, (_, i) => ({ version: `3.0.${11 - i}`, state: 'published', published_at: at }));
+    const versions = [...patches, { version: '2.4.0', state: 'published', published_at: at }, { version: '1.0.0', state: 'yanked', yank_reason: null, published_at: at }, { version: '1.0.0-rc.1', state: 'published', published_at: at }];
+    const out = render(packageFixture((r) => Object.assign(r, { latest: '3.0.11', versions })));
+    const main = out.slice(0, out.indexOf('<aside'));
+    expect(main.match(/<tr class="state-/g)).toHaveLength(3);
+    // 1.0.0-rc.1 is outside the registry's grammar, so it is text, not a link; it still shows the 1.x line, the
+    // line's release being yanked.
+    expect([...main.matchAll(/<th scope="row">([^<]+)<\/th><td><(?:a href="[^"]+"|span)>([^<]+)<\/(?:a|span)>/g)].map((m) => [m[1], m[2]])).toEqual([
+      ['3.x', '3.0.11'],
+      ['2.x', '2.4.0'],
+      ['1.x', '1.0.0-rc.1'],
+    ]);
+    expect(main).toContain('<a href="/packages/komira-ai/json/versions">All 15 versions</a>');
+    expect(text(out)).toContain('15 versions in 3 release lines');
+  });
+
+  test('versions outside the grammar are rows of their own after the lines, as text, not links', () => {
     const at = '2026-10-13T12:00:00Z';
     const out = render(
       packageFixture((r) =>
         Object.assign(r, {
           versions: [
-            { version: '0.6.0', state: 'tombstoned', published_at: at },
-            { version: '0.5.1', state: 'yanked', yank_reason: null, published_at: at },
-            { version: '0.5.0', state: 'published', published_at: at },
+            { version: '1.1.0', state: 'published', published_at: at },
+            { version: '2.0', state: 'published', published_at: at },
+            { version: '1.0.0', state: 'published', published_at: at },
           ],
         }),
       ),
     );
-    expect(out).toContain('<td>tombstoned (files removed by an administrator)</td>');
-    expect(out).toContain('<td>yanked</td>');
-    expect(out).toContain('<td>published</td>');
-    expect(out).toContain('<td><time datetime="2026-10-13T12:00:00Z">2026-10-13 12:00 UTC</time></td>');
+    const body = out.slice(out.indexOf('<tbody>'), out.indexOf('</tbody>'));
+    expect(body.indexOf('<th scope="row">1.x</th>')).toBeLessThan(body.indexOf('<th scope="row">other</th><td><span>2.0</span></td>'));
+    expect(body.match(/<tr /g)).toHaveLength(2);
+    expect(hrefs(out)).not.toContain('/packages/komira-ai/json/2.0');
   });
 
-  test(`the side panel shows the newest ${SIDE_VERSIONS} versions, tombstoned in words; the table has them all`, () => {
+  test('one version: the link to the full list says so, without a count', () => {
+    const out = render(packageFixture((r) => Object.assign(r, { versions: [{ version: '1.1.0', state: 'published', published_at: '2026-10-13T12:00:00Z' }] })));
+    expect(text(out)).toContain('1 version in 1 release line; each line shows its newest published version.');
+    expect(out.match(/<a href="\/packages\/komira-ai\/json\/versions">The version list<\/a>/g)).toHaveLength(2);
+    expect(out).not.toContain('All 1 versions');
+  });
+
+  test(`the side panel shows the newest ${SIDE_LINES} release lines, tombstoned in words; the section has them all`, () => {
     const at = '2026-10-13T12:00:00Z';
     const versions = ['0.7.0', '0.6.0', '0.5.0', '0.4.0', '0.3.0', '0.2.0', '0.1.0'].map((version, i) => ({ version, state: i === 0 ? 'tombstoned' : 'published', published_at: at }));
     const out = render(packageFixture((r) => Object.assign(r, { latest: '0.6.0', versions })));
     const side = out.slice(out.indexOf('<aside'));
-    expect(side.match(/<li class="state-/g)).toHaveLength(SIDE_VERSIONS);
+    expect(side.match(/<li class="state-/g)).toHaveLength(SIDE_LINES);
     expect(side).toContain('<li class="state-tombstoned"><a href="/packages/komira-ai/json/0.7.0">0.7.0</a><span>tombstoned</span></li>');
     expect(side).not.toContain('0.2.0');
-    expect(side).toContain('All 7 versions');
+    expect(side).toContain('<a href="/packages/komira-ai/json/versions">All 7 versions</a>');
     expect(out.slice(0, out.indexOf('<aside')).match(/<tr class="state-/g)).toHaveLength(7);
   });
 

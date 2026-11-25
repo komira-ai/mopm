@@ -16,6 +16,19 @@ use tokio::net::{TcpListener, TcpStream};
 
 const STAGE_SETTINGS_ITEM: &str = include_str!("../../web/tests/fixtures/stage_settings_item.json");
 const TOKENS: &str = include_str!("fixtures/web_session_tokens.json");
+/// The entry reads the system clock, so the sessions it is given expire on 2100-01-01 (as the runtime API's deadline
+/// below), not on the shared fixture's date, which the flow tests' injected clock is set before.
+const EXPIRES_AT: (&str, &str) = ("4102444800", "2100-01-01T00:00:00.000Z");
+
+/// The shared token fixture with every `expires_at` (number and ISO string) set to [`EXPIRES_AT`].
+fn tokens() -> Vec<Value> {
+    let mut items: Vec<Value> = serde_json::from_str(TOKENS).unwrap();
+    for item in &mut items {
+        item["expires_at"] = json!({"N": EXPIRES_AT.0});
+        item["expires_at_iso"] = json!({"S": EXPIRES_AT.1});
+    }
+    items
+}
 const USERS: &str = include_str!("fixtures/web_session_users.json");
 
 /// `TokenSecret::mint(&[1; SECRET_BYTES])`, the cookie of the session `tok-1`.
@@ -76,7 +89,7 @@ fn events() -> Vec<(&'static str, String)> {
 fn expected() -> Vec<String> {
     vec![
         format!(
-            r#"{{"statusCode":200,"headers":{{"x-mopm-request-id":"gw-1","cache-control":"no-store","content-type":"application/json"}},"multiValueHeaders":{{}},"body":"{{\"csrf\":\"{CSRF}\",\"expires_at\":\"2026-11-25T11:06:40.000Z\",\"login\":\"alice\"}}","isBase64Encoded":false,"cookies":[]}}"#
+            r#"{{"statusCode":200,"headers":{{"x-mopm-request-id":"gw-1","cache-control":"no-store","content-type":"application/json"}},"multiValueHeaders":{{}},"body":"{{\"csrf\":\"{CSRF}\",\"expires_at\":\"2100-01-01T00:00:00.000Z\",\"login\":\"alice\"}}","isBase64Encoded":false,"cookies":[]}}"#
         ),
         format!(r#"{{"statusCode":204,"headers":{{"x-mopm-request-id":"gw-2","cache-control":"no-store"}},"multiValueHeaders":{{}},"isBase64Encoded":false,"cookies":["{CLEARED}"]}}"#),
         r#"{"statusCode":401,"headers":{"x-mopm-request-id":"gw-3","cache-control":"no-store","content-type":"application/json"},"multiValueHeaders":{},"body":"{\"error\":{\"code\":\"session_required\",\"message\":\"You are not signed in to the website.\",\"hint\":\"Sign in with GitHub, then try again.\"}}","isBase64Encoded":false,"cookies":[]}"#.to_string(),
@@ -191,7 +204,7 @@ fn start_fakes() -> Fakes {
             for item in serde_json::from_str::<Vec<Value>>(USERS).unwrap() {
                 dynamo.seed("mopm-t-users", item);
             }
-            for item in serde_json::from_str::<Vec<Value>>(TOKENS).unwrap() {
+            for item in tokens() {
                 dynamo.seed("mopm-t-tokens", item);
             }
             let secrets = FakeHttp::start(vec![Reply::new(200)
