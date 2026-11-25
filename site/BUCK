@@ -39,7 +39,8 @@ _LESSONS = {
 # sources of the sizes, registries, allowed values, variables and platforms test/docs-values.test.ts reads, and the
 # worked examples test/docs-examples.test.ts holds the examples page to (and the driver that runs them, tests/drivers/examples_test.zig),
 # and the lifetimes, retention, log line, timeout, cookie attributes, scope and table settings test/docs-stores.test.ts
-# holds docs/what-mopm-stores.md to (with the stage configs, which must not override the sandbox timeout).
+# holds docs/what-mopm-stores.md to (with the stage configs, which must not override the sandbox timeout), and the
+# codes of a refused sign-in test/account.test.ts holds the header's banner to (fn_web_login's outcome.rs).
 _TEST_DATA = _DOCS | _LESSONS | {
     "README.md": "//:site.README.md",
     "RELEASING.md": "//:site.RELEASING.md",
@@ -79,6 +80,7 @@ _TEST_DATA = _DOCS | _LESSONS | {
     "service/lambda/fn_tutorial_sandbox/src/log.rs": "//service/lambda/fn_tutorial_sandbox:site_log.rs",
     "service/lambda/fn_web_login/src/github.rs": "//service/lambda/fn_web_login:site_github.rs",
     "service/lambda/fn_web_login/src/login.rs": "//service/lambda/fn_web_login:site_login.rs",
+    "service/lambda/fn_web_login/src/outcome.rs": "//service/lambda/fn_web_login:site_outcome.rs",
     "service/lambda/web/src/cookie.rs": "//service/lambda/web:site_cookie.rs",
     "service/lambda/web/src/session.rs": "//service/lambda/web:site_session.rs",
     "src/cli/publish_cmd.zig": "//:site.src.cli.publish_cmd.zig",

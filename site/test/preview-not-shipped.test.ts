@@ -1,7 +1,8 @@
 // Nothing of the local preview reaches a deployed stage. dist/ ships src/main.ts and the modules it imports
 // (tools/build.ts, moduleGraph), and the tutorial bundle of src/tutorial/main.ts (the page script) with what it imports and E2B's SDK
 // (tools/build.ts, bundleTutorial), all compiled by tsconfig.browser.json from src/ alone: so the preview
-// (tools/preview.ts) is never compiled for the browser, and main.js's modules do not include the tutorial gate. The site stack's test
+// (tools/preview.ts) is never compiled for the browser, and main.js's modules include the site's session client
+// (session.js, for the header's account box) but not the tutorial gate, with its sandbox route and its replaying fake. The site stack's test
 // checks the real build too (service/infra/stacks/test/site.test.ts: no file of dist/ names E2B or its key, and the
 // tutorial bundle, E2B's SDK, carries none of the preview's own text).
 import { readFileSync } from 'fs';
@@ -30,6 +31,7 @@ test("the modules dist/ ships do not include the tutorial gate, and none names E
   const modules = browserModules();
   const shipped = [ENTRY, ...moduleGraph(modules, ENTRY)];
   expect(shipped).toContain('host.js');
+  expect(shipped).toEqual(expect.arrayContaining(['account.js', 'session.js']));
   expect(shipped.filter((m) => m.startsWith('tutorial/'))).toEqual([]);
   for (const m of shipped) {
     const text = (modules.get(m) as Buffer).toString('utf8');

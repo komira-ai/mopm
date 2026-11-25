@@ -247,7 +247,7 @@ operator step tu-O1.
 
   `GET /api/v2/auth/web/session` returns `{login, csrf, expires_at}`, or 401 `session_required`. Nothing new is stored
   for it.
-- **Sign-out**: the tutorial page's "Sign out" sends `POST /api/v2/auth/web/logout`. It sets `revoked_at` on this
+- **Sign-out**: "Sign out" in the header of every page (section 7) and on the tutorial page sends `POST /api/v2/auth/web/logout`. It sets `revoked_at` on this
   session's row, clears the cookie (`Max-Age=0`) and answers 204. The CLI's sessions and API tokens are untouched. "Sign
   out everywhere", the session list and the account page stay in mopm-dev.md (PRs 4a, 5). Signing out does not end a
   sandbox the page already holds; it ends at its `expires_at` (section 4).
@@ -284,6 +284,9 @@ The same PR makes these changes too:
 The origin header's value lives in Secrets Manager (`mopm/<stage>/edge-origin`, generated at creation) and reaches the
 distribution as a dynamic reference at deploy, so it is never committed. That CloudFormation resolves a Secrets Manager
 reference in a CloudFront origin custom header is **unverified**; if it does not, tu-I1 sets the value from a held step.
+After every deploy, e2e.yml's read-only sign-in checks (`tests/drivers/signin_e2e.zig`) send the sign-in start through the
+site, where it must reach GitHub's authorize address with the login cookie, and straight at `api.<site>`, where it must be
+refused: a stage whose distribution does not deliver the edge value, or whose OAuth secret or settings are missing, fails them.
 
 ## 3. The gate
 
@@ -526,7 +529,7 @@ address. The site distribution's standard logs stay off.
     with no dependency.
 - **The editor** is a `<textarea>` per editable file, with no editor library. Output is text nodes in a `<pre>`, and
   control, bidi and invisible characters show as markers, as appendix C.2's copied-example rule does.
-- **A `TutorialGate` port** (`site/src/tutorial/gate.ts`) has four members:
+- **A `TutorialGate` port** (`site/src/tutorial/gate.ts`, over the site's session client `site/src/session.ts`) has four members:
   - `session()` returns `{signed_in: true, login, csrf, expires_at}` or `{signed_in: false}`;
   - `sandbox()` returns the grant of "The endpoint" or an error code;
   - `signInHref(returnTo)` returns a `SafeHref`;
@@ -540,8 +543,12 @@ with a fake.
 - **Lessons** are `tutorial/lessons/<id>/`: `lesson.md`, `lesson.json` (title, summary, order, editable files, actions)
   and `project/` (a mopm project with `mopm.toml` and `mopm.lock`). The site build reads the first two and the template
   build takes `project/`. One schema, `spec/tutorial-lesson.schema.json`, is the contract between them.
-- **The header** gains "Tutorial". The login and "Sign out" show on the tutorial pages only, so other pages make no
-  call they do not need.
+- **The header** gains "Tutorial". It also carries the sign-in on every page: "Sign in with
+  GitHub" (the start route, `return_to` the page's own path), and, once the session route says who is signed in, the
+  login and "Sign out" (`site/src/account.ts`). The link is in the prerendered page; the signed-in state is filled in by
+  the page script, so the cached pages are the same for everyone. Every page therefore makes the one session call. The
+  session, the sign-in link and sign-out are `site/src/session.ts`, which the tutorial's gate builds on; the gate, with
+  the sandbox route, stays out of the pages that are not the tutorial's.
 
 ## 8. Implementation tasks and order
 
@@ -560,7 +567,7 @@ Contract first, so the tutorial can be built against it:
   - `spec/tutorial-lesson.schema.json`. All of it additive only.
   - Tests: the generator's check that checked-in outputs equal its output; the schema accepts the example lesson and
     refuses an editable path outside `project/`, a missing action and an id out of grammar.
-- **tu-S1 (M) The stub**: `site/src/tutorial/gate.ts` with the real client and the replaying fake, and
+- **tu-S1 (M) The stub**: `site/src/tutorial/gate.ts` (over the site's session client, now `site/src/session.ts`) with the real client and the replaying fake, and
   `site/tools/preview.ts` with an npm script `preview`.
   - The preview serves `dist/` on 127.0.0.1 (port 0, printed) with the site's headers and answers our routes per the
     `--scenario` flag, as "Running it locally" says; `--e2b-template` names the template it creates sandboxes from.
@@ -696,8 +703,10 @@ Go-live:
 - tu-S3 follows tu-S2, once tu-A2, tu-A3 and tu-I1 are deployed to prod.
 - Deploys stay automatic from main.
 
-Until tu-S3, nobody sees the sign-in or the tutorial: the new routes answer only requests that carry the
-distribution's header, and no page links to them.
+Until tu-S3, nobody sees the tutorial: its routes answer only requests that carry the distribution's header, and no
+page links to them. The sign-in is the exception: the header links it on every page (section 7, "The header"). A
+refused sign-in lands on `/tutorial?error=<code>`, which is the 404 page until tu-S3; the header's script shows what
+the code means above it.
 
 tu-I1 is the exception. Once deployed, it changes what every visitor gets: every API read of the site goes through
 the site host, and the CSP's `connect-src` and the 404 handling change. It is the one change before tu-S3 that users

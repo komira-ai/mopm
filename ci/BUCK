@@ -18,6 +18,7 @@ filegroup(
         "service_infra_access": "//service/infra/access:coverage_floor",
         "service_infra_dns": "//service/infra/dns:coverage_floor",
         "service_infra_stacks": "//service/infra/stacks:coverage_floor",
+        "signin_e2e": "//:signin_e2e_coverage_floor",
         "site": "//site:coverage_floor",
         "tutorial_lessons": "//:tutorial_lessons_coverage_floor",
         "tutorial_template": "//tutorial/template:coverage_floor",
