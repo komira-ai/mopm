@@ -1,5 +1,7 @@
 // The page wrapper every prerendered page shares: the document head, a skip link, the site header (brand, search,
-// navigation), <main id="main"> and the footer.
+// navigation, and the account box with its "Sign in with GitHub" link back to the page's own path), <main id="main">
+// and the footer. The account box is the same for every visitor (src/account.ts): who is signed in is filled in by the
+// page script from the session route, never written into the page, so the pages stay cacheable.
 //
 // The body is built through StringDoc and h() like any view. The document shell around it (doctype, <html>, <head>,
 // <body>, the stylesheet <link> and the module <script>) is not markup a view may produce, so it is written here, once,
@@ -7,6 +9,7 @@
 // (AREA_STYLESHEETS), one module script (plus modulepreload hints for the modules it imports), no style attribute, no
 // event handler.
 
+import { ACCOUNT_ID, accountLink } from '../src/account';
 import { escapeAttr, escapeText, h, type SNode, serialize, StringDoc } from '../src/doc';
 import { anchorHref, internalHref, REPO_URL, webHref } from '../src/links';
 import { titleOf } from '../src/views/common';
@@ -53,6 +56,12 @@ export interface PageSpec {
   title: string;
   description: string;
   kind: PageKind;
+  /**
+   * The address the page is served at, which the header's sign-in link returns to (src/account.ts returnPathOf: '/'
+   * when the start route would not keep it). The app shell serves many addresses and gives '/search'; its script
+   * rewrites the link for the address it is at.
+   */
+  path: string;
   main: readonly SNode[];
   noindex?: boolean;
   /** Shown at the top of <main> when scripts do not run (inside <noscript>). */
@@ -114,6 +123,7 @@ function header(spec: PageSpec): SNode {
           h(doc, 'li', null, h(doc, 'a', { href: webHref(REPO_URL) ?? undefined }, 'GitHub')),
         ),
       ),
+      h(doc, 'div', { class: 'site-account', id: ACCOUNT_ID }, accountLink(doc, spec.path)),
     ),
   );
 }

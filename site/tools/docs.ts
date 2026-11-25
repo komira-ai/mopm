@@ -127,7 +127,7 @@ export function buildDocPage(repoRoot: string, d: { slug: string; source: string
     source: d.source,
     title,
     fallbacks,
-    spec: { title, description: docSummary(src) || title, kind: 'docs', current: 'docs', main },
+    spec: { title, description: docSummary(src) || title, kind: 'docs', path: `/docs/${d.slug}/`, current: 'docs', main },
   };
 }
 
@@ -153,6 +153,7 @@ export function docsIndexPage(pages: readonly DocPage[], repoRoot: string): Page
     title: 'Docs',
     description: 'mopm documentation: why mopm exists and how it is built, getting started, every configuration key, worked examples, the mopm.toml manifest and the mopm test runner.',
     kind: 'docs',
+    path: '/docs/',
     current: 'docs',
     currentIsTarget: true,
     main: [

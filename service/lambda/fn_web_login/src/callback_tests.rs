@@ -141,6 +141,34 @@ async fn the_return_to_start_stored_is_where_the_browser_goes_and_a_bad_one_went
     }
 }
 
+/// The site header's "Sign in with GitHub" is on every page, with the page's own path as `return_to`
+/// (`site/src/account.ts`; `site/test/layout.test.ts` holds the link of each built page): a whole sign-in at the fake
+/// GitHub, started from each kind of page, ends signed in and back on that page.
+#[tokio::test]
+async fn a_sign_in_from_the_header_of_each_kind_of_page_comes_back_to_that_page() {
+    for page in [
+        "/",
+        "/search",
+        "/docs",
+        "/docs/",
+        "/docs/getting-started/",
+        "/packages/komira-ai/http_client",
+        "/packages/komira-ai/http_client/1.0.0",
+        "/tutorial",
+        "/tutorial/hello",
+    ] {
+        let rig = Rig::new().await;
+        let done = rig.sign_in(alice(), Some(page), "").await;
+        assert_eq!(done.finished.status, 303, "{page}");
+        assert_eq!(
+            done.finished.header("location"),
+            Some(format!("https://mopm.test{page}").as_str()),
+            "{page}"
+        );
+        assert!(done.session().is_some(), "{page}");
+    }
+}
+
 #[tokio::test]
 async fn the_session_row_is_a_web_login_session_that_is_never_fresh_and_lasts_seven_days() {
     let rig = Rig::new().await;

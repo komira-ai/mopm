@@ -42,13 +42,13 @@
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
   --wrap: 76rem;
-  /* The sticky header's height: two rows (brand and nav, then the search) below 48rem, one row from 48rem. The two-row
-     value holds from a 320px viewport up (the max-width: 25rem rule below keeps brand and nav on one row there); under
+  /* The sticky header's height: two rows (brand and nav, then the search and the account box) below 64rem, one row
+     from 64rem. The two-row value holds from a 320px viewport up (the max-width: 25rem rule below keeps brand and nav on one row there); under
      320px the nav wraps to a third row. Anchor targets and sticky columns offset by it, so a heading reached by a #link
      is not hidden under the header. */
   --header-h: 106px;
 }
-@media (min-width: 48rem) { :root { --header-h: 65px; } }
+@media (min-width: 64rem) { :root { --header-h: 65px; } }
 
 @media (prefers-color-scheme: dark) {
   :root {
@@ -174,10 +174,25 @@ blockquote { margin-left: 0; padding: 0.1rem 1rem; border-left: 4px solid var(--
   .site-nav ul { gap: 0; }
   .site-nav a { padding: 6px; font-size: 0.875rem; }
 }
-@media (min-width: 48rem) {
+@media (min-width: 64rem) {
   .site-search { order: 0; flex: 1 1 18rem; max-width: 30rem; margin-left: auto; }
   .site-search + .site-nav { margin-left: 0; }
 }
+/* The account box (src/account.ts). Below 64rem it ends row two: ::before breaks the line after the nav, and its 10px is
+   the space between the rows (row-gap is 0). The login and " with GitHub" are hidden visually, not from names, where
+   there is no room. The status of a failed sign-out sits under the box, so it never changes the header's height. */
+.site-account { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.site-account .button { padding: 7px 14px; font-size: 0.875rem; }
+.account-login { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.account-status { position: absolute; top: 100%; right: 0; white-space: nowrap; font-size: 0.875rem; background: var(--bg); }
+@media not all and (min-width: 64rem) {
+  .bar { row-gap: 0; }
+  .bar::before { content: ""; order: 2; flex: 0 0 100%; height: 10px; }
+  .site-search { flex: 1 1 0; }
+  .site-account { order: 4; margin-left: auto; }
+}
+@media (max-width: 40rem) { .sign-in-more { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); } }
+@media (max-width: 30rem) { .account-login { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); } }
 
 /* ---- forms ---- */
 

@@ -89,6 +89,23 @@ describe.each(ALL_PAGES)('%s', (page) => {
     expect(html).toContain('<nav aria-label="Footer">');
   });
 
+  // The header's account box (src/account.ts) is the sign-in link back to the page's own path on every page, and holds
+  // nothing of a signed-in user: the pages are cached for every visitor, so who is signed in is the script's to fill in.
+  // The 404 page has no path of its own ('/', as the start route would send an unknown path to the unserved tutorial),
+  // and the app shell's is '/search' until its script rewrites it. Defect caught: a page without the link; the link with
+  // no return_to (the start route's fallback is /tutorial, a 404 today) or with another page's; a login or Sign out
+  // written into the cached HTML.
+  test("the header's account box is the sign-in link back to this page, and nothing of a signed-in user", () => {
+    const own: Record<string, string> = { 'index.html': '/', '404.html': '/', 'app.html': '/search', 'docs/index.html': '/docs/' };
+    const path = own[page] ?? `/${page.replace(/index\.html$/, '')}`;
+    expect(byId(html, 'site-account')).toBe(
+      `<a class="button sign-in" href="/api/v2/auth/web/start?return_to=${encodeURIComponent(path)}"><span>Sign in<span class="sign-in-more"> with GitHub</span></span></a>`,
+    );
+    const header = html.slice(html.indexOf('<header class="site-header">'), html.indexOf('</header>'));
+    expect(header).not.toMatch(/Sign out|Signed in as/);
+    expect(html).not.toMatch(/account-login|site-sign-out|account-status/);
+  });
+
   // copy.ts finds a .copy-box's one <pre> and adds the button at runtime; a prerendered button would do nothing
   // without scripts, and a box with two blocks would copy the wrong one.
   test('every copy box holds exactly one named <pre> and no button', () => {
@@ -592,7 +609,7 @@ describe('the home page says what the repository says', () => {
 // loads it after main.js; a page that does not ask for it, or a build that gives no bundle, has main.js alone.
 // Defect caught: the bundle on every page (300 KB the other pages do not need), or before main.js.
 describe('the tutorial bundle script', () => {
-  const spec = { title: 'T', description: 'd', kind: 'tutorial' as const, main: [] };
+  const spec = { title: 'T', description: 'd', kind: 'tutorial' as const, path: '/tutorial', main: [] };
   const assets = { base: '/assets/0123456789abcdef/', entry: 'main.js', preload: [], tutorial: 'tutorial.js' };
   // Every <script> as the page's tag scanner reads it (any case, any spacing), as its attributes.
   const scripts = (html: string) => tagsIn(html).filter(([t]) => t === 'script').map(([, attrs]) => attrs);

@@ -87,3 +87,11 @@ export_file(
     mode = "reference",
     visibility = ["//site:"],
 )
+
+# The codes a refused sign-in is sent back with, which the site's banner explains (site/test/account.test.ts reads them).
+export_file(
+    name = "site_outcome.rs",
+    src = "src/outcome.rs",
+    mode = "reference",
+    visibility = ["//site:"],
+)

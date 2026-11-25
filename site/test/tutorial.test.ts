@@ -80,9 +80,15 @@ describe('the held tree of a build of the repository', () => {
     expect(main).toContain(`<ol class="lesson-list">${items.join('')}</ol>`);
   });
 
-  test("the pages are the shell every page has, with no sign-in, the shared stylesheet only and the page script; a lesson's page loads the tutorial bundle after it, the index does not", () => {
+  // The header's account box is every page's, its sign-in link back to the page's own route (test/layout.test.ts holds
+  // it on the pages of dist/); nothing else of a page is a sign-in: the lesson's own sign-in card is the script's.
+  test("the pages are the shell every page has, with no sign-in but the header's, the shared stylesheet only and the page script; a lesson's page loads the tutorial bundle after it, the index does not", () => {
     for (const p of real.held) {
-      const html = real.page(p);
+      const page = real.page(p);
+      const route = `/${p.replace(/\/?index\.html$/, '')}`;
+      const account = `<div class="site-account" id="site-account"><a class="button sign-in" href="/api/v2/auth/web/start?return_to=${encodeURIComponent(route)}"><span>Sign in<span class="sign-in-more"> with GitHub</span></span></a></div>`;
+      expect([p, page.split(account).length]).toEqual([p, 2]);
+      const html = page.replace(account, '');
       expect(html).toContain('<body data-page="tutorial">');
       expect(html).toContain(`<link rel="stylesheet" href="/assets/${real.id}/site.css">`);
       expect(html.match(/rel="stylesheet"/g)).toHaveLength(1);

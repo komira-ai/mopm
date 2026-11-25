@@ -176,15 +176,17 @@ test('only the package head sets its crumb\'s current item in monospace', () => 
 // Dependencies tabs to #files-heading and #deps-heading, the package page's #section-readme and #versions-heading)
 // scrolls its target to the viewport top, under the header, unless the target has a scroll margin at least the header's
 // height. Every one of those targets is an element with an id, so one shared [id] rule covers them all, on every page
-// (the 404 page loads site.css alone). The header measured in headless Chrome: 104px tall from 320px to below 48rem (two
-// rows: brand and nav, then the search; 106px from 25rem), 65px from 48rem. Defect caught: the [id] rule removed (a heading
+// (the 404 page loads site.css alone). The header measured in headless Chrome (pages in iframes of each width, signed out
+// and with a login of 5 and of 39 characters): 104px tall from 320px to below 64rem (two rows: brand and nav, then the
+// search and the account box, or the account box alone on the home page, 101px; 106px from 25rem), 65px from 64rem.
+// Defect caught: the [id] rule removed (a heading
 // lands at top 0, hidden); the token below the narrow header (a docs heading's top 18px hidden at 88px); an area sheet
 // with its own fixed scroll-margin-top that beats [id] on specificity (docs.css's old `.doc h2 { scroll-margin-top: 88px }`).
 describe('anchor targets clear the sticky header', () => {
   const sheets = [['site.css', css] as const, ...['home.css', 'package.css', 'search.css', 'docs.css'].map((f) => [f, readFileSync(join(__dirname, '..', 'static', f), 'utf8')] as const)];
   const px = (v: string | undefined): number => Number(/^(\d+)px$/.exec(v ?? '')?.[1] ?? NaN);
   const narrow = px(/--header-h:\s*([^;]+);/.exec(rule(':root'))?.[1]);
-  const wideBlock = css.slice(css.indexOf('@media (min-width: 48rem) { :root {'));
+  const wideBlock = css.slice(css.indexOf('@media (min-width: 64rem) { :root {'));
   const wide = px(/--header-h:\s*([^;]+);/.exec(wideBlock.slice(0, wideBlock.indexOf('}')))?.[1]);
 
   test('every element with an id has a scroll margin of the header height plus a gap', () => {
@@ -206,11 +208,25 @@ describe('anchor targets clear the sticky header', () => {
     expect(m).not.toBeNull();
     const px = Number(m?.[1]) * 16;
     expect(px).toBeGreaterThanOrEqual(385);
-    expect(px).toBeLessThan(48 * 16);
+    expect(px).toBeLessThan(64 * 16);
     expect(m?.[2]).toContain('.site-nav ul { gap: 0; }');
     expect(m?.[2]).toContain('.site-nav a { padding: 6px; font-size: 0.875rem; }');
     expect(m?.[2]).toContain('.brand { font-size: 1.2rem; gap: 8px; }');
     expect(rule(':root')).toContain('holds from a 320px viewport up');
+  });
+
+  // The token's two values are right only where the header changes from two rows to one: the search moves up into the
+  // first row, and the account box leaves the second, at the same width. Defect caught: one of the three breakpoints
+  // moved without the others (at 48rem the signed-in box wraps to a second row while the token says 65px).
+  test('the token, the search and the account box change rows at one breakpoint', () => {
+    expect(css).toContain('@media (min-width: 64rem) { :root { --header-h: 65px; } }');
+    expect(css).toContain('@media (min-width: 64rem) {\n  .site-search { order: 0;');
+    // Written as the negation of the wide query, so no fractional width (a zoomed viewport between 63.99rem and 64rem)
+    // gets neither layout.
+    const narrowRows = /@media not all and \(min-width: ([\d.]+)rem\) \{\n  \.bar \{ row-gap: 0; \}\n([\s\S]*?)\n\}/.exec(css);
+    expect(narrowRows?.[1]).toBe('64');
+    expect(narrowRows?.[2]).toContain('.bar::before { content: ""; order: 2; flex: 0 0 100%; height: 10px; }');
+    expect(narrowRows?.[2]).toContain('.site-account { order: 4; margin-left: auto; }');
   });
 
   test.each(sheets)('%s sets no scroll margin but the shared one, and offsets sticky columns by the token', (f, text) => {
