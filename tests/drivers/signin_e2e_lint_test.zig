@@ -12,6 +12,9 @@ const Repo = struct {
     tree: c.Tree,
     from: []const u8,
     to: []const u8,
+    /// A second change, applied after the first (empty: none).
+    from2: []const u8 = "",
+    to2: []const u8 = "",
 
     pub fn read(self: Repo, a: Allocator, name: []const u8) ![]u8 {
         const text = try self.tree.read(a, try std.fmt.allocPrint(a, ".github/workflows/{s}", .{name}));
@@ -20,17 +23,28 @@ const Repo = struct {
             std.debug.print("the faulty change does not apply to e2e.yml once: {s}\n", .{self.from});
             return error.TestUnexpectedResult;
         }
-        return std.mem.replaceOwned(u8, a, text, self.from, self.to);
+        const once = try std.mem.replaceOwned(u8, a, text, self.from, self.to);
+        if (self.from2.len == 0) return once;
+        if (std.mem.count(u8, once, self.from2) != 1) {
+            std.debug.print("the second faulty change does not apply to e2e.yml once: {s}\n", .{self.from2});
+            return error.TestUnexpectedResult;
+        }
+        return std.mem.replaceOwned(u8, a, once, self.from2, self.to2);
     }
 };
 
 /// e2e.yml with `from` (found exactly once) replaced by `to`: the whole-repository rules must print `want`, one line each.
 fn expect(from: []const u8, to: []const u8, want: []const []const u8) !void {
+    return expect2(from, to, "", "", want);
+}
+
+/// As `expect`, with a second change applied after the first.
+fn expect2(from: []const u8, to: []const u8, from2: []const u8, to2: []const u8, want: []const []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var out = c.Out.init(a);
-    try wl.repoProblems(a, Repo{ .tree = try c.loadTree(a), .from = from, .to = to }, &out);
+    try wl.repoProblems(a, Repo{ .tree = try c.loadTree(a), .from = from, .to = to, .from2 = from2, .to2 = to2 }, &out);
     try c.expectLines("e2e.yml", out.items, want);
 }
 
@@ -53,7 +67,8 @@ test "e2e.yml: the sign-in step is there once, after the site checks, and the ch
         "e2e.yml: smoke-linux lost the step `Build the sign-in check`",
         "e2e.yml: `Install Zig 0.12.0 (sha256-pinned), for the sign-in check` and then `Build the sign-in check` must come before",
     });
-    try expect(build ++ assume, assume ++ build, &.{"e2e.yml: `Install Zig 0.12.0 (sha256-pinned), for the sign-in check` and then `Build the sign-in check` must come before `Assume the e2e role through OIDC`"});
+    // The build moved to just before the check, after the assume step: it would run with the credentials in the environment.
+    try expect2(build, "", head, build ++ head, &.{"e2e.yml: `Install Zig 0.12.0 (sha256-pinned), for the sign-in check` and then `Build the sign-in check` must come before `Assume the e2e role through OIDC`"});
     try expect(assume, "      - name: Assume the e2e role, OIDC\n", &.{
         "e2e.yml: smoke-linux lost the step `Assume the e2e role through OIDC`",
         "e2e.yml: `Install Zig 0.12.0 (sha256-pinned), for the sign-in check` and then `Build the sign-in check` must come before",
