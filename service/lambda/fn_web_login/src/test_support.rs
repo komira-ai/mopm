@@ -486,6 +486,7 @@ impl LogBuf {
     /// Starts this thread's capture: the subscriber is installed (once) and the thread's log emptied.
     pub fn capture(&self) -> Capture {
         INSTALLED.call_once(|| {
+            load_native_roots_before_the_log();
             tracing::subscriber::set_global_default(crate::runtime::subscriber(|| LogBuf))
                 .expect("no other test installs a subscriber");
         });
@@ -507,6 +508,45 @@ impl LogBuf {
     pub fn text(&self) -> String {
         self.lines().join("\n")
     }
+}
+
+/// The SDK's HTTPS client reads the system's root certificates once per process, on the first request any client
+/// sends, and logs a warning when there are none (a build worker may have none). One request here, before the
+/// subscriber is installed, makes that read happen with nobody listening, so no test's log holds the warning, whichever
+/// test would otherwise send the process's first request. The request goes to a loopback port with no listener and is
+/// refused; only the connector it builds matters, and it is not retried.
+fn load_native_roots_before_the_log() {
+    std::thread::spawn(|| {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime for the warm-up request");
+        runtime.block_on(async {
+            let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+            let endpoint = format!("http://{}", closed.local_addr().expect("its address"));
+            drop(closed);
+            let config = aws_sdk_dynamodb::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(Region::new("us-east-1"))
+                .endpoint_url(endpoint)
+                .credentials_provider(Credentials::new(
+                    "AKIDFAKE",
+                    "fakesecret",
+                    None,
+                    None,
+                    "static",
+                ))
+                .retry_config(aws_sdk_dynamodb::config::retry::RetryConfig::disabled())
+                .build();
+            let refused = aws_sdk_dynamodb::Client::from_conf(config)
+                .list_tables()
+                .send()
+                .await;
+            assert!(refused.is_err(), "nothing listens on the warm-up port");
+        });
+    })
+    .join()
+    .expect("the warm-up request");
 }
 
 /// Held by a test for as long as it captures; the capture itself is the thread's, so there is nothing to undo.
