@@ -7,9 +7,11 @@
 // dependency is a full name and links only when it is a valid one.
 //
 // The head band is the package page's (pageHead). A published or yanked version leads with the package page's install
-// commands, pixi, plus a channel line for each other namespace its dependencies are in, with a line saying they install
-// the newest version (spec/channel.md documents no version-pinned spelling); the pinned mopm.toml lines (published
-// only) and the channel sit under "Other ways". Each
+// card. On a published version it is 'mopm add <namespace>/<name>@=<version>' and the mopm.toml line pinning that
+// version ('=<version>'); a yanked one cannot be pinned (new resolution skips it, src/core/resolve.zig), so its card
+// has 'mopm add <namespace>/<name>' and a line saying it adds the newest version, and no mopm.toml line. Under "Other
+// tools" are the pixi commands, plus a channel line for each other namespace its dependencies are in, with a line saying
+// they install the newest version (spec/channel.md documents no version-pinned spelling), and the channel. Each
 // file's SHA-256 is a .copy-box, so the page script gives it a Copy button.
 
 import { type Doc, h } from '../doc.js';
@@ -150,9 +152,11 @@ function platforms(v: VersionDetail): string[] {
   return [...new Set(allFiles(v).map((f) => f.subdir))];
 }
 
-/** spec/channel.md documents no version-pinned pixi spelling, so the one command installs the newest version. */
+/** spec/channel.md documents no version-pinned pixi spelling, so the pixi command installs the newest version. */
 export const CAVEAT_PUBLISHED = 'This installs the newest version, not necessarily this one.';
 export const CAVEAT_YANKED = 'This installs the newest version, not this yanked one.';
+/** mopm will not pin a yanked version, so on its page `mopm add` names no version and adds the newest that fits. */
+export const ADD_CAVEAT_YANKED = 'This adds the newest version, not this yanked one: new resolution skips a yanked version.';
 
 export function versionView<N>(doc: Doc<N>, name: FullName, v: VersionDetail, ctx: PageContext): View<N> {
   // The address shows the version the registry returned, when it is in the grammar.
@@ -184,7 +188,18 @@ export function versionView<N>(doc: Doc<N>, name: FullName, v: VersionDetail, ct
     const pinned = pinnedSnippet(name, spelling, v.state);
     const why = pinned !== null || v.state !== 'published' ? null : refusalSentence(`Version ${spelling}`, spelling);
     const deps = v.deps.map((d) => d.name);
-    doc.append(main, installCard(doc, name, pinned, ctx, why, v.state === 'yanked' ? CAVEAT_YANKED : CAVEAT_PUBLISHED, deps));
+    const yanked = v.state === 'yanked';
+    doc.append(
+      main,
+      installCard(doc, name, ctx, {
+        pin: yanked ? null : spelling,
+        manifest: pinned,
+        noManifestWhy: why,
+        addCaveat: yanked ? ADD_CAVEAT_YANKED : null,
+        pixiCaveat: yanked ? CAVEAT_YANKED : CAVEAT_PUBLISHED,
+        deps,
+      }),
+    );
   }
   doc.append(main, h(doc, 'section', { 'aria-labelledby': 'files-heading' }, h(doc, 'h2', { id: 'files-heading' }, 'Files'), filesTable(doc, name, v, ctx)));
   doc.append(main, h(doc, 'section', { 'aria-labelledby': 'deps-heading' }, h(doc, 'h2', { id: 'deps-heading' }, 'Dependencies'), depsList(doc, v)));

@@ -40,6 +40,7 @@
 .alt > p { margin: 0; }
 .snippet { margin-bottom: 1rem; }
 .alt .snippet { margin: 0; }
+.install-card > .snippet { margin: 12px 0 8px; }
 .snippet-label { margin: 0 0 4px; font-size: 0.75rem; font-weight: 650; color: var(--fg-muted); }
 
 .side-panel { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); align-self: start; font-size: 0.9375rem; }

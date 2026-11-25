@@ -497,14 +497,17 @@ policy, docs, shortcuts. A theme toggle sets `data-theme` from `main.ts`; a forc
 |---|---|---|
 | `/` | prerendered | search hero; the one-line CLI install (Q7); a search preview; Featured and Recent from `GET /api/v1/home` in fixed-height placeholders; a three-step stepper; "Status: early" |
 | `/search?q=` | shell | one row per package: name, latest version, version count, other lines (at most 2), summary, why it matched, up to three matched symbols linking to the reference, a "New" badge where set (3.6); the ranking explained beside; ten per page, "Show more" up to 200 |
-| `/packages/<n>` | shell | metadata; **one install command with copy first**, others under "Other ways"; README; tabs (README, API reference, Versions); side panel with links, licence, keywords, owners, the five newest versions |
+| `/packages/<n>` | shell | metadata; **`mopm add <namespace>/<name>` with copy first**, then the `mopm.toml` line with copy ("then run `mopm sync`") and a link to install mopm; pixi and the conda channel under a closed "Other tools (pixi, conda)"; README; tabs (README, API reference, Versions); side panel with links, licence, keywords, owners, the five newest versions |
 | `/packages/<n>/<v>`, `.../versions` | shell | the version page; versions grouped by line (1.5); yanked, tombstoned and outdated-version banners |
 | `.../api/...`, `/account`, `/login` | shell | sections 2.4 and 4.4 |
 | `/docs/...`, `/llms.txt` | prerendered | docs, the docstring guide, search help, the agent guide (3.4) |
 
-**Featured** is a list of names in the writer's stage settings; **Recent** the last eight published versions. Until
-`mopm add` exists the install command is `pixi add mojo-<name>`, with the channel and the `mopm.toml` line under
-"Other ways"; `test/layout.test.ts` ties the page to the CLI's command list. Keyboard: `/` or `s`, `f`, `y`, `?`,
+**Featured** is a list of names in the writer's stage settings; **Recent** the last eight published versions. The
+install card leads with mopm, as a crate's page leads with cargo: `mopm add <namespace>/<name>` (on a published
+version's page `mopm add <namespace>/<name>@=<version>`; a yanked one is not pinned, since resolution skips it), then
+the `[dependencies]` line, then a link to the home page's install block; on beta and gamma both commands carry that
+stage's `--registry`. The pixi commands and the namespace's conda channel stay, under a closed "Other tools (pixi,
+conda)"; `test/views-package.test.ts` ties the page to the CLI's command list. Keyboard: `/` or `s`, `f`, `y`, `?`,
 `Esc`; copy buttons announce "Copied"; orange is the brand, red only for destructive actions.
 
 **Budgets (enforced in PR 2)**: each route loads only its own modules, and `check-dist` measures each route's import

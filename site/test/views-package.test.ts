@@ -1,9 +1,10 @@
 // T14 (package page): the package view over the contract fixture and the shapes the fixtures do not cover (a claimed
 // name, no latest release, a latest mopm cannot name, an unknown state, a hostile readme or repository URL). Every
 // value is shown as text; only checked URLs become links; the state of a version is words, not only a class. The page
-// leads with ONE install command (pixi, which installs a published package today), with the others under "Other ways
-// to install", then the readme; the side panel lists the newest versions with their state.
-import { CHANNELS_NOTE, DEP_CHANNELS_NOTE, packageView, README_MAX_BYTES, SIDE_VERSIONS } from '../src/views/package';
+// leads with mopm's own install lines (`mopm add <namespace>/<name>`, then the mopm.toml line and "then run mopm
+// sync"), with pixi and the conda channel under a closed "Other tools (pixi, conda)", then the readme; the side panel
+// lists the newest versions with their state.
+import { CHANNELS_NOTE, DEP_CHANNELS_NOTE, INSTALL_NOTE, MOPM_INSTALL_PATH, OTHER_TOOLS, packageView, README_MAX_BYTES, SIDE_VERSIONS } from '../src/views/package';
 import { PLANNED, WORKING_TODAY } from '../tools/pages';
 import { hrefs, html, packageFixture, sdoc, text, uniqueIds } from './view-helpers';
 
@@ -15,8 +16,10 @@ const render = (info = packageFixture(), ctx = CTX) => html(packageView(sdoc, FN
 
 const rich = (r: Record<string, unknown>) =>
   Object.assign(r, { description: 'JSON parser', license: 'Apache-2.0', repository: 'https://github.com/komira-ai/json' });
+/** The commands of the copy boxes in `card`, in order (the text of each `.cmd-lg` row's <code>). */
+const commands = (card: string) => [...card.matchAll(/<div class="cmd cmd-lg copy-box">.*?<code>(.*?)<\/code>/g)].map((m) => text(m[1]));
 const installCard = (page: string) => page.slice(page.indexOf('<section class="install-card"'), page.indexOf('</section>', page.indexOf('<section class="install-card"')));
-const cmdRow = (cmd: string, label: string, describedBy = 'install-note') =>
+const cmdRow = (cmd: string, label: string, describedBy = 'pixi-note') =>
   `<div class="cmd cmd-lg copy-box"><span class="prompt" aria-hidden="true">$</span><pre tabindex="0" role="region" aria-label="${label}" aria-describedby="${describedBy}"><code>${cmd}</code></pre></div>`;
 
 describe('an active package (fixture: package info)', () => {
@@ -47,21 +50,41 @@ describe('an active package (fixture: package info)', () => {
     expect(out).not.toContain('<code>https://conda.mopm.dev/</code>');
   });
 
-  // Catches: the channel line after the package line (pixi would not find the package), a command without a label a
-  // copy button can use, the channel or manifest moved out of the <details>, or a block copy.ts cannot find (it looks
-  // for a .copy-box holding one <pre>).
-  test('the commands come first in order, each in its own named copy box, with the other ways in a closed <details>', () => {
+  // Catches the card leading with pixi again (or any command before mopm's), the mopm.toml line or the mopm install
+  // link moved under the <details>, the pixi lines left outside it, the <details> open, or a block copy.ts cannot find
+  // (it looks for a .copy-box holding one <pre>).
+  test('the first install command is mopm add, then the mopm.toml line and a link to install mopm; pixi and conda sit in a closed <details>', () => {
     const card = installCard(out);
+    expect(commands(card)[0]).toBe('mopm add komira-ai/json');
+    expect(card.indexOf('<pre')).toBe(card.indexOf('<pre tabindex="0" role="region" aria-label="install command" aria-describedby="install-note"><code>mopm add komira-ai/json</code></pre>'));
     const before = card.slice(0, card.indexOf('<details'));
-    expect(before.match(/class="cmd[^"]*copy-box"/g)).toHaveLength(2);
-    expect(before.indexOf(cmdRow(CH_CMD, 'channel command'))).toBeGreaterThan(-1);
-    expect(before.indexOf(cmdRow('pixi add mojo-komira-ai.json', 'install command'))).toBeGreaterThan(before.indexOf(cmdRow(CH_CMD, 'channel command')));
-    expect(before).toContain(`<p class="install-note" id="install-note">in a pixi workspace: add the conda channel of the namespace, <code>${CH}</code>, then the package</p>`);
+    expect(before.match(/class="cmd[^"]*copy-box"/g)).toHaveLength(2); // the mopm add command and the mopm.toml lines
+    expect(before).toContain(`<p class="install-note" id="install-note">${INSTALL_NOTE}</p>`);
+    expect(before).toContain('<div class="cmd copy-box"><pre tabindex="0" role="region" aria-labelledby="snippet-manifest"><code>[dependencies]\n"komira-ai/json" = "1.1.0"</code></pre></div>');
+    expect(before.indexOf('mopm add komira-ai/json')).toBeLessThan(before.indexOf('[dependencies]'));
+    expect(text(before)).toContain('Or write this line into mopm.toml yourself, then run mopm sync.');
+    expect(before).toContain(`<a href="${MOPM_INSTALL_PATH}">Install it</a>`);
+    expect(text(before)).toContain('New to mopm? Install it with one command.');
+    expect(before).not.toContain('pixi');
+    expect(before).not.toContain('conda.');
     const others = card.slice(card.indexOf('<details'));
-    expect(others.startsWith('<details class="other-ways"><summary>Other ways to install</summary>')).toBe(true);
+    expect(others.startsWith(`<details class="other-ways"><summary>${OTHER_TOOLS}</summary>`)).toBe(true);
+    expect(OTHER_TOOLS).toBe('Other tools (pixi, conda)');
+    expect(commands(others)).toEqual([CH_CMD, 'pixi add mojo-komira-ai.json']);
+    expect(others).toContain(cmdRow(CH_CMD, 'pixi channel command'));
+    expect(others).toContain(cmdRow('pixi add mojo-komira-ai.json', 'pixi install command'));
+    expect(others).toContain(`<p class="install-note" id="pixi-note">In a pixi workspace: add the conda channel of the namespace, <code>${CH}</code>, then the package.</p>`);
     expect(others).toContain(`<div class="cmd copy-box"><pre tabindex="0" role="region" aria-labelledby="snippet-channel"><code>${CH}</code></pre></div>`);
-    expect(others).toContain('<code>[dependencies]\n"komira-ai/json" = "1.1.0"</code>');
+    expect(others).not.toContain('[dependencies]');
+    expect(card).not.toContain('<details class="other-ways" open');
     expect(card).not.toContain('<button'); // the page script adds the buttons; a view never does
+    expect(uniqueIds(out)).toBe(true);
+  });
+
+  // The home page's install block carries id="install" (layout.test.ts holds the built page to it).
+  test('the link to install mopm is the home page install block', () => {
+    expect(MOPM_INSTALL_PATH).toBe('/#install');
+    expect(hrefs(installCard(out))).toContain('/#install');
   });
 
   test('the package page says a dependency in another namespace needs its channel, and adds no channel of its own for it', () => {
@@ -95,8 +118,9 @@ describe('an active package (fixture: package info)', () => {
 
   // The note names only commands README.md says work today or src/cli/main.zig still plans (layout.test.ts pins
   // PLANNED to main.zig), so a command the CLI has since implemented is never called planned here.
-  test('the install note names mopm add as working, and names no command the CLI does not have', () => {
-    expect(text(out)).toContain('mopm add writes a dependency line like this one and locks it; mopm metadata checks this table.');
+  test('the install card names mopm add and mopm sync as working, and names no command the CLI does not have', () => {
+    expect(text(installCard(out))).toContain('in a project with a mopm.toml: writes the dependency into it and locks it, as cargo add does');
+    expect(text(installCard(out))).toContain('then run mopm sync.');
     expect(text(out)).not.toContain('is planned');
     const named = [...text(out).matchAll(/\bmopm ([a-z-]+)/g)].map((m) => m[1]);
     for (const cmd of named) expect([...WORKING_TODAY, ...PLANNED]).toContain(cmd);
@@ -120,13 +144,25 @@ describe('an active package (fixture: package info)', () => {
     expect(beta).toContain('<code>pixi workspace channel add https://conda.beta.mopm.dev/komira-ai/</code>');
   });
 
+  // Catches a mopm command without --registry on beta or gamma: mopm's default is prod, so a reader copying it would add
+  // prod's package of that name (or none) to a project meant for that stage. mopm.dev, the prod site, names none.
+  test.each([
+    ['mopm.dev', 'mopm add komira-ai/json', 'mopm sync'],
+    ['beta.mopm.dev', 'mopm add komira-ai/json --registry beta', 'mopm sync --registry beta'],
+    ['gamma.mopm.dev', 'mopm add komira-ai/json --registry gamma', 'mopm sync --registry gamma'],
+  ])('on %s the mopm commands name that stage\'s registry', (host, add, sync) => {
+    const card = installCard(render(packageFixture(), { host }));
+    expect(commands(card)[0]).toBe(add);
+    expect(text(card)).toContain(`then run ${sync}.`);
+  });
+
   // Catches a fixed note naming prod's channel beside a command run on another stage: a reader following the visible
   // line would install prod's package of that name.
   test("the line beside the commands names this stage's channel of the namespace", () => {
     for (const host of ['beta.mopm.dev', 'gamma.mopm.dev']) {
       const page = render(packageFixture(), { host });
-      const note = page.slice(page.indexOf('<p class="install-note"'), page.indexOf('</p>', page.indexOf('<p class="install-note"')));
-      expect(text(note)).toBe(`in a pixi workspace: add the conda channel of the namespace, https://conda.${host}/komira-ai/, then the package`);
+      const note = page.slice(page.indexOf('<p class="install-note" id="pixi-note"'), page.indexOf('</p>', page.indexOf('<p class="install-note" id="pixi-note"')));
+      expect(text(note)).toBe(`In a pixi workspace: add the conda channel of the namespace, https://conda.${host}/komira-ai/, then the package.`);
     }
   });
 
@@ -149,14 +185,16 @@ describe('an active package (fixture: package info)', () => {
     expect(head).not.toContain('2026-10-14');
   });
 
-  test('a page on an unknown host shows no channel and no pixi command; the mopm.toml lines stand alone', () => {
+  test('a page on an unknown host shows no channel, no pixi command and no <details>; the mopm lines stand alone, with no --registry', () => {
     const out2 = render(packageFixture(), { host: 'localhost' });
     expect(out2).not.toContain('conda.');
     expect(out2).not.toContain('pixi');
     expect(out2).not.toContain('<details');
-    expect(out2).not.toContain('cmd-lg');
+    expect(out2).not.toContain('--registry');
+    expect(commands(installCard(out2))).toEqual(['mopm add komira-ai/json']);
     expect(text(out2)).not.toContain(text(CHANNELS_NOTE));
     expect(out2).toContain('<code>[dependencies]\n"komira-ai/json" = "1.1.0"</code>');
+    expect(hrefs(installCard(out2))).toContain('/#install');
   });
 });
 
@@ -166,9 +204,10 @@ describe('a full name the site cannot write into a command', () => {
     ['a namespace with an uppercase letter', { namespace: 'Komira', name: 'json' }],
     ['a name with a quote', { namespace: 'komira-ai', name: 'js"on' }],
     ['a name the registry would normalise', { namespace: 'komira-ai', name: 'Json' }],
-  ])('%s: no channel, no pixi command and no mopm.toml line, though the page still renders', (_what, f) => {
+  ])('%s: no mopm or pixi command, no channel and no mopm.toml line, though the page still renders', (_what, f) => {
     const out = html(packageView(sdoc, f, packageFixture(), CTX));
     expect(out).not.toContain('pixi');
+    expect(out).not.toContain('mopm add');
     expect(out).not.toContain('[dependencies]');
     expect(out).not.toContain('cmd-lg');
     expect(out).not.toContain('conda.');
@@ -276,14 +315,15 @@ describe('package shapes the fixtures do not cover', () => {
     const out = render(packageFixture((r) => Object.assign(r, { state: 'claimed', latest: null, versions: [] })));
     expect(out).not.toContain('[dependencies]');
     expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('mopm add');
     expect(out).not.toContain('<table>');
     expect(text(out)).toContain('This name is claimed.');
   });
 
   const AT = '2026-10-13T12:00:00Z';
   // The spec makes latest the newest published version, so a null latest beside a published version is a contract
-  // break; the page still offers the channel and pixi, which do not depend on latest.
-  test('active with a published version but no latest: no mopm.toml line, a reason, the channel and pixi shown', () => {
+  // break; the page still offers mopm add (mopm picks the newest version that fits), the channel and pixi, none of which depend on latest.
+  test('active with a published version but no latest: no mopm.toml line, a reason; mopm add, the channel and pixi shown', () => {
     const out = render(
       packageFixture((r) => Object.assign(r, { latest: null, versions: [{ version: '1.0.0', state: 'published', published_at: AT }] })),
     );
@@ -291,6 +331,7 @@ describe('package shapes the fixtures do not cover', () => {
     expect(text(out)).toContain('The registry names no latest version this page can show, so there is no mopm.toml line.');
     expect(out).toContain(`<code>${CH}</code>`);
     expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
+    expect(commands(installCard(out))[0]).toBe('mopm add komira-ai/json');
   });
 
   // spec/channel.md: a yanked version leaves packages.conda, a tombstoned one loses its bytes; with no published
@@ -309,26 +350,29 @@ describe('package shapes the fixtures do not cover', () => {
     const out = render(packageFixture((r) => Object.assign(r, { latest: null, versions })));
     expect(out).not.toContain('[dependencies]');
     expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('mopm add');
     expect(out).not.toContain('conda.mopm.dev');
     expect(text(out)).toContain('Nothing can be installed: every version is yanked or its files were removed.');
     expect(out).toContain('<table>');
   });
 
-  test('latest with a part over 2^64-1: no mopm.toml line, the reason, pixi still shown', () => {
+  test('latest with a part over 2^64-1: no mopm.toml line, the reason; mopm add and pixi still shown', () => {
     const v = '1.18446744073709551616.0';
     const out = render(packageFixture((r) => Object.assign(r, { latest: v })));
     expect(out).not.toContain('[dependencies]');
     expect(text(out)).toContain(`The latest version, ${v}, has a part larger than a mopm.toml requirement allows (2^64-1).`);
     expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
+    expect(commands(installCard(out))[0]).toBe('mopm add komira-ai/json');
   });
 
-  test.each(['1.0', '1.0rc1'])('latest %s (outside the grammar): no mopm.toml line, not shown as the latest, pixi still shown', (v) => {
+  test.each(['1.0', '1.0rc1'])('latest %s (outside the grammar): no mopm.toml line, not shown as the latest; mopm add and pixi still shown', (v) => {
     const out = render(packageFixture((r) => Object.assign(r, { latest: v })));
     expect(out).not.toContain('[dependencies]');
     expect(render()).toContain('latest version </span>1.1.0'); // the marker the next line looks for
     expect(out).not.toContain('latest version </span>');
     expect(text(out)).toContain('The registry names no latest version this page can show');
     expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
+    expect(commands(installCard(out))[0]).toBe('mopm add komira-ai/json');
   });
 
   // Any published version makes the package installable, wherever it sits: newest first, the newest is often the
@@ -349,6 +393,7 @@ describe('package shapes the fixtures do not cover', () => {
     const out = render(packageFixture((r) => Object.assign(r, { latest, versions })));
     expect(out).toContain(`<code>${CH}</code>`);
     expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
+    expect(commands(installCard(out))[0]).toBe('mopm add komira-ai/json');
     expect(out).toContain(`<code>[dependencies]\n"komira-ai/json" = "${latest}"</code>`);
     expect(text(out)).not.toContain('Nothing can be installed');
   });
@@ -356,6 +401,7 @@ describe('package shapes the fixtures do not cover', () => {
   test('active with no versions at all: no install lines, says no version is published', () => {
     const out = render(packageFixture((r) => Object.assign(r, { latest: null, versions: [] })));
     expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('mopm add');
     expect(text(out)).toContain('Nothing can be installed: no version is published.');
   });
 
@@ -363,6 +409,7 @@ describe('package shapes the fixtures do not cover', () => {
     const out = render(packageFixture((r) => Object.assign(r, { state: 'frozen' })));
     expect(out).not.toContain('[dependencies]');
     expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('mopm add');
     expect(out).not.toContain('conda.mopm.dev');
     expect(text(out)).toContain('The registry reports a package state this page does not know. Treat this package as not installable.');
     expect(out).toContain('<table>');

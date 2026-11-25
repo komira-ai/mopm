@@ -8,12 +8,18 @@
 // A dependency key is a full name, '<namespace>/<name>', and TOML needs quotes around a key holding '/'
 // (spec/proposed/namespaces.md, section 3), so the line is '"komira-ai/json" = "0.1.0"'.
 //
+// The command a page leads with is mopm's own: 'mopm add <namespace>/<name>' (src/cli/install_cmd.zig) writes the
+// dependency line and locks it, as `cargo add` does; on a version page it is 'mopm add <namespace>/<name>@=<version>',
+// the '<package>@<requirement>' spelling docs/configuration.md gives, which writes that exact pin. A page served by a
+// stage other than prod adds that stage's '--registry' (docs/configuration.md), as its conda channel is that stage's.
+//
 // The conda channel works for any conda client (spec/channel.md): one channel per namespace,
 // 'https://conda.<site>/<namespace>/', where the package '<namespace>/<name>' is 'mojo-<namespace>.<name>'. A pixi
 // project adds the channel and then the package, so the pixi lines are those commands; a version whose dependencies are
 // in other namespaces needs their channels too, and its page adds one line for each.
 
 import { type FullName, fullName, isCanonicalName, isNamespace, isVersion, splitFullName } from './routes.js';
+import type { Stage } from './host.js';
 import type { VersionState } from './types.js';
 
 /** semver.zig parses each part as a u64. */
@@ -56,6 +62,18 @@ export function manifestSnippet(f: FullName, latest: string | null): string | nu
 export function pinnedSnippet(f: FullName, version: string, state: VersionState): string | null {
   if (state !== 'published' || !valid(f) || manifestRefusal(version) !== null) return null;
   return dependencies(f, `=${version}`);
+}
+
+/**
+ * The `mopm add` command for `f`: with `requirement` ('=1.2.3') written as '<full name>@<requirement>', without one
+ * mopm picks the newest version that fits; `registry` adds '--registry <stage>'. Null when the name is outside the
+ * grammar, or the requirement is not a version mopm can name (both are written into a shell command).
+ */
+export function addCommand(f: FullName, requirement: { pin: string } | null, registry: Exclude<Stage, 'prod'> | null): string | null {
+  if (!valid(f)) return null;
+  if (requirement !== null && manifestRefusal(requirement.pin) !== null) return null;
+  const spec = requirement === null ? fullName(f) : `${fullName(f)}@=${requirement.pin}`;
+  return registry === null ? `mopm add ${spec}` : `mopm add ${spec} --registry ${registry}`;
 }
 
 /** The conda package name of a mopm package: 'mojo-<namespace>.<name>' (spec/channel.md, Package naming). */

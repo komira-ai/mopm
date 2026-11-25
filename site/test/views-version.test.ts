@@ -2,8 +2,8 @@
 // or yanked version and only to the conda channel of the host the page is served on (a tombstoned version never gets
 // one, even if a url came with it); a pinned mopm.toml line only for a published version; dependencies link only when
 // their name is valid; the address shows the version the registry returned.
-import { DEP_CHANNELS_NOTE, CHANNELS_NOTE } from '../src/views/package';
-import { versionView } from '../src/views/version';
+import { DEP_CHANNELS_NOTE, CHANNELS_NOTE, OTHER_TOOLS } from '../src/views/package';
+import { ADD_CAVEAT_YANKED, versionView } from '../src/views/version';
 import { hrefs, html, sdoc, text, uniqueIds, versionFixture } from './view-helpers';
 
 const CTX = { host: 'mopm.dev' };
@@ -12,6 +12,8 @@ const FILE_URL = `${CH}noarch/mojo-komira-ai.json-1.1.0-mojo1.0.0_0.conda`;
 const FN = { namespace: 'komira-ai', name: 'json' };
 const installCardOf = (page: string) => page.slice(page.indexOf('<section class="install-card"'), page.indexOf('</section>', page.indexOf('<section class="install-card"')));
 const render = (v = versionFixture('version detail'), ctx = CTX, route = FN) => versionView(sdoc, route, v, ctx);
+/** Each command row of a page, in order: its label and its command. */
+const cmdRows = (page: string) => [...page.matchAll(/<div class="cmd cmd-lg copy-box">.*?aria-label="([^"]*)"[^>]*><code>([^<]*)<\/code>/g)].map((m) => [m[1], m[2]]);
 
 describe('a published version (fixture: version detail)', () => {
   const view = render();
@@ -35,18 +37,24 @@ describe('a published version (fixture: version detail)', () => {
     expect(facts).toContain('Platform noarch');
   });
 
-  // One install command first, as on the package page, before the files; the mopm.toml pin and the channel under
-  // "Other ways". Defect caught: the card moved below the files; a second command shown outside the details.
-  test('the channel command and the install command lead the page, before the files, with the pin under Other ways', () => {
+  // mopm's own lines first, as on the package page, before the files: `mopm add` with the version pinned, then the
+  // pinned mopm.toml line; pixi and the channel under "Other tools". Defect caught: the card moved below the files;
+  // pixi leading again; the mopm add command naming no version (it would add the newest, not this one); the pin under
+  // the <details>.
+  test('mopm add with the version pinned leads the page, then the pinned mopm.toml line; pixi sits under Other tools', () => {
     expect(out.indexOf('class="install-card"')).toBeLessThan(out.indexOf('id="files-heading"'));
-    expect(out.match(/<div class="cmd cmd-lg copy-box">/g)).toHaveLength(2);
-    expect(out.indexOf(`<code>pixi workspace channel add ${CH}</code>`)).toBeGreaterThan(-1);
-    expect(out.indexOf('<code>pixi add mojo-komira-ai.json</code>')).toBeGreaterThan(out.indexOf(`<code>pixi workspace channel add ${CH}</code>`));
-    expect(out).toContain('aria-label="channel command"');
-    expect(out).toContain('aria-label="install command"');
-    const details = out.slice(out.indexOf('<details class="other-ways">'));
-    expect(details).toContain('"komira-ai/json" = "=1.1.0"');
-    expect(out.indexOf('"komira-ai/json" = "=1.1.0"')).toBeGreaterThan(out.indexOf('<details class="other-ways">'));
+    expect(cmdRows(out)[0]).toEqual(['install command', 'mopm add komira-ai/json@=1.1.0']);
+    expect(cmdRows(out)).toEqual([
+      ['install command', 'mopm add komira-ai/json@=1.1.0'],
+      ['pixi channel command', `pixi workspace channel add ${CH}`],
+      ['pixi install command', 'pixi add mojo-komira-ai.json'],
+    ]);
+    const details = out.indexOf(`<details class="other-ways"><summary>${OTHER_TOOLS}</summary>`);
+    expect(details).toBeGreaterThan(out.indexOf('"komira-ai/json" = "=1.1.0"'));
+    expect(out.indexOf('"komira-ai/json" = "=1.1.0"')).toBeGreaterThan(out.indexOf('mopm add komira-ai/json@=1.1.0'));
+    expect(details).toBeLessThan(out.indexOf(`<code>pixi workspace channel add ${CH}</code>`));
+    expect(text(installCardOf(out))).toContain('Or write this line into mopm.toml yourself, then run mopm sync.');
+    expect(installCardOf(out)).toContain('<a href="/#install">Install it</a>');
   });
 
   // Each digest is a copy box the page script gives a Copy button, named for its file through a hidden label. The
@@ -97,10 +105,13 @@ describe('a published version (fixture: version detail)', () => {
     expect(out).toContain('bec06d7f4d2accdf76fca6d972465db912d5467a35cfc63b0efc5fd6b2af3363');
   });
 
-  test('the pixi line says it installs the newest version, which may not be this one', () => {
+  test('the pixi line says it installs the newest version, which may not be this one; the pinned mopm line has no such caveat', () => {
     expect(out).toContain('<code>pixi add mojo-komira-ai.json</code>');
     expect(text(out)).toContain('This installs the newest version, not necessarily this one.');
-    expect(out).toContain('aria-describedby="install-note install-caveat"');
+    expect(out.indexOf('This installs the newest version')).toBeGreaterThan(out.indexOf('<details class="other-ways">'));
+    expect(out).toContain('aria-describedby="pixi-note pixi-caveat"');
+    expect(out).toContain('aria-label="install command" aria-describedby="install-note"><code>mopm add komira-ai/json@=1.1.0</code>');
+    expect(out).not.toContain('id="install-caveat"');
   });
 
   test('the sidebar shows the state and the publish time in UTC', () => {
@@ -145,6 +156,17 @@ describe('yanked (fixture)', () => {
     expect(text(out)).toContain('This installs the newest version, not this yanked one.');
   });
 
+  // mopm's resolver refuses a pin on a yanked version (src/core/resolve.zig), so the page must not offer one.
+  // Defect caught: 'mopm add komira-ai/json@=<yanked version>', which fails; the caveat missing or not tied to it.
+  test('mopm add names no version and says it adds the newest, not this yanked one', () => {
+    expect(cmdRows(out)[0]).toEqual(['install command', 'mopm add komira-ai/json']);
+    expect(out).not.toContain('mopm add komira-ai/json@');
+    expect(out).toContain(`<p class="install-caveat" id="install-caveat">${ADD_CAVEAT_YANKED}</p>`);
+    expect(out).toContain('aria-label="install command" aria-describedby="install-note install-caveat"><code>mopm add komira-ai/json</code>');
+    expect(text(installCardOf(out))).not.toContain('mopm sync');
+    expect(uniqueIds(out)).toBe(true);
+  });
+
   test('the sidebar state carries the reason', () => {
     expect(out).toContain('<dt>State</dt><dd>yanked: crashes on empty input</dd>');
   });
@@ -157,6 +179,7 @@ describe('tombstoned (fixture)', () => {
     expect(text(out)).toContain('Reason: malware, on 2026-11-12.');
     expect(out).not.toContain('[dependencies]');
     expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('mopm add');
     expect(out).not.toContain('conda channel');
     expect(out).toContain('<dt>State</dt><dd>tombstoned (files removed by an administrator)</dd>');
   });
@@ -178,6 +201,7 @@ describe('download links', () => {
     expect(hrefs(out).filter((h) => h.includes('conda'))).toEqual([]);
     expect(out).not.toContain('[dependencies]');
     expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('mopm add');
     expect(out).not.toContain('conda channel');
     expect(text(out)).toContain('Treat this version as not installable.');
     expect(out).toContain('<dt>State</dt><dd>unknown (quarantined)</dd>');
@@ -266,6 +290,7 @@ describe('names, spellings and unknown values', () => {
     const view = render(versionFixture('version detail', (r) => Object.assign(r, { version: v })));
     expect(html(view)).not.toContain('[dependencies]');
     expect(html(view)).not.toContain('pixi add');
+    expect(html(view)).not.toContain('mopm add');
     expect(view.canonicalPath).toBeUndefined();
   });
 
@@ -273,11 +298,25 @@ describe('names, spellings and unknown values', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.18446744073709551616.0' }))));
     expect(out).not.toContain('[dependencies]');
     expect(text(out)).toContain('Version 1.18446744073709551616.0 has a part larger than a mopm.toml requirement allows (2^64-1).');
+    // mopm cannot pin it either, and an unpinned `mopm add` would add another version: no mopm command at all.
+    expect(out).not.toContain('mopm add');
+    expect(cmdRows(out).map((c) => c[0])).toEqual(['pixi channel command', 'pixi install command']);
   });
 
   test('a published version is pinned as written', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.2.0' }))));
     expect(out).toContain('<code>[dependencies]\n"komira-ai/json" = "=1.2.0"</code>');
+    expect(cmdRows(out)[0]).toEqual(['install command', 'mopm add komira-ai/json@=1.2.0']);
+  });
+
+  // Catches a version page on beta or gamma whose mopm commands omit --registry: mopm would read prod's registry.
+  test.each([
+    ['beta.mopm.dev', 'mopm add komira-ai/json@=1.1.0 --registry beta', 'mopm sync --registry beta'],
+    ['gamma.mopm.dev', 'mopm add komira-ai/json@=1.1.0 --registry gamma', 'mopm sync --registry gamma'],
+  ])('on %s the pinned mopm commands name that stage\'s registry', (host, add, sync) => {
+    const out = html(render(versionFixture('version detail'), { host }));
+    expect(cmdRows(out)[0]).toEqual(['install command', add]);
+    expect(text(installCardOf(out))).toContain(`then run ${sync}.`);
   });
 });
 
@@ -338,13 +377,14 @@ describe('a version with no files', () => {
 describe('the channels of the dependencies', () => {
   const withDeps = (names: string[], host = 'mopm.dev') =>
     html(render(versionFixture('version detail', (r) => Object.assign(r, { deps: names.map((name) => ({ name })) })), { host }));
-  const cmds = (page: string) => [...page.matchAll(/aria-label="((?:channel|install) command[^"]*)"[^>]*><code>([^<]*)<\/code>/g)].map((m) => [m[1], m[2]]);
+  // The pixi rows only; the mopm row before them is checked above.
+  const cmds = (page: string) => cmdRows(page).filter((c) => c[0].startsWith('pixi '));
 
   test('no dependencies: one channel command, then the install command, and no note about other channels', () => {
     const page = withDeps([]);
     expect(cmds(page)).toEqual([
-      ['channel command', `pixi workspace channel add ${CH}`],
-      ['install command', 'pixi add mojo-komira-ai.json'],
+      ['pixi channel command', `pixi workspace channel add ${CH}`],
+      ['pixi install command', 'pixi add mojo-komira-ai.json'],
     ]);
     expect(text(page)).not.toContain(text(DEP_CHANNELS_NOTE));
   });
@@ -358,10 +398,10 @@ describe('the channels of the dependencies', () => {
   test('each other namespace of the dependencies gets a channel command, sorted, once, between the own channel and the install command', () => {
     const page = withDeps(['zeta/a_pkg', 'acme/http', 'komira-ai/xml', 'acme/json', 'zeta/b_pkg']);
     expect(cmds(page)).toEqual([
-      ['channel command', `pixi workspace channel add ${CH}`],
-      ['channel command 2', 'pixi workspace channel add https://conda.mopm.dev/acme/'],
-      ['channel command 3', 'pixi workspace channel add https://conda.mopm.dev/zeta/'],
-      ['install command', 'pixi add mojo-komira-ai.json'],
+      ['pixi channel command', `pixi workspace channel add ${CH}`],
+      ['pixi channel command 2', 'pixi workspace channel add https://conda.mopm.dev/acme/'],
+      ['pixi channel command 3', 'pixi workspace channel add https://conda.mopm.dev/zeta/'],
+      ['pixi install command', 'pixi add mojo-komira-ai.json'],
     ]);
   });
 
@@ -386,9 +426,9 @@ describe('the channels of the dependencies', () => {
     ]);
   });
 
-  test('every command is described by the install note and the caveat', () => {
+  test('every pixi command is described by the pixi note and the caveat', () => {
     const page = withDeps(['acme/http']);
-    expect(page.match(/aria-describedby="install-note install-caveat"/g)).toHaveLength(3);
+    expect(page.match(/aria-describedby="pixi-note pixi-caveat"/g)).toHaveLength(3);
   });
 
   test('a yanked version lists the channels of its dependencies too', () => {
@@ -399,13 +439,14 @@ describe('the channels of the dependencies', () => {
 
   test('a tombstoned version has no commands and no note', () => {
     const page = html(render(versionFixture('tombstoned version has no url', (r) => Object.assign(r, { deps: [{ name: 'acme/http' }] }))));
-    expect(cmds(page)).toEqual([]);
+    expect(cmdRows(page)).toEqual([]);
     expect(text(page)).not.toContain(text(DEP_CHANNELS_NOTE));
   });
 
-  test('on a host outside the table there are no commands and no note', () => {
+  test('on a host outside the table there is no pixi command and no note; the mopm command stays, with no --registry', () => {
     const page = withDeps(['acme/http'], 'localhost');
-    expect(cmds(page)).toEqual([]);
+    expect(cmdRows(page)).toEqual([['install command', 'mopm add komira-ai/json@=1.1.0']]);
+    expect(page).not.toContain('<details');
     expect(text(page)).not.toContain(text(DEP_CHANNELS_NOTE));
   });
 });

@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { TAGS } from '../src/doc';
 import { DOC_PAGES } from '../src/links';
+import { MOPM_INSTALL_PATH } from '../src/views/package';
 import { tagsIn } from '../tools/check-dist';
 import { renderPage } from '../tools/layout';
 import { ASSET_PATTERN, INSTALL_COMMAND, OPENING_SENTENCE, PLANNED, RELEASE_SERIES, TARGETS, VERIFY, WORKING_TODAY } from '../tools/pages';
@@ -437,6 +438,18 @@ describe('the home page says what the repository says', () => {
       expect(home).toContain(`aria-label="install command"><code>${INSTALL_COMMAND}</code>`);
       // It is the first command block on the page.
       expect(home.indexOf('<pre')).toBe(home.indexOf('<pre tabindex="0" role="region" aria-label="install command">'));
+    });
+
+    // The package and version pages link "New to mopm? Install it" to MOPM_INSTALL_PATH. Defect caught: the install
+    // block's id renamed or the link pointing elsewhere, so the link lands at the top of the home page, or nowhere.
+    test('the install block is where the package pages send a reader to install mopm', () => {
+      const home = read('index.html');
+      const [path, anchor] = MOPM_INSTALL_PATH.split('#');
+      expect(path).toBe('/');
+      expect(home.match(new RegExp(`id="${anchor}"`, 'g'))).toHaveLength(1);
+      const block = home.slice(home.indexOf(`id="${anchor}"`));
+      expect(block.indexOf(`<code>${INSTALL_COMMAND}</code>`)).toBeGreaterThan(-1);
+      expect(block.indexOf(`<code>${INSTALL_COMMAND}</code>`)).toBeLessThan(block.indexOf('</section>'));
     });
 
     // The command fetches https://mopm.dev/install.sh: the build must serve that file, byte for byte.

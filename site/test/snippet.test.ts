@@ -1,9 +1,9 @@
 // T13: the install lines. A registry version is MAJOR.MINOR.PATCH (spec Version); a mopm.toml line appears only for
 // a version mopm's requirement grammar can name as written (each part a u64: src/core/semver.zig), so a spelling
-// outside the grammar never yields a line mopm would refuse; a version page pins only a published version; the pixi
-// command is the one spec/channel.md documents.
+// outside the grammar never yields a line mopm would refuse; a version page pins only a published version; the mopm
+// command is `mopm add` as src/cli/install_cmd.zig parses it; the pixi command is the one spec/channel.md documents.
 import {
-  channelAddCommand, condaName, manifestRefusal, manifestSnippet, namespaceChannel, otherChannels, pinnedSnippet, pixiCommands,
+  addCommand, channelAddCommand, condaName, manifestRefusal, manifestSnippet, namespaceChannel, otherChannels, pinnedSnippet, pixiCommands,
   refusalSentence,
 } from '../src/snippet';
 
@@ -207,5 +207,33 @@ describe('pixiCommands', () => {
     expect(pixiCommands(base, { namespace: 'Komira-AI', name: 'json' }, ['bob/xx'])).toBeNull();
     expect(pixiCommands(base, { namespace: 'a b', name: 'json' })).toBeNull();
     expect(pixiCommands(base, { namespace: 'a'.repeat(40), name: 'json' })).toBeNull();
+  });
+});
+
+describe('addCommand', () => {
+  test('without a pin: the full name, so mopm picks the newest version that fits', () => {
+    expect(addCommand(F, null, null)).toBe('mopm add komira-ai/http_client');
+  });
+
+  test('with a pin: <full name>@=<version>, the spelling docs/configuration.md gives, as written', () => {
+    expect(addCommand(F, { pin: '1.2.0' }, null)).toBe('mopm add komira-ai/http_client@=1.2.0');
+    expect(addCommand(F, { pin: '0.0.0' }, null)).toBe('mopm add komira-ai/http_client@=0.0.0');
+    expect(addCommand(F, { pin: '18446744073709551615.0.0' }, null)).toBe('mopm add komira-ai/http_client@=18446744073709551615.0.0');
+  });
+
+  test('a stage other than prod adds its --registry after the package', () => {
+    expect(addCommand(F, null, 'beta')).toBe('mopm add komira-ai/http_client --registry beta');
+    expect(addCommand(F, { pin: '1.2.0' }, 'gamma')).toBe('mopm add komira-ai/http_client@=1.2.0 --registry gamma');
+  });
+
+  // The pin is written into a shell command, so only a version mopm can name gets one; the page then shows the reason.
+  test.each(['1.0', '1.0rc1', '01.0.0', '1.2.3; rm -rf x', '', '1.18446744073709551616.0'])('a pin %j mopm cannot name gets no command', (pin) => {
+    expect(addCommand(F, { pin }, null)).toBeNull();
+  });
+
+  test('a name or namespace outside the grammar gets none', () => {
+    expect(addCommand({ namespace: 'komira-ai', name: 'Http; rm -rf x' }, null, null)).toBeNull();
+    expect(addCommand({ namespace: 'Komira-AI', name: 'json' }, { pin: '1.0.0' }, null)).toBeNull();
+    expect(addCommand({ namespace: 'a b', name: 'json' }, null, 'beta')).toBeNull();
   });
 });
