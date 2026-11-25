@@ -38,6 +38,7 @@ const Defect = enum {
     sandbox_csrf_first,
     sandbox_201,
     start_store_failed,
+    start_error_not_a_code,
     start_no_request_id,
     start_no_location,
     start_two_locations,
@@ -62,6 +63,7 @@ const Defect = enum {
     cookie_empty,
     cookie_none,
     cookie_two,
+    cookie_no_pair,
     refused_start_redirects,
     refused_start_sets_cookie,
     refused_start_html,
@@ -102,6 +104,8 @@ const Fake = struct {
     site: []const u8 = "",
     /// The target whose first request is closed with no answer.
     drop_first: ?[]const u8 = null,
+    /// Every request is closed with no answer.
+    drop_all: bool = false,
     /// The target answered 503 for its first `busy_times` requests.
     busy: ?[]const u8 = null,
     busy_times: u32 = 0,
@@ -208,6 +212,7 @@ const Fake = struct {
             };
             break :blk k;
         };
+        if (f.drop_all) return;
         if (f.drop_first) |t| if (std.mem.eql(u8, t, target) and nth == 1) return;
         if (f.busy) |t| if (std.mem.eql(u8, t, target) and nth <= f.busy_times) return send(stream, .{ .status = 503, .headers = &.{html}, .body = "<html>busy</html>" });
         return send(stream, try f.answer(a, seen));
@@ -229,9 +234,9 @@ const Fake = struct {
         if (post and std.mem.eql(u8, r.target, s.sandbox_path)) return f.sandbox();
         if (!is_start) return notFound();
         if (navigation(r.headers)) {
-            if (f.has(.start_store_failed)) {
+            if (f.has(.start_store_failed) or f.has(.start_error_not_a_code)) {
                 var hs = std.ArrayList([2][]const u8).init(a);
-                try hs.append(.{ "location", try std.fmt.allocPrint(a, "{s}/tutorial?error=unavailable", .{f.site}) });
+                try hs.append(.{ "location", try std.fmt.allocPrint(a, "{s}/tutorial?error={s}", .{ f.site, if (f.has(.start_error_not_a_code)) state else "unavailable" }) });
                 try hs.appendSlice(&.{ .{ "x-mopm-request-id", "req-start" }, no_store });
                 return .{ .status = 303, .headers = hs.items };
             }
@@ -299,7 +304,7 @@ const Fake = struct {
     fn cookie(f: *Fake, a: Allocator) ![]const u8 {
         var c = std.ArrayList(u8).init(a);
         const w = c.writer();
-        try w.print("{s}={s}", .{ if (f.has(.cookie_name)) "mopm_login" else s.login_cookie, if (f.has(.cookie_empty)) "" else txn });
+        if (f.has(.cookie_no_pair)) try w.writeAll(txn) else try w.print("{s}={s}", .{ if (f.has(.cookie_name)) "mopm_login" else s.login_cookie, if (f.has(.cookie_empty)) "" else txn });
         if (!f.has(.cookie_no_secure)) try w.writeAll("; Secure");
         if (!f.has(.cookie_no_httponly)) try w.writeAll("; HttpOnly");
         try w.writeAll(if (f.has(.cookie_path)) "; Path=/api" else "; Path=/");
@@ -493,6 +498,7 @@ const cases = [_]Case{
         .{ .check = 1, .line = "the body is not the API's error envelope (content-type 'application/json'), session_required expected" },
     } },
     .{ .defect = .start_store_failed, .fails = &.{.{ .check = 2, .line = "answered HTTP 303 to {site}/tutorial?error=unavailable, 302 expected (the login transaction was not stored)" }} },
+    .{ .defect = .start_error_not_a_code, .fails = &.{.{ .check = 2, .line = "answered HTTP 303 to {site}/tutorial?error, 302 expected" }} },
     .{ .defect = .start_no_request_id, .fails = &.{.{ .check = 2, .line = no_request_id }} },
     .{ .defect = .start_no_location, .fails = &.{.{ .check = 2, .line = "0 Location headers, 1 expected" }} },
     .{ .defect = .start_two_locations, .fails = &.{.{ .check = 2, .line = "2 Location headers, 1 expected" }} },
@@ -517,6 +523,7 @@ const cases = [_]Case{
     .{ .defect = .cookie_empty, .fails = &.{.{ .check = 2, .line = "the login cookie has no value" }} },
     .{ .defect = .cookie_none, .fails = &.{.{ .check = 2, .line = "0 Set-Cookie headers (), 1 expected (__Host-mopm_login)" }} },
     .{ .defect = .cookie_two, .fails = &.{.{ .check = 2, .line = "2 Set-Cookie headers (__Host-mopm_login, __Host-mopm_session), 1 expected (__Host-mopm_login)" }} },
+    .{ .defect = .cookie_no_pair, .fails = &.{.{ .check = 2, .line = "the cookie set is '', __Host-mopm_login expected" }} },
     .{ .defect = .refused_start_redirects, .fails = &.{
         .{ .check = 3, .line = "answered HTTP 302, 400 expected (it started a sign-in for a request that is not a top-level navigation)" },
         .{ .check = 3, .line = "the body is not the API's error envelope (content-type ''), invalid_request expected" },
@@ -613,12 +620,17 @@ test "a host that does not answer fails its checks by name after five tries" {
     defer ar.deinit();
     var r = try Rig.init(ar.allocator(), &.{});
     defer r.deinit();
-    r.api.stop();
+    r.api.drop_all = true;
     const got = try r.check();
     try std.testing.expectEqual(@as(u8, 1), got.code);
-    try expectOutput(try r.expected(&.{
-        .{ .check = 4, .line = "GET {api}" ++ s.start_path ++ ": no answer after 5 tries (ConnectionRefused)" },
-    }), got.out);
+    // The error's name is the HTTP client's; everything around it is fixed.
+    const want = try r.expected(&.{.{ .check = 4, .line = "GET {api}" ++ s.start_path ++ ": no answer after 5 tries (@)" }});
+    const at = std.mem.indexOfScalar(u8, want, '@').?;
+    const tail = want[at + 1 ..];
+    try std.testing.expect(std.mem.startsWith(u8, got.out, want[0..at]) and std.mem.endsWith(u8, got.out, tail));
+    const name = got.out[at .. got.out.len - tail.len];
+    try std.testing.expect(name.len > 0 and std.mem.indexOfAny(u8, name, " \n()") == null);
+    try std.testing.expectEqual(@as(usize, 5), r.api.count(s.start_path));
     try std.testing.expectEqual(@as(u32, 4), r.pauses.n);
 }
 

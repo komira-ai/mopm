@@ -30,11 +30,12 @@
 //! Every check runs and reports (`ok: <check>: ...` or one `FAIL: <check>: ...` line per thing that is wrong), so one red run
 //! names every failure; the last line counts them, and the exit status is 1 when any failed, 2 for a wrong command line.
 //! No line holds a cookie's value, the `state` or the `code_challenge`: a `Location` is printed as its address and the names
-//! of its parameters (`error`'s value, one of a fixed list of codes, is kept), a `Set-Cookie` by its name, and a body only
+//! of its parameters (`error`'s value is kept when it is a code, lower-case letters and `_` only), a `Set-Cookie` by its name
+//! (nothing when it has no `=`), and a body only
 //! for an answer of 400 or more.
 //!
 //! A request that gets no answer, or an answer of 408, 429, 500, 502, 503 or 504 (the transient answers `curl --retry` tries
-//! again, as the other read-only steps of the job do), is tried again, five tries in all, five seconds apart; the last
+//! again in the job's other read-only steps), is tried again, five tries in all, five seconds apart; the last
 //! answer is the one judged. Redirects are never followed, so nothing is sent to GitHub.
 //!
 //! A base URL is an origin, `https://<host>` (`http://` is accepted for the loopback servers of
@@ -151,12 +152,40 @@ fn isOrigin(s: []const u8) bool {
 }
 
 /// Runs the five checks against `o` and writes what each found to `out`. Returns how many failed.
-/// Not written yet: it reports a pass without sending a request.
 pub fn run(a: Allocator, o: Options, out: std.io.AnyWriter, net: Net) !u32 {
-    _ = a;
-    _ = net;
-    try out.print("sign-in checks: all {d} passed (site {s}, API {s})\n", .{ check_names.len, o.site, o.api });
-    return 0;
+    const origin = [_]std.http.Header{
+        .{ .name = "Origin", .value = o.site },
+        .{ .name = "Sec-Fetch-Site", .value = "same-origin" },
+    };
+    const steps = [_]Step{
+        .{ .method = .GET, .url = try cat(a, o.site, session_path), .headers = &.{}, .judge = &judgeSession },
+        .{ .method = .POST, .url = try cat(a, o.site, sandbox_path), .headers = &origin, .judge = &judgeSandbox },
+        .{ .method = .GET, .url = try cat(a, o.site, start_path), .headers = &navigation, .judge = &judgeStart },
+        .{ .method = .GET, .url = try cat(a, o.site, start_path), .headers = &.{}, .judge = &judgeStartRefused },
+        .{ .method = .GET, .url = try cat(a, o.api, start_path), .headers = &navigation, .judge = &judgeStartAtApi },
+    };
+    var failed: u32 = 0;
+    for (steps, check_names) |st, name| {
+        var c = Check{ .a = a, .name = name, .site = o.site, .problems = std.ArrayList([]const u8).init(a) };
+        const got = try fetch(a, net, st.method, st.url, st.headers);
+        switch (got) {
+            .no_answer => |why| try c.bad("{s} {s}: no answer after {d} tries ({s})", .{ @tagName(st.method), st.url, net.tries, why }),
+            .answer => |ans| try st.judge(&c, ans),
+        }
+        if (c.problems.items.len == 0) {
+            const ans = got.answer;
+            try out.print("ok: {s}: HTTP {d}, request id {s}\n", .{ name, ans.status, ans.first("x-mopm-request-id").? });
+        } else {
+            failed += 1;
+            for (c.problems.items) |p| try out.print("FAIL: {s}: {s}\n", .{ name, p });
+        }
+    }
+    if (failed == 0) {
+        try out.print("sign-in checks: all {d} passed (site {s}, API {s})\n", .{ check_names.len, o.site, o.api });
+    } else {
+        try out.print("sign-in checks: {d} of {d} failed (site {s}, API {s})\n", .{ failed, check_names.len, o.site, o.api });
+    }
+    return failed;
 }
 
 fn cat(a: Allocator, x: []const u8, y: []const u8) ![]u8 {
@@ -374,9 +403,9 @@ fn formDecode(a: Allocator, s: []const u8) ![]const u8 {
 fn judgeLoginCookie(c: *Check, set_cookie: []const u8) !void {
     var parts = std.mem.splitScalar(u8, set_cookie, ';');
     const pair = std.mem.trim(u8, parts.first(), " \t");
-    const eq = std.mem.indexOfScalar(u8, pair, '=') orelse pair.len;
-    if (!std.mem.eql(u8, pair[0..eq], login_cookie)) try c.bad("the cookie set is '{s}', " ++ login_cookie ++ " expected", .{pair[0..eq]});
-    if (eq + 1 >= pair.len) try c.bad("the login cookie has no value", .{});
+    const name = nameOf(pair);
+    if (!std.mem.eql(u8, name, login_cookie)) try c.bad("the cookie set is '{s}', " ++ login_cookie ++ " expected", .{name});
+    if (name.len + 1 >= pair.len) try c.bad("the login cookie has no value", .{});
     var secure = false;
     var http_only = false;
     var path: ?[]const u8 = null;
@@ -433,9 +462,20 @@ fn redact(a: Allocator, url: []const u8) ![]const u8 {
         const eq = std.mem.indexOfScalar(u8, pair, '=') orelse pair.len;
         if (n > 0) try out.append('&');
         n += 1;
-        try out.appendSlice(if (std.mem.eql(u8, pair[0..eq], "error")) pair else pair[0..eq]);
+        try out.appendSlice(if (std.mem.eql(u8, pair[0..eq], "error") and isCode(pair[@min(eq + 1, pair.len)..])) pair else pair[0..eq]);
     }
     return out.items;
+}
+
+/// Lower-case letters and `_`, as the error codes are.
+fn isCode(s: []const u8) bool {
+    for (s) |b| if (!(std.ascii.isLower(b) or b == '_')) return false;
+    return s.len > 0;
+}
+
+/// The name of a `name=value` pair: "" when it has no `=` (the pair is then all value).
+fn nameOf(pair: []const u8) []const u8 {
+    return pair[0 .. std.mem.indexOfScalar(u8, pair, '=') orelse 0];
 }
 
 /// The names of the cookies of `Set-Cookie` values, never their values.
@@ -444,7 +484,7 @@ fn cookieNames(a: Allocator, values: []const []const u8) ![]const u8 {
     for (values, 0..) |v, i| {
         if (i > 0) try out.appendSlice(", ");
         const pair = std.mem.trim(u8, v[0 .. std.mem.indexOfScalar(u8, v, ';') orelse v.len], " \t");
-        try out.appendSlice(pair[0 .. std.mem.indexOfScalar(u8, pair, '=') orelse pair.len]);
+        try out.appendSlice(nameOf(pair));
     }
     return out.items;
 }

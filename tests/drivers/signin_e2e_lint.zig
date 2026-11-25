@@ -3,8 +3,9 @@
 //!
 //! The checks are a step of the smoke-linux job, after "Read-only checks, site", so they run in every e2e run, after the
 //! beta, gamma and prod deploys alike: the job runs on main with no condition on the stage and keeps exactly its grants
-//! (id-token write for the AWS steps before it, contents read). The step runs the program the job built (Zig installed
-//! by the pinned installer, then `zig build signin-e2e`) with the stage's two origins from service/config/<stage>.json,
+//! (id-token write for the AWS steps before it, contents read). The step runs the program the job built before it assumed
+//! the AWS role (Zig installed by the pinned installer, then `zig build signin-e2e`, both before the step that writes the
+//! credentials to the job's environment) with the stage's two origins from service/config/<stage>.json,
 //! exactly one command line, so nothing can tolerate its failure. It reads no secret and needs no id-token: its env is
 //! the stage and the three AWS credential variables set empty, so the credentials the assume step put in the job's
 //! environment do not reach it. No step of the three has an `if` or `continue-on-error`.
@@ -22,6 +23,7 @@ pub const step_name = "Read-only checks, sign-in and sandbox routes";
 const site_step = "Read-only checks, site";
 const zig_step = "Install Zig 0.12.0 (sha256-pinned), for the sign-in check";
 const build_step = "Build the sign-in check";
+const assume_step = "Assume the e2e role through OIDC";
 
 const zig_cmd = "echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"";
 const build_cmd = "zig build signin-e2e -Doptimize=ReleaseSafe";
@@ -50,10 +52,11 @@ pub fn problems(a: Allocator, doc: Value, out: *Out) !void {
     const site = try only(a, steps, site_step, out);
     const zig = try only(a, steps, zig_step, out);
     const build = try only(a, steps, build_step, out);
+    const assume = try only(a, steps, assume_step, out);
     const check = try only(a, steps, step_name, out) orelse return;
     if (site == null or site.? > check) try c.problem(a, out, prefix ++ "`" ++ step_name ++ "` must come after `" ++ site_step ++ "`", .{});
-    if (zig == null or build == null or zig.? > build.? or build.? > check) {
-        try c.problem(a, out, prefix ++ "`" ++ zig_step ++ "` and then `" ++ build_step ++ "` must come before `" ++ step_name ++ "`", .{});
+    if (zig == null or build == null or assume == null or zig.? > build.? or build.? > assume.? or assume.? > check) {
+        try c.problem(a, out, prefix ++ "`" ++ zig_step ++ "` and then `" ++ build_step ++ "` must come before `" ++ assume_step ++ "`, and that before `" ++ step_name ++ "` (nothing is built with the credentials in the environment)", .{});
     }
     if (zig) |i| try runIs(a, steps[i], zig_step, zig_cmd, out);
     if (build) |i| try runIs(a, steps[i], build_step, build_cmd, out);

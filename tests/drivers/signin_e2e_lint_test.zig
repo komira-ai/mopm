@@ -39,6 +39,7 @@ const env_block = "        env:\n          STAGE: ${{ inputs.stage }}\n         
 const run_line = "        run: " ++ se.check_cmd ++ "\n";
 const step = head ++ env_block ++ run_line;
 const build = "      - name: Build the sign-in check\n        run: zig build signin-e2e -Doptimize=ReleaseSafe\n";
+const assume = "      - name: Assume the e2e role through OIDC\n";
 const job_if = "    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 20\n";
 
 test "e2e.yml: the sign-in step is there once, after the site checks, and the check is built before it" {
@@ -52,7 +53,11 @@ test "e2e.yml: the sign-in step is there once, after the site checks, and the ch
         "e2e.yml: smoke-linux lost the step `Build the sign-in check`",
         "e2e.yml: `Install Zig 0.12.0 (sha256-pinned), for the sign-in check` and then `Build the sign-in check` must come before",
     });
-    try expect(build ++ step, step ++ build, &.{"e2e.yml: `Install Zig 0.12.0 (sha256-pinned), for the sign-in check` and then `Build the sign-in check` must come before"});
+    try expect(build ++ assume, assume ++ build, &.{"e2e.yml: `Install Zig 0.12.0 (sha256-pinned), for the sign-in check` and then `Build the sign-in check` must come before `Assume the e2e role through OIDC`"});
+    try expect(assume, "      - name: Assume the e2e role, OIDC\n", &.{
+        "e2e.yml: smoke-linux lost the step `Assume the e2e role through OIDC`",
+        "e2e.yml: `Install Zig 0.12.0 (sha256-pinned), for the sign-in check` and then `Build the sign-in check` must come before",
+    });
     try expect("zig build signin-e2e -Doptimize=ReleaseSafe", "zig build -Doptimize=ReleaseSafe", &.{"e2e.yml: `Build the sign-in check` must run exactly `zig build signin-e2e -Doptimize=ReleaseSafe`"});
     try expect("      - name: Install Zig 0.12.0 (sha256-pinned), for the sign-in check\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n", "      - name: Install Zig 0.12.0 (sha256-pinned), for the sign-in check\n        run: tools/install_zig.sh /opt/zig\n", &.{"e2e.yml: `Install Zig 0.12.0 (sha256-pinned), for the sign-in check` must run exactly"});
 }
