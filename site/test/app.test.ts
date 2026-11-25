@@ -81,12 +81,13 @@ describe('package', () => {
     const view = await appView(sdoc, '/packages/komira-ai/json', '', api, HOST);
     expect(calls).toEqual([['getPackage', KOMIRA]]);
     expect(html(view)).toContain('<span class="ns">komira-ai/</span><span>json</span></h1>');
-    expect(html(view)).toContain('https://conda.mopm.dev/komira-ai/');
+    expect(html(view)).toContain('<code>mopm add komira-ai/json</code>');
   });
 
-  test('the host picks the channel the view shows', async () => {
+  // The host reaches the view: a page on beta names beta's registry in its commands.
+  test('the host picks the registry the view\'s commands name', async () => {
     const { api } = fake({ pkg: ok(packageFixture()) });
-    expect(html(await appView(sdoc, '/packages/komira-ai/json', '', api, 'beta.mopm.dev'))).toContain('https://conda.beta.mopm.dev/komira-ai/');
+    expect(html(await appView(sdoc, '/packages/komira-ai/json', '', api, 'beta.mopm.dev'))).toContain('<code>mopm add komira-ai/json --registry beta</code>');
   });
 
   test.each(['package_not_found', 'namespace_not_found'])('%s: the package-not-found view, noindex', async (code) => {

@@ -1,7 +1,7 @@
 // T2: only the three site hostnames (and the local preview's) have an API, on the page's own origin under the relative
 // /api/v2, and each its own channel; anything else gets no API (and no call).
 import { client, type FetchFn } from '../src/api';
-import { API_BASE, apiBase, condaBase } from '../src/host';
+import { API_BASE, apiBase, condaBase, registryFlag } from '../src/host';
 
 test.each([
   ['mopm.dev', 'https://conda.mopm.dev/'],
@@ -57,6 +57,19 @@ test.each([
 ])('%j has no API', (host) => {
   expect(apiBase(host)).toBeNull();
   expect(condaBase(host)).toBeNull();
+  expect(registryFlag(host)).toBeNull();
+});
+
+// A command a page shows must reach the registry the page reads: mopm's default is prod, so mopm.dev needs no flag and
+// the other two stages need theirs, spelled as `--registry` takes them (docs/configuration.md).
+test.each([
+  ['mopm.dev', null],
+  ['beta.mopm.dev', 'beta'],
+  ['gamma.mopm.dev', 'gamma'],
+  ['127.0.0.1', null],
+  ['localhost', null],
+])('%s: the --registry its commands name is %p', (host, flag) => {
+  expect(registryFlag(host)).toBe(flag);
 });
 
 test.each(['mopm.dev', 'beta.mopm.dev', 'gamma.mopm.dev'])('%s: the API base is version 2, the one with full names', (host) => {

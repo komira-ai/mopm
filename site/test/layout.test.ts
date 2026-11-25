@@ -4,10 +4,11 @@
 // commands that work today, src/cli/main.zig's planned commands, and a quickstart of working commands only. And its
 // install story is the installer's and the release's: the command, the targets, the asset names, the verification
 // commands and the version series are held to site/static/install.sh, README.md and VERSION.
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { TAGS } from '../src/doc';
 import { DOC_PAGES } from '../src/links';
+import { MOPM_INSTALL_PATH } from '../src/views/package';
 import { tagsIn } from '../tools/check-dist';
 import { renderPage } from '../tools/layout';
 import { ASSET_PATTERN, INSTALL_COMMAND, OPENING_SENTENCE, PLANNED, RELEASE_SERIES, TARGETS, VERIFY, WORKING_TODAY } from '../tools/pages';
@@ -439,6 +440,18 @@ describe('the home page says what the repository says', () => {
       expect(home.indexOf('<pre')).toBe(home.indexOf('<pre tabindex="0" role="region" aria-label="install command">'));
     });
 
+    // The package and version pages link "New to mopm? Install it" to MOPM_INSTALL_PATH. Defect caught: the install
+    // block's id renamed or the link pointing elsewhere, so the link lands at the top of the home page, or nowhere.
+    test('the install block is where the package pages send a reader to install mopm', () => {
+      const home = read('index.html');
+      const [path, anchor] = MOPM_INSTALL_PATH.split('#');
+      expect(path).toBe('/');
+      expect(home.match(new RegExp(`id="${anchor}"`, 'g'))).toHaveLength(1);
+      const block = home.slice(home.indexOf(`id="${anchor}"`));
+      expect(block.indexOf(`<code>${INSTALL_COMMAND}</code>`)).toBeGreaterThan(-1);
+      expect(block.indexOf(`<code>${INSTALL_COMMAND}</code>`)).toBeLessThan(block.indexOf('</section>'));
+    });
+
     // The command fetches https://mopm.dev/install.sh: the build must serve that file, byte for byte.
     // Defect caught: the installer not copied to dist/, or copied changed.
     test('the build serves /install.sh as the script in site/static', () => {
@@ -525,23 +538,21 @@ describe('the home page says what the repository says', () => {
     });
   });
 
-  // The quickstart's third step is the registry: the command block is pixi's (spec/channel.md); the text names
-  // `mopm add`, which main.zig implements, and never calls it planned.
-  test('the three quickstart steps: install, start a package, add one with pixi or mopm add', () => {
+  // The quickstart's third step is the registry: the command block is `mopm add`, which main.zig implements, and the
+  // text never calls it planned. Defect caught: pixi (or any other installer) back in the steps.
+  test('the three quickstart steps: install, start a package, add one with mopm add', () => {
     const home = read('index.html');
     const steps = home.slice(home.indexOf('<ol class="stepper">'), home.indexOf('</ol>', home.indexOf('<ol class="stepper">')));
     expect(steps.match(/<li>/g)).toHaveLength(3);
     expect([...steps.matchAll(/<h3>([^<]*)<\/h3>/g)].map((m) => m[1])).toEqual(['Install mopm', 'Start a package', 'Add a package']);
     const cmds = [...steps.matchAll(/<code>([^<]*)<\/code><\/pre>/g)].map((m) => textOf(m[1]));
-    expect(cmds).toEqual(['mopm --version', 'mopm new my_package --lib', 'pixi add mojo-<namespace>.<name>']);
+    expect(cmds).toEqual(['mopm --version', 'mopm new my_package --lib', 'mopm add <namespace>/<name>']);
     expect(PLANNED).not.toContain('add');
     expect(WORKING_TODAY).toContain('add');
-    expect(textOf(steps)).toContain('In a mopm project, mopm add <namespace>/<name> adds it to mopm.toml and writes mopm.lock.');
+    expect(WORKING_TODAY).toContain('sync');
+    expect(textOf(steps)).toContain('In a mopm project, mopm add <namespace>/<name> adds it to mopm.toml and writes mopm.lock; mopm sync installs it.');
     expect(textOf(steps)).not.toContain('planned');
-    // One artifact serves every stage: a static step must not name prod's channel (the channel shown below follows
-    // the host at runtime).
-    expect(textOf(steps)).toContain('In a pixi project that lists the conda channel of the package’s namespace.');
-    expect(textOf(steps)).not.toContain('mopm.dev channel');
+    expect(steps).not.toMatch(/pixi|conda/i);
   });
 
   // Recently published is fetched at runtime (src/views/recent.ts); a list baked in at build time would go stale and
@@ -568,23 +579,34 @@ describe('the home page says what the repository says', () => {
     expect(home).not.toContain('sort=updated');
   });
 
-  test('the channel section names the per-namespace channel, the conda name and both add commands with full names', () => {
+  // Defect caught: the registry section telling a reader to install with pixi or from a conda channel again, or naming a
+  // package without its namespace.
+  test('the registry section adds a package with mopm add or a mopm.toml line and mopm sync, with full names', () => {
     const home = read('index.html');
-    const t = textOf(home);
-    expect(t).toContain('Every published package is served from a conda channel, one per namespace, under https://conda.mopm.dev/');
-    expect(t).toContain('The conda package of <namespace>/<name> is mojo-<namespace>.<name> in the channel <namespace>/ there; in a pixi project that lists that channel, pixi add mojo-<namespace>.<name> installs it');
-    expect(t).toContain('In a mopm project, mopm add <namespace>/<name> resolves it against the registry’s index and writes mopm.toml and mopm.lock.');
-    expect(t).not.toContain('mojo-<name>');
-    expect(t).not.toContain('mopm add <name>');
+    const section = home.slice(home.indexOf('<div class="strip-registry">'), home.indexOf('</section>', home.indexOf('<div class="strip-registry">')));
+    expect(textOf(section)).toBe(
+      'Install from the registryAdd a package as cargo adds a crateIn a mopm project, mopm add <namespace>/<name> resolves it against the registry’s index and writes mopm.toml and mopm.lock.Or write it under [dependencies] in mopm.toml yourself, then run mopm sync: it locks the project and installs every package it needs. Each package’s page shows its line.',
+    );
+    expect(section).not.toMatch(/pixi|conda/i);
+    expect(home).not.toContain('id="conda-channel"');
   });
 
-  test('the pixi command is the one spec/channel.md documents, and the channel is the prod default', () => {
-    const channel = readFileSync(join(REPO_ROOT, 'spec', 'channel.md'), 'utf8').replace(/\s*\n\s*/g, ' ');
-    expect(channel).toContain('`pixi workspace channel add https://conda.mopm.dev/komira-ai/` then `pixi add mojo-komira-ai.json` installs `komira-ai/json`');
-    expect(channel).toContain('The conda package name of the package `<namespace>/<name>` is `mojo-<namespace>.<name>`');
-    const home = read('index.html');
-    expect(home).toContain('<code>pixi add mojo-&lt;namespace&gt;.&lt;name&gt;</code>');
-    expect(home).toContain('<code id="conda-channel">https://conda.mopm.dev/</code>');
+  // No page of the site names pixi: not the home page, the package and version views (served by app.html), the docs
+  // pages, the tutorial pages, the 404 page, or any script or stylesheet the build ships. Defect caught: a pixi command
+  // or "install with pixi" line anywhere on the site, including a doc rendered from docs/.
+  test('no file the build ships mentions pixi', () => {
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else files.push(p);
+      }
+    };
+    walk(f.outDir);
+    expect(files.length).toBeGreaterThan(10);
+    expect(files.some((p) => p.endsWith(join('docs', 'why', 'index.html')))).toBe(true);
+    expect(files.filter((p) => /pixi/i.test(readFileSync(p, 'utf8')))).toEqual([]);
   });
 });
 

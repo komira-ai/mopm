@@ -49,8 +49,8 @@ catalogue is empty today, and several things in section 10 are not built.
 - The **CLI** (`src/cli`, `src/core`) reads a package's `mopm.toml`, resolves dependencies, writes
   `mopm.lock`, installs, builds, tests, packs and publishes.
 - The **registry** is an HTTP API (OpenAPI 3.1, `spec/api/openapi.yaml`) that accepts publishes and
-  regenerates two read-only views: a **conda channel** (what pixi and other conda tools read) and a
-  **sparse index** (what mopm reads). Both are static files, so reading needs no account and no running
+  regenerates two read-only views: a **conda channel** (the package files mopm downloads) and a
+  **sparse index** (what mopm resolves against). Both are static files, so reading needs no account and no running
   service.
 - The **contract** between the two is the `spec/` directory. The CLI is tested against a local fake
   registry that implements the contract; the hosted registry is tested against the same contract
@@ -61,15 +61,14 @@ catalogue is empty today, and several things in section 10 are not built.
 **Packages are conda packages.** A published version is a `.conda` archive named
 `mojo-<namespace>.<name>-<version>-<build>.conda` (`komira-ai/json` is `mojo-komira-ai.json`), holding `lib/mojo/<name>.mojoc`, an embedded metadata file
 `lib/mojo/<name>.mopm.json` (the import name; its `schema` is 2 and it names packages by full name), and any native libraries the package declares under `lib/`. The conda
-format was chosen for three reasons: the Mojo toolchain itself is distributed as conda packages, so
-an environment with `mojo` in it already has an installer for them; pixi installs them with no mopm
-involved (`pixi add mojo-<namespace>.<name>`); and the format has hashes, sizes and subdirs for the four
+format was chosen for two reasons: the Mojo toolchain itself is distributed as conda packages, so
+mopm installs the toolchain and the packages with one unpacker; and the format has hashes, sizes and subdirs for the four
 platforms (`noarch`, `linux-64`, `linux-aarch64`, `osx-arm64`) built in. The registry accepts only the
 allowed paths: no `bin/`, no link or activate scripts, no symlinks or hardlinks, no executable code
 outside declared native libraries. A client that unpacks a package applies the same rules.
 
 **The build string carries the compiler.** It is `mojo<compiler>_<n>`, for example `mojo1.0.0_0`, so two
-builds of one package version for two compilers are two files under one version, and pixi's solver
+builds of one package version for two compilers are two files under one version, and an environment
 cannot mix them either (the package depends on `mojo-compiler ==<exact>`). A version has one build for
 each compiler it was built with. Its first build is created with the version, and a build for another compiler can be
 added later, one at a time, when it is built from the same source: the same metadata file, which carries a
@@ -126,7 +125,7 @@ dead end backtracks to the latest choice. A failure names the requirements and w
 There is no pre-release logic because there are no pre-releases. `mopm lock` keeps versions that still
 fit; `mopm update` drops the pins of the named packages (all, with none named).
 
-**Installing from a lock.** `mopm sync` installs the environment itself, with no pixi, conda or solver.
+**Installing from a lock.** `mopm sync` installs the environment itself, with no other package manager and no solver.
 It downloads each locked file for the host's platform and each file of the Mojo toolchain's closure (a
 list, built into mopm, of every package `mojo` needs for that Mojo version and platform, each with its
 sha256 and size, made once by a solver in CI: `toolchain/README.md`), refuses any file whose size or
@@ -290,8 +289,8 @@ Trade-offs accepted on purpose:
 - *Exact compiler match.* A package is usable only with the compiler it was built for. This is the
   truth about `.mojoc`, but it multiplies builds; publishing for several compilers is what `[package] mojo`
   lists are for.
-- *conda as the carrier.* It gets pixi compatibility and hashing for free; mopm unpacks the format
-  itself, so `mopm sync` needs no conda client, at the cost of an unpacker mopm must keep right.
+- *conda as the carrier.* It gets hashing and per-platform files for free, in the toolchain's own format; mopm
+  unpacks it itself, so `mopm sync` needs no other tool, at the cost of an unpacker mopm must keep right.
 - *Registry-computed metadata.* The registry writes repodata and index entries from the validated
   manifest and never trusts the archive's own, at the cost of a validator that must be kept right.
 - *One process per test.* Strong isolation, slower on large suites.

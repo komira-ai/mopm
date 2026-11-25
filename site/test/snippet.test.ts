@@ -1,11 +1,9 @@
 // T13: the install lines. A registry version is MAJOR.MINOR.PATCH (spec Version); a mopm.toml line appears only for
 // a version mopm's requirement grammar can name as written (each part a u64: src/core/semver.zig), so a spelling
-// outside the grammar never yields a line mopm would refuse; a version page pins only a published version; the pixi
-// command is the one spec/channel.md documents.
-import {
-  channelAddCommand, condaName, manifestRefusal, manifestSnippet, namespaceChannel, otherChannels, pinnedSnippet, pixiCommands,
-  refusalSentence,
-} from '../src/snippet';
+// outside the grammar never yields a line mopm would refuse; a version page pins only a published version; the mopm
+// command is `mopm add` as src/cli/install_cmd.zig parses it; a namespace's channel is where the version page links
+// its files.
+import { addCommand, manifestRefusal, manifestSnippet, namespaceChannel, pinnedSnippet, refusalSentence } from '../src/snippet';
 
 const F = { namespace: 'komira-ai', name: 'http_client' };
 const KEY = '"komira-ai/http_client"';
@@ -128,84 +126,37 @@ describe('why there is no mopm.toml line', () => {
   });
 });
 
-describe('condaName', () => {
-  test('is mojo-<namespace>.<name>', () => {
-    expect(condaName(F)).toBe('mojo-komira-ai.http_client');
-    expect(condaName({ namespace: 'alice', name: 'json' })).toBe('mojo-alice.json');
-  });
-
-  test('the same name in two namespaces is two conda names', () => {
-    expect(condaName({ namespace: 'alice', name: 'json' })).not.toBe(condaName({ namespace: 'bob', name: 'json' }));
-  });
-});
-
-describe('namespaceChannel and channelAddCommand', () => {
+describe('namespaceChannel', () => {
   test('the channel is the stage root plus the namespace and a slash', () => {
     expect(namespaceChannel('https://conda.mopm.dev/', 'komira-ai')).toBe('https://conda.mopm.dev/komira-ai/');
     expect(namespaceChannel('https://conda.beta.mopm.dev/', 'a')).toBe('https://conda.beta.mopm.dev/a/');
   });
-
-  test('the command adds that channel to the pixi workspace', () => {
-    expect(channelAddCommand('https://conda.mopm.dev/komira-ai/')).toBe('pixi workspace channel add https://conda.mopm.dev/komira-ai/');
-  });
 });
 
-describe('otherChannels', () => {
-  const base = 'https://conda.mopm.dev/';
-
-  test('no dependencies need no channel', () => {
-    expect(otherChannels(base, 'komira-ai', [])).toEqual([]);
+describe('addCommand', () => {
+  test('without a pin: the full name, so mopm picks the newest version that fits', () => {
+    expect(addCommand(F, null, null)).toBe('mopm add komira-ai/http_client');
   });
 
-  test('dependencies in the own namespace need none', () => {
-    expect(otherChannels(base, 'komira-ai', ['komira-ai/json', 'komira-ai/tls'])).toEqual([]);
+  test('with a pin: <full name>@=<version>, the spelling docs/configuration.md gives, as written', () => {
+    expect(addCommand(F, { pin: '1.2.0' }, null)).toBe('mopm add komira-ai/http_client@=1.2.0');
+    expect(addCommand(F, { pin: '0.0.0' }, null)).toBe('mopm add komira-ai/http_client@=0.0.0');
+    expect(addCommand(F, { pin: '18446744073709551615.0.0' }, null)).toBe('mopm add komira-ai/http_client@=18446744073709551615.0.0');
   });
 
-  test('each other namespace is listed once, sorted', () => {
-    expect(otherChannels(base, 'komira-ai', ['zed/aa', 'alice/json', 'zed/bb', 'alice/yaml', 'komira-ai/tls', 'bob/xx'])).toEqual([
-      'https://conda.mopm.dev/alice/',
-      'https://conda.mopm.dev/bob/',
-      'https://conda.mopm.dev/zed/',
-    ]);
+  test('a stage other than prod adds its --registry after the package', () => {
+    expect(addCommand(F, null, 'beta')).toBe('mopm add komira-ai/http_client --registry beta');
+    expect(addCommand(F, { pin: '1.2.0' }, 'gamma')).toBe('mopm add komira-ai/http_client@=1.2.0 --registry gamma');
   });
 
-  test('a dependency that is not a full name is skipped, and the rest still count', () => {
-    expect(otherChannels(base, 'komira-ai', ['json', 'Alice/json', 'alice/Json', 'alice/a/b', '', 'a"b/c', 'bob/ok'])).toEqual(['https://conda.mopm.dev/bob/']);
+  // The pin is written into a shell command, so only a version mopm can name gets one; the page then shows the reason.
+  test.each(['1.0', '1.0rc1', '01.0.0', '1.2.3; rm -rf x', '', '1.18446744073709551616.0'])('a pin %j mopm cannot name gets no command', (pin) => {
+    expect(addCommand(F, { pin }, null)).toBeNull();
   });
 
-  test('only skipped dependencies give none', () => {
-    expect(otherChannels(base, 'komira-ai', ['flat', 'a/B'])).toEqual([]);
-  });
-});
-
-describe('pixiCommands', () => {
-  const base = 'https://conda.mopm.dev/';
-
-  test('without dependencies: add the namespace channel, then the package', () => {
-    expect(pixiCommands(base, F)).toEqual(['pixi workspace channel add https://conda.mopm.dev/komira-ai/', 'pixi add mojo-komira-ai.http_client']);
-  });
-
-  test('an empty dependency list is the same as none', () => {
-    expect(pixiCommands(base, F, [])).toEqual(pixiCommands(base, F));
-  });
-
-  test('with dependencies in other namespaces: own channel first, then theirs sorted, then the package', () => {
-    expect(pixiCommands(base, F, ['zed/aa', 'alice/json', 'komira-ai/tls', 'alice/yaml'])).toEqual([
-      'pixi workspace channel add https://conda.mopm.dev/komira-ai/',
-      'pixi workspace channel add https://conda.mopm.dev/alice/',
-      'pixi workspace channel add https://conda.mopm.dev/zed/',
-      'pixi add mojo-komira-ai.http_client',
-    ]);
-  });
-
-  test('dependencies outside the grammar add no channel', () => {
-    expect(pixiCommands(base, F, ['flat', 'X/y'])).toEqual(pixiCommands(base, F));
-  });
-
-  test('a name or namespace outside the grammar gets none, whatever the dependencies', () => {
-    expect(pixiCommands(base, { namespace: 'komira-ai', name: 'Http; rm -rf x' })).toBeNull();
-    expect(pixiCommands(base, { namespace: 'Komira-AI', name: 'json' }, ['bob/xx'])).toBeNull();
-    expect(pixiCommands(base, { namespace: 'a b', name: 'json' })).toBeNull();
-    expect(pixiCommands(base, { namespace: 'a'.repeat(40), name: 'json' })).toBeNull();
+  test('a name or namespace outside the grammar gets none', () => {
+    expect(addCommand({ namespace: 'komira-ai', name: 'Http; rm -rf x' }, null, null)).toBeNull();
+    expect(addCommand({ namespace: 'Komira-AI', name: 'json' }, { pin: '1.0.0' }, null)).toBeNull();
+    expect(addCommand({ namespace: 'a b', name: 'json' }, null, 'beta')).toBeNull();
   });
 });
