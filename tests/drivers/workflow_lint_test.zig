@@ -12,9 +12,10 @@ const wl = @import("workflow_lint.zig");
 const sh = @import("shell_syntax.zig");
 const Allocator = std.mem.Allocator;
 
-// The rules for the one build of the Rust Lambda zips are tested in their own file.
+// The rules for the one build of the Rust Lambda zips, and for e2e.yml's sign-in checks, are tested in their own files.
 test {
     _ = @import("function_zips_lint_test.zig");
+    _ = @import("signin_e2e_lint_test.zig");
 }
 
 // ---- the repository's workflows ---------------------------------------------------

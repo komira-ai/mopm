@@ -236,6 +236,24 @@ jobs:
           code=$(get /nope.txt)
           [ "$code" = "404" ] || fail "/nope.txt answered HTTP $code (404 expected)"
           echo "ok: /nope.txt is 404"
+      # The website's sign-in and sandbox routes through the site host, signed out, and the sign-in start straight at the API
+      # host (tests/drivers/signin_e2e.zig says what each of the five checks asserts). They prove the site's /api/* behaviour
+      # reaches the three Rust functions, the edge secret reaches web-login through the distribution and only through it,
+      # the stage's OAuth app secret is readable and its settings item exists. No token, no cookie, no credential: the AWS
+      # variables the assume step set are emptied for this step. The one write is the start's ten-minute web_logins row,
+      # which expires by itself; the redirect to GitHub is never followed. Every check reports, so one red run names every
+      # failure. Runs in every e2e run, after beta, gamma and prod deploys alike (signin_e2e_lint.zig holds the step).
+      - name: Install Zig 0.12.0 (sha256-pinned), for the sign-in check
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the sign-in check
+        run: zig build signin-e2e -Doptimize=ReleaseSafe
+      - name: Read-only checks, sign-in and sandbox routes
+        env:
+          STAGE: ${{ inputs.stage }}
+          AWS_ACCESS_KEY_ID: ""
+          AWS_SECRET_ACCESS_KEY: ""
+          AWS_SESSION_TOKEN: ""
+        run: ./zig-out/bin/mopm-signin-e2e --site "https://$(jq -r .siteDomain "service/config/${STAGE}.json")" --api "https://$(jq -r .apiDomain "service/config/${STAGE}.json")"
 
   # Gate 1 of the sparse index (spec/index.md): the three requests a `mopm lock` makes of a registry before it reads any package,
   # answered by the stage that was just deployed. Curl only, no token and no AWS credentials, so it needs no environment and

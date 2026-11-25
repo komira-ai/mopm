@@ -188,4 +188,6 @@ or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.m
   `Cross-Origin-Resource-Policy` `same-origin`, and a `Permissions-Policy` that turns off camera, microphone,
   geolocation, payment and USB.
 - **Smoke test.** e2e.yml checks the site host after every deploy: the home page and one of its assets, the app shell
-  for a package route, a 404 for an unknown file, and the CSP's `connect-src`.
+  for a package route, a 404 for an unknown file, and the CSP's `connect-src`. Then the sign-in and sandbox routes of
+  `/api/*`, signed out, and the sign-in start through the site and straight at the API host
+  (`tests/drivers/signin_e2e.zig`, tested by `//:signin_e2e`).

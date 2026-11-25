@@ -197,6 +197,22 @@ zig_exe(
     **_TOOLS
 )
 
+# ---- The read-only sign-in checks (run by the smoke-linux job of .github/workflows/e2e.yml after every deploy) ---------
+
+zig_exe(
+    name = "mopm-signin-e2e",
+    src = "tests/drivers/signin_e2e.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: tests/drivers/signin_e2e.zig against a loopback site host and API host, correct and wrong in each way; and the built program
+    name = "signin_e2e",
+    src = "tests/drivers/signin_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/signin_e2e.zig"],
+    env_tools = {"SIGNIN_E2E": ":mopm-signin-e2e"},
+    **_TOOLS
+)
+
 # ---- Helper programs of the tests (no /bin/sh, no #! scripts on the farm) -----
 
 zig_exe(  # buck-only: the child processes of src/core/test_proc.zig's tests
@@ -717,6 +733,7 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "registry/fake/main.zig",
         "registry/fake/groups_test.zig",
         "tests/drivers/group_e2e.zig",
+        "tests/drivers/signin_e2e.zig",
         "tests/drivers/compat_namespaces_test.zig",
         "tests/drivers/compat_pre_builds_test.zig",
         "tests/drivers/registry_client_lint_test.zig",
@@ -1531,6 +1548,8 @@ zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in f
         "tests/drivers/release_lint.zig",
         "tests/drivers/function_zips_lint.zig",
         "tests/drivers/function_zips_lint_test.zig",  # the tests of function_zips_lint.zig, pulled in by workflow_lint_test.zig
+        "tests/drivers/signin_e2e_lint.zig",
+        "tests/drivers/signin_e2e_lint_test.zig",  # the tests of signin_e2e_lint.zig, pulled in by workflow_lint_test.zig
         "tests/drivers/workflow_lint.zig",
     ],
     data = dict({f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])}, **{"tools/install_osv_scanner.zig": "tools/install_osv_scanner.zig"}),  # the installer: the pinned version, the sha256 and the refusal
@@ -1561,6 +1580,7 @@ zig_test(  # buck-only: both lints over the fixtures, against the table in the t
         "tests/drivers/shell_syntax.zig",
         "tests/drivers/release_lint.zig",
         "tests/drivers/function_zips_lint.zig",
+        "tests/drivers/signin_e2e_lint.zig",
         "tests/drivers/workflow_lint.zig",
     ],
     data = {f: f for f in glob(["tests/lint/fixtures/*"])},
@@ -1777,6 +1797,16 @@ zig_coverage(
 )
 
 zig_coverage(
+    name = "signin_e2e_coverage",
+    blocks = False,
+    floor = "coverage/signin_e2e.txt",
+    test_targets = [":signin_e2e"],
+    # The checks the smoke-linux job runs, driven here against a loopback site host and API host (the test file's own lines are
+    # not counted: they are the servers). main() is not compiled into the test binary; the process test runs it.
+    expect = ["tests/drivers/signin_e2e.zig"],
+)
+
+zig_coverage(
     name = "agents_coverage",
     blocks = False,
     floor = "coverage/agents.txt",
@@ -1811,6 +1841,7 @@ zig_coverage(
         "tests/drivers/regex.zig",
         "tests/drivers/release_lint.zig",
         "tests/drivers/shell_syntax.zig",
+        "tests/drivers/signin_e2e_lint.zig",
         "tests/drivers/validator_corpus.zig",
         "tests/drivers/workflow_lint.zig",
         "tests/drivers/yaml.zig",

@@ -284,6 +284,9 @@ The same PR makes these changes too:
 The origin header's value lives in Secrets Manager (`mopm/<stage>/edge-origin`, generated at creation) and reaches the
 distribution as a dynamic reference at deploy, so it is never committed. That CloudFormation resolves a Secrets Manager
 reference in a CloudFront origin custom header is **unverified**; if it does not, tu-I1 sets the value from a held step.
+After every deploy, e2e.yml's read-only sign-in checks (`tests/drivers/signin_e2e.zig`) send the sign-in start through the
+site, where it must reach GitHub's authorize address with the login cookie, and straight at `api.<site>`, where it must be
+refused: a stage whose distribution does not deliver the edge value, or whose OAuth secret or settings are missing, fails them.
 
 ## 3. The gate
 
