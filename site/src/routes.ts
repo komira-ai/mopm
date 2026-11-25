@@ -22,6 +22,11 @@ export const NAMESPACE_MAX = 39;
  */
 export const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 export const VERSION_MAX = 128;
+/**
+ * The last segment of a package's full version list, `/packages/<namespace>/<name>/versions`. A version starts with a
+ * digit, so the segment is never a version.
+ */
+export const VERSIONS_SEGMENT = 'versions';
 /** A docs page slug (`/docs/<slug>/`, src/links.ts DOC_PAGES); the edge router serves `/docs/<slug>/index.html` for it. */
 export const DOC_SLUG = /^[a-z0-9-]{1,64}$/;
 /** The runs of separators the registry's normalisation folds into one '_' (normaliseName). */
@@ -79,11 +84,13 @@ export function splitFullName(s: string): FullName | null {
 export type Route =
   | { kind: 'search' }
   | ({ kind: 'package' } & FullName)
+  | ({ kind: 'versions' } & FullName)
   | ({ kind: 'version'; version: string } & FullName);
 
 /**
  * The app-shell view for a path, or null when the path is not an app route (the edge router must never send it to the
- * shell). A package is `/packages/<namespace>/<name>`, a version `/packages/<namespace>/<name>/<version>`. The flat
+ * shell). A package is `/packages/<namespace>/<name>`, its full version list `/packages/<namespace>/<name>/versions`, a
+ * version `/packages/<namespace>/<name>/<version>`. The flat
  * addresses of the names before namespaces, `/packages/<name>` and `/packages/<name>/<version>`, are no app route: the
  * edge router sends them to a search for the name (flatSearchPath). A name starts with a letter and a version with a
  * digit, so `/packages/<a>/<b>` is never both a package and a flat version.
@@ -96,6 +103,7 @@ export function parseRoute(path: string): Route | null {
   const [, , namespace, name] = parts;
   if (!isNamespace(namespace) || !isCanonicalName(name)) return null;
   if (parts.length === 4) return { kind: 'package', namespace, name };
+  if (parts[4] === VERSIONS_SEGMENT) return { kind: 'versions', namespace, name };
   return isVersion(parts[4]) ? { kind: 'version', namespace, name, version: parts[4] } : null;
 }
 
@@ -142,6 +150,11 @@ export function searchPath(p: SearchParams = {}): string {
 
 export function packagePath(f: FullName): string {
   return `/packages/${encodeURIComponent(f.namespace)}/${encodeURIComponent(f.name)}`;
+}
+
+/** A package's full version list. */
+export function versionsPath(f: FullName): string {
+  return `${packagePath(f)}/${VERSIONS_SEGMENT}`;
 }
 
 export function versionPath(f: FullName, version: string): string {

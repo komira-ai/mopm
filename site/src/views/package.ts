@@ -3,8 +3,10 @@
 // The page reads top to bottom: the full name, latest version, description and a line of facts; then the install
 // commands with a Copy button each (pixi: add the namespace's conda channel, then the package; the other ways, the
 // channel and the mopm.toml line with its quoted full-name key, sit in a closed <details>); then the readme and the
-// versions table. A side panel holds the links, license, keywords, the namespace (the package's owner) with its GitHub
-// account, and the newest versions with their state. The GitHub link is what tells a look-alike namespace from the real
+// versions section: one row per release line (src/versions.ts), its newest version with its state and date, the number
+// of versions in total and a link to the full list on its own page (views/versions.ts). A side panel holds the links,
+// license, keywords, the namespace (the package's owner) with its GitHub account, and the same release lines, newest
+// first, with their state. The GitHub link is what tells a look-alike namespace from the real
 // one (docs/design/namespaces.md, section 1), so the panel shows the account's login as GitHub has it now.
 //
 // The shapes: a claimed name with nothing published; a package state this page does not know, or an active package
@@ -21,9 +23,10 @@ import { formatDate, stateLabel } from '../format.js';
 import { condaBase } from '../host.js';
 import { anchorHref, internalHref, webHref } from '../links.js';
 import { renderMarkdown } from '../markdown/render.js';
-import { type FullName, fullName, isNamespace, isVersion, namespaceSearchPath, packagePath, searchPath, versionPath } from '../routes.js';
+import { type FullName, fullName, isNamespace, isVersion, namespaceSearchPath, packagePath, searchPath, versionPath, versionsPath } from '../routes.js';
 import { manifestSnippet, namespaceChannel, pixiCommands, refusalSentence } from '../snippet.js';
 import type { NamespaceInfo, PackageInfo, VersionSummary } from '../types.js';
+import { type ReleaseLine, releaseLines } from '../versions.js';
 import { details, snippetBlock, timeEl, type View } from './common.js';
 import { glyphClass, initials } from './recent.js';
 
@@ -66,7 +69,8 @@ function versionCell<N>(doc: Doc<N>, f: FullName, v: VersionSummary): N {
   return isVersion(v.version) ? h(doc, 'a', { href: internalHref(versionPath(f, v.version)) }, v.version) : h(doc, 'span', null, v.version);
 }
 
-function versionsTable<N>(doc: Doc<N>, f: FullName, versions: readonly VersionSummary[]): N {
+/** Every version in the order the API gives (newest first), with its state and publish time: the full list's page. */
+export function versionsTable<N>(doc: Doc<N>, f: FullName, versions: readonly VersionSummary[]): N {
   if (versions.length === 0) return h(doc, 'p', { class: 'muted' }, 'No versions are published.');
   const rows = versions.map((v) =>
     h(
@@ -93,6 +97,74 @@ function versionsTable<N>(doc: Doc<N>, f: FullName, versions: readonly VersionSu
   );
 }
 
+/** The words for a row's release line: '2.x', '0.4.x', or 'other' for a version outside the grammar. */
+function lineLabel(l: ReleaseLine): string {
+  return l.line ?? 'other';
+}
+
+/** The link to the full version list, by its count. */
+export function allVersionsLink<N>(doc: Doc<N>, f: FullName, total: number): N {
+  return h(doc, 'a', { href: internalHref(versionsPath(f)) }, total === 1 ? 'The version list' : `All ${total} versions`);
+}
+
+/** One row per release line: the line, the version that shows it, its state and publish time, and the line's size. */
+function linesTable<N>(doc: Doc<N>, f: FullName, lines: readonly ReleaseLine[]): N {
+  const rows = lines.map((l) =>
+    h(
+      doc,
+      'tr',
+      { class: `state-${l.shown.state}` },
+      h(doc, 'th', { scope: 'row' }, lineLabel(l)),
+      h(doc, 'td', null, versionCell(doc, f, l.shown)),
+      h(doc, 'td', null, stateLabel(l.shown.state, l.shown.state_raw, l.shown.yank_reason)),
+      h(doc, 'td', null, timeEl(doc, l.shown.published_at)),
+      h(doc, 'td', null, String(l.count)),
+    ),
+  );
+  return h(
+    doc,
+    'div',
+    { class: 'scroll', role: 'region', tabindex: '0', 'aria-label': 'Release lines' },
+    h(
+      doc,
+      'table',
+      null,
+      h(doc, 'caption', null, `Release lines of ${fullName(f)}, newest first`),
+      h(
+        doc,
+        'thead',
+        null,
+        h(
+          doc,
+          'tr',
+          null,
+          h(doc, 'th', { scope: 'col' }, 'Line'),
+          h(doc, 'th', { scope: 'col' }, 'Newest'),
+          h(doc, 'th', { scope: 'col' }, 'State'),
+          h(doc, 'th', { scope: 'col' }, 'Published'),
+          h(doc, 'th', { scope: 'col' }, 'Versions'),
+        ),
+      ),
+      h(doc, 'tbody', null, ...rows),
+    ),
+  );
+}
+
+/** The package page's versions section: the release lines, the number of versions and the link to all of them. */
+function versionsSection<N>(doc: Doc<N>, f: FullName, versions: readonly VersionSummary[]): N {
+  const section = h(doc, 'section', { class: 'versions', 'aria-labelledby': 'versions-heading' }, h(doc, 'h2', { id: 'versions-heading' }, 'Versions'));
+  if (versions.length === 0) {
+    doc.append(section, h(doc, 'p', { class: 'muted' }, 'No versions are published.'));
+    return section;
+  }
+  const lines = releaseLines(versions);
+  const count = `${versions.length} ${versions.length === 1 ? 'version' : 'versions'} in ${lines.length} ${lines.length === 1 ? 'release line' : 'release lines'}; each line shows its newest published version.`;
+  doc.append(section, h(doc, 'p', { class: 'muted small' }, count));
+  doc.append(section, linesTable(doc, f, lines));
+  doc.append(section, h(doc, 'p', { class: 'small' }, allVersionsLink(doc, f, versions.length)));
+  return section;
+}
+
 /** What the install commands do, naming the namespace's channel on this host (one artifact serves every stage). */
 export const INSTALL_NOTE = 'in a pixi workspace: add the conda channel of the namespace, ';
 /** The package page knows no dependencies (getPackage has none), so it says where their channels are listed. */
@@ -100,8 +172,8 @@ export const CHANNELS_NOTE = 'A dependency in another namespace needs that names
 /** A version page with dependencies in other namespaces: what the extra channel lines are, and what they do not cover. */
 export const DEP_CHANNELS_NOTE = 'The other channels are the namespaces of this version’s dependencies. A dependency of a dependency may need one more; its own version page lists it.';
 
-/** How many versions the side panel lists; the table below the readme has them all. */
-export const SIDE_VERSIONS = 5;
+/** How many release lines the side panel lists, newest first; the versions section has them all. */
+export const SIDE_LINES = 5;
 
 /** One command row: a prompt, the command in a <pre> and (from the page script) a Copy button named by `label`. */
 function commandRow<N>(doc: Doc<N>, cmd: string, label: string, describedBy: string): N {
@@ -178,14 +250,14 @@ function sideState(v: VersionSummary): string {
 
 function sideVersions<N>(doc: Doc<N>, f: FullName, versions: readonly VersionSummary[]): N | null {
   if (versions.length === 0) return null;
-  const shown = versions.slice(0, SIDE_VERSIONS);
+  const shown = releaseLines(versions).slice(0, SIDE_LINES);
   return h(
     doc,
     'section',
     { 'aria-labelledby': 'side-versions' },
-    h(doc, 'h2', { id: 'side-versions' }, 'Recent versions'),
-    h(doc, 'ul', { class: 'vers' }, ...shown.map((v) => h(doc, 'li', { class: `state-${v.state}` }, versionCell(doc, f, v), h(doc, 'span', null, sideState(v))))),
-    h(doc, 'p', { class: 'small' }, h(doc, 'a', { href: anchorHref('versions-heading') }, versions.length === 1 ? 'The versions table' : `All ${versions.length} versions`)),
+    h(doc, 'h2', { id: 'side-versions' }, 'Release lines'),
+    h(doc, 'ul', { class: 'vers' }, ...shown.map((l) => h(doc, 'li', { class: `state-${l.shown.state}` }, versionCell(doc, f, l.shown), h(doc, 'span', null, sideState(l.shown))))),
+    h(doc, 'p', { class: 'small' }, allVersionsLink(doc, f, versions.length)),
   );
 }
 
@@ -255,6 +327,8 @@ export interface HeadParts<N> {
   name: FullName;
   /** The version a version page is about; the crumb then links the package and ends at the version. */
   version?: string;
+  /** A page of the package that is not a version (its version list): the crumb links the package and ends at this. */
+  section?: string;
   /** After the h1: the latest version and its tag, or the version's state tag. */
   badges: (N | null)[];
   description?: string | null;
@@ -265,8 +339,8 @@ export interface HeadParts<N> {
 
 /**
  * The head band a package and a version page share: crumb, glyph and full name, description, facts, jump links. The
- * crumb is Packages / namespace (its packages) / name, then the version on a version page; the h1 is the full name, its
- * namespace part muted.
+ * crumb is Packages / namespace (its packages) / name, then the version on a version page or the section on another page
+ * of the package (its version list); the h1 is the full name, its namespace part muted.
  */
 export function pageHead<N>(doc: Doc<N>, p: HeadParts<N>): N {
   const sep = (): N => h(doc, 'span', { class: 'sep', 'aria-hidden': 'true' }, '/');
@@ -276,10 +350,11 @@ export function pageHead<N>(doc: Doc<N>, p: HeadParts<N>): N {
     h(doc, 'a', { href: internalHref(namespaceSearchPath(p.name.namespace)), class: 'crumb-pkg' }, p.name.namespace),
     sep(),
   ];
-  if (p.version === undefined) {
+  const tail = p.version ?? p.section;
+  if (tail === undefined) {
     crumbs.push(h(doc, 'span', { 'aria-current': 'page' }, p.name.name));
   } else {
-    crumbs.push(h(doc, 'a', { href: internalHref(packagePath(p.name)), class: 'crumb-pkg' }, p.name.name), sep(), h(doc, 'span', { 'aria-current': 'page' }, p.version));
+    crumbs.push(h(doc, 'a', { href: internalHref(packagePath(p.name)), class: 'crumb-pkg' }, p.name.name), sep(), h(doc, 'span', { 'aria-current': 'page' }, tail));
   }
   const title: N[] = [h(doc, 'span', { class: 'ns' }, `${p.name.namespace}/`), h(doc, 'span', null, p.name.name)];
   const h1 = p.version === undefined ? h(doc, 'h1', null, ...title) : h(doc, 'h1', null, ...title, ' ', h(doc, 'span', { class: 'ver' }, p.version));
@@ -344,7 +419,7 @@ export function packageView<N>(doc: Doc<N>, name: FullName, info: PackageInfo, c
   }
   if (readme) doc.append(main, readme);
   if (info.state !== 'claimed') {
-    doc.append(main, h(doc, 'section', { class: 'versions', 'aria-labelledby': 'versions-heading' }, h(doc, 'h2', { id: 'versions-heading' }, 'Versions'), versionsTable(doc, name, info.versions)));
+    doc.append(main, versionsSection(doc, name, info.versions));
   }
 
   return { title: fullName(name), nodes: [head(doc, name, info, latest, readme !== null), h(doc, 'div', { class: 'layout' }, main, sidePanel(doc, name, info))] };

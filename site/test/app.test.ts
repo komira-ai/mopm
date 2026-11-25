@@ -104,6 +104,43 @@ describe('package', () => {
   });
 });
 
+describe('the full version list', () => {
+  test('one getPackage call with the route namespace and name, and the list of every version', async () => {
+    const { api, calls } = fake({ pkg: ok(packageFixture()) });
+    const view = await appView(sdoc, '/packages/komira-ai/json/versions', '', api, HOST);
+    expect(calls).toEqual([['getPackage', KOMIRA]]);
+    expect(view.title).toBe('Versions of komira-ai/json');
+    expect(html(view)).toContain('<caption>Versions of komira-ai/json, newest first</caption>');
+    expect(view.noindex).toBeUndefined();
+  });
+
+  test.each(['package_not_found', 'namespace_not_found'])('%s: the package-not-found view, noindex', async (code) => {
+    const { api } = fake({ pkg: notFound(code) });
+    const view = await appView(sdoc, '/packages/komira-ai/zz_absent/versions', '', api, HOST);
+    expect(view.title).toBe('Package not found');
+    expect(view.noindex).toBe(true);
+  });
+
+  test.each([
+    [400, 'invalid_name'],
+    [400, 'invalid_namespace'],
+    [403, 'namespace_reserved'],
+  ])('answered %i %s: "Package not found", noindex, no Retry', async (status, code) => {
+    const { api } = fake({ pkg: refused(code, status) });
+    const view = await appView(sdoc, '/packages/komira-ai/json/versions', '', api, HOST);
+    expect(view.title).toBe('Package not found');
+    expect(view.noindex).toBe(true);
+    expect(html(view)).not.toContain('Retry');
+  });
+
+  test('another failure: the error view with the request id and Retry', async () => {
+    const { api } = fake({ pkg: fromResponse(500, JSON.stringify({ error: { code: 'internal_error', message: 'x', hint: '' } }), 'req-6') });
+    const out = html(await appView(sdoc, '/packages/komira-ai/json/versions', '', api, HOST));
+    expect(out).toContain('role="alert"');
+    expect(out).toContain('<code>req-6</code>');
+  });
+});
+
 describe('version', () => {
   test('one getVersion call; the address is the version as published', async () => {
     const { api, calls } = fake({ version: ok(versionFixture('version detail')) });
@@ -176,6 +213,7 @@ describe('no call at all', () => {
     '/', '/packages/Foo', '/packages/a', '/packages/komira-ai/json/v1', '/packages/xy/1.0', '/packages/komira-ai/json/1.0', '/packages/komira-ai/json/1.0rc1',
     '/packages/komira-ai/json/1.0.0.0', '/packages/Komira-AI/json', '/packages/komira--ai/json', '/packages/-komira/json', '/packages/komira-ai/Json',
     `/packages/${'a'.repeat(40)}/json`, '/packages/komira-ai/json/1.0.0/x', '/app.html', '/search/x',
+    '/packages/komira-ai/json/Versions', '/packages/komira-ai/json/versions/1.0.0', '/packages/komira-ai/Json/versions',
   ])('%s is not an app route', async (path) => {
     const { api, calls } = fake();
     const view = await appView(sdoc, path, '', api, HOST);
