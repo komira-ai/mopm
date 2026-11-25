@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { REPO_URL } from '../src/links';
 import { parseRoute } from '../src/routes';
+import { START_PATH } from '../src/session';
 import { cleanup, type Fixture, fixture } from './build-fixture';
 
 let f: Fixture;
@@ -21,10 +22,16 @@ test('the home page has internal links to check', () => {
   expect(hrefs().filter((h) => h.startsWith('/')).length).toBeGreaterThan(3);
 });
 
-test('every internal href of the home page resolves to a built page or an app route', () => {
+// The header's sign-in link is the one internal href that is no page: the site distribution sends /api/* to the API
+// (README.md, "How it is served"), and only the start route is linked. Defect caught: any other API path linked, or a
+// page link that the build does not write.
+test('every internal href of the home page resolves to a built page or an app route, but the sign-in link', () => {
   const bad: string[] = [];
-  for (const h of hrefs().filter((x) => x.startsWith('/'))) {
+  const internal = hrefs().filter((x) => x.startsWith('/'));
+  expect(internal.filter((x) => x.startsWith('/api/'))).toEqual([`${START_PATH}?return_to=%2F`]);
+  for (const h of internal) {
     const path = h.split('#')[0].split('?')[0];
+    if (path === START_PATH) continue;
     const built = path.endsWith('/') ? join(f.outDir, path, 'index.html') : join(f.outDir, path);
     if (!existsSync(built) && parseRoute(path) === null) bad.push(h);
   }

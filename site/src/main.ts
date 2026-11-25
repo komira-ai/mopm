@@ -1,13 +1,17 @@
 // The page script, loaded as a module by every page.
 //
-// On every page: the read-only banner (from getHealth; any failure is silent), '/' to focus the search field, and
-// a Copy button on every command block (copy.ts). On the home page: the "Recently updated" list (views/recent.ts,
-// one searchPackages call). On the app shell (body[data-page=app]): the view app.ts picks
-// for the address. What to show is decided in app.ts, how a view is put on the page in mount.ts, and the copy buttons and
+// On every page: the header's account box (account.ts: the sign-in link for this address, or for the home page on the
+// 404 page, then who is signed in from the session route, and Sign out; asked again when the page comes back from the
+// back-forward cache), the banner of a refused sign-in on the address the sign-in sent the browser to, the
+// read-only banner (from getHealth; any failure is silent), '/' to focus the search field, and a Copy button on every
+// command block (copy.ts). On the home page: the "Recently updated" list (views/recent.ts, one searchPackages call).
+// On the app shell (body[data-page=app]): the view app.ts picks for the address. What to show is decided in app.ts, how a view is put on the page in mount.ts, and the copy buttons and
 // recent list in enhance.ts, all tested; this file connects them to the real document, location and history. Nothing
 // here builds markup from strings: views are built through browserDoc, and the only DOM writes are mount.ts's, the
-// banner's after, the copy buttons' (text only), the recent list's replaceChildren, and the '/' key's focus.
+// banners' after, the copy buttons' (text only), the recent list's and the account box's replaceChildren, and the '/'
+// key's and Sign out's focus.
 
+import { ACCOUNT_ID, type AccountPort, pagePath, showAccount, signInError, signInErrorBanner } from './account.js';
 import { client, type Client, type FetchFn } from './api.js';
 import { appView, healthBanner } from './app.js';
 import type { Clipboard } from './copy.js';
@@ -15,6 +19,7 @@ import { browserDoc, h } from './doc.js';
 import { addCopyButtons, type EnhancePort, searchFieldId, showRecent } from './enhance.js';
 import { apiBase } from './host.js';
 import { mount, type MountTarget } from './mount.js';
+import { webSession } from './session.js';
 import { loadingView, type View } from './views/common.js';
 
 const doc = browserDoc;
@@ -73,6 +78,28 @@ async function showApp(): Promise<void> {
   show(await appView(doc, location.pathname, location.search, api, host));
 }
 
+/** Puts `banner` right under the site header. */
+function underHeader(banner: Node): void {
+  document.querySelector('body > header')?.after(banner);
+}
+
+function showSignInError(): void {
+  const code = signInError(location.pathname, location.search);
+  if (code !== null) underHeader(signInErrorBanner(doc, code));
+}
+
+// The account box asks the site's own routes, same-origin, only on a host that has the API.
+const accountPort: AccountPort<Node> = {
+  ...doc,
+  onClick: (node, fn) => node.addEventListener('click', fn),
+  replaceChildren: (node, nodes) => (node as ParentNode).replaceChildren(...nodes),
+  focus: (node) => (node as HTMLElement).focus(),
+  setText: (node, text) => {
+    node.textContent = text;
+  },
+  linkHref: (box) => (box as ParentNode).querySelector('a.sign-in')?.getAttribute('href') ?? null,
+};
+
 function showHealthBanner(): void {
   if (api === null) return;
   api
@@ -101,6 +128,16 @@ function slashToSearch(e: KeyboardEvent): void {
   q.select();
 }
 
+const accountSession = base === null ? null : webSession((url, init) => fetch(url, init));
+function showAccountBox(): void {
+  void showAccount(accountPort, document.getElementById(ACCOUNT_ID), accountSession, pagePath(location.pathname, document.body.getAttribute('data-page')));
+}
+showAccountBox();
+// A page restored from the back-forward cache shows the box as it was left: ask again, the session may have ended.
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) showAccountBox();
+});
+showSignInError();
 showHealthBanner();
 document.addEventListener('keydown', slashToSearch);
 addCopyButtons(port, document, clipboard, later);

@@ -419,6 +419,7 @@ export function homePage(): PageSpec {
     title: 'mopm',
     description: 'mopm is a package manager plus build, test and coverage tooling for Mojo projects, with a package registry at mopm.dev.',
     kind: 'home',
+    path: '/',
     main: [hero, quickstart, registry, today, releases, planned],
   };
 }
@@ -428,6 +429,7 @@ export function notFoundPage(): PageSpec {
     title: 'Page not found',
     description: 'There is no page at this address.',
     kind: 'error',
+    path: '/',
     noindex: true,
     main: [
       lostBlock(
@@ -450,6 +452,7 @@ export function appShell(): PageSpec {
     title: 'mopm',
     description: 'Packages in the mopm registry.',
     kind: 'app',
+    path: '/search',
     main: loading,
     noscript: [
       h(doc, 'p', null, 'This page reads the registry API and needs JavaScript. To add a package without it, see the ', h(doc, 'a', { href: internalHref('/') }, 'home page'), ': mopm add <namespace>/<name>.'),

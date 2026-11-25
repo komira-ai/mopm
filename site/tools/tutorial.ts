@@ -55,6 +55,7 @@ export function lessonPage(l: Lesson, position: number, count: number): PageSpec
     title: `${l.title} (tutorial)`,
     description: l.summary,
     kind: 'tutorial',
+    path: lessonPath(l),
     main: [
       crumb(l.title),
       h(doc, 'p', { class: 'lesson-place muted small' }, `Lesson ${position} of ${count}`),
@@ -77,6 +78,7 @@ export function tutorialIndexPage(lessons: readonly Lesson[]): PageSpec {
     title: 'Tutorial',
     description: 'An interactive tutorial for mopm: lessons that build and run Mojo programs in a sandbox.',
     kind: 'tutorial',
+    path: TUTORIAL_PATH,
     main: [
       h(doc, 'h1', null, 'Tutorial'),
       h(doc, 'p', { class: 'lede' }, 'Each lesson is a small mopm project you change and run in the page.'),

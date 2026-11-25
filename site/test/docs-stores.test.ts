@@ -127,7 +127,7 @@ describe('docs/what-mopm-stores.md', () => {
   });
 
   test('last_used_at: the page says how often a request writes it', () => {
-    expect(row(page, '`tokens` table')[1]).toContain(`written at most once every ${touchSeconds} seconds while you use the tutorial`);
+    expect(row(page, '`tokens` table')[1]).toContain(`written at most once every ${touchSeconds} seconds while you use mopm.dev signed in`);
   });
 
   test('the logs: every Rust function log group keeps what the page says', () => {
@@ -135,7 +135,7 @@ describe('docs/what-mopm-stores.md', () => {
     expect(members).toHaveLength(1);
     const t = retentionText(members[0]);
     expect(row(page, 'logs')[2]).toBe(t);
-    expect(page).toContain(`one line per request to the sign-in and sandbox routes, kept for ${t}.`);
+    expect(page).toContain(`one line per request to the sign-in, session and sandbox routes, kept for ${t}.`);
   });
 
   test('the sandbox: E2B ends it when the stage settings say, and the page says when', () => {

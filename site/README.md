@@ -4,8 +4,12 @@ The mopm.dev web site: plain TypeScript compiled by `tsc` to ES modules the brow
 bundler or runtime dependency outside the one exception of rule 1, the tutorial's bundle of E2B's SDK.
 
 The prerendered pages (`/`, `/docs/`, `/docs/<slug>/`, `404.html`) work without scripts; the home page's "Recently
-updated" list is the one part a script fills (one `searchPackages?sort=updated` call), and without scripts it
+updated" list is a part a script fills (one `searchPackages?sort=updated` call), and without scripts it
 links to the package list instead. Copy buttons are added by the script too, so without it a command is plain text.
+Every page's header has "Sign in with GitHub", a link to the start route with the page's own path as `return_to`; the
+script asks the session route (`GET /api/v2/auth/web/session`) and, signed in, puts the GitHub login and "Sign out" in
+its place. Without scripts, signed out, or when the session route fails, the header keeps the link: the cached page is
+the same for everyone and never says who is signed in.
 `/search`, `/packages/<namespace>/<name>` and `/packages/<namespace>/<name>/<version>` share one shell, `app.html`,
 which `src/main.ts` fills from one call to the registry API version 2 (`src/app.ts` picks the call and the view).
 
@@ -22,10 +26,12 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/views/` | the search, package and version views, the home page's recently updated list, and the shared ones (loading, error, not found), built through a `Doc` |
 | `src/app.ts` | the app shell's routing: the API call an address makes and the view its answer gives (no DOM) |
 | `src/mount.ts` | putting a view on the page (title, focus, noindex, canonical address, Retry), against the few DOM members it uses |
+| `src/session.ts` | the website's session over the site's own routes (`credentials: 'same-origin'`, the CSRF header): who is signed in, sign-out, the sign-in link and the `return_to` grammar it is held to; the tutorial's gate builds on it |
+| `src/account.ts` | the header's account box: the sign-in link back to the page (`returnPathOf`), then the login and Sign out once the session route answers, against a small DOM port; and the banner of a refused sign-in on `/tutorial?error=<code>`, where the sign-in sends it |
 | `src/enhance.ts` | what the page script adds once a page is on screen: the copy buttons and the home page's recently updated list, against a small DOM port |
-| `src/main.ts` | the page script: connects `app.ts`, `mount.ts` and `enhance.ts` to the real document, plus the read-only banner and `/` to focus search |
+| `src/main.ts` | the page script: connects `app.ts`, `mount.ts`, `enhance.ts` and `account.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
-| `src/tutorial/gate.ts` | the tutorial's gate: the session, a sandbox and sign-out over the site's own `/api/v2` routes (`credentials: 'same-origin'`, the CSRF header), the sign-in link, and `replayGate`, a fake that replays recorded answers |
+| `src/tutorial/gate.ts` | the tutorial's gate: `session.ts`'s session, sign-in link and sign-out, plus the sandbox route, and `replayGate`, a fake that replays recorded answers; `main.js` does not import it (`test/preview-not-shipped.test.ts`) |
 | `src/tutorial/runner.ts` | the tutorial's runner, `page.ts`'s `Runner` for one lesson over E2B's SDK, from each run's sandbox grant alone (the `Sandbox` constructor with the sandbox's access token, no API key): writes its edited files into the lesson's directory and runs its command, giving the exit code and output, or `{kind: 'SandboxNotRunning'}` / `{kind: 'SandboxUnreachable'}`; bundled with `e2b` into `tutorial.js` |
 | `src/tutorial/node-stub.ts` | the empty module the bundle gives `e2b`'s six `node:*` imports, which only its template builder uses |
 | `src/tutorial/page.ts` | the tutorial page's logic with no DOM and no SDK: what the page shows signed out, signed in and while running, each gate error as its message, the in-memory sandbox grant (replaced near its `expires_at` or when the `Runner` port says it is gone), output with control and bidi characters as `[U+XXXX]` markers, and the draft in `localStorage` (`mopm.tutorial.1`) |
