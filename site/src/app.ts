@@ -13,6 +13,7 @@ import { errorView, notFoundView, pageNotFoundView, readOnlyBanner, unknownHostV
 import { packageView } from './views/package.js';
 import { readSearch, searchErrorView, searchResultsView, searchTooLongView } from './views/search.js';
 import { versionView } from './views/version.js';
+import { versionsView } from './views/versions.js';
 
 /**
  * The API refused the route's namespace or name. routes.ts sends only namespaces and names the spec grammar accepts, so
@@ -49,6 +50,12 @@ export async function appView<N>(doc: Doc<N>, pathname: string, search: string, 
       const f = { namespace: route.namespace, name: route.name };
       const r = await api.getPackage(f);
       if (r.kind === 'ok') return packageView(doc, f, r.value, ctx);
+      return r.kind === 'notFound' || refusedName(r) ? notFoundView(doc, f) : errorView(doc, r);
+    }
+    case 'versions': {
+      const f = { namespace: route.namespace, name: route.name };
+      const r = await api.getPackage(f);
+      if (r.kind === 'ok') return versionsView(doc, f, r.value);
       return r.kind === 'notFound' || refusedName(r) ? notFoundView(doc, f) : errorView(doc, r);
     }
     case 'version': {

@@ -12,7 +12,7 @@
 
 import type { SafeHref } from './doc.js';
 import { internalHref } from './links.js';
-import { DOC_SLUG, isCanonicalName, isNamespace, isVersion } from './routes.js';
+import { DOC_SLUG, isCanonicalName, isNamespace, isVersion, VERSIONS_SEGMENT } from './routes.js';
 
 /** The error codes of the endpoint's table, each a different thing for the page to do. */
 export const GATE_ERROR_CODES = ['session_required', 'csrf_failed', 'invalid_request', 'tutorial_unavailable'] as const;
@@ -112,7 +112,7 @@ export const LESSON = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /**
  * Whether the start route keeps `p` as its `return_to` (mopm_core return_to.rs, the same grammar): a page of the
- * site, `/`, `/search`, `/packages/<namespace>/<name>[/<version>]`, `/docs[/[<slug>[/]]]` or `/tutorial[/<lesson>]`,
+ * site, `/`, `/search`, `/packages/<namespace>/<name>[/<version> or /versions]`, `/docs[/[<slug>[/]]]` or `/tutorial[/<lesson>]`,
  * at most 256 characters, with no query, fragment, control character or backslash. Anything else the route would
  * replace with `/tutorial`, so a page asking for it has a bug.
  */
@@ -128,7 +128,7 @@ export function isReturnPath(p: string): boolean {
     case 3:
       return (a === 'docs' && DOC_SLUG.test(b) && c === '') || (a === 'packages' && isNamespace(b) && isCanonicalName(c));
     case 4:
-      return a === 'packages' && isNamespace(b) && isCanonicalName(c) && isVersion(d);
+      return a === 'packages' && isNamespace(b) && isCanonicalName(c) && (d === VERSIONS_SEGMENT || isVersion(d));
     default:
       return false;
   }

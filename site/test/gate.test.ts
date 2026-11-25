@@ -326,6 +326,8 @@ describe('signInHref', () => {
     '/docs/getting-started/',
     '/packages/komira-ai/http_client',
     '/packages/9lives/a1/1.0.0',
+    '/packages/komira-ai/http_client/versions',
+    '/packages/ab/versions/versions',
   ])('keeps %j', (p) => {
     expect(isReturnPath(p)).toBe(true);
     expect(signInHref(p)).toBe(`${START_PATH}?return_to=${encodeURIComponent(p)}`);
@@ -357,6 +359,10 @@ describe('signInHref', () => {
     '/packages/komira-ai/http__client',
     '/packages/komira-ai/http_client/1.0',
     '/packages/komira-ai/http_client/1.0.0/x',
+    '/packages/komira-ai/http_client/Versions',
+    '/packages/komira-ai/http_client/versions/',
+    '/packages/komira-ai/http_client/versions/1.0.0',
+    '/packages/komira-ai/Http_client/versions',
     `/tutorial/${'a'.repeat(RETURN_TO_MAX)}`,
   ])('refuses %j', (p) => {
     expect(isReturnPath(p)).toBe(false);

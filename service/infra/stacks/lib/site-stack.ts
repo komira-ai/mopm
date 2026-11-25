@@ -12,7 +12,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 // The site's own route grammar: the edge router below is generated from it, so the router and the app shell accept the
 // same namespaces, names, versions and docs slugs (site/src/routes.ts imports nothing).
-import { DOC_SLUG, NAME, NAME_SEPARATORS, NAMESPACE, NAMESPACE_MAX, VERSION, VERSION_MAX } from '../../../../site/src/routes';
+import { DOC_SLUG, NAME, NAME_SEPARATORS, NAMESPACE, NAMESPACE_MAX, VERSION, VERSION_MAX, VERSIONS_SEGMENT } from '../../../../site/src/routes';
 // The site's security headers: the local preview (site/tools/preview.ts) sends the same ones, from the same builder.
 import { HSTS_MAX_AGE_SECONDS, PERMISSIONS_POLICY, contentSecurityPolicy as sitePolicy } from '../../../../site/tools/headers';
 import { StageConfig, edgeOriginSecretName, siteBucketName } from './config';
@@ -77,7 +77,8 @@ export function siteFiles(dir: string, rel = ''): string[] {
  * site/test/fixtures/routes.json holds the vectors it must satisfy and the build they assume (test/site-router.test.ts
  * runs it over every one). The same function runs on viewer-request and on viewer-response.
  *
- * Viewer request. A package is `/packages/<namespace>/<name>`, a version `/packages/<namespace>/<name>/<version>`; a
+ * Viewer request. A package is `/packages/<namespace>/<name>`, its full version list
+ * `/packages/<namespace>/<name>/versions`, a version `/packages/<namespace>/<name>/<version>`; a
  * name the registry would normalise is redirected (301) to its normalised spelling, the namespace never (nothing
  * normalises it). A one-segment address, `/packages/<name>` of the names before namespaces or `/packages/<namespace>`,
  * and a flat `/packages/<name>/<version>` are redirected (302, not 301: they name no package now, and what a search
@@ -103,6 +104,7 @@ var NAMESPACE = /${NAMESPACE.source}/;
 var NAMESPACE_MAX = ${NAMESPACE_MAX};
 var VERSION = /${VERSION.source}/;
 var VERSION_MAX = ${VERSION_MAX};
+var VERSIONS = '${VERSIONS_SEGMENT}';
 var SEPARATORS = /${NAME_SEPARATORS.source}/g;
 var DOC_SLUG = /${DOC_SLUG.source}/;
 var NOT_FOUND = '${NOT_FOUND_PAGE}';
@@ -165,7 +167,7 @@ function target(uri, qs) {
       var n = normalise(p[3]);
       if (n !== p[3] && NAME.test(n)) return redirect(301, '/packages/' + p[2] + '/' + n + query(qs));
     }
-    if (p.length === 5 && namespace(p[2]) && canonical(p[3]) && version(p[4])) return '/app.html';
+    if (p.length === 5 && namespace(p[2]) && canonical(p[3]) && (version(p[4]) || p[4] === VERSIONS)) return '/app.html';
     return file(uri);
   }
   if (p[1] === 'assets' && p.length > 3 && p[2] !== '' && p[p.length - 1] !== '' && !has(BUILDS, p[2])) return uri;

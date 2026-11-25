@@ -10,7 +10,7 @@ Every page's header has "Sign in with GitHub", a link to the start route with th
 script asks the session route (`GET /api/v2/auth/web/session`) and, signed in, puts the GitHub login and "Sign out" in
 its place. Without scripts, signed out, or when the session route fails, the header keeps the link: the cached page is
 the same for everyone and never says who is signed in.
-`/search`, `/packages/<namespace>/<name>` and `/packages/<namespace>/<name>/<version>` share one shell, `app.html`,
+`/search`, `/packages/<namespace>/<name>`, `/packages/<namespace>/<name>/versions` and `/packages/<namespace>/<name>/<version>` share one shell, `app.html`,
 which `src/main.ts` fills from one call to the registry API version 2 (`src/app.ts` picks the call and the view).
 
 | module | what it does |
@@ -21,9 +21,10 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/doc.ts` | the Doc port: element and text nodes through a tag and attribute allowlist (`h()`); DOM and string backends |
 | `src/links.ts` | URL checking, the only source of `SafeHref` |
 | `src/markdown/` | a restricted Markdown parser (linear time) and its renderer, for package readmes and repo docs |
+| `src/versions.ts` | a package's versions grouped by release line (each major, and each 0.MINOR below 1.0.0) for the package page: semver's order, pre-releases below their release, the line's newest published version, versions outside the grammar last |
 | `src/snippet.ts`, `src/format.ts` | the install lines a page shows; times, sizes and version states as text |
 | `src/copy.ts` | the Copy button the page script adds to each command block (`.copy-box`), with a live "Copied" status |
-| `src/views/` | the search, package and version views, the home page's recently updated list, and the shared ones (loading, error, not found), built through a `Doc` |
+| `src/views/` | the search, package, version list and version views, the home page's recently updated list, and the shared ones (loading, error, not found), built through a `Doc` |
 | `src/app.ts` | the app shell's routing: the API call an address makes and the view its answer gives (no DOM) |
 | `src/mount.ts` | putting a view on the page (title, focus, noindex, canonical address, Retry), against the few DOM members it uses |
 | `src/session.ts` | the website's session over the site's own routes (`credentials: 'same-origin'`, the CSRF header): who is signed in, sign-out, the sign-in link and the `return_to` grammar it is held to; the tutorial's gate builds on it |

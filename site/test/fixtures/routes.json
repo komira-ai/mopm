@@ -463,6 +463,68 @@
     },
     {
       "path": "/packages/komira-ai/json/versions",
+      "edge": "/app.html",
+      "view": {
+        "kind": "versions",
+        "namespace": "komira-ai",
+        "name": "json"
+      }
+    },
+    {
+      "path": "/packages/ab/versions/versions",
+      "edge": "/app.html",
+      "view": {
+        "kind": "versions",
+        "namespace": "ab",
+        "name": "versions"
+      }
+    },
+    {
+      "path": "/packages/json/versions",
+      "edge": "/app.html",
+      "view": {
+        "kind": "package",
+        "namespace": "json",
+        "name": "versions"
+      }
+    },
+    {
+      "path": "/packages/komira-ai/json/versions/",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/packages/komira-ai/json/Versions",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/packages/komira-ai/json/version",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/packages/komira-ai/json/versions/1.0.0",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/packages/komira-ai/Json/versions",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/packages/komira-ai/foo__bar/versions",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/packages/Komira-AI/json/versions",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/packages/json/1.0.0/versions",
       "edge": "/404.html",
       "view": null
     },
