@@ -86,14 +86,18 @@ interface Parsed {
   s: Semver;
 }
 
-/** Which of two versions of one line shows it: published first, then a release before a pre-release, then the higher. */
+/**
+ * Which of two versions of one line shows it: published first; between two published ones a release before a
+ * pre-release; then the higher. Between two that are not published only the higher counts, so a line with nothing
+ * published shows its highest version.
+ */
 function better(a: Parsed, b: Parsed): boolean {
   const ap = a.v.state === 'published';
   const bp = b.v.state === 'published';
   if (ap !== bp) return ap;
   const ar = a.s.pre.length === 0;
   const br = b.s.pre.length === 0;
-  if (ar !== br) return ar;
+  if (ap && ar !== br) return ar;
   return compareSemver(a.s, b.s) > 0;
 }
 

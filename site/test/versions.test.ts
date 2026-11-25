@@ -137,6 +137,12 @@ describe('releaseLines', () => {
     expect(rows([v('4.0.0', 'unknown')])).toEqual([['4.x', '4.0.0', 'unknown', 1]]);
   });
 
+  test('with nothing published, a pre-release above the release shows the line: only the higher counts', () => {
+    expect(rows([v('1.0.0', 'yanked'), v('1.1.0-rc.1', 'yanked')])).toEqual([['1.x', '1.1.0-rc.1', 'yanked', 2]]);
+    expect(rows([v('1.1.0-rc.1', 'tombstoned'), v('1.0.0', 'yanked')])).toEqual([['1.x', '1.1.0-rc.1', 'tombstoned', 2]]);
+    expect(rows([v('1.0.0-rc.1', 'yanked'), v('1.0.0', 'yanked')])).toEqual([['1.x', '1.0.0', 'yanked', 2]]);
+  });
+
   test('a tombstoned or unknown-state version does not show its line while one of the line is published', () => {
     expect(rows([v('1.2.0', 'tombstoned'), v('1.1.0', 'unknown'), v('1.0.0')])).toEqual([['1.x', '1.0.0', 'published', 3]]);
   });

@@ -16,7 +16,7 @@ import { type Doc, h } from '../doc.js';
 import { formatBytes, stateLabel } from '../format.js';
 import { condaBase } from '../host.js';
 import { anchorHref, channelFileHref, internalHref } from '../links.js';
-import { type FullName, fullName, isVersion, packagePath, splitFullName, versionPath } from '../routes.js';
+import { type FullName, fullName, isVersion, packagePath, splitFullName, versionPath, versionsPath } from '../routes.js';
 import { namespaceChannel, pinnedSnippet, refusalSentence } from '../snippet.js';
 import type { FileRef, VersionDetail } from '../types.js';
 import { details, timeEl, type View } from './common.js';
@@ -218,7 +218,7 @@ export function versionView<N>(doc: Doc<N>, name: FullName, v: VersionDetail, ct
       'section',
       { 'aria-labelledby': 'side-versions' },
       h(doc, 'h2', { id: 'side-versions' }, 'Other versions'),
-      h(doc, 'p', { class: 'small' }, h(doc, 'a', { href: internalHref(`${packagePath(name)}#versions-heading`) }, `All versions of ${fullName(name)}`)),
+      h(doc, 'p', { class: 'small' }, h(doc, 'a', { href: internalHref(versionsPath(name)) }, `All versions of ${fullName(name)}`)),
     ),
   );
 
