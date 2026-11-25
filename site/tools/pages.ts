@@ -239,8 +239,8 @@ export function homePage(): PageSpec {
       null,
       h(doc, 'span', { class: 'num', 'aria-hidden': 'true' }, '3'),
       h(doc, 'h3', null, 'Add a package'),
-      h(doc, 'p', null, 'In a pixi project that lists the conda channel of the package’s namespace. In a mopm project, ', code('mopm add <namespace>/<name>'), ' adds it to mopm.toml and writes mopm.lock.'),
-      plainBlock('pixi add mojo-<namespace>.<name>', 'pixi command'),
+      h(doc, 'p', null, 'In a mopm project, ', code('mopm add <namespace>/<name>'), ' adds it to mopm.toml and writes mopm.lock; ', code('mopm sync'), ' installs it.'),
+      plainBlock('mopm add <namespace>/<name>', 'add command'),
     ),
   );
   const quickstart = band('quickstart', 'band-steps', 'Quickstart', 'Three steps to your first package', steps);
@@ -274,26 +274,18 @@ export function homePage(): PageSpec {
         'div',
         { class: 'strip-registry' },
         h(doc, 'p', { class: 'kicker' }, 'Install from the registry'),
-        h(doc, 'h2', { id: 'registry' }, 'Every package is a conda package'),
+        h(doc, 'h2', { id: 'registry' }, 'Add a package as cargo adds a crate'),
+        h(doc, 'p', null, 'In a mopm project, ', code('mopm add <namespace>/<name>'), ' resolves it against the registry’s index and writes mopm.toml and mopm.lock.'),
         h(
           doc,
           'p',
           null,
-          'Every published package is served from a conda channel, one per namespace, under ',
-          h(doc, 'code', { id: 'conda-channel' }, 'https://conda.mopm.dev/'),
-          ', so pixi and other conda clients install it today. The conda package of ',
-          code('<namespace>/<name>'),
-          ' is ',
-          code('mojo-<namespace>.<name>'),
-          ' in the channel ',
-          code('<namespace>/'),
-          ' there; in a pixi project that lists that channel, ',
-          code('pixi add mojo-<namespace>.<name>'),
-          ' installs it (',
-          link(`${REPO_URL}/blob/main/spec/channel.md`, 'the channel spec'),
-          ').',
+          'Or write it under ',
+          code('[dependencies]'),
+          ' in mopm.toml yourself, then run ',
+          code('mopm sync'),
+          ': it locks the project and installs every package it needs. Each package’s page shows its line.',
         ),
-        h(doc, 'p', null, 'In a mopm project, ', code('mopm add <namespace>/<name>'), ' resolves it against the registry’s index and writes mopm.toml and mopm.lock.'),
       ),
     ),
   );
@@ -463,7 +455,7 @@ export function appShell(): PageSpec {
     path: '/search',
     main: loading,
     noscript: [
-      h(doc, 'p', null, 'This page reads the registry API and needs JavaScript. Packages are also served as a conda channel; see the ', h(doc, 'a', { href: internalHref('/') }, 'home page'), '.'),
+      h(doc, 'p', null, 'This page reads the registry API and needs JavaScript. To add a package without it, see the ', h(doc, 'a', { href: internalHref('/') }, 'home page'), ': mopm add <namespace>/<name>.'),
     ],
   };
 }

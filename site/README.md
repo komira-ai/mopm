@@ -25,7 +25,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/copy.ts` | the Copy button the page script adds to each command block (`.copy-box`), with a live "Copied" status |
 | `src/views/` | the search, package and version views, the home page's recently updated list, and the shared ones (loading, error, not found), built through a `Doc` |
 | `src/app.ts` | the app shell's routing: the API call an address makes and the view its answer gives (no DOM) |
-| `src/mount.ts` | putting a view on the page (title, focus, noindex, canonical address, Retry) and the home page's conda channel, against the few DOM members it uses |
+| `src/mount.ts` | putting a view on the page (title, focus, noindex, canonical address, Retry), against the few DOM members it uses |
 | `src/session.ts` | the website's session over the site's own routes (`credentials: 'same-origin'`, the CSRF header): who is signed in, sign-out, the sign-in link and the `return_to` grammar it is held to; the tutorial's gate builds on it |
 | `src/account.ts` | the header's account box: the sign-in link back to the page (`returnPathOf`), then the login and Sign out once the session route answers, against a small DOM port; and the banner of a refused sign-in on `/tutorial?error=<code>`, where the sign-in sends it |
 | `src/enhance.ts` | what the page script adds once a page is on screen: the copy buttons and the home page's recently updated list, against a small DOM port |
