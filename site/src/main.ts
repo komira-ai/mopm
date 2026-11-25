@@ -1,8 +1,8 @@
 // The page script, loaded as a module by every page.
 //
 // On every page: the read-only banner (from getHealth; any failure is silent), '/' to focus the search field, and
-// a Copy button on every command block (copy.ts). On the home page: the conda channel of this host and the "Recently
-// updated" list (views/recent.ts, one searchPackages call). On the app shell (body[data-page=app]): the view app.ts picks
+// a Copy button on every command block (copy.ts). On the home page: the "Recently updated" list (views/recent.ts,
+// one searchPackages call). On the app shell (body[data-page=app]): the view app.ts picks
 // for the address. What to show is decided in app.ts, how a view is put on the page in mount.ts, and the copy buttons and
 // recent list in enhance.ts, all tested; this file connects them to the real document, location and history. Nothing
 // here builds markup from strings: views are built through browserDoc, and the only DOM writes are mount.ts's, the
@@ -14,7 +14,7 @@ import type { Clipboard } from './copy.js';
 import { browserDoc, h } from './doc.js';
 import { addCopyButtons, type EnhancePort, searchFieldId, showRecent } from './enhance.js';
 import { apiBase } from './host.js';
-import { mount, type MountTarget, showChannel } from './mount.js';
+import { mount, type MountTarget } from './mount.js';
 import { loadingView, type View } from './views/common.js';
 
 const doc = browserDoc;
@@ -103,7 +103,6 @@ function slashToSearch(e: KeyboardEvent): void {
 
 showHealthBanner();
 document.addEventListener('keydown', slashToSearch);
-showChannel(document.getElementById('conda-channel'), host);
 addCopyButtons(port, document, clipboard, later);
 if (document.body.getAttribute('data-page') === 'home') void showRecent(port, document.getElementById('recent-list'), api);
 if (document.body.getAttribute('data-page') === 'app') void showApp();

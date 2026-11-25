@@ -5,13 +5,17 @@
 // relative `/api/v2` and every read is same-origin. The page CSP's connect-src is `'self'` plus E2B's sandboxes; it
 // names no API host. Only the hosts of this fixed table, and the local preview's, get an API at all: any other hostname
 // (a mirror, a deployed preview) gets none, and the page shows an error instead of calling anything. The conda channel
-// is still on its own host, `conda.<site host>`.
+// is still on its own host, `conda.<site host>`. Each site host is one stage of the registry, and the table names it as
+// the command line's `--registry` does (docs/configuration.md): `prod`, `beta`, `gamma`.
 
-const SITES: Readonly<Record<string, true>> = Object.freeze(
-  Object.assign(Object.create(null) as Record<string, true>, {
-    'mopm.dev': true,
-    'beta.mopm.dev': true,
-    'gamma.mopm.dev': true,
+/** A stage's name for `mopm --registry`. */
+export type Stage = 'prod' | 'beta' | 'gamma';
+
+const SITES: Readonly<Record<string, Stage>> = Object.freeze(
+  Object.assign(Object.create(null) as Record<string, Stage>, {
+    'mopm.dev': 'prod',
+    'beta.mopm.dev': 'beta',
+    'gamma.mopm.dev': 'gamma',
   }),
 );
 
@@ -40,4 +44,14 @@ export function apiBase(hostname: string): string | null {
  */
 export function condaBase(hostname: string): string | null {
   return known(hostname) ? `https://conda.${hostname}/` : null;
+}
+
+/**
+ * The `--registry` a command shown on this host needs: null for mopm.dev (prod is the command line's default) and for a
+ * host outside the table (the local preview), else the stage of the site host ('beta', 'gamma').
+ */
+export function registryFlag(hostname: string): Exclude<Stage, 'prod'> | null {
+  if (!known(hostname)) return null;
+  const stage = SITES[hostname];
+  return stage === 'prod' ? null : stage;
 }

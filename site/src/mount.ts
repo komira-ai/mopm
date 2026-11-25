@@ -1,8 +1,7 @@
-// Putting a view on the page, and the home page's conda channel: the DOM work main.ts does, written against the few
-// DOM members it uses so a test can pass fakes (test/mount.test.ts). main.ts hands in the real document, location and
-// history; nothing here builds markup from strings.
+// Putting a view on the page: the DOM work main.ts does, written against the few DOM members it uses so a test can
+// pass fakes (test/mount.test.ts). main.ts hands in the real document, location and history; nothing here builds
+// markup from strings.
 
-import { condaBase } from './host.js';
 import { titleOf, type View } from './views/common.js';
 
 /** The click target a view marks for retrying (button.retry). */
@@ -52,8 +51,3 @@ export function mount<N>(t: MountTarget<N>, view: View<N>, retry: () => void): v
   if (button) button.addEventListener('click', retry, { once: true });
 }
 
-/** Puts this host's conda channel in the home page's #conda-channel (prerendered with prod's); leaves it otherwise. */
-export function showChannel(el: { textContent: string | null } | null, host: string): void {
-  const channel = condaBase(host);
-  if (el && channel !== null) el.textContent = channel;
-}
