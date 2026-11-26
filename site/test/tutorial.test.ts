@@ -11,6 +11,7 @@ import { escapeText, serialize } from '../src/doc';
 import { parseRoute } from '../src/routes';
 import { checkDist, DistError, tagsIn, TUTORIAL_BUNDLE } from '../tools/check-dist';
 import { LESSON_SCHEMA, loadLessons, readLessonSchema } from '../tools/lessons';
+import { stylesheetsFor } from '../tools/layout';
 import { LESSON_ID_PREFIX, lessonArticle, RUNNER_ID, TUTORIAL_PATH } from '../tools/tutorial';
 import { withoutTutorialLink } from '../tools/tutorial-link';
 import { cleanup, type Fixture, fixture, goodLesson, LESSONS_DIR, lessonJson, lessonTree, REPO_ROOT } from './build-fixture';
@@ -179,6 +180,77 @@ describe('a lesson tree of the tests', () => {
     expect(() => checkDist(b.f.outDir)).toThrow(
       'dist check failed:\n  tutorial/x/data.json: only .html, .js and .css files are published\n  tutorial/x/index.html: an inline <script>\n  tutorial/x/index.html: a <script> without one src under /assets/\n  tutorial/x/index.html: references /assets/gone.css, which is not in dist',
     );
+  });
+});
+
+// Each lesson's page ends with a link to the lesson before it and the lesson after it, in the index's order (order, not
+// directory name), in the prerendered HTML: no script builds them and nothing about them needs a session. The first
+// lesson has only Next, the last only Previous, and a tutorial of one lesson has neither, so no empty <nav>.
+describe("a lesson's Previous and Next links", () => {
+  const PREV = (id: string, title: string): string => `<a class="button" href="/tutorial/${id}" rel="prev">← Previous: ${title}</a>`;
+  const NEXT = (id: string, title: string): string => `<a class="button button-primary" href="/tutorial/${id}" rel="next">Next: ${title} →</a>`;
+  const PAGER = (...links: string[]): string => `<nav class="pager" aria-label="Lessons">${links.join('')}</nav>`;
+  const tree = (lessons: Parameters<typeof lessonTree>[0]) => {
+    const t = lessonTree(lessons);
+    trees.push(t);
+    return built(t);
+  };
+
+  test('one lesson: its page has no Previous, no Next and no pager, and ends with the runner', () => {
+    const b = tree({ only: goodLesson(1) });
+    const main = mainOf(b.page('tutorial/only/index.html'));
+    expect(main.endsWith('</section>')).toBe(true);
+    expect(main).not.toMatch(/rel="(prev|next)"|class="pager"|Previous|Next/);
+  });
+
+  test('two lessons: the first has only Next, to the second; the second only Previous, to the first', () => {
+    const b = tree({ second: goodLesson(2), first: goodLesson(1) });
+    expect(mainOf(b.page('tutorial/first/index.html')).endsWith(`</section>${PAGER(NEXT('second', 'Lesson 2'))}`)).toBe(true);
+    expect(mainOf(b.page('tutorial/second/index.html')).endsWith(`</section>${PAGER(PREV('first', 'Lesson 1'))}`)).toBe(true);
+  });
+
+  // The ids sort the other way from the order (zeta first), and the orders have gaps, so a page that took its
+  // neighbours from the directory listing or from order ± 1 links the wrong lesson or none.
+  test('three lessons: the middle one has both, each page links its neighbours in the order of the index', () => {
+    const b = tree({ zeta: goodLesson(1), alpha: goodLesson(9), mid: goodLesson(4) });
+    const index = mainOf(b.page('tutorial/index.html'));
+    expect([...index.matchAll(/href="\/tutorial\/([a-z]+)"/g)].map((m) => m[1])).toEqual(['zeta', 'mid', 'alpha']);
+    const pages = Object.fromEntries(['zeta', 'mid', 'alpha'].map((id) => [id, mainOf(b.page(`tutorial/${id}/index.html`))]));
+    expect(pages.zeta.endsWith(`</section>${PAGER(NEXT('mid', 'Lesson 4'))}`)).toBe(true);
+    expect(pages.mid.endsWith(`</section>${PAGER(PREV('zeta', 'Lesson 1'), NEXT('alpha', 'Lesson 9'))}`)).toBe(true);
+    expect(pages.alpha.endsWith(`</section>${PAGER(PREV('mid', 'Lesson 4'))}`)).toBe(true);
+    // One pager a page, and every link it holds is a page of this build.
+    for (const [id, main] of Object.entries(pages)) {
+      expect([id, main.split('<nav class="pager"').length]).toEqual([id, 2]);
+      for (const m of main.matchAll(/href="\/tutorial\/([a-z]+)" rel=/g)) expect(b.pages).toContain(`tutorial/${m[1]}/index.html`);
+    }
+    expect(() => checkDist(b.f.outDir)).not.toThrow();
+  });
+
+  test("a neighbour's title is text in the link: markup in it is escaped", () => {
+    const b = tree({ a: goodLesson(1), b: { ...goodLesson(2), json: lessonJson(2, { title: '<b>"&</b>' }) } });
+    const main = mainOf(b.page('tutorial/a/index.html'));
+    expect(main.endsWith(`</section>${PAGER(NEXT('b', '&lt;b&gt;"&amp;&lt;/b&gt;'))}`)).toBe(true);
+    expect(() => tagsIn(b.page('tutorial/a/index.html'))).not.toThrow();
+  });
+
+  test("the repository's lessons: each page links the lessons before and after it in LESSONS, and the first and last only one", () => {
+    LESSONS.forEach((l, i) => {
+      const links = [i > 0 ? PREV(LESSONS[i - 1].id, escapeText(LESSONS[i - 1].title)) : null, i + 1 < LESSONS.length ? NEXT(LESSONS[i + 1].id, escapeText(LESSONS[i + 1].title)) : null].filter((x) => x !== null);
+      const main = mainOf(real.page(`tutorial/${l.id}/index.html`));
+      expect([l.id, main.endsWith(`</section>${links.length === 0 ? '' : PAGER(...links)}`)]).toEqual([l.id, true]);
+    });
+  });
+
+  // The tutorial's pages load site.css alone (tools/layout.ts AREA_STYLESHEETS), so the pager's layout has to be there:
+  // a .pager rule left in search.css would leave the links unstyled on every lesson page. A long title wraps inside its
+  // button: .button is `flex: none; white-space: nowrap`, which on a 320px screen would push a long Next link past the
+  // edge, so the pager's buttons may shrink and wrap, and the links wrap onto two rows rather than overflow.
+  test("the pager's rules are in a stylesheet the tutorial's pages load, and a long title wraps", () => {
+    const sheets = stylesheetsFor('tutorial').map((f) => readFileSync(join(__dirname, '..', 'static', f), 'utf8')).join('\n');
+    expect(sheets).toContain('\n.pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-top: 8px; }\n');
+    expect(sheets).toContain('\n.pager a[rel="next"] { margin-left: auto; }\n');
+    expect(sheets).toContain('\n.pager .button { flex: 0 1 auto; white-space: normal; }\n');
   });
 });
 
