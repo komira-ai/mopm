@@ -37,9 +37,10 @@ the site's real security headers and plays our side of the sign-in and sandbox r
 | `unavailable` | 200 | 503 `tutorial_unavailable`, `Retry-After: 30` |
 | `session-expired` | 200 | 401 `session_required` |
 
-The tutorial page is what you are building: the preview serves `/tutorial` from `dist/tutorial.html` when the site's
-build wrote one, and the site's 404 page otherwise. Without the page, see the routes from the browser's console on
-any page of the preview (the home page at `http://127.0.0.1:<port>/` will do):
+The tutorial pages are what you are building: the preview serves `/tutorial` and `/tutorial/<lesson>` from the
+build's `dist/tutorial/index.html` and `dist/tutorial/<lesson>/index.html`, as the edge router does on a stage that
+serves the tutorial. To see the routes without a page, use the browser's console on any page of the preview (the home
+page at `http://127.0.0.1:<port>/` will do):
 
 ```js
 const s = await (await fetch('/api/v2/auth/web/session')).json(); s

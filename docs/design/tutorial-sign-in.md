@@ -513,8 +513,10 @@ address. The site distribution's standard logs stay off.
   - The site build checks every lesson against the schema and its rules first (`site/tools/lessons.ts`), and fails on
     a bad one. It then writes `/tutorial` (the lessons in order) and `/tutorial/<lesson>` (the text under the title,
     the lesson's place and the runner's mount point) as `tutorial/index.html` and `tutorial/<lesson>/index.html`.
-  - Until tu-S3 they are written to `site/build/held/`, not `dist/`. The edge router serves every file of `dist/` as
-    it is, so pages in `dist/` would be reachable before their routes exist. tu-S3 writes them to `dist/`.
+  - They are written to `dist/`, the one build every stage deploys. The site stack uploads them, and the edge router
+    serves `/tutorial` and `/tutorial/<lesson>` from them, only on a stage whose `service/config/<stage>.json` names
+    the tutorial's E2B template (`tutorial.e2bTemplateId`); elsewhere every tutorial path is the 404 page (tu-S3).
+    Until tu-S3 they were written to `site/build/held/` instead.
 - **The E2B SDK** is the site's first runtime dependency. `site/README.md` rule 1 gains one written exception: `e2b`,
   pinned exactly, on the tutorial pages only.
   - A pinned `esbuild` dev dependency bundles `site/src/tutorial/main.ts` with it into one hashed asset, which only
@@ -689,10 +691,16 @@ Operator:
 Go-live:
 
 - **tu-S3 (S)** The edge router routes `/tutorial` and `/tutorial/<lesson>`, and the build writes the tutorial's held
-  pages to `dist/` (section 7); the header gets its "Tutorial" link; the
-  docs page "What mopm.dev stores", from section 6, names E2B and what it sees. This is the step users see.
-  - Tests: the route fixtures (`site/test/fixtures/routes.json`) and the site-router test; the layout test for the
-    header.
+  pages to `dist/` (section 7), per stage: the site stack uploads and routes them only on a stage whose configuration
+  names the tutorial's E2B template, which is tu-O2's last step, so a stage goes live when its sandbox can be created
+  and not before. The docs page "What mopm.dev stores", from section 6, names E2B and what it sees (done with that
+  page). This is the step users see.
+  - Tests: the route fixtures (`site/test/fixtures/routes.json`) and the site-router test, with a router of the build
+    without its tutorial files; the site stack's test of both kinds of stage; the template diff naming what serving the
+    tutorial changes.
+- **tu-S4 (S)** The header gets its "Tutorial" link, once prod serves the tutorial: every stage deploys the same
+  pages, so a link in the header would lead to the 404 page on a stage that does not.
+  - Tests: the layout test for the header.
 
 **Order**:
 
@@ -700,13 +708,16 @@ Go-live:
 - tu-F1, tu-I1 and tu-X1 start at once. tu-F2 follows tu-F1, and tu-F3 follows tu-F2.
 - tu-O1 can be done at any time. tu-A1 follows tu-F2 and tu-F3. tu-A2 follows tu-A1 and deploys after tu-O1.
 - tu-X2 follows tu-X1, and tu-O2 follows tu-X2. tu-A3 follows tu-A1 and tu-F2, and deploys after tu-O2.
-- tu-S3 follows tu-S2, once tu-A2, tu-A3 and tu-I1 are deployed to prod.
+- tu-S3 follows tu-S2, once tu-A2, tu-A3 and tu-I1 are deployed. It turns the tutorial on stage by stage: a stage
+  serves it from the deploy after tu-O2 sets its template id.
+- tu-S4 follows tu-O2 on prod.
 - Deploys stay automatic from main.
 
-Until tu-S3, nobody sees the tutorial: its routes answer only requests that carry the distribution's header, and no
-page links to them. The sign-in is the exception: the header links it on every page (section 7, "The header"). A
-refused sign-in lands on `/tutorial?error=<code>`, which is the 404 page until tu-S3; the header's script shows what
-the code means above it.
+Until a stage serves the tutorial (tu-S3), nobody there sees it: its API routes answer only requests that carry the
+distribution's header, and no page links to them. The sign-in is the exception: the header links it on every page
+(section 7, "The header"). A refused sign-in lands on `/tutorial?error=<code>`, which is the 404 page on a stage
+without the tutorial; the header's script shows what the code means above it. Until tu-S4 no page outside the tutorial
+links to it, so on a stage that serves it the tutorial is reached by its address.
 
 tu-I1 is the exception. Once deployed, it changes what every visitor gets: every API read of the site goes through
 the site host, and the CSP's `connect-src` and the 404 handling change. It is the one change before tu-S3 that users
