@@ -6,6 +6,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { AREA_STYLESHEETS } from '../tools/layout';
+import { TUTORIAL_NAV_ID } from '../tools/tutorial-link';
 
 const css = readFileSync(join(__dirname, '..', 'static', 'site.css'), 'utf8');
 /** The home page's area stylesheet: the hero's build-command block lives there. */
@@ -200,9 +201,10 @@ describe('anchor targets clear the sticky header', () => {
   });
 
   // The 106px holds only while brand and nav share the first row. Untightened they need 353px of content, so they wrap
-  // (a third row, 151px, measured at 360 and 375) below a 385px viewport; the max-width rule tightens them to 286px,
-  // which fits the 288px content box of a 320px viewport. Defect caught: the tightening rule removed, or its breakpoint set
-  // under 385px (24rem = 384px wraps at 384), or above the wide breakpoint; the nav padding or gap put back.
+  // (a third row, 151px, measured at 360 and 375) below a 385px viewport; the max-width rule tightens them to 286px
+  // (measured with a 6px nav padding; 5px now, for "Tutorial" in GitHub's place), which fits the 288px content box of a
+  // 320px viewport. Defect caught: the tightening rule removed, or its breakpoint set under 385px (24rem = 384px wraps
+  // at 384), or above the wide breakpoint; the nav padding or gap put back.
   test('below the width where brand and nav would wrap, a rule tightens them onto one row', () => {
     const m = /@media \(max-width: ([\d.]+)rem\) \{\n  \.bar \{ column-gap: 8px; \}([\s\S]*?)\n\}/.exec(css);
     expect(m).not.toBeNull();
@@ -210,9 +212,21 @@ describe('anchor targets clear the sticky header', () => {
     expect(px).toBeGreaterThanOrEqual(385);
     expect(px).toBeLessThan(64 * 16);
     expect(m?.[2]).toContain('.site-nav ul { gap: 0; }');
-    expect(m?.[2]).toContain('.site-nav a { padding: 6px; font-size: 0.875rem; }');
+    expect(m?.[2]).toContain('.site-nav a { padding: 6px 5px; font-size: 0.875rem; }');
     expect(m?.[2]).toContain('.brand { font-size: 1.2rem; gap: 8px; }');
     expect(rule(':root')).toContain('holds from a 320px viewport up');
+  });
+
+  // A stage that serves the tutorial has a fourth nav entry, Tutorial (#nav-tutorial, tools/tutorial-link.ts), which
+  // would put brand and nav on two rows below about a 460px viewport (estimated from the measurements above): below 30rem
+  // the header's GitHub entry after it gives way, so the row has three again. Where the stack took the entry out, the
+  // rule matches nothing. Defect caught: the rule removed, its breakpoint under 460px, or a selector that hides GitHub
+  // on a stage with no Tutorial entry; the entry's id renamed without the stylesheet.
+  test('below 30rem, GitHub gives way to the Tutorial entry, and only where there is one', () => {
+    const m = /@media \(max-width: ([\d.]+)rem\) \{ #([a-z-]+) ~ li \{ display: none; \} \}/.exec(css);
+    expect(m?.[2]).toBe(TUTORIAL_NAV_ID);
+    expect(Number(m?.[1]) * 16).toBeGreaterThanOrEqual(460);
+    expect(Number(m?.[1]) * 16).toBeLessThan(64 * 16);
   });
 
   // The token's two values are right only where the header changes from two rows to one: the search moves up into the

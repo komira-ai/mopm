@@ -1,7 +1,9 @@
 // The page wrapper every prerendered page shares: the document head, a skip link, the site header (brand, search,
 // navigation, and the account box with its "Sign in with GitHub" link back to the page's own path), <main id="main">
-// and the footer. The account box is the same for every visitor (src/account.ts): who is signed in is filled in by the
-// page script from the session route, never written into the page, so the pages stay cacheable.
+// and the footer. The navigation's Tutorial entry is on every page: the site stack takes it out of the pages of a stage
+// that does not serve the tutorial (tools/tutorial-link.ts). The account box is the same for every visitor
+// (src/account.ts): who is signed in is filled in by the page script from the session route, never written into the
+// page, so the pages stay cacheable.
 //
 // The body is built through StringDoc and h() like any view. The document shell around it (doctype, <html>, <head>,
 // <body>, the stylesheet <link> and the module <script>) is not markup a view may produce, so it is written here, once,
@@ -12,7 +14,9 @@
 import { ACCOUNT_ID, accountLink } from '../src/account';
 import { escapeAttr, escapeText, h, type SNode, serialize, StringDoc } from '../src/doc';
 import { anchorHref, internalHref, REPO_URL, webHref } from '../src/links';
+import { TUTORIAL_PATH } from '../src/routes';
 import { titleOf } from '../src/views/common';
+import { TUTORIAL_NAV_ID } from './tutorial-link';
 
 export const doc = new StringDoc();
 
@@ -67,12 +71,15 @@ export interface PageSpec {
   /** Shown at the top of <main> when scripts do not run (inside <noscript>). */
   noscript?: readonly SNode[];
   /** The navigation entry this page belongs to. */
-  current?: 'packages' | 'docs';
+  current?: NavEntry;
   /** This page is that entry's own target (aria-current="page"); otherwise it is below it (aria-current="true"). */
   currentIsTarget?: boolean;
   /** The page loads the tutorial bundle (Assets.tutorial) after main.js: a lesson's page, whose script fills its runner. */
   tutorialScript?: boolean;
 }
+
+/** The header's navigation entries a page can belong to (PageSpec.current). */
+export type NavEntry = 'packages' | 'docs' | 'tutorial';
 
 function siteSearch(): SNode {
   return h(
@@ -94,11 +101,15 @@ function siteSearch(): SNode {
   );
 }
 
-/** The site header. The home page leaves out the header search: its own search form is the first thing on it. */
+/**
+ * The site header. The home page leaves out the header search: its own search form is the first thing on it. The nav is
+ * Packages, Docs, Tutorial and GitHub on every page; the Tutorial entry carries TUTORIAL_NAV_ID, by which the site stack
+ * takes it out (tools/tutorial-link.ts) and site.css gives way to it on a narrow screen.
+ */
 function header(spec: PageSpec): SNode {
-  const navLink = (key: 'packages' | 'docs', path: string, label: string): SNode => {
+  const navLink = (key: NavEntry, path: string, label: string, id?: string): SNode => {
     const attrs = spec.current !== key ? { href: internalHref(path) } : { href: internalHref(path), 'aria-current': spec.currentIsTarget ? 'page' : 'true' };
-    return h(doc, 'li', null, h(doc, 'a', attrs, label));
+    return h(doc, 'li', id === undefined ? null : { id }, h(doc, 'a', attrs, label));
   };
   return h(
     doc,
@@ -120,6 +131,7 @@ function header(spec: PageSpec): SNode {
           null,
           navLink('packages', '/search', 'Packages'),
           navLink('docs', '/docs/', 'Docs'),
+          navLink('tutorial', TUTORIAL_PATH, 'Tutorial', TUTORIAL_NAV_ID),
           h(doc, 'li', null, h(doc, 'a', { href: webHref(REPO_URL) ?? undefined }, 'GitHub')),
         ),
       ),

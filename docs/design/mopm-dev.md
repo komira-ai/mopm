@@ -490,7 +490,7 @@ tokens needs a session, not a fresh one. GitHub's avatar origin is the CSP's one
 
 ## 5. Pages, navigation and budgets
 
-Header: brand, search box (`/` and `s`), Packages, Docs, sign-in or the account menu. Footer: repository, security
+Header: brand, search box (`/` and `s`), Packages, Docs, Tutorial (on a stage that serves the tutorial; `tutorial-sign-in.md`, tu-S4), GitHub, sign-in or the account menu. Footer: repository, security
 policy, docs, shortcuts. A theme toggle sets `data-theme` from `main.ts`; a forced theme flashes on load, accepted.
 
 | URL | kind | content |

@@ -7,11 +7,12 @@ import { STAGES, TutorialConfig, edgeOriginSecretName, stageConfig } from '../li
 import {
   API_CONTENT_SECURITY_POLICY, API_PATH_PATTERN, ASSETS_CACHE_CONTROL, DEFAULT_SITE_DIR, EDGE_HEADER, FUNCTION_MAX_BYTES,
   PAGES_CACHE_CONTROL, PERMISSIONS_POLICY, SiteStack, TUTORIAL_DIR, assertSiteBuild, contentSecurityPolicy, servedFiles,
-  servesTutorial, siteFiles, siteRouterSource,
+  servesTutorial, siteFiles, siteRouterSource, writeServedPages,
 } from '../lib/site-stack';
 import { DUMMY_ACCOUNT, DUMMY_ZONE_ID, SITE_STUB_DIR, bucketStatements, build } from './util';
 import { apiBehaviour, behaviourFor, edgeHeaderProblems } from './site-edge';
 import { securityHeaders } from '../../../../site/tools/headers';
+import { TUTORIAL_NAV_ITEM } from '../../../../site/tools/tutorial-link';
 
 type Json = any;
 
@@ -214,6 +215,9 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
     expect(files(staged(pages))).toContain('index.html');
     // The stage files decide: beta names its template, gamma and prod do not yet.
     expect([stage, files(staged(pages)).some(tutorial)]).toEqual([stage, stage === 'beta']);
+    // And so the header: beta's pages have the Tutorial entry, gamma's and prod's none.
+    const index = fs.readFileSync(path.join(staged(pages), 'index.html'), 'utf8');
+    expect([stage, index.includes(TUTORIAL_NAV_ITEM)]).toEqual([stage, stage === 'beta']);
   });
 
   test('no distribution-wide error responses: they would turn the JSON errors of /api/* into the 404 page', () => {
@@ -329,21 +333,28 @@ describe('the tutorial on a stage', () => {
     const dir = (s.site.node.root as App).synth().directory;
     const t = Template.fromStack(s.site);
     const [, pages] = Object.entries<Json>(t.findResources('Custom::CDKBucketDeployment')).find(([, r]) => r.Properties.DestinationBucketKeyPrefix === undefined) as [string, Json];
-    const staged = files(path.join(dir, `asset.${String(pages.Properties.SourceObjectKeys[0]).replace(/\.zip$/, '')}`));
+    const stagedDir = path.join(dir, `asset.${String(pages.Properties.SourceObjectKeys[0]).replace(/\.zip$/, '')}`);
+    const staged = files(stagedDir);
+    const text = (f: string) => fs.readFileSync(path.join(stagedDir, f), 'utf8');
     const [fn] = Object.values<Json>(t.findResources('AWS::CloudFront::Function'));
     const router = new Function(`${fn.Properties.FunctionCode}\nreturn handler;`)() as (e: Json) => Json;
     const edge = (uri: string) => router({ request: { method: 'GET', uri, querystring: {}, headers: {} } }).uri;
-    return { pages, staged, edge };
+    return { pages, staged, text, edge };
   };
   const STUB_TUTORIAL = ['tutorial/hello/index.html', 'tutorial/index.html'];
+  const stub = (f: string) => fs.readFileSync(path.join(SITE_STUB_DIR, f), 'utf8');
+  const STUB_PAGES = ['404.html', 'app.html', 'docs/index.html', 'index.html'];
 
   test.each([
     ['prod', { e2bTemplateId: 'tpl-1' }],
     ['gamma', { e2bTemplateId: 'tpl-1', e2bDomain: 'e2b.example' }],
     ['beta', { e2bTemplateId: 'tpl-1', sandboxTimeoutS: 60 }],
-  ] as const)('%s with a template (%j): the pages upload has the tutorial and the router serves it', (stage, tutorial) => {
-    const { pages, staged, edge } = stack(stage, tutorial);
+  ] as const)('%s with a template (%j): the pages upload has the tutorial, every page as built, Tutorial entry included, and the router serves it', (stage, tutorial) => {
+    const { pages, staged, text, edge } = stack(stage, tutorial);
     expect(staged.filter((f) => f.startsWith(`${TUTORIAL_DIR}/`))).toEqual(STUB_TUTORIAL);
+    expect(staged).toEqual([...STUB_PAGES, ...STUB_TUTORIAL].sort());
+    for (const f of staged) expect([f, text(f)]).toEqual([f, stub(f)]);
+    for (const f of STUB_PAGES) expect([f, text(f).includes(TUTORIAL_NAV_ITEM)]).toEqual([f, true]);
     expect(pages.Properties.Exclude).toEqual(['assets/*']);
     expect([edge('/tutorial'), edge('/tutorial/hello'), edge('/tutorial/hello/index.html')]).toEqual([
       '/tutorial/index.html',
@@ -356,16 +367,50 @@ describe('the tutorial on a stage', () => {
   test.each([
     ['beta', {}],
     ['prod', { e2bDomain: 'e2b.example', sandboxTimeoutS: 60 }],
-  ] as const)('%s without a template (%j): no tutorial file is uploaded, the prune still covers tutorial/, and every tutorial path is the 404 page', (stage, tutorial) => {
-    const { pages, staged, edge } = stack(stage, tutorial);
+  ] as const)('%s without a template (%j): no tutorial file is uploaded, no page has the Tutorial entry, the prune still covers tutorial/, and every tutorial path is the 404 page', (stage, tutorial) => {
+    const { pages, staged, text, edge } = stack(stage, tutorial);
     expect(staged.filter((f) => f.startsWith(`${TUTORIAL_DIR}/`))).toEqual([]);
-    expect(staged).toEqual(expect.arrayContaining(['index.html', '404.html', 'app.html', 'docs/index.html']));
+    expect(staged).toEqual(STUB_PAGES);
+    // Each page is the build's with the entry taken out, and nothing else changed; no page links to the tutorial.
+    for (const f of staged) expect([f, text(f)]).toEqual([f, stub(f).replace(TUTORIAL_NAV_ITEM, '')]);
+    for (const f of staged) expect([f, /href="\/tutorial/.test(text(f))]).toEqual([f, false]);
     // Only assets/ is kept out of the prune, so tutorial pages an earlier deploy left are deleted.
     expect(pages.Properties.Exclude).toEqual(['assets/*']);
     for (const uri of ['/tutorial', '/tutorial/hello', '/tutorial/index.html', '/tutorial/hello/index.html']) {
       expect([uri, edge(uri)]).toEqual([uri, '/404.html']);
     }
     expect(edge('/docs/')).toBe('/docs/index.html');
+  });
+
+  // A page of the build without the entry (a layout that changed its markup) would ship the link where /tutorial is the
+  // 404 page if the removal passed it by: a stage without the tutorial refuses to synthesize, naming the page. A stage
+  // that serves the tutorial uploads the page as it is. A file that is not a page is copied untouched on both.
+  test('a page without the Tutorial entry: refused on a stage without the tutorial, uploaded as built on one with it', () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'site-pages-'));
+    try {
+      const site = path.join(scratch, 'site');
+      fs.cpSync(SITE_STUB_DIR, site, { recursive: true });
+      fs.writeFileSync(path.join(site, 'docs/index.html'), stub('docs/index.html').replace(TUTORIAL_NAV_ITEM, ''));
+      fs.writeFileSync(path.join(site, 'install.sh'), '#!/bin/sh\n# <li id="nav-tutorial"><a href="/tutorial">Tutorial</a></li>\n');
+      const make = (tutorial: TutorialConfig) =>
+        new SiteStack(new App(), 'mopm-prod-site', {
+          env: { account: DUMMY_ACCOUNT, region: 'us-east-1' },
+          config: stageConfig('prod', DUMMY_ZONE_ID, tutorial),
+          siteDir: site,
+        });
+      expect(() => make({})).toThrow("docs/index.html: expected the header's Tutorial entry exactly once, found it 0 times");
+      expect(() => make({ e2bTemplateId: 't' })).not.toThrow();
+      // writeServedPages itself, on a build without that page: install.sh is copied byte for byte on both kinds of stage.
+      fs.rmSync(path.join(site, 'docs'), { recursive: true });
+      for (const [name, tutorial] of [['without', {}], ['with', { e2bTemplateId: 't' }]] as const) {
+        const out = path.join(scratch, name);
+        writeServedPages(stageConfig('prod', DUMMY_ZONE_ID, tutorial), site, out);
+        expect([name, fs.readFileSync(path.join(out, 'install.sh'), 'utf8')]).toEqual([name, fs.readFileSync(path.join(site, 'install.sh'), 'utf8')]);
+        expect([name, files(out).filter((f) => f.startsWith('assets'))]).toEqual([name, []]);
+      }
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
   });
 
   test('servedFiles drops only what is under tutorial/, and keeps a file merely named like it', () => {
@@ -490,6 +535,16 @@ describe('the site build', () => {
       for (const [, ref] of html.matchAll(/"(\/assets\/[^"]+)"/g)) {
         expect([page, ref, fs.existsSync(path.join(DEFAULT_SITE_DIR, ref))]).toEqual([page, ref, true]);
       }
+    }
+    // A stage without the tutorial takes the header's Tutorial entry out of every page of this build (it refuses a page
+    // without it), and a stage with it uploads the build's pages, entry included.
+    const prod = new SiteStack(new App(), 'mopm-prod-site', {
+      env: { account: DUMMY_ACCOUNT, region: 'us-east-1' },
+      config: stageConfig('prod', DUMMY_ZONE_ID, {}),
+    });
+    expect(prod.distribution).toBeDefined();
+    for (const page of pages.filter((p) => !p.startsWith(`${TUTORIAL_DIR}/`))) {
+      expect([page, fs.readFileSync(path.join(DEFAULT_SITE_DIR, page), 'utf8').split(TUTORIAL_NAV_ITEM).length]).toEqual([page, 2]);
     }
   });
 
