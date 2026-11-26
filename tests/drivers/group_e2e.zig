@@ -215,10 +215,14 @@ pub fn sourceOf(name: []const u8) []const u8 {
     return "def base() -> Int:\n    return 1\n";
 }
 
-/// The README of a member. The app's holds the program a reader of the package page would copy.
+/// The line of the app's README that hides a test-only import as komira's READMEs do (`<!-- mojo-hidden ... -->`). The page
+/// must show none of it: the readme-e2e job of e2e.yml reads the app's package page on beta and gamma (site/tools/readme-e2e.ts).
+pub const readme_hidden_line = "<!-- mojo-hidden from std.testing import assert_equal -->";
+
+/// The README of a member. The app's holds the program a reader of the package page would copy, after a hidden line.
 pub fn readmeOf(a: Allocator, name: []const u8) ![]u8 {
     if (std.mem.eql(u8, name, pkg_app)) {
-        return std.fmt.allocPrint(a, "# {s}\n\nA throwaway package of the group publishing end-to-end check. Install it, then:\n\n```mojo\nfrom zz_e2e_app import total\n\n\ndef main():\n    print(\"zz_e2e total\", total())\n```\n\nIt prints `zz_e2e total 3`.\n", .{name});
+        return std.fmt.allocPrint(a, "# {s}\n\nA throwaway package of the group publishing end-to-end check. Install it, then:\n\n" ++ readme_hidden_line ++ "\n```mojo\nfrom zz_e2e_app import total\n\n\ndef main():\n    print(\"zz_e2e total\", total())\n```\n\nIt prints `zz_e2e total 3`.\n", .{name});
     }
     return std.fmt.allocPrint(a, "# {s}\n\nA throwaway package of the group publishing end-to-end check.\n", .{name});
 }
