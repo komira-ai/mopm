@@ -104,8 +104,8 @@ tree with a missing page, a dangling asset or import, markup its tag scanner can
 comment, a `<` inside a tag, an unclosed tag), a script that is not an empty `<script src="/assets/...">`, a
 style element or attribute, an event-handler attribute, a `javascript:`, `data:` or `vbscript:` URL, a file
 other than `.html`, `.js` or `.css`, JavaScript that names a source map, `tutorial.js` loaded by a page that is not a
-tutorial page (one under `tutorial/`), or JavaScript or CSS over its size budget (64 KiB a module and
-128 KiB in all for the `tsc` modules; 320 KiB for `tutorial.js`, `TUTORIAL_JS_MAX_BYTES`, set from its first measurement
+tutorial page (one under `tutorial/`), or JavaScript or CSS over its size budget (64 KiB a module and 128 KiB in all for
+the `tsc` modules; 320 KiB for `tutorial.js`, `TUTORIAL_JS_MAX_BYTES`, set from its first measurement
 of 309,160 bytes; for CSS, the design note's 24 KiB for the shared `site.css`, 16 KiB for each area stylesheet, and 30 KiB for
 the stylesheets one page links together, down from the 32 KiB the single stylesheet had).
 
