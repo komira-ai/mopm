@@ -17,7 +17,6 @@
 //    PAGE_CSS_MAX_BYTES together;
 //  - no page but a tutorial page (one under tutorial/) loads the tutorial bundle;
 //  - no JavaScript names a source map (none is published, and a map would carry this machine's paths).
-// checkHeld holds the pages the build writes beside dist/ (the held tree, tools/build.ts) to the same page rules.
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, posix, relative, sep } from 'path';
@@ -195,11 +194,11 @@ export const isTutorialBundle = (f: string): boolean => /^assets\/[^/]+\/[^/]+$/
 export const isTutorialPage = (f: string): boolean => f.startsWith('tutorial/');
 
 /**
- * The rules of one page `f` (its text; `page`, its path in its own tree, as the site will serve it): no inline script or
- * style, no handler or script URL, every '<' read, every /assets/ reference a file of `have`, the tutorial bundle only on
- * a tutorial page, and the stylesheets it links (sizes from `cssSize`) within the page budget.
+ * The rules of one page `f` of dist/ (its text): no inline script or style, no handler or script URL, every '<' read,
+ * every /assets/ reference a file of `have`, the tutorial bundle only on a tutorial page, and the stylesheets it links
+ * (sizes from `cssSize`) within the page budget.
  */
-function pageProblems(f: string, text: string, have: ReadonlySet<string>, cssSize: ReadonlyMap<string, number>, page: string = f): string[] {
+function pageProblems(f: string, text: string, have: ReadonlySet<string>, cssSize: ReadonlyMap<string, number>): string[] {
   const problems: string[] = [];
   // A script's content runs whatever its attributes say; every one must be empty (an unclosed one runs to the end).
   for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)(?:<\/script\s*>|$)/gi)) {
@@ -224,7 +223,7 @@ function pageProblems(f: string, text: string, have: ReadonlySet<string>, cssSiz
       if (isUrlAttr(name) && isScriptUrl(value)) problems.push(`${f}: a script URL (or an unknown character reference) in ${name} on <${tag}>`);
       const asset = (name === 'href' || name === 'src') && /^\/(assets\/[^#?]+)/.exec(value);
       if (asset && !have.has(asset[1])) problems.push(`${f}: references /${asset[1]}, which is not in dist`);
-      if (asset && isTutorialBundle(asset[1]) && !isTutorialPage(page)) problems.push(`${f}: loads /${asset[1]}; only the tutorial pages do`);
+      if (asset && isTutorialBundle(asset[1]) && !isTutorialPage(f)) problems.push(`${f}: loads /${asset[1]}; only the tutorial pages do`);
     }
   }
   if (pageCss > PAGE_CSS_MAX_BYTES) problems.push(`${f} links ${pageCss} bytes of CSS; the limit for one page is ${PAGE_CSS_MAX_BYTES}`);
@@ -277,26 +276,5 @@ export function checkDist(dir: string): void {
     if (ext === '.html') problems.push(...pageProblems(f, text, have, cssSize));
   }
   if (js > JS_TOTAL_MAX_BYTES) problems.push(`JavaScript is ${js} bytes in all; the limit is ${JS_TOTAL_MAX_BYTES}`);
-  if (problems.length > 0) throw new DistError(problems);
-}
-
-/**
- * Checks the held tree (pages the build writes but dist/ does not ship until their routes exist, tools/build.ts): only
- * .html pages, each held to every rule of a page in dist/, its /assets/ references and stylesheet sizes read from the
- * built dist/ beside it (`distDir`), where they will be served from. Throws a DistError naming each page `held/<path>`.
- */
-export function checkHeld(heldDir: string, distDir: string): void {
-  const have = new Set(listFiles(distDir));
-  const cssSize = new Map<string, number>();
-  for (const f of have) if (posix.extname(f) === '.css') cssSize.set(f, statSync(join(distDir, f)).size);
-  const problems: string[] = [];
-  for (const f of listFiles(heldDir)) {
-    const name = `held/${f}`;
-    if (posix.extname(f) !== '.html') {
-      problems.push(`${name}: only .html pages are held`);
-      continue;
-    }
-    problems.push(...pageProblems(name, readFileSync(join(heldDir, f), 'utf8'), have, cssSize, f));
-  }
   if (problems.length > 0) throw new DistError(problems);
 }

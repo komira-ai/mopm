@@ -1,5 +1,5 @@
 {
-  "$comment": "Route vectors for the site (parseRoute: view) and for the edge router of the site stack (edge: a CloudFront Function generated from src/routes.ts and the files of a site build, run over every vector by service/infra/stacks/test/site-router.test.ts). files is the build the vectors assume: every file of it as the URI that names it, the assets of one build id under /assets/. edge is the URI the router rewrites the request to, \"redirect:<path>\" for a permanent (301) redirect to the normalised package name (the query kept), \"found:<path>\" for a temporary (302) redirect of a one-segment or flat version address to a search (src/routes.ts flatSearchPath), \"pass\" when the request goes to the bucket unchanged (a file of the build, or an asset of an earlier build, whose id is not this build's), or \"/404.html\" for anything else: the router answers it with the 404 page and status 404. The tutorial is not served yet (site/tools/build.ts builds its pages but holds them out of the build): its vectors here are 404s, among them the files its pages will be. /tutorial and /tutorial/<lesson> have none yet: the login's return_to keeps them (test/gate.test.ts and service/lambda/core/tests/return_to_routes.rs hold return_to to the pages the vectors serve), so they come with the routes. view is the app-shell route, or null when the path never reaches the shell.",
+  "$comment": "Route vectors for the site (parseRoute: view) and for the edge router of the site stack (edge: a CloudFront Function generated from src/routes.ts and the files of a site build, run over every vector by service/infra/stacks/test/site-router.test.ts). files is the build the vectors assume: every file of it as the URI that names it, the assets of one build id under /assets/. edge is the URI the router rewrites the request to, \"redirect:<path>\" for a permanent (301) redirect to the normalised package name (the query kept), \"found:<path>\" for a temporary (302) redirect of a one-segment or flat version address to a search (src/routes.ts flatSearchPath), \"pass\" when the request goes to the bucket unchanged (a file of the build, or an asset of an earlier build, whose id is not this build's), or \"/404.html\" for anything else: the router answers it with the 404 page and status 404. The tutorial's pages are files of the build: /tutorial and /tutorial/<lesson> are their index.html, and with a trailing slash no page, as the login's return_to keeps them (test/gate.test.ts and service/lambda/core/tests/return_to_routes.rs hold return_to to the pages the vectors serve). A stage that does not serve the tutorial leaves its files out of the router's build (service/infra/stacks/lib/site-stack.ts servedFiles), so there every tutorial vector is a 404 (test/site-router.test.ts). view is the app-shell route, or null when the path never reaches the shell.",
   "files": [
     "/404.html",
     "/app.html",
@@ -16,7 +16,9 @@
     "/docs/what-mopm-stores/index.html",
     "/docs/why/index.html",
     "/index.html",
-    "/install.sh"
+    "/install.sh",
+    "/tutorial/hello/index.html",
+    "/tutorial/index.html"
   ],
   "vectors": [
     {
@@ -854,8 +856,18 @@
       "view": null
     },
     {
+      "path": "/tutorial",
+      "edge": "/tutorial/index.html",
+      "view": null
+    },
+    {
       "path": "/tutorial/",
       "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/tutorial/hello",
+      "edge": "/tutorial/hello/index.html",
       "view": null
     },
     {
@@ -865,11 +877,41 @@
     },
     {
       "path": "/tutorial/index.html",
-      "edge": "/404.html",
+      "edge": "pass",
       "view": null
     },
     {
       "path": "/tutorial/hello/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/tutorial/Hello",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/tutorial/hello/x",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/tutorial/hello/index",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/tutorial/../index.html",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/tutorials",
+      "edge": "/404.html",
+      "view": null
+    },
+    {
+      "path": "/tutorial.html",
       "edge": "/404.html",
       "view": null
     }

@@ -372,6 +372,5 @@ describe('a bad lesson is refused, naming the lesson and the field', () => {
     expect(() => f.build()).toThrow(LessonError);
     expect(() => f.build()).toThrow('tutorial/lessons/hello: lesson.json: /editable: src/gone.mojo is not a file under project/');
     expect(existsSync(f.outDir)).toBe(false);
-    expect(existsSync(f.heldDir)).toBe(false);
   });
 });

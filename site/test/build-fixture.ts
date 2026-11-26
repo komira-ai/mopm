@@ -48,8 +48,7 @@ export interface Fixture {
   staticDir: string;
   lessonsDir: string;
   outDir: string;
-  heldDir: string;
-  build(): { id: string; files: string[]; held: string[]; tutorialBytes: number };
+  build(): { id: string; files: string[]; tutorialBytes: number };
 }
 
 /** A fresh scratch directory under site/build/test-scratch. */
@@ -64,7 +63,6 @@ export function fixture(files: Record<string, string> = {}, lessonsDir: string =
   const browserDir = join(root, 'browser');
   const staticDir = join(root, 'static');
   const outDir = join(root, 'dist');
-  const heldDir = join(root, 'held');
   for (const [p, s] of Object.entries({ ...BROWSER_FILES, ...files })) {
     mkdirSync(dirname(join(browserDir, p)), { recursive: true });
     writeFileSync(join(browserDir, p), s);
@@ -76,8 +74,7 @@ export function fixture(files: Record<string, string> = {}, lessonsDir: string =
     staticDir,
     lessonsDir,
     outDir,
-    heldDir,
-    build: () => buildSite({ browserDir, staticDir, repoRoot: REPO_ROOT, lessonsDir, outDir, heldDir }),
+    build: () => buildSite({ browserDir, staticDir, repoRoot: REPO_ROOT, lessonsDir, outDir }),
   };
 }
 

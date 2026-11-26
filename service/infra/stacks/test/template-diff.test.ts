@@ -1,5 +1,6 @@
 import { Template } from 'aws-cdk-lib/assertions';
 import { STAGES, Stage, stageConfig } from '../lib/config';
+import { servesTutorial } from '../lib/site-stack';
 import { build } from './util';
 
 // Whole-template stage diff. The summarised stage-diff test only watches named settings; this one compares every
@@ -72,7 +73,7 @@ function differing(a: Map<string, string>, b: Map<string, string>): string[] {
   for (const k of keys) {
     if ((a.get(k) ?? 'null') !== (b.get(k) ?? 'null')) {
       out.add(typeOnly(k));
-      if (!EXPECTED_PROD_DIFF.includes(typeOnly(k))) {
+      if (!EXPECTED_PROD_DIFF.includes(typeOnly(k)) && !TUTORIAL_DIFF.includes(typeOnly(k))) {
         // Unexpected difference: show both values so the failure is diagnosable from the CI log alone.
         console.log(`DIFF ${k}\n  a=${(a.get(k) ?? 'null').slice(0, 400)}\n  b=${(b.get(k) ?? 'null').slice(0, 400)}`);
       }
@@ -112,6 +113,13 @@ const EXPECTED_PROD_DIFF = [
 // stage (package creation is the claim route's grant). Config-as-code trust is beta's alone, so this is the whole of beta's
 // difference from gamma. Adding to this list is a reviewed decision.
 const EXPECTED_BETA_ONLY_DIFF = ['api:AWS::Lambda::Function:Properties.Environment'];
+
+// What serving the tutorial changes between two stages, when one does and the other does not (site-stack.ts
+// servesTutorial: the stage file names the tutorial's E2B template): the router, which serves the tutorial's pages, and
+// the pages upload, which holds them. site.test.ts pins both sides. Today beta serves it; gamma and prod do not.
+const TUTORIAL_DIFF = ['site:AWS::CloudFront::Function:Properties.FunctionCode', 'site:Custom::CDKBucketDeployment:Properties.SourceObjectKeys'];
+const tutorialDiff = (a: Stage, b: Stage): string[] => (servesTutorial(stageConfig(a)) === servesTutorial(stageConfig(b)) ? [] : TUTORIAL_DIFF);
+const expected = (...lists: string[][]): string[] => [...new Set(lists.flat())].sort();
 const EXPECTED_BETA_ONLY_ENV = ['CI_PUBLISHERS', 'MOPM_GROUPS_POLICY'];
 // What prod has that gamma does not: CI_PUBLISHERS, whose one row acts for an account (the stack test pins the row). No groups policy.
 const EXPECTED_PROD_ONLY_ENV = ['CI_PUBLISHERS'];
@@ -127,16 +135,22 @@ function apiEnvNames(stage: Stage): string[] {
 describe('whole-template stage diff', () => {
   const [beta, gamma, prod] = STAGES.map(fingerprint);
 
-  test('beta and gamma synthesize identical templates (modulo names and hosts), except for the beta-only CI trust', () => {
-    expect(differing(beta, gamma)).toEqual(EXPECTED_BETA_ONLY_DIFF);
+  test('beta and gamma synthesize identical templates (modulo names and hosts), except for the beta-only CI trust and the tutorial', () => {
+    expect(differing(beta, gamma)).toEqual(expected(EXPECTED_BETA_ONLY_DIFF, tutorialDiff('beta', 'gamma')));
   });
 
-  test('gamma differs from prod only in the expected properties', () => {
-    expect(differing(gamma, prod)).toEqual(EXPECTED_PROD_DIFF);
+  test('gamma differs from prod only in the expected properties and the tutorial', () => {
+    expect(differing(gamma, prod)).toEqual(expected(EXPECTED_PROD_DIFF, tutorialDiff('gamma', 'prod')));
   });
 
-  test('beta differs from prod in the expected properties and the beta-only CI trust', () => {
-    expect(differing(beta, prod)).toEqual([...new Set([...EXPECTED_PROD_DIFF, ...EXPECTED_BETA_ONLY_DIFF])].sort());
+  test('beta differs from prod in the expected properties, the beta-only CI trust and the tutorial', () => {
+    expect(differing(beta, prod)).toEqual(expected(EXPECTED_PROD_DIFF, EXPECTED_BETA_ONLY_DIFF, tutorialDiff('beta', 'prod')));
+  });
+
+  // The stage files as they are: only beta's names a template. A change that sets gamma's or prod's changes this line
+  // with it, so turning the tutorial on for a stage is a reviewed decision too.
+  test('beta alone serves the tutorial today', () => {
+    expect(STAGES.filter((s) => servesTutorial(stageConfig(s)))).toEqual(['beta']);
   });
 });
 

@@ -18,8 +18,7 @@ import { randomBytes } from 'crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { extname, join, resolve, sep } from 'path';
-import { parseRoute } from '../src/routes';
-import { LESSON } from '../src/tutorial/gate';
+import { LESSON, parseRoute, TUTORIAL_PATH } from '../src/routes';
 import { securityHeaders } from './headers';
 
 // ---- scenarios and flags ------------------------------------------------------------------------------------------
@@ -253,18 +252,19 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
 
 /**
  * The file of dist/ a path is answered with, relative, or null for the 404 page. As the edge router: `/` is the home
- * page, an app route the app shell, a directory its index.html; and the tutorial's routes (section 7) its shell page,
- * `tutorial.html`, once the tutorial pages build one. The router's redirects of names the registry would normalise are
- * not played.
+ * page, an app route the app shell, a directory its index.html; `/tutorial` and `/tutorial/<lesson>` the tutorial's
+ * pages (tutorial/index.html, tutorial/<lesson>/index.html), and any other tutorial path ending in '/' no page. The
+ * router's redirects of names the registry would normalise are not played.
  */
 export function pageFile(distDir: string, path: string): string | null {
   const segments = path.split('/');
   if (segments.some((s) => s === '..' || s === '.') || /[\u0000\\]/.test(path)) return null;
   let rel: string;
   if (path === '/') rel = 'index.html';
-  else if (path === '/tutorial' || (segments.length === 3 && segments[1] === 'tutorial' && LESSON.test(segments[2]))) {
-    rel = 'tutorial.html';
-  } else if (parseRoute(path) !== null) rel = 'app.html';
+  else if (path === TUTORIAL_PATH) rel = 'tutorial/index.html';
+  else if (segments.length === 3 && `/${segments[1]}` === TUTORIAL_PATH && LESSON.test(segments[2])) rel = `tutorial/${segments[2]}/index.html`;
+  else if (`/${segments[1]}` === TUTORIAL_PATH && path.endsWith('/')) return null;
+  else if (parseRoute(path) !== null) rel = 'app.html';
   else rel = path.slice(1);
   const full = resolve(distDir, rel);
   if (!full.startsWith(distDir + sep)) return null;

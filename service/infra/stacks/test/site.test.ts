@@ -3,10 +3,11 @@ import * as os from 'os';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { STAGES, edgeOriginSecretName, stageConfig } from '../lib/config';
+import { STAGES, TutorialConfig, edgeOriginSecretName, stageConfig } from '../lib/config';
 import {
   API_CONTENT_SECURITY_POLICY, API_PATH_PATTERN, ASSETS_CACHE_CONTROL, DEFAULT_SITE_DIR, EDGE_HEADER, FUNCTION_MAX_BYTES,
-  PAGES_CACHE_CONTROL, PERMISSIONS_POLICY, SiteStack, assertSiteBuild, contentSecurityPolicy, siteFiles, siteRouterSource,
+  PAGES_CACHE_CONTROL, PERMISSIONS_POLICY, SiteStack, TUTORIAL_DIR, assertSiteBuild, contentSecurityPolicy, servedFiles,
+  servesTutorial, siteFiles, siteRouterSource,
 } from '../lib/site-stack';
 import { DUMMY_ACCOUNT, DUMMY_ZONE_ID, SITE_STUB_DIR, bucketStatements, build } from './util';
 import { apiBehaviour, behaviourFor, edgeHeaderProblems } from './site-edge';
@@ -208,8 +209,11 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
     const [[, assets]] = byPrefix('assets/');
     const [[, pages]] = byPrefix(undefined);
     expect(files(staged(assets))).toEqual(files(path.join(SITE_STUB_DIR, 'assets')));
-    expect(files(staged(pages))).toEqual(files(SITE_STUB_DIR).filter((f) => !f.startsWith('assets/')));
+    const tutorial = (f: string) => f.startsWith(`${TUTORIAL_DIR}/`);
+    expect(files(staged(pages))).toEqual(files(SITE_STUB_DIR).filter((f) => !f.startsWith('assets/') && (servesTutorial(c) || !tutorial(f))));
     expect(files(staged(pages))).toContain('index.html');
+    // The stage files decide: beta names its template, gamma and prod do not yet.
+    expect([stage, files(staged(pages)).some(tutorial)]).toEqual([stage, stage === 'beta']);
   });
 
   test('no distribution-wide error responses: they would turn the JSON errors of /api/* into the 404 page', () => {
@@ -223,7 +227,7 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
     const [[fnId, fn]] = fns;
     expect(fn.Properties.FunctionConfig.Runtime).toBe('cloudfront-js-2.0');
     expect(fn.Properties.AutoPublish).toBe(true);
-    expect(fn.Properties.FunctionCode).toBe(siteRouterSource(files(SITE_STUB_DIR).map((f) => `/${f}`)));
+    expect(fn.Properties.FunctionCode).toBe(siteRouterSource(servedFiles(c, files(SITE_STUB_DIR).map((f) => `/${f}`))));
     const arn = { 'Fn::GetAtt': [fnId, 'FunctionARN'] };
     expect(dist.DefaultCacheBehavior.FunctionAssociations).toEqual([
       { EventType: 'viewer-request', FunctionARN: arn },
@@ -317,6 +321,62 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
   });
 });
 
+// A stage serves the tutorial's pages exactly when its configuration names the E2B template its sandboxes start from:
+// the stage's name plays no part, and the other settings of the tutorial block do not turn it on.
+describe('the tutorial on a stage', () => {
+  const stack = (stage: (typeof STAGES)[number], tutorial: TutorialConfig) => {
+    const s = build(stage, { tutorial });
+    const dir = (s.site.node.root as App).synth().directory;
+    const t = Template.fromStack(s.site);
+    const [, pages] = Object.entries<Json>(t.findResources('Custom::CDKBucketDeployment')).find(([, r]) => r.Properties.DestinationBucketKeyPrefix === undefined) as [string, Json];
+    const staged = files(path.join(dir, `asset.${String(pages.Properties.SourceObjectKeys[0]).replace(/\.zip$/, '')}`));
+    const [fn] = Object.values<Json>(t.findResources('AWS::CloudFront::Function'));
+    const router = new Function(`${fn.Properties.FunctionCode}\nreturn handler;`)() as (e: Json) => Json;
+    const edge = (uri: string) => router({ request: { method: 'GET', uri, querystring: {}, headers: {} } }).uri;
+    return { pages, staged, edge };
+  };
+  const STUB_TUTORIAL = ['tutorial/hello/index.html', 'tutorial/index.html'];
+
+  test.each([
+    ['prod', { e2bTemplateId: 'tpl-1' }],
+    ['gamma', { e2bTemplateId: 'tpl-1', e2bDomain: 'e2b.example' }],
+    ['beta', { e2bTemplateId: 'tpl-1', sandboxTimeoutS: 60 }],
+  ] as const)('%s with a template (%j): the pages upload has the tutorial and the router serves it', (stage, tutorial) => {
+    const { pages, staged, edge } = stack(stage, tutorial);
+    expect(staged.filter((f) => f.startsWith(`${TUTORIAL_DIR}/`))).toEqual(STUB_TUTORIAL);
+    expect(pages.Properties.Exclude).toEqual(['assets/*']);
+    expect([edge('/tutorial'), edge('/tutorial/hello'), edge('/tutorial/hello/index.html')]).toEqual([
+      '/tutorial/index.html',
+      '/tutorial/hello/index.html',
+      '/tutorial/hello/index.html',
+    ]);
+    expect([edge('/tutorial/'), edge('/tutorial/nope'), edge('/tutorial/hello/')]).toEqual(['/404.html', '/404.html', '/404.html']);
+  });
+
+  test.each([
+    ['beta', {}],
+    ['prod', { e2bDomain: 'e2b.example', sandboxTimeoutS: 60 }],
+  ] as const)('%s without a template (%j): no tutorial file is uploaded, the prune still covers tutorial/, and every tutorial path is the 404 page', (stage, tutorial) => {
+    const { pages, staged, edge } = stack(stage, tutorial);
+    expect(staged.filter((f) => f.startsWith(`${TUTORIAL_DIR}/`))).toEqual([]);
+    expect(staged).toEqual(expect.arrayContaining(['index.html', '404.html', 'app.html', 'docs/index.html']));
+    // Only assets/ is kept out of the prune, so tutorial pages an earlier deploy left are deleted.
+    expect(pages.Properties.Exclude).toEqual(['assets/*']);
+    for (const uri of ['/tutorial', '/tutorial/hello', '/tutorial/index.html', '/tutorial/hello/index.html']) {
+      expect([uri, edge(uri)]).toEqual([uri, '/404.html']);
+    }
+    expect(edge('/docs/')).toBe('/docs/index.html');
+  });
+
+  test('servedFiles drops only what is under tutorial/, and keeps a file merely named like it', () => {
+    const build = ['/index.html', '/tutorial/index.html', '/tutorial/a/index.html', '/tutorial.html', '/tutorials/x.html', '/docs/tutorial/index.html'];
+    expect(servedFiles(stageConfig('prod', DUMMY_ZONE_ID, {}), build)).toEqual(['/index.html', '/tutorial.html', '/tutorials/x.html', '/docs/tutorial/index.html']);
+    expect(servedFiles(stageConfig('prod', DUMMY_ZONE_ID, { e2bTemplateId: 't' }), build)).toEqual(build);
+    // No tutorial block at all (stageConfig would read the stage file's for an undefined argument).
+    expect(servesTutorial({ ...stageConfig('prod', DUMMY_ZONE_ID, {}), tutorial: undefined })).toBe(false);
+  });
+});
+
 describe('the edge header check', () => {
   const site = build('beta').site;
   const fresh = () => JSON.parse(JSON.stringify(Template.fromStack(site).toJSON()));
@@ -403,7 +463,7 @@ describe('the site build', () => {
     }
     assertSiteBuild(DEFAULT_SITE_DIR);
     const pages = files(DEFAULT_SITE_DIR).filter((f) => f.endsWith('.html'));
-    expect(pages).toEqual(expect.arrayContaining(['404.html', 'app.html', 'docs/index.html', 'index.html']));
+    expect(pages).toEqual(expect.arrayContaining(['404.html', 'app.html', 'docs/index.html', 'index.html', 'tutorial/index.html']));
     // The router of the real build: within CloudFront Functions' size limit, and it serves every file of the build.
     const real = siteFiles(DEFAULT_SITE_DIR);
     expect(Buffer.byteLength(siteRouterSource(real))).toBeLessThanOrEqual(FUNCTION_MAX_BYTES);
@@ -418,7 +478,8 @@ describe('the site build', () => {
     for (const page of pages) {
       const html = fs.readFileSync(path.join(DEFAULT_SITE_DIR, page), 'utf8');
       const scripts = html.match(/<script\b[^>]*>[\s\S]*?<\/script>/g) ?? [];
-      expect([page, scripts.length]).toEqual([page, 1]);
+      // main.js, and on a lesson's page the tutorial bundle after it.
+      expect([page, scripts.length]).toEqual([page, /^tutorial\/[^/]+\/index\.html$/.test(page) ? 2 : 1]);
       for (const s of scripts) expect([page, s]).toEqual([page, expect.stringMatching(/^<script type="module" src="\/assets\/[^"]+\.js"><\/script>$/)]);
       for (const [, href] of html.matchAll(/<link\b[^>]*\bhref="([^"]*)"/g)) {
         expect([page, href]).toEqual([page, expect.stringMatching(/^\/assets\/[^"]+\.(css|js)$/)]);

@@ -72,7 +72,9 @@ test.each(V.map((v) => [v.path, v.edge] as const))('the response to %j (router: 
 test('the vectors exercise every kind of answer, including a version route that ends in what looks like an extension', () => {
   expect(V.length).toBeGreaterThan(40);
   const kinds = new Set(V.map((v) => (v.edge.startsWith('redirect:') ? 'redirect' : v.edge.startsWith('found:') ? 'found' : v.edge)));
-  for (const k of ['/index.html', '/app.html', '/docs/index.html', '/404.html', 'redirect', 'found', 'pass']) expect(kinds).toContain(k);
+  for (const k of ['/index.html', '/app.html', '/docs/index.html', '/tutorial/index.html', '/tutorial/hello/index.html', '/404.html', 'redirect', 'found', 'pass']) {
+    expect(kinds).toContain(k);
+  }
   expect(V).toContainEqual(expect.objectContaining({ path: '/packages/a/ab/1.0.0', edge: '/app.html' }));
   expect(V).toContainEqual(
     expect.objectContaining({ path: '/packages/komira-ai/http.client', edge: 'redirect:/packages/komira-ai/http_client' }),
@@ -92,6 +94,31 @@ test('an unknown page, a missing docs page and a missing key under /assets/ of t
   }
   // The page itself is answered with 404 too, however it was asked for.
   expect(viewerResponse('/404.html', response(200)).statusCode).toBe(404);
+});
+
+test('a lesson id the build has no page for, and a tutorial path of the wrong shape, get the 404 page', () => {
+  // Held here, not in the shared vectors: return_to keeps every path of the lesson grammar, and its vector test reads a
+  // kept path as one the router serves a page for.
+  for (const uri of ['/tutorial/no-such-lesson', '/tutorial/index', '/tutorial/hello-world-2', '/tutorial//hello', '/tutorial/hello%2F']) {
+    expect([uri, edge(uri)]).toEqual([uri, '/404.html']);
+    expect([uri, viewerResponse(uri, response(200)).statusCode]).toEqual([uri, 404]);
+  }
+});
+
+// A stage without the tutorial's E2B template leaves the tutorial's files out of the router's build (site-stack.ts
+// servedFiles): there the router answers every tutorial vector with the 404 page, and every other vector as before.
+test('a router of the build without its tutorial files answers every tutorial path with the 404 page, and the rest as before', () => {
+  const without = load(siteRouterSource(FIXTURE.files.filter((f) => !f.startsWith('/tutorial/'))));
+  const run = (uri: string) => {
+    const out = without({ context: { eventType: 'viewer-request' }, request: request(uri) });
+    return 'statusCode' in out ? (out as Redirect).headers.location.value : (out as Request).uri;
+  };
+  const tutorial = V.filter((v) => v.path.startsWith('/tutorial'));
+  expect(tutorial.length).toBeGreaterThan(5);
+  for (const v of tutorial) expect([v.path, run(v.path)]).toEqual([v.path, '/404.html']);
+  for (const v of V.filter((x) => !x.path.startsWith('/tutorial') && !x.edge.includes(':'))) {
+    expect([v.path, run(v.path)]).toEqual([v.path, v.edge === 'pass' ? v.path : v.edge]);
+  }
 });
 
 test("an asset of an earlier build goes to the bucket as it is: the router knows only this build's files", () => {

@@ -7,12 +7,14 @@
 // the pages work without scripts and without signing in (the files and commands are on the page to read), and the
 // header is every page's (no login, no "Sign out").
 //
-// The build writes them to the held tree (tools/build.ts, BuildOptions.heldDir), not to dist/: the edge router serves
-// every file of dist/ as it is, and the tutorial is not to be reachable before its routes and its header link exist.
+// The build writes them to dist/tutorial/ (tools/build.ts). The edge router serves `/tutorial` and `/tutorial/<lesson>`
+// from them (src/routes.ts TUTORIAL_PATH, LESSON), on a stage the site stack ships them to: one whose configuration
+// names the tutorial's E2B template (service/infra/stacks/lib/site-stack.ts, servesTutorial).
 
 import { h, type SElement, type SNode } from '../src/doc';
 import { internalHref } from '../src/links';
 import { renderMarkdown } from '../src/markdown/render';
+import { TUTORIAL_PATH } from '../src/routes';
 import { lessonSource, RUNNER_ID } from '../src/tutorial/view';
 import { doc, type PageSpec } from './layout';
 import type { Lesson } from './lessons';
@@ -22,8 +24,8 @@ export const LESSON_ID_PREFIX = 'lesson-';
 /** The id of the element the tutorial's page script fills with the editor, the buttons and the output. */
 export { RUNNER_ID };
 
-/** The routes of the tutorial's pages (src/routes.ts does not route them yet). */
-export const TUTORIAL_PATH = '/tutorial';
+/** The routes of the tutorial's pages (src/routes.ts). */
+export { TUTORIAL_PATH };
 export const lessonPath = (l: Pick<Lesson, 'id'>): string => `${TUTORIAL_PATH}/${l.id}`;
 
 /** The lesson's text as an article: lesson.md under the page's h1 (its headings shifted down one level). */

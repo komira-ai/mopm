@@ -29,6 +29,15 @@ export const VERSION_MAX = 128;
 export const VERSIONS_SEGMENT = 'versions';
 /** A docs page slug (`/docs/<slug>/`, src/links.ts DOC_PAGES); the edge router serves `/docs/<slug>/index.html` for it. */
 export const DOC_SLUG = /^[a-z0-9-]{1,64}$/;
+/**
+ * The tutorial's index page. The edge router serves it, and each lesson's page `/tutorial/<lesson>`, from the build's
+ * `tutorial/index.html` and `tutorial/<lesson>/index.html`, on a stage the site stack ships the tutorial to. No trailing
+ * slash: the sign-in's `return_to` keeps exactly these two forms (session.ts isReturnPath), so a page the router serves
+ * is one a sign-in can come back to.
+ */
+export const TUTORIAL_PATH = '/tutorial';
+/** A lesson id (spec/tutorial-lesson.schema.json, `id`), the `<lesson>` of `/tutorial/<lesson>`. */
+export const LESSON = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 /** The runs of separators the registry's normalisation folds into one '_' (normaliseName). */
 export const NAME_SEPARATORS = /[-._]+/g;
 

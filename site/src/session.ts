@@ -12,7 +12,7 @@
 
 import type { SafeHref } from './doc.js';
 import { internalHref } from './links.js';
-import { DOC_SLUG, isCanonicalName, isNamespace, isVersion, VERSIONS_SEGMENT } from './routes.js';
+import { DOC_SLUG, isCanonicalName, isNamespace, isVersion, LESSON, VERSIONS_SEGMENT } from './routes.js';
 
 /** The error codes of the endpoint's table, each a different thing for the page to do. */
 export const GATE_ERROR_CODES = ['session_required', 'csrf_failed', 'invalid_request', 'tutorial_unavailable'] as const;
@@ -107,8 +107,8 @@ export function errorCode(body: string): GateErrorCode {
 
 /** The longest `return_to` the start route keeps (mopm_core return_to.rs RETURN_TO_MAX). */
 export const RETURN_TO_MAX = 256;
-/** A lesson id (section 7). */
-export const LESSON = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** A lesson id (section 7; src/routes.ts, which the edge router is generated from). */
+export { LESSON };
 
 /**
  * Whether the start route keeps `p` as its `return_to` (mopm_core return_to.rs, the same grammar): a page of the

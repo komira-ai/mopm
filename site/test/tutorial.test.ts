@@ -1,14 +1,15 @@
-// The tutorial's prerendered pages (tools/tutorial.ts, written by tools/build.ts to the held tree): every lesson of the
+// The tutorial's prerendered pages (tools/tutorial.ts, written by tools/build.ts to dist/tutorial/): every lesson of the
 // repository renders, with its title, its place and the runner's mount point, in the shell every page has and with no
-// sign-in; the index lists the lessons in order; hostile Markdown in a lesson renders inert; and nothing serves them yet:
-// dist/ holds no tutorial file, so the edge router (which serves the files of dist/ and the routes of src/routes.ts) has
-// none to serve, the route vectors name none, parseRoute routes none, and no page links to one.
+// sign-in; the index lists the lessons in order; hostile Markdown in a lesson renders inert; the pages pass checkDist's
+// page rules, and a broken one fails the build's check; the route vectors serve `/tutorial` and `/tutorial/<lesson>`
+// from these files and nothing else under `/tutorial`; parseRoute (the app shell) routes none of them; and no page
+// outside tutorial/ links to one.
 import vectors from './fixtures/routes.json';
 import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { escapeText, serialize } from '../src/doc';
 import { parseRoute } from '../src/routes';
-import { checkHeld, DistError, tagsIn, TUTORIAL_BUNDLE } from '../tools/check-dist';
+import { checkDist, DistError, tagsIn, TUTORIAL_BUNDLE } from '../tools/check-dist';
 import { LESSON_SCHEMA, loadLessons, readLessonSchema } from '../tools/lessons';
 import { LESSON_ID_PREFIX, lessonArticle, RUNNER_ID, TUTORIAL_PATH } from '../tools/tutorial';
 import { cleanup, type Fixture, fixture, goodLesson, LESSONS_DIR, lessonJson, lessonTree, REPO_ROOT } from './build-fixture';
@@ -24,11 +25,11 @@ afterAll(() => {
   for (const t of trees) rmSync(dirname(t), { recursive: true, force: true });
 });
 
-function built(lessonsDir?: string): { f: Fixture; id: string; files: string[]; held: string[]; page: (p: string) => string } {
+function built(lessonsDir?: string): { f: Fixture; id: string; files: string[]; pages: string[]; page: (p: string) => string } {
   const f = fixture({}, lessonsDir);
   made.push(f);
   const r = f.build();
-  return { f, ...r, page: (p) => readFileSync(join(f.heldDir, p), 'utf8') };
+  return { f, ...r, pages: r.files.filter((p) => p.startsWith('tutorial/')), page: (p) => readFileSync(join(f.outDir, p), 'utf8') };
 }
 
 const real = built();
@@ -44,9 +45,9 @@ const mainOf = (html: string): string => {
   return m[1];
 };
 
-describe('the held tree of a build of the repository', () => {
-  test('holds the index and one page per lesson, at the paths of their routes, and nothing else', () => {
-    expect(real.held).toEqual(['tutorial/index.html', ...LESSONS.map((l) => `tutorial/${l.id}/index.html`)].sort());
+describe("the tutorial's pages in a build of the repository", () => {
+  test('dist/tutorial/ holds the index and one page per lesson, at the paths of their routes, and nothing else', () => {
+    expect(real.pages).toEqual(['tutorial/index.html', ...LESSONS.map((l) => `tutorial/${l.id}/index.html`)].sort());
   });
 
   test("every lesson renders: its title as the h1, its place, its text, and the runner mount holding its files and commands", () => {
@@ -83,7 +84,7 @@ describe('the held tree of a build of the repository', () => {
   // The header's account box is every page's, its sign-in link back to the page's own route (test/layout.test.ts holds
   // it on the pages of dist/); nothing else of a page is a sign-in: the lesson's own sign-in card is the script's.
   test("the pages are the shell every page has, with no sign-in but the header's, the shared stylesheet only and the page script; a lesson's page loads the tutorial bundle after it, the index does not", () => {
-    for (const p of real.held) {
+    for (const p of real.pages) {
       const page = real.page(p);
       const route = `/${p.replace(/\/?index\.html$/, '')}`;
       const account = `<div class="site-account" id="site-account"><a class="button sign-in" href="/api/v2/auth/web/start?return_to=${encodeURIComponent(route)}"><span>Sign in<span class="sign-in-more"> with GitHub</span></span></a></div>`;
@@ -100,25 +101,33 @@ describe('the held tree of a build of the repository', () => {
     }
   });
 
-  test('the held pages pass the page rules of dist/', () => {
-    expect(() => checkHeld(real.f.heldDir, real.f.outDir)).not.toThrow();
+  test('the pages pass the page rules of dist/', () => {
+    expect(() => checkDist(real.f.outDir)).not.toThrow();
   });
 });
 
-describe('nothing serves the tutorial yet', () => {
-  test('dist/ holds no tutorial file, and no page of it links to one', () => {
-    expect(real.files.filter((f) => /^tutorial\b/.test(f))).toEqual([]);
-    for (const p of real.files.filter((f) => f.endsWith('.html'))) {
+describe('how the tutorial is reached', () => {
+  // The header's "Tutorial" link is not there yet: every stage deploys this one build, and a stage without the tutorial's
+  // E2B template serves no tutorial page (service/infra/stacks/lib/site-stack.ts servesTutorial).
+  test('no page outside tutorial/ links to a tutorial page', () => {
+    for (const p of real.files.filter((f) => f.endsWith('.html') && !f.startsWith('tutorial/'))) {
       const hrefs = tagsIn(readFileSync(join(real.f.outDir, p), 'utf8')).flatMap(([, attrs]) => attrs.filter(([k]) => k === 'href').map(([, v]) => v));
       expect([p, hrefs.filter((h) => h.startsWith(TUTORIAL_PATH))]).toEqual([p, []]);
     }
   });
 
-  test('the route vectors name no tutorial file and no tutorial path the router answers with a page', () => {
-    expect(vectors.files.filter((f) => f.startsWith(TUTORIAL_PATH))).toEqual([]);
-    const tutorial = vectors.vectors.filter((v) => v.path === TUTORIAL_PATH || v.path.startsWith(`${TUTORIAL_PATH}/`));
-    expect(tutorial.length).toBeGreaterThan(0);
-    for (const v of tutorial) expect([v.path, v.edge, v.view]).toEqual([v.path, '/404.html', null]);
+  test("the route vectors serve /tutorial and /tutorial/<lesson> from the build's pages, and every other tutorial path is the 404 page or a file", () => {
+    expect(vectors.files.filter((f) => f.startsWith(`${TUTORIAL_PATH}/`))).toEqual(['/tutorial/hello/index.html', '/tutorial/index.html']);
+    const tutorial = vectors.vectors.filter((v) => v.path.startsWith(TUTORIAL_PATH));
+    const served = tutorial.filter((v) => v.edge !== '/404.html' && v.edge !== 'pass').map((v) => [v.path, v.edge]);
+    expect(served).toEqual([
+      ['/tutorial', '/tutorial/index.html'],
+      ['/tutorial/hello', '/tutorial/hello/index.html'],
+    ]);
+    for (const v of tutorial) expect([v.path, v.view]).toEqual([v.path, null]);
+    // The pages' own files pass to the bucket as they are, and a trailing slash is no page.
+    expect(tutorial.filter((v) => v.edge === 'pass').map((v) => v.path)).toEqual(['/tutorial/index.html', '/tutorial/hello/index.html']);
+    for (const p of ['/tutorial/', '/tutorial/hello/']) expect(tutorial).toContainEqual({ path: p, edge: '/404.html', view: null });
   });
 
   test.each(['/tutorial', '/tutorial/', '/tutorial/hello', '/tutorial/hello/', '/tutorial/index.html', '/tutorial/hello/index.html'])(
@@ -144,7 +153,7 @@ describe('a lesson tree of the tests', () => {
     const t = lessonTree({ x: { ...goodLesson(1), json: lessonJson(1, { title: '<script>alert(1)</script>', summary: '"><img src=x onerror=alert(1)>' }) } });
     trees.push(t);
     const b = built(t);
-    for (const p of b.held) {
+    for (const p of b.pages) {
       const html = b.page(p);
       expect(html).not.toContain('<script>alert');
       expect(html).not.toContain('<img');
@@ -154,17 +163,17 @@ describe('a lesson tree of the tests', () => {
     expect(b.page('tutorial/x/index.html')).toContain('<meta name="description" content="&quot;&gt;&lt;img src=x onerror=alert(1)&gt;">');
   });
 
-  test('a held tree with a page that breaks a page rule, or a file that is no page, is refused', () => {
+  test('a tutorial page that breaks a page rule, or a file under tutorial/ that is no page, is refused', () => {
     const t = lessonTree({ x: { ...goodLesson(1), md: 'plain text\n' } });
     trees.push(t);
     const b = built(t);
-    const p = join(b.f.heldDir, 'tutorial', 'x', 'index.html');
+    const p = join(b.f.outDir, 'tutorial', 'x', 'index.html');
     const page = readFileSync(p, 'utf8');
     writeFileSync(p, page.replace('</main>', '<script>alert(1)</script><a href="/assets/gone.css">x</a></main>'));
-    writeFileSync(join(b.f.heldDir, 'tutorial', 'x', 'data.json'), '{}');
-    expect(() => checkHeld(b.f.heldDir, b.f.outDir)).toThrow(DistError);
-    expect(() => checkHeld(b.f.heldDir, b.f.outDir)).toThrow(
-      'dist check failed:\n  held/tutorial/x/data.json: only .html pages are held\n  held/tutorial/x/index.html: an inline <script>\n  held/tutorial/x/index.html: a <script> without one src under /assets/\n  held/tutorial/x/index.html: references /assets/gone.css, which is not in dist',
+    writeFileSync(join(b.f.outDir, 'tutorial', 'x', 'data.json'), '{}');
+    expect(() => checkDist(b.f.outDir)).toThrow(DistError);
+    expect(() => checkDist(b.f.outDir)).toThrow(
+      'dist check failed:\n  tutorial/x/data.json: only .html, .js and .css files are published\n  tutorial/x/index.html: an inline <script>\n  tutorial/x/index.html: a <script> without one src under /assets/\n  tutorial/x/index.html: references /assets/gone.css, which is not in dist',
     );
   });
 });
@@ -189,7 +198,7 @@ describe('hostile Markdown in a lesson renders inert', () => {
 
   test('the corpus has its cases, and each is a page of the build', () => {
     expect(cases.length).toBeGreaterThanOrEqual(30);
-    expect(b.held).toHaveLength(cases.length + 2);
+    expect(b.pages).toHaveLength(cases.length + 2);
   });
 
   // A lesson's text is rendered as a docs page is (heading anchors, code blocks in a labelled copy box), so it may hold
