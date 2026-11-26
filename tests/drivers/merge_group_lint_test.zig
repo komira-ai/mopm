@@ -122,7 +122,9 @@ test "farm.yml: a merge group with no farm fails, never skips green, and builds 
     try expectVariant("farm.yml", "if: ${{ vars.FARM_ADDRESS == '' && github.event_name != 'pull_request' }}", "if: ${{ vars.FARM_ADDRESS == '' && github.event_name == 'push' }}", &.{"farm.yml: job build: the step that refuses has if:"});
     try expectVariant("farm.yml", "Set it, or the farm check is not a check.\"; exit 1", "Set it, or the farm check is not a check.\"", &.{"farm.yml: job build: the step that refuses must end with exit 1"});
     try expectVariant("farm.yml", "::error title=farm::", "::warning title=farm::", &.{"farm.yml: job build: no step fails, with an ::error"});
-    try expectVariant("farm.yml", " || [ \"$EVENT\" = merge_group ]", "", &.{"farm.yml: job build: the build step does not give a merge group the pull request tier"});
+    // Defect caught: the build step is handed the event as it is (a merge group would build every target), or no EVENT at all.
+    try expectVariant("farm.yml", "EVENT: ${{ github.event_name == 'merge_group' && 'pull_request' || github.event_name }}", "EVENT: ${{ github.event_name }}", &.{"farm.yml: job build: the build step's EVENT is \"${{ github.event_name }}\", expected"});
+    try expectVariant("farm.yml", "EVENT: ${{ github.event_name == 'merge_group' && 'pull_request' || github.event_name }}", "OTHER: x", &.{"farm.yml: job build: the build step's EVENT is nil, expected"});
     try expectVariant("farm.yml", "./buck2 uquery", "./buck2 cquery", &.{"farm.yml: job build: no step builds the pull request tier"});
     try expectVariant("farm.yml", "      - name: the farm is not configured (push to main or merge group)\n", "      - name: the farm is not configured (push to main or merge group)\n        continue-on-error: true\n", &.{"farm.yml: job build: the step that refuses must not set continue-on-error"});
 }

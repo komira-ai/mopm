@@ -11,7 +11,8 @@
 //!   - a required job checks out the commit the event names (no `ref:`), the merge group's head;
 //!   - no concurrency group cancels a merge group's run, or puts two merge groups in one group (a newer pending run cancels an
 //!     older pending one even with `cancel-in-progress: false`);
-//!   - farm.yml fails, and never skips green, when a merge group finds no farm configured, and builds the pull request tier.
+//!   - farm.yml fails, and never skips green, when a merge group finds no farm configured, and builds the pull request tier (its
+//!     build step is handed the merge group as `pull_request`, so the step's script is the pull request's).
 //!
 //! `required_checks` is the list of contexts main's ruleset requires: the ruleset change reads it from this file on main (one
 //! `.{ .file = ..., .job = ..., .context = ... }` entry per line), so the lint and the ruleset name the same checks.
@@ -65,8 +66,9 @@ const merge_group_term = "github.event_name == 'merge_group'";
 /// farm.yml's two steps for a farm that is not configured: the notice that skips (a pull request alone) and the error (anything else).
 pub const farm_skip_if = "${{ vars.FARM_ADDRESS == '' && github.event_name == 'pull_request' }}";
 pub const farm_refuse_if = "${{ vars.FARM_ADDRESS == '' && github.event_name != 'pull_request' }}";
-/// The shell test that gives a merge group the pull request tier in farm.yml's build step.
-pub const farm_tier_test = "[ \"$EVENT\" = merge_group ]";
+/// The event farm.yml's build step hands its script: a merge group is handed over as a pull request, so it builds the pull request
+/// tier and the script itself has no branch for it.
+pub const farm_tier_env = "${{ github.event_name == 'merge_group' && 'pull_request' || github.event_name }}";
 
 fn isRequiredFile(name: []const u8) bool {
     for (required_checks) |r| if (std.mem.eql(u8, r.file, name)) return true;
@@ -221,7 +223,7 @@ fn farmProblems(a: Allocator, f: []const u8, job: Value, out: *Out) !void {
         if (c.get(st, "continue-on-error") != null) try c.problem(a, out, prefix ++ "{s}: job build: the step that refuses must not set continue-on-error", .{f});
     } else try c.problem(a, out, prefix ++ "{s}: job build: no step fails, with an ::error, when a merge group or a push to main finds no farm configured", .{f});
     if (stepRunning(job, "./buck2 uquery")) |st| {
-        if (std.mem.indexOf(u8, c.str(c.get(st, "run")) orelse "", farm_tier_test) == null) try c.problem(a, out, prefix ++ "{s}: job build: the build step does not give a merge group the pull request tier (`" ++ farm_tier_test ++ "`)", .{f});
+        if (!c.isStr(c.get(c.get(st, "env"), "EVENT"), farm_tier_env)) try c.problem(a, out, prefix ++ "{s}: job build: the build step's EVENT is {s}, expected {s} (a merge group builds the pull request tier)", .{ f, try c.inspect(a, c.get(c.get(st, "env"), "EVENT")), farm_tier_env });
     } else try c.problem(a, out, prefix ++ "{s}: job build: no step builds the pull request tier (`./buck2 uquery`)", .{f});
 }
 

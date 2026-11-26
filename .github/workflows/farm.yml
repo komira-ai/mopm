@@ -106,10 +106,11 @@ jobs:
       - name: buck2 build (the unit tier on a pull request or a merge group, every target on a push to main)
         if: ${{ vars.FARM_ADDRESS != '' }}
         env:
-          EVENT: ${{ github.event_name }}
+          # A merge group builds what a pull request builds: it is handed to the script as pull_request, so the script is the same.
+          EVENT: ${{ github.event_name == 'merge_group' && 'pull_request' || github.event_name }}
         run: |
           set -o pipefail
-          if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then
+          if [ "$EVENT" = pull_request ]; then
             ./buck2 uquery '//... - set(//:autolink //:build_targets_mojo //:discovery //:flaky //:group_e2e_mojo //:install_e2e //:mojo_probe //:native_static //:native_workspace_mojo //:supervisor //:user_beta)' > "$RUNNER_TEMP/targets"
             ./buck2 build --skip-incompatible-targets "@$RUNNER_TEMP/targets" 2>&1 | tee "$RUNNER_TEMP/build.log"
           else
