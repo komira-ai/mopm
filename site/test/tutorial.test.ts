@@ -118,7 +118,12 @@ describe('how the tutorial is reached', () => {
   });
 
   test("the route vectors serve /tutorial and /tutorial/<lesson> from the build's pages, and every other tutorial path is the 404 page or a file", () => {
-    expect(vectors.files.filter((f) => f.startsWith(`${TUTORIAL_PATH}/`))).toEqual(['/tutorial/hello/index.html', '/tutorial/index.html']);
+    expect(vectors.files.filter((f) => f.startsWith(`${TUTORIAL_PATH}/`))).toEqual([
+      '/tutorial/hello/index.html',
+      '/tutorial/index.html',
+      '/tutorial/structs/index.html',
+      '/tutorial/tests/index.html',
+    ]);
     const tutorial = vectors.vectors.filter((v) => v.path.startsWith(TUTORIAL_PATH));
     const served = tutorial.filter((v) => v.edge !== '/404.html' && v.edge !== 'pass').map((v) => [v.path, v.edge]);
     expect(served).toEqual([
@@ -127,7 +132,12 @@ describe('how the tutorial is reached', () => {
     ]);
     for (const v of tutorial) expect([v.path, v.view]).toEqual([v.path, null]);
     // The pages' own files pass to the bucket as they are, and a trailing slash is no page.
-    expect(tutorial.filter((v) => v.edge === 'pass').map((v) => v.path)).toEqual(['/tutorial/index.html', '/tutorial/hello/index.html']);
+    expect(tutorial.filter((v) => v.edge === 'pass').map((v) => v.path)).toEqual([
+      '/tutorial/index.html',
+      '/tutorial/hello/index.html',
+      '/tutorial/structs/index.html',
+      '/tutorial/tests/index.html',
+    ]);
     for (const p of ['/tutorial/', '/tutorial/hello/']) expect(tutorial).toContainEqual({ path: p, edge: '/404.html', view: null });
   });
 

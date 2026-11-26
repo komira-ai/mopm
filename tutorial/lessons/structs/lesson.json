@@ -1,0 +1,7 @@
+{
+  "title": "Structs",
+  "summary": "Define a struct with fields and methods, change it, and print it.",
+  "order": 3,
+  "editable": ["src/main.mojo"],
+  "actions": { "run": "mopm run src/main.mojo" }
+}

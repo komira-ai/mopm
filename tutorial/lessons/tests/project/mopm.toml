@@ -1,0 +1,11 @@
+[package]
+name = "tutorial/calc"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[targets]
+lib = { path = "src/calc" }
+bins = [{ name = "calc", path = "src/main.mojo" }]
+tests = ["tests"]

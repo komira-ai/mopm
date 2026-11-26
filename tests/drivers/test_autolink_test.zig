@@ -21,13 +21,17 @@
 //!   5. in the split prefix, controls: stock `mojo run` and `mojo repl`
 //!      given greet and outer but not inner must NOT print the values, so
 //!      the transitive entry is load-bearing;
-//!   6. the tutorial's first lesson (tutorial/lessons/hello): its `run`
-//!      action from lesson.json, in a copy of its project/ with the pixi
-//!      prefix, exits 0 and prints exactly `Hello, world!`.
+//!   6. every lesson of the tutorial (tutorial/lessons/<id>): each action
+//!      of its lesson.json (`run`, and `test` when it has one), in a copy of
+//!      its project/ with the pixi prefix, exits 0 and prints the output its
+//!      lesson.md shows for that action (tests/drivers/lesson_output.zig), so
+//!      a lesson whose program or tests do not build, or print something
+//!      else, fails here.
 
 const std = @import("std");
 const h = @import("harness.zig");
 const mojo_env = @import("mojo_env.zig");
+const lesson_output = @import("lesson_output.zig");
 const Allocator = std.mem.Allocator;
 
 const values = [_][]const u8{ "greet 4242", "base 1000", "chain 1234" };
@@ -280,30 +284,63 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const none = try c.mopmRun(pixi, &.{ "run", args_src }, null);
     rep.check("mopm run with no --: the program gets no arguments", !none.signaled and none.code == 0 and std.mem.eql(u8, none.text, "count 0\n"), none.text);
 
-    // 6. The tutorial's first lesson: the page runs its `run` action in the lesson's directory, a copy of its project/.
-    try tutorialHello(&c, pixi);
+    // 6. The tutorial's lessons: the page runs each action in the lesson's directory, a copy of its project/.
+    try tutorialLessons(&c, pixi);
 }
 
-/// The hello lesson's `run` action (lesson.json, `actions.run`), as the tutorial page runs it: in a copy of project/, the
-/// command's words with the built mopm for `mopm` and `--prefix <prefix>` for the environment the sandbox has synced.
-fn tutorialHello(c: *Ctx, prefix: []const u8) !void {
+/// Every lesson under tutorial/lessons, by id. The farm stages them in the work directory (BUCK, data);
+/// `zig build test-autolink` runs from the checkout.
+fn tutorialLessons(c: *Ctx, prefix: []const u8) !void {
     const a = c.a;
-    // The farm stages the lesson in the work directory (BUCK, data); `zig build test-autolink` runs from the checkout.
-    const staged = try h.join(a, &.{ c.m.work, "tutorial/lessons/hello" });
-    const lesson = if (std.fs.cwd().access(staged, .{})) |_| staged else |_| "tutorial/lessons/hello";
-    const doc = try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ lesson, "lesson.json" })));
-    const action = doc.object.get("actions").?.object.get("run").?.string;
+    const staged = try h.join(a, &.{ c.m.work, "tutorial/lessons" });
+    const root = if (std.fs.cwd().access(staged, .{})) |_| staged else |_| "tutorial/lessons";
+    var dir = try std.fs.cwd().openDir(root, .{ .iterate = true });
+    defer dir.close();
+    var ids = std.ArrayList([]const u8).init(a);
+    var it = dir.iterate();
+    while (try it.next()) |e| {
+        // openDir follows a symbolic link, as the copy of the sandbox template does.
+        var sub = dir.openDir(e.name, .{}) catch continue;
+        sub.close();
+        try ids.append(try a.dupe(u8, e.name));
+    }
+    std.mem.sort([]const u8, ids.items, {}, struct {
+        fn less(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.less);
+    c.rep.check("tutorial: tutorial/lessons holds a lesson to run", ids.items.len != 0, root);
+    for (ids.items) |id| try tutorialLesson(c, prefix, try h.join(a, &.{ root, id }), id);
+}
 
-    const project = try h.join(a, &.{ c.out, "tutorial_hello" });
+/// The lesson in the directory `lesson`, as the tutorial page runs it: each action of lesson.json (`actions`), in a copy
+/// of project/, the command's words with the built mopm for `mopm` and `--prefix <prefix>` for the environment the
+/// sandbox has synced. Each must exit 0 and print the block lesson.md shows for it (`output <action>`).
+fn tutorialLesson(c: *Ctx, prefix: []const u8, lesson: []const u8, id: []const u8) !void {
+    const a = c.a;
+    const doc = try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ lesson, "lesson.json" })));
+    const shown = try lesson_output.outputBlocks(a, try h.readFile(a, try h.join(a, &.{ lesson, "lesson.md" })));
+    const project = try h.join(a, &.{ c.out, "tutorial", id });
     try h.copyTree(a, try h.join(a, &.{ lesson, "project" }), project);
-    var argv = std.ArrayList([]const u8).init(a);
-    var words = std.mem.splitScalar(u8, action, ' ');
-    _ = words.next(); // `mopm`
-    try argv.append(c.mopm);
-    while (words.next()) |w| try argv.append(w);
-    try argv.appendSlice(&.{ "--prefix", prefix });
-    var env = try c.m.freshEnv();
-    const r = try h.run(a, argv.items, &env, .{ .cwd = project });
-    const ok = !r.signaled and r.code == 0 and std.mem.eql(u8, r.text, "Hello, world!\n");
-    c.rep.check(try h.fmt(a, "tutorial hello: `{s}` in its project prints Hello, world!", .{action}), ok, try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+
+    var actions = doc.object.get("actions").?.object.iterator();
+    while (actions.next()) |e| {
+        const name = e.key_ptr.*;
+        const action = e.value_ptr.string;
+        const label = try h.fmt(a, "tutorial {s}: `{s}` exits 0 and prints the ```output {s} block of lesson.md", .{ id, action, name });
+        const want = (lesson_output.find(shown.blocks, name) orelse {
+            c.rep.check(label, false, "lesson.md has no such block (//:tutorial_lessons says so too)");
+            continue;
+        }).text;
+        var argv = std.ArrayList([]const u8).init(a);
+        var words = std.mem.splitScalar(u8, action, ' ');
+        _ = words.next(); // `mopm`
+        try argv.append(c.mopm);
+        while (words.next()) |w| try argv.append(w);
+        try argv.appendSlice(&.{ "--prefix", prefix });
+        var env = try c.m.freshEnv();
+        const r = try h.run(a, argv.items, &env, .{ .cwd = project });
+        const ok = !r.signaled and r.code == 0 and try lesson_output.sameOutput(a, want, r.text);
+        c.rep.check(label, ok, try h.fmt(a, "exit {d}{s}\n--- want\n{s}--- got\n{s}---", .{ r.code, if (r.signaled) " (signal)" else "", want, r.text }));
+    }
 }
