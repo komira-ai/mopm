@@ -98,11 +98,10 @@ describe.each(ALL_PAGES)('%s', (page) => {
   // current page on /tutorial and its parent on a lesson's page. Defect caught: a page without the entry, which would
   // stop the stack; a page whose entry the stack could not find to take out.
   test("the header's Tutorial entry, once", () => {
-    const entry: Record<string, string> = {
-      'tutorial/index.html': TUTORIAL_NAV_ITEM.replace('">Tutorial', '" aria-current="page">Tutorial'),
-      'tutorial/hello/index.html': TUTORIAL_NAV_ITEM.replace('">Tutorial', '" aria-current="true">Tutorial'),
-    };
-    expect(html.split(entry[page] ?? TUTORIAL_NAV_ITEM)).toHaveLength(2);
+    // Every lesson's page is below the entry, whichever lessons the repository has.
+    const current = page === 'tutorial/index.html' ? 'page' : page.startsWith('tutorial/') ? 'true' : null;
+    const entry = current === null ? TUTORIAL_NAV_ITEM : TUTORIAL_NAV_ITEM.replace('">Tutorial', `" aria-current="${current}">Tutorial`);
+    expect(html.split(entry)).toHaveLength(2);
     expect(html.split(`id="${TUTORIAL_NAV_ID}"`)).toHaveLength(2);
   });
 
