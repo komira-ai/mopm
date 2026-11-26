@@ -174,7 +174,7 @@ blockquote { margin-left: 0; padding: 0.1rem 1rem; border-left: 4px solid var(--
   .site-nav ul { gap: 0; }
   .site-nav a { padding: 6px 5px; font-size: 0.875rem; }
 }
-/* With Tutorial (a 4th entry) GitHub gives way below 30rem, to keep one row (estimated; 5px padding: Tutorial is wider) */
+/* GitHub gives way to Tutorial (4th entry) below 30rem: one row (estimated) */
 @media (max-width: 30rem) { #nav-tutorial ~ li { display: none; } }
 @media (min-width: 64rem) {
   .site-search { order: 0; flex: 1 1 18rem; max-width: 30rem; margin-left: auto; }
