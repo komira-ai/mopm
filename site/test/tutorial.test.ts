@@ -239,11 +239,14 @@ describe("a lesson's Previous and Next links", () => {
   });
 
   // The tutorial's pages load site.css alone (tools/layout.ts AREA_STYLESHEETS), so the pager's layout has to be there:
-  // a .pager rule left in search.css would leave the links unstyled on every lesson page.
-  test("the pager's rules are in a stylesheet the tutorial's pages load", () => {
+  // a .pager rule left in search.css would leave the links unstyled on every lesson page. A long title wraps inside its
+  // button: .button is `flex: none; white-space: nowrap`, which on a 320px screen would push a long Next link past the
+  // edge, so the pager's buttons may shrink and wrap, and the links wrap onto two rows rather than overflow.
+  test("the pager's rules are in a stylesheet the tutorial's pages load, and a long title wraps", () => {
     const sheets = stylesheetsFor('tutorial').map((f) => readFileSync(join(__dirname, '..', 'static', f), 'utf8')).join('\n');
-    expect(sheets).toContain('\n.pager { display: flex;');
-    expect(sheets).toContain('\n.pager a[rel="next"] { margin-left: auto; }');
+    expect(sheets).toContain('\n.pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-top: 8px; }\n');
+    expect(sheets).toContain('\n.pager a[rel="next"] { margin-left: auto; }\n');
+    expect(sheets).toContain('\n.pager .button { flex: 0 1 auto; white-space: normal; }\n');
   });
 });
 

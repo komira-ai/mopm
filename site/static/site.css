@@ -293,7 +293,7 @@ label { display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 0.
 .crumb [aria-current] { color: var(--fg); font-weight: 600; }
 .pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-top: 8px; }
 .pager a[rel="next"] { margin-left: auto; }
-.pager .button { white-space: normal; }
+.pager .button { flex: 0 1 auto; white-space: normal; }
 .ver { font-family: var(--mono); color: var(--fg-muted); }
 .no-js { display: none; }
 @media (scripting: none) {
