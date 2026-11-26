@@ -237,9 +237,14 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
   on the **`push` event only**; a `workflow_dispatch` run is refused. `job_workflow_ref` must equal
   `komira-ai/komira/.github/workflows/release.yml@refs/heads/main` as well as `workflow_ref`, so a reusable workflow call is refused.
   A manual release needs a pull request that adds `workflow_dispatch` to `events`.
+- **Two rows of that identity, as on prod.** The row with no namespace serves `/api/v1`'s exchange. The second row carries
+  `namespace: komira-ai` and serves `/api/v2`'s: a token for full names in `komira-ai`, with which `mopm publish` creates a missing
+  package (see "Namespace publishers" below). It needs the `komira-ai` organization namespace registered on beta (its GitHub id is the
+  row's `repository_owner_id`, 305577347; `mopm org create komira-ai --registry beta` by an admin of the organization); until then the
+  `/api/v2` exchange answers `namespace_not_found`. Both rows are one group actor, `ci:gh-repo:1376408823` ("Beta lets that identity create groups" below).
 
 - **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
-  trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
+  trusting the identity, remove its rows in a pull request: a deployed value cannot be switched off at runtime (there is no
   config-table item for it), so the fastest stop is the deploy.
 - **Gamma gets none of it, and prod only the two rows below** (acting for an account, and publishing in `komira-ai`). Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the create route's, `PUT /api/v2/packages/{namespace}/{name}`, on every stage, and there is no CI-only grant), and answers the `packages`
   form of the exchange with `oidc_not_trusted`. The handler also refuses to start on gamma if the variable is present, and on prod if a
@@ -366,8 +371,9 @@ row created only if its key is absent, so of two claims of one name exactly one 
 
 On beta the same identity may also create groups without anyone flipping `groups_enabled`. This is **code** as well:
 `BETA_GROUPS_POLICY` in `service/infra/stacks/lib/api-stack.ts`, delivered as the `MOPM_GROUPS_POLICY` environment variable of the beta
-API function and nowhere else: `{"mode":"allow","actors":["ci:gh-repo:<repository_id>"]}`, the actors derived from `BETA_CI_PUBLISHERS`. Design and
-reasons: the addendum in `service/docs/adr-ci-publisher-identity.md`.
+API function and nowhere else: `{"mode":"allow","actors":["ci:gh-repo:<repository_id>"]}`, the actors derived from `BETA_CI_PUBLISHERS`, one per
+distinct repository (its two rows are one actor; a policy that names an actor twice stops the function from starting with "an actor is
+named twice"). Design and reasons: the addendum in `service/docs/adr-ci-publisher-identity.md`.
 
 - **A static policy is ORed with the `groups_enabled` item, and a `deny` in the item does not override it.** The two are read
   separately and either one admitting the actor is enough. So on beta, setting `groups_enabled` to `off`, or putting the identity in

@@ -62,6 +62,21 @@ const inputs: [string, string, boolean?][] = [
   // walks the whole `__` stack. Kept as a source position, the stop still holds.
   ['openers below matched pairs', ('__a '.repeat(N / 8) + '_*"'.repeat(N / 6)).slice(0, N)],
   ['star openers below matched pairs', ('a*__'.repeat(N / 8) + '_*"'.repeat(N / 6)).slice(0, N)],
+  // HTML comments: each `<!--` looks for its `-->`. A parser that searches from every opener to the end of the input
+  // (or of the lines) walks the rest of it once per unclosed opener.
+  ['comment lines', fill('<!-- a -->\n')],
+  ['unclosed comment lines', fill('<!--\n')],
+  ['unclosed comment lines, one close at the end', fill('<!--\n') + '-->'],
+  ['comment lines with text after', fill('<!-- a --> b\n')],
+  ['comments in a paragraph', 'a\n' + fill('<!-- b --> ')],
+  ['unclosed comments in a paragraph', 'a\n' + fill('x <!--')],
+  ['empty comments in a paragraph', 'a\n' + fill('<!-->')],
+  ['comment openers after a comment line', '<!-- a --> ' + fill('<!--')],
+  ['quoted unclosed comment lines', fill('> <!--\n')],
+  ['list items of comments', fill('- <!-- a\n  -->\n')],
+  // Each container level builds its own table of comment ends over its lines: held to the nested bound.
+  ['deeply quoted comment lines', fill('>'.repeat(MAX_DEPTH) + ' <!-- a\n'), true],
+  ['deeply quoted unclosed comments then one close', fill('>'.repeat(MAX_DEPTH) + ' <!--\n') + '-->', true],
   ['hash lines', fill('#\n')],
   ['fence openers', fill('```\n')],
   ['setext-looking lines', fill('a\n=\n')],

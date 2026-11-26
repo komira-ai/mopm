@@ -147,7 +147,11 @@ export const WEB_SESSION_TABLES: RustTableGrant[] = [
  * The CI identity the BETA stage trusts by configuration (config as code): the komira repository's release workflow, on
  * main, from a push only (never a manual run), as the workflow itself and not as a reusable workflow called by another
  * (`job_workflow_ref` is pinned as well as `workflow_ref`), in its `beta` environment. GitHub's numeric ids of the repository and its owner (public).
- * Set on the beta stage only (see the ApiStack); gamma and prod get no such variable and keep the human step.
+ * Two rows of that one identity, as on prod:
+ * - The row with no namespace serves `/api/v1`'s exchange, under which the identity owns the packages it creates itself.
+ * - The `namespace` row serves `/api/v2`'s exchange: a token for full names in `komira-ai` (whose GitHub id is the repository's owner
+ *   id, 305577347), with which `mopm publish` creates a missing package. It needs the `komira-ai` namespace registered on beta.
+ * Set on the beta stage only (see the ApiStack); gamma gets no such variable and prod has PROD_CI_PUBLISHERS.
  */
 export const BETA_CI_PUBLISHERS = [
   {
@@ -158,6 +162,16 @@ export const BETA_CI_PUBLISHERS = [
     job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
     events: ['push'],
     environment: 'beta',
+  },
+  {
+    repository_id: '1376408823',
+    repository_owner_id: '305577347',
+    workflow: '.github/workflows/release.yml',
+    ref: 'refs/heads/main',
+    job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+    events: ['push'],
+    environment: 'beta',
+    namespace: 'komira-ai',
   },
 ];
 
@@ -200,10 +214,12 @@ export const PROD_CI_PUBLISHERS = [
 export const GROUPS_POLICY_ENV = 'MOPM_GROUPS_POLICY';
 /**
  * Who may create a group on the BETA stage by configuration (config as code): exactly the CI actors of BETA_CI_PUBLISHERS
- * (`ci:gh-repo:<repository id>`), never mode `all`, never an account. A static policy is ORed with the `groups_enabled` item of the
- * config table and an item's `deny` does not override it: stopping it takes a deploy. Gamma and prod keep the human flip.
+ * (`ci:gh-repo:<repository id>`), each once, never mode `all`, never an account. A repository's rows share one actor, and the handler
+ * refuses a policy that names an actor twice (the function would not start), so the actors are the distinct repository ids. A static
+ * policy is ORed with the `groups_enabled` item of the config table and an item's `deny` does not override it: stopping it takes a
+ * deploy. Gamma and prod keep the human flip.
  */
-export const BETA_GROUPS_POLICY = { mode: 'allow', actors: BETA_CI_PUBLISHERS.map((p) => `ci:gh-repo:${p.repository_id}`) };
+export const BETA_GROUPS_POLICY = { mode: 'allow', actors: [...new Set(BETA_CI_PUBLISHERS.map((p) => `ci:gh-repo:${p.repository_id}`))] };
 // The CI publisher creates the packages it publishes with the same conditional PutItem on `packages` that the claim route uses
 // (WRITE_GRANTS, sid ClaimPackages, every stage). There is no CI-only grant: what is beta-only is the CI_PUBLISHERS variable.
 
@@ -310,7 +326,7 @@ export class ApiStack extends Stack {
         // service/infra/access/lib/oauth-secret.ts; until it exists the device login routes answer 503.
         MOPM_OAUTH_SECRET_NAME: oauthSecretName(c.stage),
         MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
-        // Beta only: the CI identity this stage trusts (BETA_CI_PUBLISHERS). Absent elsewhere, and the handler refuses it elsewhere.
+        // Beta only: the CI identity this stage trusts (BETA_CI_PUBLISHERS), with and without the komira-ai namespace. Absent on gamma; prod's is the next line.
         ...(c.stage === 'beta' ? { [CI_PUBLISHERS_ENV]: JSON.stringify(BETA_CI_PUBLISHERS) } : {}),
         // Prod only: the CI identity that acts for an account or publishes in a namespace (PROD_CI_PUBLISHERS). Gamma has none; the handler refuses a row with neither here.
         ...(c.stage === 'prod' ? { [CI_PUBLISHERS_ENV]: JSON.stringify(PROD_CI_PUBLISHERS) } : {}),

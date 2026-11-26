@@ -1,4 +1,6 @@
 // The Markdown subset renders as CommonMark/GFM would, and what is not supported stays literal text.
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { MAX_DEPTH, parse } from '../src/markdown/parse';
 import { Slugger, slugify } from '../src/markdown/render';
 import { tagsIn } from '../tools/check-dist';
@@ -198,9 +200,9 @@ describe('inlines', () => {
 
 describe('literal fallbacks', () => {
   test('raw HTML is text, counted once per tag', () => {
-    const r = mdFull('<div onclick="x()">hi</div>\n\n<!-- c -->');
-    expect(r.html).toBe('<p>&lt;div onclick="x()"&gt;hi&lt;/div&gt;</p><p>&lt;!-- c --&gt;</p>');
-    expect(r.fallbacks).toBe(3);
+    const r = mdFull('<div onclick="x()">hi</div>\n\n<?php x ?> <![CDATA[y]]>');
+    expect(r.html).toBe('<p>&lt;div onclick="x()"&gt;hi&lt;/div&gt;</p><p>&lt;?php x ?&gt; &lt;![CDATA[y]]&gt;</p>');
+    expect(r.fallbacks).toBe(4);
   });
 
   test('setext underlines and reference definitions stay text, counted', () => {
@@ -228,6 +230,102 @@ describe('literal fallbacks', () => {
     const html = md(src);
     expect(html.split('<em>').length - 1).toBeLessThanOrEqual(40);
     expect(html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ')).toBe(`${'a '.repeat(n)}x${' a'.repeat(n)}`);
+  });
+});
+
+// komira's README examples hide test-only lines in `<!-- mojo-hidden CODE -->` (one line, or several ending in
+// `-->`). An HTML comment, as a block or inside a paragraph, renders nothing; other raw HTML stays text.
+describe('HTML comments render nothing', () => {
+  const MOJO = '<pre tabindex="0"><code class="language-mojo">x</code></pre>';
+
+  test('a one-line comment before a code fence', () => {
+    const r = mdFull('<!-- mojo-hidden from std.testing import assert_equal -->\n```mojo\nx\n```');
+    expect(r.html).toBe(MOJO);
+    expect(r.fallbacks).toBe(0);
+  });
+
+  test('a comment over several lines, blank lines and Markdown included, ends at the first -->', () => {
+    expect(md('<!-- mojo-hidden\nfrom std.testing import assert_true\nfrom a import b\n-->\n```mojo\nx\n```')).toBe(MOJO);
+    expect(md('a\n\n<!--\n\n# not a heading\n\n- nor a list\n\n```\n--> b\n\nc')).toBe('<p>a</p><p>b</p><p>c</p>');
+  });
+
+  test('a comment inside a list item, one line or several', () => {
+    expect(md('- step\n\n  <!-- mojo-hidden from a import b -->\n  ```mojo\n  x\n  ```')).toBe(`<ul><li><p>step</p>${MOJO}</li></ul>`);
+    expect(md('1. step\n   <!-- mojo-hidden\n   from a import b\n   -->\n   ```mojo\n   x\n   ```')).toBe(`<ol><li>step${MOJO}</li></ol>`);
+    expect(md('- <!-- hidden -->\n- b')).toBe('<ul><li></li><li>b</li></ul>');
+  });
+
+  test('a comment inside a block quote, one line or several', () => {
+    expect(md('> Example:\n> <!-- mojo-hidden from a import b -->\n> ```mojo\n> x\n> ```')).toBe(
+      `<blockquote><p>Example:</p>${MOJO}</blockquote>`,
+    );
+    expect(md('> <!-- mojo-hidden\n> from a import b\n> -->\n> text')).toBe('<blockquote><p>text</p></blockquote>');
+  });
+
+  test('a comment line ends a paragraph, and a lazy quote or list line', () => {
+    expect(md('text\n<!-- c -->\nmore')).toBe('<p>text</p><p>more</p>');
+    expect(md('> quote\n<!-- c -->\nafter')).toBe('<blockquote><p>quote</p></blockquote><p>after</p>');
+    expect(md('- item\n<!-- c -->\nafter')).toBe('<ul><li>item</li></ul><p>after</p>');
+  });
+
+  test('text before and after a comment on the same line stays', () => {
+    expect(md('before <!-- c --> after')).toBe('<p>before  after</p>');
+    expect(md('<!-- c --> after\nnext line')).toBe('<p>after\nnext line</p>');
+    expect(md('<!-- one\ntwo --> after')).toBe('<p>after</p>');
+    expect(md('<!-- a --> x <!-- b --> y')).toBe('<p>x  y</p>');
+    expect(md('a <!-- one\ntwo --> b')).toBe('<p>a  b</p>');
+    expect(md('# Title <!-- c -->')).toBe('<h1 id="readme-title">Title </h1>');
+    // What follows the comment is a paragraph's text, never a block start.
+    expect(md('<!-- c --> # not a heading')).toBe('<p># not a heading</p>');
+  });
+
+  test('a line of nothing but comments renders nothing', () => {
+    expect(mdFull('<!-- a --> <!-- b -->')).toEqual({ html: '', fallbacks: 0 });
+    expect(md('<!-- a -->   ')).toBe('');
+    expect(md('<!-- a --> <!-- b\nc -->  ')).toBe('');
+  });
+
+  test("CommonMark's comment forms: <!-->, <!--->, and -- inside", () => {
+    expect(md('<!-->\n<!--->\n<!-- a -- b -->\nx <!--> y <!---> z')).toBe('<p>x  y  z</p>');
+  });
+
+  test('an unterminated <!-- is literal text and never hides the rest of the readme', () => {
+    const r = mdFull('<!-- mojo-hidden oops\n\n# Install\n\nmopm add x');
+    expect(r.html).toBe('<p>&lt;!-- mojo-hidden oops</p><h1 id="readme-install">Install</h1><p>mopm add x</p>');
+    expect(r.fallbacks).toBe(0);
+    expect(md('a <!-- open\n\nb --> c')).toBe('<p>a &lt;!-- open</p><p>b --&gt; c</p>');
+    // At a line start it still begins a new paragraph, as a comment line does.
+    expect(md('foo\n<!-- bar\nbaz')).toBe('<p>foo</p><p>&lt;!-- bar\nbaz</p>');
+    // With a '>' after it, it is the raw tag it always was: text, counted.
+    expect(mdFull('x <!-- a > b')).toEqual({ html: '<p>x &lt;!-- a &gt; b</p>', fallbacks: 1 });
+  });
+
+  test('a comment stays literal where Markdown is literal: code spans, fenced and indented code, escapes', () => {
+    expect(md('`<!-- c -->`')).toBe('<p><code>&lt;!-- c --&gt;</code></p>');
+    expect(md('```\n<!-- c -->\n```')).toBe('<pre tabindex="0"><code>&lt;!-- c --&gt;</code></pre>');
+    expect(md('    <!-- c -->')).toBe('<pre tabindex="0"><code>&lt;!-- c --&gt;</code></pre>');
+    expect(md('\\<!-- c -->')).toBe('<p>&lt;!-- c --&gt;</p>');
+  });
+
+  test('other raw HTML next to a comment stays text', () => {
+    const r = mdFull('<!-- c --><b>x</b>\n\n<!-- --><script>alert(1)</script>');
+    expect(r.html).toBe('<p>&lt;b&gt;x&lt;/b&gt;</p><p>&lt;script&gt;alert(1)&lt;/script&gt;</p>');
+    expect(r.fallbacks).toBe(4);
+    // Near misses of '<!--' are raw tags: text, counted.
+    expect(mdFull('<!-x> <!x>')).toEqual({ html: '<p>&lt;!-x&gt; &lt;!x&gt;</p>', fallbacks: 2 });
+  });
+
+  // The readme of komira-ai/json as komira holds it (src/komira_json/README.md): five `mojo-hidden` lines.
+  test('the komira-ai/json readme shows none of its mojo-hidden lines', () => {
+    const src = readFileSync(join(__dirname, 'fixtures', 'komira-json-readme.md'), 'utf8');
+    expect(src.match(/<!-- mojo-hidden /g)).toHaveLength(5);
+    const r = mdFull(src);
+    expect(r.html).not.toContain('mojo-hidden');
+    expect(r.html).not.toContain('std.testing');
+    expect(r.html).not.toContain('&lt;!--');
+    expect(r.html.match(/<pre tabindex="0"><code class="language-mojo">/g)).toHaveLength(5);
+    expect(r.fallbacks).toBe(0);
+    expect(r.html).toContain('<p>Read a document and its fields:</p><pre tabindex="0"><code class="language-mojo">from komira_json import parse_json_value\n');
   });
 });
 

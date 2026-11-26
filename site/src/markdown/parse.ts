@@ -8,8 +8,15 @@
 //
 // Supported: ATX headings, paragraphs, hard breaks, fenced and indented code, block quotes, bullet and ordered lists,
 // thematic breaks, GFM tables, code spans, emphasis and strong emphasis, inline links, autolinks, images (as links).
-// Everything else stays literal text: raw HTML (a `raw` node, counted in `fallbacks`), setext heading underlines and
-// reference definitions (counted too), reference-style links, and entities (never decoded).
+// HTML comments render nothing: a line that starts with `<!--` (indented at most 3 spaces) begins a comment that runs
+// to the first `-->`, on that line or a later one, as CommonMark's HTML block of type 2 does, and inside a paragraph a
+// `<!--` runs to the first `-->` in it (inline.ts). Text after the `-->` on a comment's last line is the start of a
+// paragraph. As in CommonMark, a stray `<!--` therefore hides everything up to the next `-->`, wherever it is. A `<!--`
+// with no `-->` after it is not a comment and stays text, so it never hides the rest of a readme; at a line start it
+// still begins a new paragraph, as any comment line ends a paragraph or a lazy quote or list line.
+// (komira's README examples keep their test-only lines in `<!-- mojo-hidden ... -->`.)
+// Everything else stays literal text: other raw HTML (a `raw` node, counted in `fallbacks`), setext heading
+// underlines and reference definitions (counted too), reference-style links, and entities (never decoded).
 
 import { type Inline, type State, parseInline } from './inline.js';
 
@@ -57,6 +64,9 @@ const INTERRUPTING_ITEM = /^ {0,3}(?:[-+*]|1[.)])[ \t]+[^ \t]/;
 const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
 const REF_DEFINITION = /^ {0,3}\[[^\]]+\]:/;
 const BLANK = /^[ \t]*$/;
+const BLANK_TEXT = /^[ \t\n]*$/;
+const COMMENT_OPEN = /^ {0,3}<!--/;
+const COMMENT_CLOSE = '-->';
 
 /** Expands tabs in the leading whitespace to spaces (tab stops of 4). */
 function expandLead(line: string): string {
@@ -158,6 +168,7 @@ function interrupts(lines: string[], i: number, st: State): boolean {
     QUOTE.test(line) ||
     isThematicBreak(line, st) ||
     INTERRUPTING_ITEM.test(line) ||
+    COMMENT_OPEN.test(line) ||
     tableStart(lines, i, st) !== null
   );
 }
@@ -227,6 +238,11 @@ function literal(lines: string[], st: State): Block {
   return { t: 'para', c: [{ t: 'raw', v: lines.join('\n') }] };
 }
 
+/** True when inline content shows nothing (a paragraph of only comments and spaces). */
+function isEmptyInline(c: readonly Inline[]): boolean {
+  return c.every((x) => x.t === 'text' && BLANK_TEXT.test(x.v));
+}
+
 function parseBlocks(input: string[], depth: number, st: State): { blocks: Block[]; blankBetween: boolean } {
   const lines = input.map(expandLead);
   const blocks: Block[] = [];
@@ -238,6 +254,44 @@ function parseBlocks(input: string[], depth: number, st: State): { blocks: Block
     blocks.push(b);
   };
   let i = 0;
+  // closeFrom[k]: the first line at or after k that holds a '-->', or -1. Built once, on the first comment line, by
+  // one pass over the lines, so finding where each comment ends never rescans the lines after it.
+  let closeFrom: Int32Array | null = null;
+  const commentEnd = (k: number): number => {
+    if (!closeFrom) {
+      const table = new Int32Array(lines.length);
+      let next = -1;
+      for (let j = lines.length - 1; j >= 0; j--) {
+        st.steps++;
+        if (lines[j].indexOf(COMMENT_CLOSE) >= 0) next = j;
+        table[j] = next;
+      }
+      closeFrom = table;
+    }
+    return closeFrom[k];
+  };
+  // A paragraph: lines from i up to a blank line or a line that starts another block.
+  const paragraph = (): void => {
+    const para: string[] = [lines[i].trimStart()];
+    i++;
+    let underline: string | null = null;
+    while (i < lines.length) {
+      st.steps++;
+      const l = lines[i];
+      if (BLANK.test(l)) break;
+      if (SETEXT_UNDERLINE.test(l)) {
+        underline = l.trim();
+        i++;
+        break;
+      }
+      if (interrupts(lines, i, st)) break;
+      para.push(l.trimStart());
+      i++;
+    }
+    const c = parseInline(para.join('\n').trimEnd(), st);
+    if (!isEmptyInline(c)) emit({ t: 'para', c });
+    if (underline !== null) emit(literal([underline], st));
+  };
   while (i < lines.length) {
     st.steps++;
     const line = lines[i];
@@ -272,6 +326,23 @@ function parseBlocks(input: string[], depth: number, st: State): { blocks: Block
       while (body.length > 0 && BLANK.test(body[body.length - 1])) body.pop();
       emit({ t: 'code', lang: '', v: body.join('\n') });
       continue;
+    }
+
+    // An HTML comment emits nothing. Text after its '-->' on the last line starts a paragraph (never another block).
+    if (COMMENT_OPEN.test(line)) {
+      const end = commentEnd(i);
+      if (end >= 0) {
+        const last = lines[end];
+        const rest = last.slice(last.indexOf(COMMENT_CLOSE) + COMMENT_CLOSE.length);
+        i = end;
+        if (BLANK.test(rest)) {
+          i++;
+        } else {
+          lines[i] = rest;
+          paragraph();
+        }
+        continue;
+      }
     }
 
     const atx = ATX.exec(line);
@@ -387,25 +458,7 @@ function parseBlocks(input: string[], depth: number, st: State): { blocks: Block
       continue;
     }
 
-    // A paragraph: lines up to a blank line or a line that starts another block.
-    const para: string[] = [line.trimStart()];
-    i++;
-    let underline: string | null = null;
-    while (i < lines.length) {
-      st.steps++;
-      const l = lines[i];
-      if (BLANK.test(l)) break;
-      if (SETEXT_UNDERLINE.test(l)) {
-        underline = l.trim();
-        i++;
-        break;
-      }
-      if (interrupts(lines, i, st)) break;
-      para.push(l.trimStart());
-      i++;
-    }
-    emit({ t: 'para', c: parseInline(para.join('\n').trimEnd(), st) });
-    if (underline !== null) emit(literal([underline], st));
+    paragraph();
   }
   return { blocks, blankBetween };
 }

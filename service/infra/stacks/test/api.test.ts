@@ -354,7 +354,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   // Config-as-code trust is beta's alone: the variable that names the trusted CI identity exists on the beta template and on
   // no other. Creating a package is the one PutItem on packages every stage has (ClaimPackages), for the claim route and the CI
   // exchange alike: there is no CI-only grant.
-  test(stage === 'beta' ? 'beta: CI_PUBLISHERS names exactly the komira release workflow on main in the beta environment, and package creation has the one shared grant' : `${stage}: no function has CI_PUBLISHERS`, () => {
+  test(stage === 'beta' ? 'beta: CI_PUBLISHERS names exactly the komira release workflow on main in the beta environment, with and without the komira-ai namespace, and package creation has the one shared grant' : `${stage}: no function has CI_PUBLISHERS`, () => {
     const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
     const values = fns.map((f) => f.Properties.Environment?.Variables?.[CI_PUBLISHERS_ENV]).filter((v) => v !== undefined);
     const creators = statements().filter(
@@ -362,18 +362,19 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     );
     expect(creators.map((s) => s.Sid)).toEqual(['ClaimPackages']); // one grant on every stage, none named for CI
     if (stage === 'beta') {
+      // Beta trusts the same workflow as prod does, in its beta environment: a row with no namespace (/api/v1) and the publisher of
+      // the komira-ai namespace (/api/v2), the same claim pins on both.
+      const pins = {
+        repository_id: '1376408823',
+        repository_owner_id: '305577347',
+        workflow: '.github/workflows/release.yml',
+        ref: 'refs/heads/main',
+        job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+        events: ['push'],
+        environment: 'beta',
+      };
       expect(values).toHaveLength(1); // the API function; the index reader has none
-      expect(JSON.parse(values[0])).toEqual([
-        {
-          repository_id: '1376408823',
-          repository_owner_id: '305577347',
-          workflow: '.github/workflows/release.yml',
-          ref: 'refs/heads/main',
-          job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
-          events: ['push'],
-          environment: 'beta',
-        },
-      ]);
+      expect(JSON.parse(values[0])).toEqual([pins, { ...pins, namespace: 'komira-ai' }]);
       expect(JSON.parse(values[0])).toEqual(BETA_CI_PUBLISHERS);
       expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
     } else if (stage === 'prod') {
@@ -405,27 +406,30 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   });
 
   // The handler's loader refuses a prod row with neither acts_for nor namespace (and any row off beta and prod), which stops the function
-  // from starting: every row a template carries on prod names an account or a namespace, and beta's rows name neither. (That the
-  // handler loads these exact prod rows, in this order, is service/api/test/auth-ci-publishers.test.ts.)
-  test(stage === 'gamma' ? 'gamma: no CI row at all' : `${stage}: every CI row ${stage === 'prod' ? 'acts for the account or names the komira-ai namespace' : 'names no account and no namespace'}`, () => {
+  // from starting: every row a template carries on prod names an account or a namespace; beta's rows name no account, and one of them
+  // the komira-ai namespace. (That the handler loads these exact prod and beta rows, in this order, is
+  // service/api/test/auth-ci-publishers.test.ts.)
+  test(stage === 'gamma' ? 'gamma: no CI row at all' : `${stage}: every CI row ${stage === 'prod' ? 'acts for the account or names the komira-ai namespace' : 'names no account, and one names the komira-ai namespace'}`, () => {
     const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
     const values = fns.map((f) => f.Properties.Environment?.Variables?.[CI_PUBLISHERS_ENV]).filter((v) => v !== undefined);
     const rows = values.flatMap((v) => JSON.parse(v) as Array<{ acts_for?: string; namespace?: string }>);
     if (stage === 'gamma') expect(rows).toEqual([]);
     else if (stage === 'prod') expect(rows.map((r) => [r.acts_for, r.namespace])).toEqual([['15257031', undefined], [undefined, 'komira-ai']]);
-    else expect(rows.map((r) => [r.acts_for, r.namespace])).toEqual([[undefined, undefined]]);
+    else expect(rows.map((r) => [r.acts_for, r.namespace])).toEqual([[undefined, undefined], [undefined, 'komira-ai']]);
   });
 
   // The groups policy is beta's alone too: the variable exists on the beta template, names exactly the CI actor of the trusted
-  // publisher (never mode all, never an account), and no other stage's template carries it, as a name or as a value.
-  test(stage === 'beta' ? 'beta: MOPM_GROUPS_POLICY allows exactly the trusted CI identity as an actor' : `${stage}: no function has MOPM_GROUPS_POLICY`, () => {
+  // publisher (never mode all, never an account), and no other stage's template carries it, as a name or as a value. The two beta
+  // rows are one repository, so one actor: the handler refuses a policy that names an actor twice, and the function would not start.
+  test(stage === 'beta' ? 'beta: MOPM_GROUPS_POLICY allows exactly the trusted CI identity as an actor, once' : `${stage}: no function has MOPM_GROUPS_POLICY`, () => {
     const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
     const values = fns.map((f) => f.Properties.Environment?.Variables?.[GROUPS_POLICY_ENV]).filter((v) => v !== undefined);
     if (stage === 'beta') {
       expect(values).toHaveLength(1); // the API function; the index reader has none
       expect(JSON.parse(values[0])).toEqual({ mode: 'allow', actors: ['ci:gh-repo:1376408823'] });
       expect(JSON.parse(values[0])).toEqual(BETA_GROUPS_POLICY);
-      expect(BETA_GROUPS_POLICY.actors).toEqual(BETA_CI_PUBLISHERS.map((p) => `ci:gh-repo:${p.repository_id}`));
+      expect(new Set(BETA_GROUPS_POLICY.actors).size).toBe(BETA_GROUPS_POLICY.actors.length); // no actor twice
+      expect(new Set(BETA_GROUPS_POLICY.actors)).toEqual(new Set(BETA_CI_PUBLISHERS.map((p) => `ci:gh-repo:${p.repository_id}`))); // every row's actor
     } else {
       expect(values).toEqual([]);
       expect(JSON.stringify(t.toJSON())).not.toContain(GROUPS_POLICY_ENV);
