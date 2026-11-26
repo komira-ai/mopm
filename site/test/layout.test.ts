@@ -12,6 +12,7 @@ import { MOPM_INSTALL_PATH } from '../src/views/package';
 import { tagsIn } from '../tools/check-dist';
 import { renderPage } from '../tools/layout';
 import { ASSET_PATTERN, INSTALL_COMMAND, OPENING_SENTENCE, PLANNED, RELEASE_SERIES, TARGETS, VERIFY, WORKING_TODAY } from '../tools/pages';
+import { TUTORIAL_NAV_ID, TUTORIAL_NAV_ITEM } from '../tools/tutorial-link';
 import { cleanup, type Fixture, fixture, REPO_ROOT } from './build-fixture';
 
 let f: Fixture;
@@ -90,6 +91,19 @@ describe.each(ALL_PAGES)('%s', (page) => {
     expect(count('footer')).toBe(1);
     expect(html).toContain('<nav class="site-nav" aria-label="Site">');
     expect(html).toContain('<nav aria-label="Footer">');
+  });
+
+  // The header's Tutorial entry is on every page the build writes (the site stack takes it out of every page of a stage
+  // that does not serve the tutorial, and refuses a page without it): as TUTORIAL_NAV_ITEM outside the tutorial, the
+  // current page on /tutorial and its parent on a lesson's page. Defect caught: a page without the entry, which would
+  // stop the stack; a page whose entry the stack could not find to take out.
+  test("the header's Tutorial entry, once", () => {
+    const entry: Record<string, string> = {
+      'tutorial/index.html': TUTORIAL_NAV_ITEM.replace('">Tutorial', '" aria-current="page">Tutorial'),
+      'tutorial/hello/index.html': TUTORIAL_NAV_ITEM.replace('">Tutorial', '" aria-current="true">Tutorial'),
+    };
+    expect(html.split(entry[page] ?? TUTORIAL_NAV_ITEM)).toHaveLength(2);
+    expect(html.split(`id="${TUTORIAL_NAV_ID}"`)).toHaveLength(2);
   });
 
   // The header's account box (src/account.ts) is the sign-in link back to the page's own path on every page, and holds

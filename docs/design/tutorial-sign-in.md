@@ -546,7 +546,7 @@ with a fake.
 - **Lessons** are `tutorial/lessons/<id>/`: `lesson.md`, `lesson.json` (title, summary, order, editable files, actions)
   and `project/` (a mopm project with `mopm.toml` and `mopm.lock`). The site build reads the first two and the template
   build takes `project/`. One schema, `spec/tutorial-lesson.schema.json`, is the contract between them.
-- **The header** gains "Tutorial". It also carries the sign-in on every page: "Sign in with
+- **The header** gains "Tutorial", on a stage that serves the tutorial (tu-S4). It also carries the sign-in on every page: "Sign in with
   GitHub" (the start route, `return_to` the page's own path), and, once the session route says who is signed in, the
   login and "Sign out" (`site/src/account.ts`). The link is in the prerendered page; the signed-in state is filled in by
   the page script, so the cached pages are the same for everyone. Every page therefore makes the one session call. The
@@ -699,9 +699,11 @@ Go-live:
   - Tests: the route fixtures (`site/test/fixtures/routes.json`) and the site-router test, with a router of the build
     without its tutorial files; the site stack's test of both kinds of stage; the template diff naming what serving the
     tutorial changes.
-- **tu-S4 (S)** The header gets its "Tutorial" link, once prod serves the tutorial: every stage deploys the same
-  pages, so a link in the header would lead to the 404 page on a stage that does not.
-  - Tests: the layout test for the header.
+- **tu-S4 (S)** The header gets its "Tutorial" link on a stage that serves the tutorial, and none elsewhere. Every
+  stage deploys the same pages, so the build puts the link in the header of every page, and the site stack uploads
+  the pages of a stage that does not serve the tutorial without it (`site/tools/tutorial-link.ts`); a page without the
+  link, or with another link to the tutorial, stops the synth, since it would lead to the 404 page there.
+  - Tests: the layout test for the header on every kind of page; the site stack's test of both kinds of stage.
 
 **Order**:
 
@@ -711,14 +713,14 @@ Go-live:
 - tu-X2 follows tu-X1, and tu-O2 follows tu-X2. tu-A3 follows tu-A1 and tu-F2, and deploys after tu-O2.
 - tu-S3 follows tu-S2, once tu-A2, tu-A3 and tu-I1 are deployed. It turns the tutorial on stage by stage: a stage
   serves it from the deploy after tu-O2 sets its template id.
-- tu-S4 follows tu-O2 on prod.
+- tu-S4 follows tu-S3; a stage shows the link from the deploy after tu-O2 sets its template id.
 - Deploys stay automatic from main.
 
 Until a stage serves the tutorial (tu-S3), nobody there sees it: its API routes answer only requests that carry the
 distribution's header, and no page links to them. The sign-in is the exception: the header links it on every page
 (section 7, "The header"). A refused sign-in lands on `/tutorial?error=<code>`, which is the 404 page on a stage
-without the tutorial; the header's script shows what the code means above it. Until tu-S4 no page outside the tutorial
-links to it, so on a stage that serves it the tutorial is reached by its address.
+without the tutorial; the header's script shows what the code means above it. From tu-S4 the header's "Tutorial" links
+to it on a stage that serves it, and on no other.
 
 tu-I1 is the exception. Once deployed, it changes what every visitor gets: every API read of the site goes through
 the site host, and the CSP's `connect-src` and the 404 handling change. It is the one change before tu-S3 that users

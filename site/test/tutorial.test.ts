@@ -3,7 +3,7 @@
 // sign-in; the index lists the lessons in order; hostile Markdown in a lesson renders inert; the pages pass checkDist's
 // page rules, and a broken one fails the build's check; the route vectors serve `/tutorial` and `/tutorial/<lesson>`
 // from these files and nothing else under `/tutorial`; parseRoute (the app shell) routes none of them; and no page
-// outside tutorial/ links to one.
+// outside tutorial/ links to one but by the header's Tutorial entry.
 import vectors from './fixtures/routes.json';
 import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
@@ -12,6 +12,7 @@ import { parseRoute } from '../src/routes';
 import { checkDist, DistError, tagsIn, TUTORIAL_BUNDLE } from '../tools/check-dist';
 import { LESSON_SCHEMA, loadLessons, readLessonSchema } from '../tools/lessons';
 import { LESSON_ID_PREFIX, lessonArticle, RUNNER_ID, TUTORIAL_PATH } from '../tools/tutorial';
+import { withoutTutorialLink } from '../tools/tutorial-link';
 import { cleanup, type Fixture, fixture, goodLesson, LESSONS_DIR, lessonJson, lessonTree, REPO_ROOT } from './build-fixture';
 import { MD_ATTRS, MD_TAGS, tagsOf, unescapeAttr } from './md';
 
@@ -107,12 +108,15 @@ describe("the tutorial's pages in a build of the repository", () => {
 });
 
 describe('how the tutorial is reached', () => {
-  // The header's "Tutorial" link is not there yet: every stage deploys this one build, and a stage without the tutorial's
-  // E2B template serves no tutorial page (service/infra/stacks/lib/site-stack.ts servesTutorial).
-  test('no page outside tutorial/ links to a tutorial page', () => {
+  // The header's "Tutorial" entry, and nothing else: every stage deploys this one build, and a stage without the
+  // tutorial's E2B template serves no tutorial page (service/infra/stacks/lib/site-stack.ts servesTutorial), so the stack
+  // takes the entry out of its pages (tools/tutorial-link.ts) and any other link would lead to its 404 page.
+  test("a page outside tutorial/ links to a tutorial page by the header's Tutorial entry alone", () => {
     for (const p of real.files.filter((f) => f.endsWith('.html') && !f.startsWith('tutorial/'))) {
-      const hrefs = tagsIn(readFileSync(join(real.f.outDir, p), 'utf8')).flatMap(([, attrs]) => attrs.filter(([k]) => k === 'href').map(([, v]) => v));
-      expect([p, hrefs.filter((h) => h.startsWith(TUTORIAL_PATH))]).toEqual([p, []]);
+      const html = readFileSync(join(real.f.outDir, p), 'utf8');
+      const hrefs = (h: string) => tagsIn(h).flatMap(([, attrs]) => attrs.filter(([k]) => k === 'href').map(([, v]) => v));
+      expect([p, hrefs(html).filter((h) => h.startsWith(TUTORIAL_PATH))]).toEqual([p, [TUTORIAL_PATH]]);
+      expect([p, hrefs(withoutTutorialLink(p, html)).filter((h) => h.startsWith(TUTORIAL_PATH))]).toEqual([p, []]);
     }
   });
 
