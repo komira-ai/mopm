@@ -239,4 +239,13 @@ describe('parseCiPublishers: a row that publishes in a namespace', () => {
     expect(configureAuth('prod', doc, env([NS_ENTRY]))!.oidc).toBeDefined();
     expect(() => configureAuth('prod', doc, env([{ ...ENTRY, environment: 'prod' }]))).toThrow(/'acts_for' or 'namespace'/);
   });
+
+  // The beta stack's BETA_CI_PUBLISHERS (service/infra/stacks pins the value): the release row with no namespace, then the same
+  // identity as the publisher of komira-ai, both in the beta environment.
+  test('beta loads its two rows of the komira release, without and with the komira-ai namespace, and the handler starts with them', () => {
+    const rows = [ENTRY, { ...ENTRY, namespace: 'komira-ai' }];
+    expect(parseCiPublishers('beta', json(rows))).toEqual(rows);
+    const doc = new FakeAuthDoc({});
+    expect(configureAuth('beta', doc, { MOPM_OAUTH_SECRET_NAME: 'mopm/x/github-oauth', [CI_PUBLISHERS_ENV]: json(rows) })!.oidc).toBeDefined();
+  });
 });
