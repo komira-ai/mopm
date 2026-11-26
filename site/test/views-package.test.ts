@@ -536,7 +536,7 @@ describe('the readme', () => {
     const readme = readFileSync(join(__dirname, 'fixtures', 'komira-json-readme.md'), 'utf8');
     const out = render(packageFixture((r) => Object.assign(r, { readme })));
     const prose = out.slice(out.indexOf('<div class="prose">'), out.indexOf('id="versions-heading"'));
-    expect(prose).toContain('<h3 id="readme-examples">Examples</h3>');
+    expect(prose).toContain('<h4 id="readme-examples">Examples</h4>');
     expect(prose.match(/<code class="language-mojo">/g)).toHaveLength(5);
     expect(out).not.toContain('mojo-hidden');
     expect(out).not.toContain('std.testing');

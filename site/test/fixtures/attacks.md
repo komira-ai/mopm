@@ -93,7 +93,7 @@ ipt>alert(1)</script>
 <!-- mojo-hidden --><script>alert(1)</script> <img src=x onerror=alert(1)>
 
 %%% comment closed early inside a tag
-<!-- a --><a href="javascript:alert(1)" title="--> x">y</a>
+<!-- a --><b title="--> <script>alert(1)</script>">y</b>
 
 %%% unterminated comment hiding nothing
 <!-- <script>alert(1)</script>

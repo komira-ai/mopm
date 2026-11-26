@@ -309,6 +309,8 @@ describe('HTML comments render nothing', () => {
     const r = mdFull('<!-- c --><b>x</b>\n\n<!-- --><script>alert(1)</script>');
     expect(r.html).toBe('<p>&lt;b&gt;x&lt;/b&gt;</p><p>&lt;script&gt;alert(1)&lt;/script&gt;</p>');
     expect(r.fallbacks).toBe(4);
+    // Near misses of '<!--' are raw tags: text, counted.
+    expect(mdFull('<!-x> <!x>')).toEqual({ html: '<p>&lt;!-x&gt; &lt;!x&gt;</p>', fallbacks: 2 });
   });
 
   // The readme of komira-ai/json as komira holds it (src/komira_json/README.md): five `mojo-hidden` lines.

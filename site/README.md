@@ -120,6 +120,9 @@ The home page copy is held to `README.md`, `src/cli/main.zig`, `VERSION` and `st
 names, the verification commands or the version series change there, the page has to change too. The page names the
 version series (`0.0.x`), never a patch number, because a release is cut on every merge. Route vectors are in `test/fixtures/routes.json`; the
 site stack's edge router is tested against the same file. The Markdown attack corpus is `test/fixtures/attacks.md`.
+A readme's HTML comments render nothing (komira's README examples keep their test-only lines in
+`<!-- mojo-hidden ... -->`), while other raw HTML shows as text; `test/fixtures/komira-json-readme.md` is komira's
+`src/komira_json/README.md`, a real readme with five of them.
 
 ## Preview
 
