@@ -13,8 +13,8 @@
 //!     older pending one even with `cancel-in-progress: false`);
 //!   - farm.yml fails, and never skips green, when a merge group finds no farm configured, and builds the pull request tier.
 //!
-//! `required_checks` is the list of contexts main's ruleset requires: the script that writes the ruleset reads it from this file
-//! on main (one `.context = "..."` per line), so the lint and the ruleset name the same checks.
+//! `required_checks` is the list of contexts main's ruleset requires: the ruleset change reads it from this file on main (one
+//! `.{ .file = ..., .job = ..., .context = ... }` entry per line), so the lint and the ruleset name the same checks.
 
 const std = @import("std");
 const c = @import("lint_common.zig");

@@ -3,7 +3,8 @@
 # //:hygiene, //:workflows, //:autopin_workflows, //:merge_group_workflows, //:lint_selftest, //:agents and //:api_gen_test (plus //:actionlint, the pinned actionlint over every workflow), run here with the Zig ci.yml installs.
 # This job holds no secret, no id-token and a read-only token, so a fork's pull request
 # gets the same check as a branch of this repository; farm.yml runs the same targets on
-# the farm when it is configured, but is neither required nor run for a fork.
+# the farm when it is configured (its `build` is one of the checks a merge group runs, tests/drivers/merge_group_lint.zig),
+# but is skipped for a fork's pull request, so this job is the check a fork gets.
 # Without BUILDRULES_TEST_WORK the lints read the files git tracks in the checkout.
 name: lint
 

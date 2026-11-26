@@ -327,8 +327,8 @@ test "pin-verify: every pull request, no condition, no secret, the required cont
     try expectRepo(verify, "  pull_request:\n", "  pull_request:\n    paths:\n      - site/**\n", &.{"pull_request has no filter and no types"});
     try expectRepo(verify, "  pull_request:\n", "  pull_request:\n    branches:\n      - main\n", &.{"pull_request has no filter and no types"});
     // Defect caught: the merge group trigger is gone (the required check would never report in the merge queue), or a third trigger is added.
-    try expectRepo(verify, "  merge_group:\n    types: [checks_requested]\n    branches: [main]\n", "", &.{"the triggers must be exactly pull_request and merge_group, got [\"pull_request\"]"});
-    try expectRepo(verify, "  merge_group:\n", "  push:\n  merge_group:\n", &.{"the triggers must be exactly pull_request and merge_group, got [\"pull_request\", \"push\", \"merge_group\"]"});
+    try expectRepo(verify, "  merge_group:\n    types:\n      - checks_requested\n    branches:\n      - main\n", "", &.{"the triggers must be exactly pull_request and merge_group, got [\"pull_request\"]"});
+    try expectRepo(verify, "  merge_group:\n", "  workflow_dispatch:\n  merge_group:\n", &.{"the triggers must be exactly pull_request and merge_group, got [\"pull_request\", \"workflow_dispatch\", \"merge_group\"]"});
     try expectRepo(verify, "    name: pin-verify\n", "    name: pin verify\n", &.{"the job must be `pin-verify` with `name: pin-verify`"});
     // Defect caught: a second job beside the check (the lint reads exactly one job, so it would read neither).
     try expectRepo(verify, "jobs:\n  pin-verify:\n", "jobs:\n  extra:\n    runs-on: ubuntu-24.04\n  pin-verify:\n", &.{ "pin-verify.yml: expected exactly one job, found 2", "pin-verify.yml: no run script carries `--set DIR=KIND`" });

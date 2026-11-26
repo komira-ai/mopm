@@ -19,8 +19,10 @@ name: pin-verify
 on:
   pull_request:
   merge_group:
-    types: [checks_requested]
-    branches: [main]
+    types:
+      - checks_requested
+    branches:
+      - main
 
 permissions:
   contents: read

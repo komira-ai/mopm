@@ -18,7 +18,7 @@
 # group's head commit and, with no farm, fails like a push to main (tests/drivers/merge_group_lint.zig
 # holds the job's condition and these two steps). A fork's pull request gets neither the token nor the variables and is
 # skipped; lint.yml runs the repository's lints for it on a GitHub-hosted runner,
-# as it does for every pull request and every push to main.
+# as it does for every pull request, every merge group and every push to main.
 # The hygiene and workflow lints (//:hygiene, //:workflows) allow the id-token grant and the
 # one action outside GitHub's own for this file and farm-macos.yml only (the macOS checks on the farm's Macs, after the merge),
 # each under its own conditions.
