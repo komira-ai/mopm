@@ -1,7 +1,9 @@
 // The tutorial's pages, prerendered from the lessons (tools/lessons.ts): /tutorial, the lessons in order, and
 // /tutorial/<lesson>, a lesson's text rendered by the same restricted Markdown renderer as the docs (raw HTML stays
 // text, every link is checked), its title and its place in the tutorial, and the mount point, #lesson-runner
-// (data-lesson="<lesson>"), holding the lesson's editable files and its commands (src/tutorial/view.ts lessonSource).
+// (data-lesson="<lesson>"), holding the lesson's editable files and its commands (src/tutorial/view.ts lessonSource),
+// then the links to the lesson before it and the lesson after it in the index's order (the first has only Next, the last
+// only Previous, and a tutorial of one lesson neither).
 // The tutorial's page script (src/tutorial/main.ts, the bundle a lesson's page loads after main.js) reads the lesson
 // from there and replaces it with the sign-in card or the editor and the Run button. Nothing on them needs a session:
 // the pages work without scripts and without signing in (the files and commands are on the page to read), and the
@@ -51,8 +53,28 @@ function crumb(title: string): SNode {
   );
 }
 
-/** The page of the lesson at `position` (from 1) of `count`, the lessons in order. */
-export function lessonPage(l: Lesson, position: number, count: number): PageSpec {
+/**
+ * The links to the lesson before and the lesson after the one at `i` of `lessons` (in order), Previous then Next, as
+ * the search pages' pager: nothing when it has neither, so no empty <nav>.
+ */
+function pager(lessons: readonly Lesson[], i: number): SNode[] {
+  const prev = i > 0 ? lessons[i - 1] : undefined;
+  const next = i + 1 < lessons.length ? lessons[i + 1] : undefined;
+  if (prev === undefined && next === undefined) return [];
+  return [
+    h(
+      doc,
+      'nav',
+      { class: 'pager', 'aria-label': 'Lessons' },
+      prev ? h(doc, 'a', { class: 'button', href: internalHref(lessonPath(prev)), rel: 'prev' }, `← Previous: ${prev.title}`) : null,
+      next ? h(doc, 'a', { class: 'button button-primary', href: internalHref(lessonPath(next)), rel: 'next' }, `Next: ${next.title} →`) : null,
+    ),
+  ];
+}
+
+/** The page of the lesson at `i` (from 0) of `lessons`, the lessons in order. */
+export function lessonPage(lessons: readonly Lesson[], i: number): PageSpec {
+  const l = lessons[i];
   return {
     title: `${l.title} (tutorial)`,
     description: l.summary,
@@ -60,7 +82,7 @@ export function lessonPage(l: Lesson, position: number, count: number): PageSpec
     path: lessonPath(l),
     main: [
       crumb(l.title),
-      h(doc, 'p', { class: 'lesson-place muted small' }, `Lesson ${position} of ${count}`),
+      h(doc, 'p', { class: 'lesson-place muted small' }, `Lesson ${i + 1} of ${lessons.length}`),
       h(doc, 'h1', null, l.title),
       lessonArticle(l).node,
       h(
@@ -69,6 +91,7 @@ export function lessonPage(l: Lesson, position: number, count: number): PageSpec
         { id: RUNNER_ID, class: 'lesson-runner', 'aria-label': 'Try it', 'data-lesson': l.id },
         ...lessonSource(doc, { id: l.id, files: l.files, actions: l.actions }),
       ),
+      ...pager(lessons, i),
     ],
     tutorialScript: true,
   };
@@ -101,6 +124,6 @@ export function tutorialIndexPage(lessons: readonly Lesson[]): PageSpec {
 export function tutorialPages(lessons: readonly Lesson[]): [string, PageSpec][] {
   return [
     ['tutorial/index.html', tutorialIndexPage(lessons)],
-    ...lessons.map((l, i): [string, PageSpec] => [`tutorial/${l.id}/index.html`, lessonPage(l, i + 1, lessons.length)]),
+    ...lessons.map((l, i): [string, PageSpec] => [`tutorial/${l.id}/index.html`, lessonPage(lessons, i)]),
   ];
 }
