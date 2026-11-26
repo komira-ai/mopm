@@ -1,0 +1,9 @@
+[package]
+name = "tutorial/structs"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[targets]
+bins = [{ name = "structs", path = "src/main.mojo" }]
