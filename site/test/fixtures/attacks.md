@@ -89,6 +89,15 @@ ipt>alert(1)</script>
 %%% html comment
 <!-- <script>alert(1)</script> -->
 
+%%% markup after a comment
+<!-- mojo-hidden --><script>alert(1)</script> <img src=x onerror=alert(1)>
+
+%%% comment closed early inside a tag
+<!-- a --><b title="--> <script>alert(1)</script>">y</b>
+
+%%% comment inside a link
+[<!-- c -->x<!-- d -->](javascript:alert(1)) [<!--](https://mopm.dev/-->)
+
 %%% cdata and processing instruction
 <![CDATA[x]]> <?php echo 1 ?>
 
@@ -122,3 +131,6 @@ ipt>alert(1)</script>
 
 %%% empty link text
 [](https://mopm.dev) [ ](https://mopm.dev/x)
+
+%%% unterminated comment hiding nothing (last, so in the whole corpus no later --> closes it)
+<!-- <script>alert(1)</script>

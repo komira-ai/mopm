@@ -5,7 +5,8 @@
 // and are deduplicated as GitHub does ('a', 'a-1', ...). A refused link shows its text; a link with no text shows its
 // target, so every link has an accessible name. An image is never loaded: it becomes a link reading "image: <alt>",
 // or, inside a link (a readme badge), just its alt text; an autolink inside a link is its text. So a link never holds a
-// link. Raw HTML was kept as text by the parser and stays text here.
+// link. An HTML comment was dropped by the parser and renders nothing; other raw HTML was kept as text and stays text
+// here.
 //
 // Wide blocks scroll on their own: a table sits in a focusable, named scroll region (class 'scroll'; styling the
 // table itself to scroll would strip its table semantics) and a code block is focusable, so a keyboard reaches the
