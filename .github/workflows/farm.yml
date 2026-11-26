@@ -14,7 +14,9 @@
 # nothing and says so, so it cannot fail a pull request before the farm is
 # available. A push to main is different: with no farm the job FAILS, because a
 # merge that nothing built must not look green.
-# A fork's pull request gets neither the token nor the variables and is
+# A merge group of the merge queue is a merge too: it builds the pull request tier on the
+# group's head commit and, with no farm, fails like a push to main (tests/drivers/merge_group_lint.zig
+# holds the job's condition and these two steps). A fork's pull request gets neither the token nor the variables and is
 # skipped; lint.yml runs the repository's lints for it on a GitHub-hosted runner,
 # as it does for every pull request and every push to main.
 # The hygiene and workflow lints (//:hygiene, //:workflows) allow the id-token grant and the
@@ -25,6 +27,9 @@ name: farm
 on:
   pull_request:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
   push:
     branches: [main]
 
@@ -32,16 +37,18 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer push to a pull request cancels its older farm build; a build of main is never cancelled.
+  # A newer push to a pull request cancels its older farm build; a build of main or of a merge group (its own head commit, so
+  # its own group) is never cancelled.
   group: farm-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
-    # A push to main, or a pull request from a branch of this repository that is not Dependabot's, and nothing else. A Dependabot
+    # A push to main, a merge group (without its own term the job would be skipped, and the merge queue counts a skipped required
+    # check as passed), or a pull request from a branch of this repository that is not Dependabot's, and nothing else. A Dependabot
     # branch gets no farm login (the farm's trust refuses its `head_ref` too, a setting outside this repository): the pin check
     # that stands in for the build is pin-verify.yml, and the pull request template says the farm did not build it.
-    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && !startsWith(github.head_ref, 'dependabot/'))
+    if: github.event_name == 'push' || github.event_name == 'merge_group' || (github.event.pull_request.head.repo.full_name == github.repository && !startsWith(github.head_ref, 'dependabot/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -55,13 +62,13 @@ jobs:
       # The condition reads the variable without putting its value in a step's
       # environment, which GitHub prints in the log.
       - name: the farm is not configured (pull request)
-        if: ${{ vars.FARM_ADDRESS == '' && github.event_name != 'push' }}
+        if: ${{ vars.FARM_ADDRESS == '' && github.event_name == 'pull_request' }}
         run: |
           echo "::notice title=farm::the repository variable FARM_ADDRESS is not set, so there is no farm to build on. Skipping; nothing was built."
-      - name: the farm is not configured (push to main)
-        if: ${{ vars.FARM_ADDRESS == '' && github.event_name == 'push' }}
+      - name: the farm is not configured (push to main or merge group)
+        if: ${{ vars.FARM_ADDRESS == '' && github.event_name != 'pull_request' }}
         run: |
-          echo "::error title=farm::the repository variable FARM_ADDRESS is not set, so nothing built this push to main. Set it, or the farm check is not a check."; exit 1
+          echo "::error title=farm::the repository variable FARM_ADDRESS is not set, so nothing built this push to main or merge group. Set it, or the farm check is not a check."; exit 1
       # The same komira commit as commit_hash in .buckconfig; bump them together.
       - name: connect to the farm
         if: ${{ vars.FARM_ADDRESS != '' }}
@@ -93,16 +100,16 @@ jobs:
             ./buck2 audit config "buildrules_re.$key" --style json | grep -q '": *"[^"]' ||
               { echo "the buckconfig sets no [buildrules_re] $key: this job would build on the runner"; exit 1; }
           done
-      # A pull request builds the unit tier: every target except the beta ones (the tests that run against the real Mojo toolchain,
-      # and the user walk of the candidate; BUCK gives each of them _MOJO_TOOLS). A push to main builds every target, so those run
-      # after the merge.
-      - name: buck2 build (the unit tier on a pull request, every target on a push to main)
+      # A pull request and a merge group build the unit tier: every target except the beta ones (the tests that run against the
+      # real Mojo toolchain, and the user walk of the candidate; BUCK gives each of them _MOJO_TOOLS). A push to main builds every
+      # target, so those run after the merge.
+      - name: buck2 build (the unit tier on a pull request or a merge group, every target on a push to main)
         if: ${{ vars.FARM_ADDRESS != '' }}
         env:
           EVENT: ${{ github.event_name }}
         run: |
           set -o pipefail
-          if [ "$EVENT" = pull_request ]; then
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then
             ./buck2 uquery '//... - set(//:autolink //:build_targets_mojo //:discovery //:flaky //:group_e2e_mojo //:install_e2e //:mojo_probe //:native_static //:native_workspace_mojo //:supervisor //:user_beta)' > "$RUNNER_TEMP/targets"
             ./buck2 build --skip-incompatible-targets "@$RUNNER_TEMP/targets" 2>&1 | tee "$RUNNER_TEMP/build.log"
           else

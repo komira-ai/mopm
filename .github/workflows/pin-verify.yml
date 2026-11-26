@@ -1,4 +1,5 @@
-# pin-verify: the required, secretless check that the pin tables agree with the lockfiles, on every pull request.
+# pin-verify: the required, secretless check that the pin tables agree with the lockfiles, on every pull request and on every
+# merge group of the merge queue (its head commit: the queued pull requests merged on top of main).
 #
 # Without it a bot-pinned Dependabot pull request would prove only that a table equals itself. This runs the
 # released `buildrules autopin verify-pins` over the pull request's checkout and fails (exit 1) when a table is out of
@@ -17,6 +18,9 @@ name: pin-verify
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
 
 permissions:
   contents: read

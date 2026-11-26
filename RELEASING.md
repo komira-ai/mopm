@@ -10,19 +10,29 @@ customer uses it, on every platform it ships for (`beta-user`).
 ## What a pull request runs
 
 A pull request runs build and unit tests only, and only on Linux x86_64 (`ubuntu-24.04`): every other platform (Linux aarch64, macOS arm64) is a beta stage of the release, after the merge (`beta` and `beta-user` below), and no label puts one on a pull request. `tests/drivers/hygiene.zig` fails a workflow that runs on `pull_request` and names any other runner. Nothing of the release runs on it: no release dry run, no packaging, no signing, attesting or
-verifying, and no beta. The tiers:
+verifying, and no beta.
+
+A merge group of GitHub's merge queue (the queued pull requests merged on top of `main`, on a branch of the queue's own) runs the
+same checks as a pull request, on the group's head commit and under the same names, so a ruleset on `main` can require them there:
+`required_checks` in `tests/drivers/merge_group_lint.zig` lists those checks (`ci.yml` `test` and `registry-build`, `lint.yml`,
+`farm.yml` `build`, the five jobs of `service-ci.yml`, `pin-verify.yml`), and the lint fails when one of their workflows does not run on
+`merge_group` (types `checks_requested`, branches `main`), when a required job could be skipped there (the queue counts a skipped
+required check as passed), checks out another commit, or reports under another name, when a concurrency group could cancel a merge
+group's run, and when any other workflow runs on `merge_group`. With no farm configured, `farm.yml` fails a merge group as it fails a
+push to main. The tiers:
 
 | tier | what | when |
 |---|---|---|
-| unit (each library) | `ci.yml` `test` (`zig build test`) and `registry-build`; `service-ci.yml` (typecheck and tests of the API, site, stacks, DNS and access packages, and the CDK synth with dummy values); `farm.yml` (on the test farm, the tests are welded into the targets: a pull request builds every target except the beta ones that run against the real Mojo, `//:autolink`, `//:build_targets_mojo`, `//:discovery`, `//:flaky`, `//:install_e2e`, `//:mojo_probe`, `//:native_static`, `//:native_workspace_mojo`, `//:supervisor` and `//:user_beta`; a push to main builds `//...`) | every pull request, and a push to main |
-| lint | `lint.yml`: hygiene, workflow lint, lint self-test, **the release lint of `release.yml`** (so a broken `release.yml` still fails a pull request) and actionlint | every pull request, and a push to main |
-| pin check | `pin-verify.yml`: every pin table it covers (`site/` and `service/api/`) is what its `package-lock.json` calls for; secretless, no condition, so it always reports (`autopin-compute.yml` runs only for Dependabot's own pull requests; see "The Dependabot pin update") | every pull request |
+| unit (each library) | `ci.yml` `test` (`zig build test`) and `registry-build`; `service-ci.yml` (typecheck and tests of the API, site, stacks, DNS and access packages, and the CDK synth with dummy values); `farm.yml` (on the test farm, the tests are welded into the targets: a pull request builds every target except the beta ones that run against the real Mojo, `//:autolink`, `//:build_targets_mojo`, `//:discovery`, `//:flaky`, `//:install_e2e`, `//:mojo_probe`, `//:native_static`, `//:native_workspace_mojo`, `//:supervisor` and `//:user_beta`; a push to main builds `//...`) | every pull request and merge group, and a push to main |
+| lint | `lint.yml`: hygiene, workflow lint, merge queue lint, lint self-test, **the release lint of `release.yml`** (so a broken `release.yml` still fails a pull request) and actionlint | every pull request and merge group, and a push to main |
+| pin check | `pin-verify.yml`: every pin table it covers (`site/` and `service/api/`) is what its `package-lock.json` calls for; secretless, no condition, so it always reports (`autopin-compute.yml` runs only for Dependabot's own pull requests; see "The Dependabot pin update") | every pull request and merge group |
 | beta (each component) | `ci.yml` `mojo-e2e`, `pack-conformance` and `installer`; `farm-macos.yml`, the macOS arm64 checks as farm actions on the farm's Mac workers; then `release-beta-user.yml`, the candidate used as a user | after the merge only: `release.yml` stages `beta` (the whole of `ci.yml`), `beta-macos` (`farm-macos.yml`, which a push to main also runs) and `beta-user` |
 | gamma (the whole system, real consumers) | `promote.yml` (`deploy.yml`, `e2e.yml`) | after a release, never on a pull request |
 
 No job of this repository measures coverage today, so none is reported. `tests/drivers/hygiene.zig` holds the split: only `ci.yml`, `lint.yml`, `farm.yml`,
 `service-ci.yml`, `pin-verify.yml` and `autopin-compute.yml` may run on `pull_request`, and every job of `ci.yml` other than `test` and `registry-build` must carry
-`if: github.event_name != 'pull_request'`. The `.deb` checks (dpkg and lintian) run inside `release-build.yml`, in the `build` stage.
+`if: github.event_name != 'pull_request' && github.event_name != 'merge_group'` (in a workflow with no `merge_group` trigger,
+`if: github.event_name != 'pull_request'` is enough). The `.deb` checks (dpkg and lintian) run inside `release-build.yml`, in the `build` stage.
 
 ## What happens on a push to main
 
@@ -366,7 +376,7 @@ and `tests/drivers/hygiene.zig` names these three (`autopin_manual`) so that a f
 |---|---|---|---|
 | `autopin-compute.yml` | `pull_request` of Dependabot's own pull request, run for Dependabot, from a branch of this repository (job-level `if:`) | a read-only token; no secret, environment, id-token or cache | runs the released `buildrules autopin compute` over the checkout of the pull request's head and uploads the regenerated tables as the artifact `autopin-<run id>-<attempt>` (never overwritten) |
 | `autopin-commit.yml` | `workflow_run` of the compute run completing (this file on the default branch is the one that runs) | environment `autopin` (the App's id and key), entered only after the job-level `if:` passed; read access until it mints | `autopin commit-check` reads the artifact as untrusted bytes and the pull request and its lockfile from the API and writes the tables it will vouch for; only then is the App token minted (contents write, this repository only) and `autopin commit-push` makes one commit on the pull request's branch with the Git Data API, moving the branch with `force: false` |
-| `pin-verify.yml` | every pull request | a read-only token and nothing else | the required check `pin-verify`: runs `autopin verify-pins` over every `--set` directory, which downloads every row and compares sha512, sha256 and size with the lock and the table |
+| `pin-verify.yml` | every pull request, and every merge group of the merge queue | a read-only token and nothing else | the required check `pin-verify`: runs `autopin verify-pins` over every `--set` directory, which downloads every row and compares sha512, sha256 and size with the lock and the table |
 
 The App's own push has the pull request's author but not its actor, so the compute job skips it: that is what stops the loop.
 The commit carries `[dependabot skip]`, so Dependabot keeps managing the pull request and a later Dependabot update replaces it.

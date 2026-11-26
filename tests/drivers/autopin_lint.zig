@@ -4,7 +4,7 @@
 //! Three workflows keep the pin tables of a Dependabot pull request current without a person:
 //!   autopin-compute.yml  pull_request, unprivileged: regenerates the tables with the released `buildrules` and uploads them;
 //!   autopin-commit.yml   workflow_run, privileged:   re-checks the artifact as untrusted bytes, then commits with the App's token;
-//!   pin-verify.yml       pull_request, secretless:   the required check that the tables agree with the lockfiles.
+//!   pin-verify.yml       pull_request and merge_group, secretless: the required check that the tables agree with the lockfiles.
 //! `fileProblems` holds each of them to its own rules (the gate, the scope of every token, the order of the steps, the artifact's
 //! name). `repoProblems` holds the rules that need the other files: R1-R4 over every workflow (which triggers may exist, what a
 //! pull_request workflow may touch, the farm's Dependabot skip), M2/M2b (what the lints can read), no workflow that merges or
@@ -491,7 +491,11 @@ fn commitFile(a: Allocator, f: []const u8, doc: Value, text: []const u8, out: *O
 }
 
 fn verifyFile(a: Allocator, f: []const u8, doc: Value, text: []const u8, out: *Out) !Facts {
-    try triggerIs(a, f, doc, "pull_request", out);
+    // A pull request, and a merge group of the merge queue (merge_group_lint.zig holds that trigger's types and branches).
+    const on = try c.onKeys(a, doc);
+    if (!(on.len == 2 and c.containsStr(on, "pull_request") and c.containsStr(on, "merge_group"))) {
+        try c.problem(a, out, prefix ++ "{s}: the triggers must be exactly pull_request and merge_group, got {s}", .{ f, try c.inspectList(a, on) });
+    }
     const pr = c.get(c.onValue(doc), "pull_request");
     if (pr != null and !(pr.? == .null or (pr.? == .object and pr.?.object.count() == 0))) {
         try c.problem(a, out, prefix ++ "{s}: pull_request has no filter and no types: every pull request gets this check", .{f});

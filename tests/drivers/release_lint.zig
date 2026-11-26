@@ -1141,8 +1141,9 @@ pub const macos_switch = "vars.MACOS_ON_FARM";
 /// CLI for the pinned target, started, and its Mach-O minimum). The beta tier's macOS legs have no farm counterpart.
 pub const switched_jobs = [_][]const u8{ "test", "registry-build" };
 
-/// The matrix of each switched job: Linux x86_64 alone on a pull request; with the switch on, every platform but macOS; otherwise all three.
-pub const switched_os = "${{ fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\"]' || " ++ macos_switch ++
+/// The matrix of each switched job: Linux x86_64 alone on a pull request and a merge group; with the switch on, every platform but macOS;
+/// otherwise all three.
+pub const switched_os = "${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[\"ubuntu-24.04\"]' || " ++ macos_switch ++
     " == 'true' && '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]') }}";
 
 /// ci.yml: the switch drops the macos-15 leg of `test` and `registry-build` and nothing else. Each of the two has exactly `switched_os`
@@ -1158,7 +1159,7 @@ pub fn ciSwitchProblems(a: Allocator, text: []const u8, out: *Out) !void {
         };
         const os = c.get(c.get(c.get(job, "strategy"), "matrix"), "os");
         if (!c.isStr(os, switched_os)) {
-            try c.problem(a, out, prefix ++ f ++ "{s}: matrix.os is {s}, expected exactly " ++ switched_os ++ " (Linux x86_64 on a pull request; " ++ macos_switch ++ " true drops macos-15 and nothing else)", .{ name, try c.inspect(a, os) });
+            try c.problem(a, out, prefix ++ f ++ "{s}: matrix.os is {s}, expected exactly " ++ switched_os ++ " (Linux x86_64 on a pull request and a merge group; " ++ macos_switch ++ " true drops macos-15 and nothing else)", .{ name, try c.inspect(a, os) });
         }
     }
     const code = try c.nonCommentLines(a, text);
