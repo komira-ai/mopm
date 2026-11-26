@@ -295,7 +295,7 @@ jobs:
         working-directory: site
         env:
           STAGE: ${{ inputs.stage }}
-        run: node build/tools/tools/readme-e2e.js --stage "$STAGE" --site "https://$(jq -r .siteDomain "../service/config/${STAGE}.json")" --dist dist --summary "$GITHUB_STEP_SUMMARY"
+        run: node build/tools/tools/readme-e2e.js --stage "$STAGE" --summary "$GITHUB_STEP_SUMMARY" --dist dist --site "https://$(jq -r '.siteDomain' "../service/config/${STAGE}.json")"
 
   # Gate 1 of the sparse index (spec/index.md): the three requests a `mopm lock` makes of a registry before it reads any package,
   # answered by the stage that was just deployed. Curl only, no token and no AWS credentials, so it needs no environment and

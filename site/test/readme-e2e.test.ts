@@ -118,7 +118,7 @@ const commentAsText: Render = <N>(doc: Doc<N>, pathname: string, search: string,
     ...api,
     getPackage: async (f) => {
       const r = await api.getPackage(f);
-      return r.kind === 'ok' && r.value.readme !== undefined ? { ...r, value: { ...r.value, readme: r.value.readme.replace(/<!--/g, '\\<!--') } } : r;
+      return r.kind === 'ok' && r.value.readme !== undefined ? { ...r, value: { ...r.value, readme: r.value.readme.split('<!--').join('\\<!--') } } : r;
     },
   };
   return appView(doc, pathname, search, keep, host);
@@ -454,7 +454,7 @@ describe('readme-e2e: what it reads on each stage, and the job that runs it', ()
     expect(job).not.toMatch(/secrets\.|id-token|environment:|continue-on-error|\|\| true/);
     expect(job).toContain('        working-directory: site\n        run: npm run build\n');
     expect(job).toContain(
-      '        run: node build/tools/tools/readme-e2e.js --stage "$STAGE" --site "https://$(jq -r .siteDomain "../service/config/${STAGE}.json")" --dist dist --summary "$GITHUB_STEP_SUMMARY"\n',
+      '        run: node build/tools/tools/readme-e2e.js --stage "$STAGE" --summary "$GITHUB_STEP_SUMMARY" --dist dist --site "https://$(jq -r \'.siteDomain\' "../service/config/${STAGE}.json")"\n',
     );
   });
 });
