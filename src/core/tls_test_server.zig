@@ -61,11 +61,21 @@ pub const Server = struct {
     request_len: usize = 0,
     failed: ?anyerror = null,
     thread: ?std.Thread = null,
+    /// Without the key: when set, the server waits for this event after sending the Certificate and before the
+    /// CertificateVerify, so a test can let the client hang up first.
+    hold_after_certificate: ?*std.Thread.ResetEvent = null,
 
     /// A server on 127.0.0.1 and a port the system picks, serving one connection on a thread of its own.
     pub fn start(s: *Server, cert: []const u8, key: ?Ed25519.KeyPair, answer: []const u8) !void {
         const addr = try std.net.Address.parseIp("127.0.0.1", 0);
         s.* = .{ .listener = try addr.listen(.{ .reuse_address = true }), .cert = cert, .key = key, .answer = answer };
+        s.thread = try std.Thread.spawn(.{}, run, .{s});
+    }
+
+    /// As `start` without the key, with the CertificateVerify held until `hold` is set (`hold_after_certificate`).
+    pub fn startHeld(s: *Server, cert: []const u8, hold: *std.Thread.ResetEvent) !void {
+        const addr = try std.net.Address.parseIp("127.0.0.1", 0);
+        s.* = .{ .listener = try addr.listen(.{ .reuse_address = true }), .cert = cert, .hold_after_certificate = hold };
         s.thread = try std.Thread.spawn(.{}, run, .{s});
     }
 
@@ -142,9 +152,12 @@ pub const Server = struct {
         try writeSealed(conn.stream, hs, 1, 0x16, msg[0 .. 4 + body_len]);
 
         const key = s.key orelse {
+            if (s.hold_after_certificate) |e| e.wait();
             // CertificateVerify (ecdsa_secp256r1_sha256) with an empty signature: a client that trusted the chain would
-            // refuse it, so a client must stop at the certificate.
-            try writeSealed(conn.stream, hs, 2, 0x16, &.{ 0x0f, 0, 0, 4, 0x04, 0x03, 0, 0 });
+            // refuse it, so a client must stop at the certificate. A client that rejects the certificate itself (a
+            // wrong host name) has stopped already and may have closed the connection, so the write's error is
+            // ignored: what the client saw is asserted on the client's side.
+            writeSealed(conn.stream, hs, 2, 0x16, &.{ 0x0f, 0, 0, 4, 0x04, 0x03, 0, 0 }) catch {};
             // Wait for the client to give up, so it reads everything sent before the connection closes.
             var sink: [64]u8 = undefined;
             _ = conn.stream.read(&sink) catch 0;
