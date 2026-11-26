@@ -1,6 +1,6 @@
 /* mopm.dev shared stylesheet, loaded first by every page: tokens (light and dark), base, header, footer, forms,
-   code, tags, the big search box, notices, tables, prose, not-found. Area sheets follow it (tools/layout.ts). No
-   external resources (CSP 'self'). The look follows the design mock: warm neutrals, orange brand. */
+   code, tags, the big search box, notices, tables, prose, the pager, not-found. Area sheets follow it
+   (tools/layout.ts). No external resources (CSP 'self'). The look follows the design mock: warm neutrals, orange brand. */
 
 :root {
   color-scheme: light dark;
@@ -291,6 +291,9 @@ label { display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 0.
 .crumb a:hover { text-decoration: underline; }
 .crumb .sep { color: var(--border-strong); }
 .crumb [aria-current] { color: var(--fg); font-weight: 600; }
+.pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-top: 8px; }
+.pager a[rel="next"] { margin-left: auto; }
+.pager .button { white-space: normal; }
 .ver { font-family: var(--mono); color: var(--fg-muted); }
 .no-js { display: none; }
 @media (scripting: none) {

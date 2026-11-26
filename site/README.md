@@ -31,7 +31,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/account.ts` | the header's account box: the sign-in link back to the page (`returnPathOf`), then the login and Sign out once the session route answers, against a small DOM port; and the banner of a refused sign-in on `/tutorial?error=<code>`, where the sign-in sends it |
 | `src/enhance.ts` | what the page script adds once a page is on screen: the copy buttons and the home page's recently updated list, against a small DOM port |
 | `src/main.ts` | the page script: connects `app.ts`, `mount.ts`, `enhance.ts` and `account.ts` to the real document, plus the read-only banner and `/` to focus search |
-| `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
+| `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards, the pager), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
 | `src/tutorial/gate.ts` | the tutorial's gate: `session.ts`'s session, sign-in link and sign-out, plus the sandbox route, and `replayGate`, a fake that replays recorded answers; `main.js` does not import it (`test/preview-not-shipped.test.ts`) |
 | `src/tutorial/runner.ts` | the tutorial's runner, `page.ts`'s `Runner` for one lesson over E2B's SDK, from each run's sandbox grant alone (the `Sandbox` constructor with the sandbox's access token, no API key): writes its edited files into the lesson's directory and runs its command, giving the exit code and output, or `{kind: 'SandboxNotRunning'}` / `{kind: 'SandboxUnreachable'}`; bundled with `e2b` into `tutorial.js` |
 | `src/tutorial/node-stub.ts` | the empty module the bundle gives `e2b`'s six `node:*` imports, which only its template builder uses |
@@ -79,7 +79,9 @@ tutorial's pages from them: `/tutorial` and `/tutorial/<lesson>`, as `tutorial/i
 tutorial's E2B template (`service/infra/stacks/lib/site-stack.ts`, `servesTutorial`); elsewhere `/tutorial` is the 404
 page. No page outside the tutorial links to it yet. A lesson's page holds, in its `#lesson-runner`, the
 lesson's editable files (their text from `project/`) and its commands, readable without scripts, and loads `tutorial.js`
-after `main.js`, which reads the lesson from there and puts the sign-in card or the editor in its place. An editable file
+after `main.js`, which reads the lesson from there and puts the sign-in card or the editor in its place. Below it are
+links to the lesson before it and the lesson after it, in the index's order, in the HTML (no script builds them): the
+first lesson has only Next, the last only Previous, a tutorial of one lesson neither. An editable file
 holding a carriage return or a NUL, or bytes that are not UTF-8, fails the build: the page's HTML cannot carry it as it is.
 
 On the build farm the same commands are Buck2 targets (`site/BUCK`, run from the repository root), over

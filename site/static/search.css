@@ -1,4 +1,4 @@
-/* The search page (/search): search band, result cards, empty states, page buttons. */
+/* The search page (/search): search band, result cards, empty states. */
 
 .search-band { padding-top: 2rem; padding-bottom: 1.25rem; }
 .search-title { font-size: clamp(1.4rem, 1.2rem + 1vw, 1.9rem); margin: 0 0 18px; overflow-wrap: anywhere; }
@@ -44,8 +44,6 @@ a.result-name:focus-visible::after { outline: 3px solid var(--focus); outline-of
 .empty-state > :last-child { margin: 16px 0 0; }
 .empty-lead { font-size: 1.0625rem; font-weight: 650; }
 .search-body .notice-error .button { margin-top: 4px; }
-.pager { display: flex; justify-content: space-between; gap: 1rem; margin-top: 8px; }
-.pager a[rel="next"] { margin-left: auto; }
 
 @media (max-width: 40rem) {
   .result { padding: 14px 16px; gap: 12px; }
