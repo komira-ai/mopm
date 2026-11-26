@@ -257,6 +257,46 @@ jobs:
           AWS_SESSION_TOKEN: ""
         run: ./zig-out/bin/mopm-signin-e2e --site "https://$(jq -r .siteDomain "service/config/${STAGE}.json")" --api "https://$(jq -r .apiDomain "service/config/${STAGE}.json")"
 
+  # The package page as a browser loads it, without a browser: the shell the site host serves for the package's address, and
+  # the view the page script builds there, made by the site's own code (its API client on the site's /api/v2, its view of
+  # the package, the readme through its Markdown renderer), at this commit; the shell must load this commit's page script
+  # (the main.js of the build's app.html), so the renderer checked is the one readers get. It fails when the readme's text
+  # holds `mojo-hidden`, the marker of komira's hidden test lines (site/tools/readme-e2e.ts says what it reads and when it
+  # skips). It does not wait for group-e2e: it reads the fixture as an earlier run published it.
+  # The package is komira-ai/json on prod, and on beta and gamma zz-e2e/zz_e2e_app, which the group-e2e job publishes with
+  # one such line; a stage that does not hold it SKIPs loudly and stays green (prod must hold it). Read-only: GETs with no
+  # token, so it needs no environment, no secret and no id-token. Runs in every e2e run, after beta, gamma and prod deploys.
+  readme-e2e:
+    needs: guard
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate stage
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          case "$STAGE" in beta|gamma|prod) ;; *) echo "bad stage" >&2; exit 1 ;; esac
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+      - name: Install the site's packages (npm ci)
+        working-directory: site
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build the site and its tools (npm run build), whose app.html names the page script the stage must serve
+        working-directory: site
+        run: npm run build
+      - name: Read-only check, no package readme shows mojo-hidden
+        working-directory: site
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: node build/tools/tools/readme-e2e.js --stage "$STAGE" --site "https://$(jq -r .siteDomain "../service/config/${STAGE}.json")" --dist dist --summary "$GITHUB_STEP_SUMMARY"
+
   # Gate 1 of the sparse index (spec/index.md): the three requests a `mopm lock` makes of a registry before it reads any package,
   # answered by the stage that was just deployed. Curl only, no token and no AWS credentials, so it needs no environment and
   # holds no id-token. Every check runs and reports, so one red run names everything that is wrong. A red run here stops
