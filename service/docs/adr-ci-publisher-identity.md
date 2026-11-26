@@ -82,8 +82,8 @@ beta-only environment variable).
    identity (a new token every job would otherwise start a new count).
 3. **A static policy, beta only.** `MOPM_GROUPS_POLICY` is `{"mode":"allow","actors":["ci:gh-repo:<repository_id>", ...]}`: one to eight CI
    actors, no `all`, no account, no `deny`, no other key. The stack sets it when the stage is `beta` (`BETA_GROUPS_POLICY`, derived from
-   the same constant as the trusted publisher) and never otherwise, and the runtime refuses to start on any other stage when the
-   variable is present (`parseStaticGroupsPolicy`, called by `flagsFor`). The existing flags read the static policy and the `groups_enabled`
+   the same constant as the trusted publisher, one actor per distinct repository) and never otherwise, and the runtime refuses to start
+   on any other stage when the variable is present (`parseStaticGroupsPolicy`, called by `flagsFor`). The existing flags read the static policy and the `groups_enabled`
    item and either admitting the actor is enough.
 
 ### Consequences
