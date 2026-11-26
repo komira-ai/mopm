@@ -18,7 +18,9 @@
     "/index.html",
     "/install.sh",
     "/tutorial/hello/index.html",
-    "/tutorial/index.html"
+    "/tutorial/index.html",
+    "/tutorial/structs/index.html",
+    "/tutorial/tests/index.html"
   ],
   "vectors": [
     {
@@ -882,6 +884,16 @@
     },
     {
       "path": "/tutorial/hello/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/tutorial/structs/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/tutorial/tests/index.html",
       "edge": "pass",
       "view": null
     },

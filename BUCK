@@ -702,11 +702,12 @@ zig_test(  # buck-only: docs/examples.md: the files under examples/ are what mop
     **_TOOLS
 )
 
-zig_test(  # buck-only: tutorial/README.md: every tutorial/lessons/<id>/ passes spec/tutorial-lesson.schema.json and tests/drivers/tutorial_lessons.zig, and its mopm.lock is what mopm lock writes
+zig_test(  # buck-only: tutorial/README.md: every tutorial/lessons/<id>/ passes spec/tutorial-lesson.schema.json and tests/drivers/tutorial_lessons.zig (an output block in lesson.md for each action), and its mopm.lock is what mopm lock writes
     name = "tutorial_lessons",
     src = "tests/drivers/tutorial_lessons_test.zig",
     imports = _CONTRACT_LIBS + [
         "tests/drivers/harness.zig",
+        "tests/drivers/lesson_output.zig",
         "tests/drivers/tutorial_lessons.zig",
         "spec/lock.schema.json",
         "spec/tutorial-lesson.schema.json",
@@ -898,7 +899,7 @@ _AUTOLINK_DATA = [
     "tests/e2e/prog_outer.mojo",
     "tests/e2e/repl.stdin",
     "tests/e2e/repl_outer.stdin",
-    "tutorial/lessons/hello",
+    "tutorial/lessons",
 ]
 zig_test(  # buck-only: the group-publish check (tests/drivers/group_e2e.zig) against a loopback registry that serves the group routes
     name = "group_e2e",
@@ -947,7 +948,7 @@ zig_test(  # buck-only: the native step of the user-level beta walk (tests/drive
 zig_test(  # buck-only: mopm build, run, repl with native libraries; the Zig port of tests/e2e/run.sh
     name = "autolink",
     src = "tests/drivers/test_autolink_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/lesson_output.zig"],
     exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm"),
     data = _AUTOLINK_DATA,
     **_TOOLS
@@ -1820,8 +1821,8 @@ zig_coverage(
     blocks = False,
     floor = "coverage/tutorial_lessons.txt",
     test_targets = [":tutorial_lessons"],
-    # The checker alone: the test file reads the real lessons and is not counted.
-    expect = ["tests/drivers/tutorial_lessons.zig"],
+    # The checker and its reader of lesson.md's output blocks: the test file reads the real lessons and is not counted.
+    expect = ["tests/drivers/lesson_output.zig", "tests/drivers/tutorial_lessons.zig"],
 )
 
 zig_coverage(

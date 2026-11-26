@@ -531,8 +531,10 @@ with E2B's `Template()` builder (E2B, "Template quickstart", <https://docs.e2b.d
 5. `user` and `/home/user` as the sandbox's user and working directory.
 
 **Add a lesson**: a directory `tutorial/lessons/<id>/` with `lesson.md`, `lesson.json` and `project/`
-(`tutorial/README.md` says what each holds). The template reads the lessons when it is built, so it needs no change;
-`//:tutorial_lessons` checks the lesson on every pull request.
+(`tutorial/README.md` says what each holds). `lesson.md` shows what each action prints in a block ```` ```output run ````
+(and ```` ```output test ````). The template reads the lessons when it is built, so it needs no change;
+`//:tutorial_lessons` checks the lesson on every pull request, and `//:autolink` runs each action with the real Mojo
+after the merge and compares what it prints with that block.
 
 **Add a tool** (a program the lessons use): add a step to `templateDefinition` before the lessons, for example
 `.aptInstall(['ripgrep'])` for a Debian package, or `.runCmd('<command>', { user: 'root' })` for anything else (E2B's

@@ -1,0 +1,7 @@
+{
+  "title": "Tests",
+  "summary": "Write a test for a function and run it with mopm test.",
+  "order": 2,
+  "editable": ["tests/test_calc.mojo", "src/calc/__init__.mojo", "src/main.mojo"],
+  "actions": { "run": "mopm run src/main.mojo", "test": "mopm test" }
+}
