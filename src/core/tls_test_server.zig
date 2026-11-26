@@ -67,15 +67,22 @@ pub const Server = struct {
 
     /// A server on 127.0.0.1 and a port the system picks, serving one connection on a thread of its own.
     pub fn start(s: *Server, cert: []const u8, key: ?Ed25519.KeyPair, answer: []const u8) !void {
-        const addr = try std.net.Address.parseIp("127.0.0.1", 0);
-        s.* = .{ .listener = try addr.listen(.{ .reuse_address = true }), .cert = cert, .key = key, .answer = answer };
-        s.thread = try std.Thread.spawn(.{}, run, .{s});
+        try s.begin(.{ .listener = try listen(), .cert = cert, .key = key, .answer = answer });
     }
 
     /// As `start` without the key, with the CertificateVerify held until `hold` is set (`hold_after_certificate`).
     pub fn startHeld(s: *Server, cert: []const u8, hold: *std.Thread.ResetEvent) !void {
+        try s.begin(.{ .listener = try listen(), .cert = cert, .hold_after_certificate = hold });
+    }
+
+    fn listen() !std.net.Server {
         const addr = try std.net.Address.parseIp("127.0.0.1", 0);
-        s.* = .{ .listener = try addr.listen(.{ .reuse_address = true }), .cert = cert, .hold_after_certificate = hold };
+        return addr.listen(.{ .reuse_address = true });
+    }
+
+    /// Sets `s` to `init`, before the thread starts, so the thread reads every field as set.
+    fn begin(s: *Server, init: Server) !void {
+        s.* = init;
         s.thread = try std.Thread.spawn(.{}, run, .{s});
     }
 

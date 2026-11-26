@@ -189,7 +189,7 @@ test "a server certificate that does not name the host, or that no trusted certi
     }
 }
 
-test "a certificate for another host is refused as soon as it arrives, and the server sees the connection closed before its CertificateVerify" {
+test "a certificate for another host is refused without waiting for the server's CertificateVerify, which then meets a closed connection" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -197,11 +197,11 @@ test "a certificate for another host is refused as soon as it arrives, and the s
     const cert = try test_server.certificate(a, key, "wrong.example");
     // The server holds its CertificateVerify until connect has returned: connect must not wait for it, and the
     // server then writes to a connection the client has closed.
+    var client = offlineClient(a);
+    try test_server.trust(&client, cert);
     var hold = std.Thread.ResetEvent{};
     var s: test_server.Server = undefined;
     try s.startHeld(cert, &hold);
-    var client = offlineClient(a);
-    try test_server.trust(&client, cert);
     const got = connect(&client, "127.0.0.1", s.port());
     const let_go = client.connection_pool.used.first == null;
     client.deinit();
