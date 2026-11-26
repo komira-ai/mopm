@@ -24,7 +24,7 @@ _DOCS = {
 }
 
 # The tutorial's lessons and their schema: tools/lessons.ts checks every lesson against them and tools/tutorial.ts
-# renders the tutorial's pages from them (held out of dist/ until the tutorial is routed, tools/build.ts).
+# renders the tutorial's pages from them into dist/tutorial/ (tools/build.ts).
 _LESSONS = {
     "spec/tutorial-lesson.schema.json": "//:site.spec.tutorial-lesson.schema.json",
     "tutorial/lessons": "//:site_tutorial_lessons",

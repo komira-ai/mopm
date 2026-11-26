@@ -2,11 +2,15 @@
 // router does (service/infra/stacks/test/site-router.test.ts runs that router over the same vectors); and the path
 // builders encode every segment.
 import vectors from './fixtures/routes.json';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { DOC_PAGES } from '../src/links';
 import {
-  DOC_SLUG, flatSearchPath, fullName, isCanonicalName, isName, isNamespace, isVersion, namespaceSearchPath, NAMESPACE_MAX,
-  normaliseName, packagePath, parseRoute, searchPath, splitFullName, VERSION_MAX, versionPath, versionsPath,
+  DOC_SLUG, flatSearchPath, LESSON, fullName, isCanonicalName, isName, isNamespace, isVersion, namespaceSearchPath, NAMESPACE_MAX,
+  normaliseName, packagePath, parseRoute, searchPath, splitFullName, TUTORIAL_PATH, VERSION_MAX, versionPath, versionsPath,
 } from '../src/routes';
+import { LESSON_SCHEMA, loadLessons, readLessonSchema } from '../tools/lessons';
+import { LESSONS_DIR, REPO_ROOT } from './build-fixture';
 
 type Vector = { path: string; edge: string; view: ReturnType<typeof parseRoute> };
 const V = vectors.vectors as Vector[];
@@ -52,7 +56,9 @@ test('a one- or two-segment package path the router answers with the 404 page ha
 
 test("the vectors' build holds every page the site builds, and a pass is a file of that build or an asset of another", () => {
   const files = vectors.files;
-  const pages = ['/404.html', '/app.html', '/docs/index.html', ...DOC_PAGES.map((d) => `/docs/${d.slug}/index.html`), '/index.html'];
+  const lessons = loadLessons(LESSONS_DIR, readLessonSchema(join(REPO_ROOT, LESSON_SCHEMA)));
+  const tutorial = [`${TUTORIAL_PATH}/index.html`, ...lessons.map((l) => `${TUTORIAL_PATH}/${l.id}/index.html`)];
+  const pages = ['/404.html', '/app.html', '/docs/index.html', ...DOC_PAGES.map((d) => `/docs/${d.slug}/index.html`), '/index.html', ...tutorial];
   expect(files.filter((f) => f.endsWith('.html')).sort()).toEqual(pages.sort());
   expect(files).toContain('/install.sh');
   const builds = new Set(files.filter((f) => f.startsWith('/assets/')).map((f) => f.split('/')[2]));
@@ -209,4 +215,11 @@ test('every docs page has a slug the edge router serves (DOC_SLUG), and a docs v
   }
   expect(DOC_SLUG.test('Bad_Slug')).toBe(false);
   expect(DOC_SLUG.test('..')).toBe(false);
+});
+
+// The edge router reads a lesson id with LESSON (src/routes.ts); the lessons' schema says what an id is.
+test("LESSON is the lesson schema's id pattern", () => {
+  const schema = JSON.parse(readFileSync(join(REPO_ROOT, LESSON_SCHEMA), 'utf8')) as { $defs: { LessonId: { pattern: string } } };
+  expect(LESSON.source).toBe(schema.$defs.LessonId.pattern);
+  expect(LESSON.flags).toBe('');
 });

@@ -42,7 +42,8 @@ export interface AccountPort<N> extends Doc<N> {
 /**
  * Where a sign-in from the page at `pathname` comes back to: the path itself when the start route keeps it as its
  * `return_to` (`isReturnPath`), else the home page. The start route would send any other value to `/tutorial`, which
- * is not a page of the site yet; a page with no such path is the 404 page or a docs address the router redirects.
+ * a stage without the tutorial does not serve; a page with no such path is the 404 page or a docs address the router
+ * redirects.
  */
 export function returnPathOf(pathname: string): string {
   return isReturnPath(pathname) ? pathname : '/';
@@ -51,7 +52,7 @@ export function returnPathOf(pathname: string): string {
 /**
  * The path the box's link returns to on a page whose body has `data-page` `page` (tools/layout.ts) at `pathname`: the
  * address the browser is at, except on the 404 page, which answers any address the site has no page for (`/tutorial`
- * among them while the tutorial is not served), so a sign-in from it comes back to the home page.
+ * among them on a stage that does not serve the tutorial), so a sign-in from it comes back to the home page.
  */
 export function pagePath(pathname: string, page: string | null): string {
   return page === 'error' ? '/' : pathname;

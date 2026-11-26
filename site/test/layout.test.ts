@@ -45,11 +45,13 @@ function byId(html: string, id: string): string {
   return html.slice(start, html.indexOf(`</${m[1]}>`, start));
 }
 
-// The pages the build writes: the home page, the 404, the app shell, the docs index and one page per doc.
+// The pages the build writes: the home page, the 404, the app shell, the docs index, one page per doc, and the
+// tutorial's index and one page per lesson.
 const DOC_HTML = ['docs/why/index.html', 'docs/getting-started/index.html', 'docs/configuration/index.html', 'docs/examples/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html', 'docs/publish-workspace/index.html', 'docs/what-mopm-stores/index.html'];
-const ALL_PAGES = ['404.html', 'app.html', 'docs/index.html', ...DOC_HTML, 'index.html'];
+const TUTORIAL_HTML = ['tutorial/index.html', 'tutorial/hello/index.html'];
+const ALL_PAGES = ['404.html', 'app.html', 'docs/index.html', ...DOC_HTML, 'index.html', ...TUTORIAL_HTML];
 
-test('the twelve pages are built', () => {
+test('the fourteen pages are built', () => {
   expect([...pages].sort()).toEqual([...ALL_PAGES].sort());
 });
 
@@ -92,12 +94,19 @@ describe.each(ALL_PAGES)('%s', (page) => {
 
   // The header's account box (src/account.ts) is the sign-in link back to the page's own path on every page, and holds
   // nothing of a signed-in user: the pages are cached for every visitor, so who is signed in is the script's to fill in.
-  // The 404 page has no path of its own ('/', as the start route would send an unknown path to the unserved tutorial),
-  // and the app shell's is '/search' until its script rewrites it. Defect caught: a page without the link; the link with
-  // no return_to (the start route's fallback is /tutorial, a 404 today) or with another page's; a login or Sign out
-  // written into the cached HTML.
+  // The 404 page has no path of its own ('/', as the start route would send an unknown path to /tutorial, which a stage
+  // without the tutorial does not serve), the app shell's is '/search' until its script rewrites it, and a tutorial page's
+  // is its route, with no trailing slash. Defect caught: a page without the link; the link with no return_to (the start
+  // route's fallback is /tutorial) or with another page's; a login or Sign out written into the cached HTML.
   test("the header's account box is the sign-in link back to this page, and nothing of a signed-in user", () => {
-    const own: Record<string, string> = { 'index.html': '/', '404.html': '/', 'app.html': '/search', 'docs/index.html': '/docs/' };
+    const own: Record<string, string> = {
+      'index.html': '/',
+      '404.html': '/',
+      'app.html': '/search',
+      'docs/index.html': '/docs/',
+      'tutorial/index.html': '/tutorial',
+      'tutorial/hello/index.html': '/tutorial/hello',
+    };
     const path = own[page] ?? `/${page.replace(/index\.html$/, '')}`;
     expect(byId(html, 'site-account')).toBe(
       `<a class="button sign-in" href="/api/v2/auth/web/start?return_to=${encodeURIComponent(path)}"><span>Sign in<span class="sign-in-more"> with GitHub</span></span></a>`,
@@ -131,6 +140,8 @@ describe.each(ALL_PAGES)('%s', (page) => {
       'index.html': ['site.css', 'home.css'],
       'app.html': ['site.css', 'package.css', 'search.css'],
       '404.html': ['site.css'],
+      'tutorial/index.html': ['site.css'],
+      'tutorial/hello/index.html': ['site.css'],
     };
     const sheets = tags.filter(([t, a]) => t === 'link' && a.some(([k, v]) => k === 'rel' && v === 'stylesheet')).map(([, a]) => (a.find(([k]) => k === 'href') as [string, string])[1]);
     expect(sheets.map((h) => h.replace(/^\/assets\/[0-9a-f]{16}\//, ''))).toEqual(want[page] ?? ['site.css', 'docs.css']);
@@ -167,7 +178,8 @@ describe.each(ALL_PAGES)('%s', (page) => {
       expect(names.filter((k) => k === 'style' || k.startsWith('on'))).toEqual([]);
     }
     expect(count('style')).toBe(0);
-    expect(count('script')).toBe(1);
+    // main.js; a lesson's page also loads the tutorial bundle (test/tutorial.test.ts holds which).
+    expect(count('script')).toBe(page === 'tutorial/hello/index.html' ? 2 : 1);
   });
 
   test('every id is unique', () => {

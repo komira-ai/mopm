@@ -638,17 +638,28 @@ describe('the site', () => {
     expect(got.headers['content-security-policy']).toBe(PAGE_HEADERS['content-security-policy']);
   });
 
-  test('the tutorial routes are its shell page once the build has one', async () => {
-    const page = join(dist, 'tutorial.html');
-    writeFileSync(page, '<!doctype html><title>tutorial</title>');
+  test("the tutorial routes are the build's tutorial pages, as the edge router serves them", async () => {
+    const pages = { 'tutorial/index.html': '<!doctype html><title>tutorial</title>', 'tutorial/hello/index.html': '<!doctype html><title>hello</title>' };
+    for (const [p, text] of Object.entries(pages)) {
+      mkdirSync(dirname(join(dist, p)), { recursive: true });
+      writeFileSync(join(dist, p), text);
+    }
     try {
       const { preview: p } = await start();
-      for (const path of ['/tutorial', '/tutorial/hello', '/tutorial/hello-world-2']) {
-        expect([path, (await send(p, path)).text]).toEqual([path, '<!doctype html><title>tutorial</title>']);
+      for (const [path, file] of [
+        ['/tutorial', 'tutorial/index.html'],
+        ['/tutorial/hello', 'tutorial/hello/index.html'],
+        ['/tutorial/index.html', 'tutorial/index.html'],
+        ['/tutorial/hello/index.html', 'tutorial/hello/index.html'],
+      ] as const) {
+        const got = await send(p, path);
+        expect([path, got.status, got.text]).toEqual([path, 200, pages[file]]);
       }
-      for (const path of ['/tutorial/Hello', '/tutorial/hello/x', '/tutorial/']) expect([path, (await send(p, path)).status]).toEqual([path, 404]);
+      for (const path of ['/tutorial/', '/tutorial/hello/', '/tutorial/Hello', '/tutorial/hello/x', '/tutorial/no-such-lesson', '/tutorial/hello-world-2']) {
+        expect([path, (await send(p, path)).status]).toEqual([path, 404]);
+      }
     } finally {
-      rmSync(page);
+      rmSync(join(dist, 'tutorial'), { recursive: true, force: true });
     }
   });
 

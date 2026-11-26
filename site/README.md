@@ -68,15 +68,16 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 npm ci --ignore-scripts --no-audit --no-fund
 npm run typecheck   # src, test (Node + DOM types), then src alone with no Node types
 npm test            # jest
-npm run build       # compiles src and tools to build/, then writes dist/ and build/held/ (and checks both)
+npm run build       # compiles src and tools to build/, then writes dist/ (and checks it)
 ```
 
 The build also reads every lesson of `tutorial/lessons/` (`tutorial/README.md`), fails on one that breaks
 `spec/tutorial-lesson.schema.json` or its rules (each problem names the lesson and the field), and renders the
 tutorial's pages from them: `/tutorial` and `/tutorial/<lesson>`, as `tutorial/index.html` and
-`tutorial/<lesson>/index.html`. They are written to `build/held/`, not to `dist/`, and checked by the same page rules:
-the edge router serves every file of `dist/` as it is, and the tutorial is not to be reachable before its routes
-(`src/routes.ts`, the route vectors) and its header link exist. A lesson's page holds, in its `#lesson-runner`, the
+`tutorial/<lesson>/index.html` in `dist/`, checked by the same page rules as every page. Every stage deploys the same
+`dist/`, but the site stack uploads and routes the tutorial's pages only on a stage whose configuration names the
+tutorial's E2B template (`service/infra/stacks/lib/site-stack.ts`, `servesTutorial`); elsewhere `/tutorial` is the 404
+page. No page outside the tutorial links to it yet. A lesson's page holds, in its `#lesson-runner`, the
 lesson's editable files (their text from `project/`) and its commands, readable without scripts, and loads `tutorial.js`
 after `main.js`, which reads the lesson from there and puts the sign-in card or the editor in its place. An editable file
 holding a carriage return or a NUL, or bytes that are not UTF-8, fails the build: the page's HTML cannot carry it as it is.
@@ -144,7 +145,8 @@ own origin and `https://*.e2b.app`. It answers `GET /api/v2/auth/web/session`, `
 `route_not_found`. The sandbox and sign-out routes make the real route's checks: no `Authorization` header, a session,
 `X-Mopm-CSRF` equal to the session's value, `Origin` equal to the page's origin, `Sec-Fetch-Site: same-origin`, and no
 body. A sign-out ends the fake session until the preview is started again. `/tutorial` and `/tutorial/<lesson>` serve
-`tutorial.html` once the build has one, and the 404 page until then.
+`dist/tutorial/index.html` and `dist/tutorial/<lesson>/index.html`, as the edge router does on a stage that serves the
+tutorial; with a trailing slash, or for a lesson the build has no page for, they are the 404 page.
 
 `E2B_API_KEY` is the one setting read from the environment, because it is secret material; the preview sends it to E2B
 and never prints or writes it. Get a key from your own E2B account. With it, the signed-in scenario sends E2B the
@@ -174,8 +176,10 @@ or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.m
   the normalised path, query kept (a namespace is never normalised). A one-segment `/packages/<x>` and a flat
   `/packages/<name>/<version>`, the addresses of the names before namespaces, get a 302 to a search: for the name in
   every namespace, or for a namespace's packages when `<x>` is a namespace and no name (`src/routes.ts`
-  `flatSearchPath`). A file of the build goes to the bucket as it is, and so does an asset under an id that is not this
-  build's (an earlier build's, which the bucket keeps).
+  `flatSearchPath`). `/tutorial` and `/tutorial/<lesson>` are the tutorial's `index.html` on a stage that serves the
+  tutorial (its configuration names `tutorial.e2bTemplateId`); with a trailing slash, or on any other stage, they are
+  the 404 page, and there the tutorial's pages are not uploaded either. A file of the build goes to the bucket as it
+  is, and so does an asset under an id that is not this build's (an earlier build's, which the bucket keeps).
 - **Not found.** Anything else (an unknown page, a docs slug with no page, a file the build does not have, including
   one under this build's `assets/<id>/`) is rewritten to `404.html`, and the same function turns that response's 200
   into 404 on viewer-response; nothing is answered with the home page. There are no distribution-wide error

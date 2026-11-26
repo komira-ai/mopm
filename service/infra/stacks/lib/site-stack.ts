@@ -12,7 +12,18 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 // The site's own route grammar: the edge router below is generated from it, so the router and the app shell accept the
 // same namespaces, names, versions and docs slugs (site/src/routes.ts imports nothing).
-import { DOC_SLUG, NAME, NAME_SEPARATORS, NAMESPACE, NAMESPACE_MAX, VERSION, VERSION_MAX, VERSIONS_SEGMENT } from '../../../../site/src/routes';
+import {
+  DOC_SLUG,
+  LESSON,
+  NAME,
+  NAME_SEPARATORS,
+  NAMESPACE,
+  NAMESPACE_MAX,
+  TUTORIAL_PATH,
+  VERSION,
+  VERSION_MAX,
+  VERSIONS_SEGMENT,
+} from '../../../../site/src/routes';
 // The site's security headers: the local preview (site/tools/preview.ts) sends the same ones, from the same builder.
 import { HSTS_MAX_AGE_SECONDS, PERMISSIONS_POLICY, contentSecurityPolicy as sitePolicy } from '../../../../site/tools/headers';
 import { StageConfig, edgeOriginSecretName, siteBucketName } from './config';
@@ -63,6 +74,24 @@ export function contentSecurityPolicy(c: StageConfig): string {
 
 export { PERMISSIONS_POLICY };
 
+/** The directory of a site build holding the tutorial's pages (site/tools/build.ts): its index and one page per lesson. */
+export const TUTORIAL_DIR = 'tutorial';
+
+/**
+ * Whether a stage serves the tutorial's pages: exactly when its configuration names the E2B template the tutorial's
+ * sandboxes start from (`tutorial.e2bTemplateId`, service/config/<stage>.json). Without one the sandbox route answers
+ * every signed-in user `tutorial_unavailable`, so a lesson's Run could never work there, and the stage serves no
+ * tutorial page: they stay out of its bucket and its router, and `/tutorial` is the 404 page.
+ */
+export function servesTutorial(c: StageConfig): boolean {
+  return c.tutorial?.e2bTemplateId !== undefined;
+}
+
+/** The files of a build (siteFiles) a stage serves: every one, less those under TUTORIAL_DIR where servesTutorial is false. */
+export function servedFiles(c: StageConfig, files: readonly string[]): string[] {
+  return servesTutorial(c) ? [...files] : files.filter((f) => !f.startsWith(`/${TUTORIAL_DIR}/`));
+}
+
 /** Every file of a site build as the URI that names it ('/index.html', '/assets/<id>/main.js'), sorted. */
 export function siteFiles(dir: string, rel = ''): string[] {
   return fs
@@ -73,7 +102,8 @@ export function siteFiles(dir: string, rel = ''): string[] {
 
 /**
  * The router (cloudfront-js-2.0) of the site's default behaviour, generated from the site's route grammar and the
- * files of the build it serves (siteFiles); no host or stage in it, so every stage runs the same code for one build.
+ * files of the build the stage serves (servedFiles over siteFiles); no host or stage name in it, so every stage that
+ * serves the same files runs the same code.
  * site/test/fixtures/routes.json holds the vectors it must satisfy and the build they assume (test/site-router.test.ts
  * runs it over every one). The same function runs on viewer-request and on viewer-response.
  *
@@ -85,8 +115,10 @@ export function siteFiles(dir: string, rel = ''): string[] {
  * answers changes as packages are published) to a search: for the name in every namespace, or for the namespace's
  * packages (site/src/routes.ts flatSearchPath, which says which). A name starts with a letter and a version with a
  * digit, so `/packages/<a>/<b>` is never both a package and a flat version. `/docs/` and `/docs/<slug>/` are their
- * `index.html`. Anything else is a file of the build as it is, or an asset of an earlier build (`/assets/<id>/...` with
- * an id this build does not have: the bucket keeps every build's assets, so an open tab of an earlier release still
+ * `index.html`. `/tutorial` and `/tutorial/<lesson>` are theirs when `files` holds it (servedFiles leaves the tutorial
+ * out on a stage that does not serve it); with a trailing slash they are no page, since the sign-in's `return_to` keeps
+ * them without one. Anything else is a file of the build as it is, or an asset of an earlier build (`/assets/<id>/...`
+ * with an id this build does not have: the bucket keeps every build's assets, so an open tab of an earlier release still
  * loads them), or else the 404 page: the router rewrites the request to NOT_FOUND_PAGE.
  *
  * Viewer response. A 200 for a request the router answers with the 404 page becomes a 404. CloudFront's request object
@@ -107,6 +139,8 @@ var VERSION_MAX = ${VERSION_MAX};
 var VERSIONS = '${VERSIONS_SEGMENT}';
 var SEPARATORS = /${NAME_SEPARATORS.source}/g;
 var DOC_SLUG = /${DOC_SLUG.source}/;
+var TUTORIAL = '${TUTORIAL_PATH}';
+var LESSON = /${LESSON.source}/;
 var NOT_FOUND = '${NOT_FOUND_PAGE}';
 var FILES = ${set(files)};
 var BUILDS = ${set(builds)};
@@ -177,6 +211,8 @@ function target(uri, qs) {
       return file('/docs/' + p[2] + '/index.html');
     }
   }
+  if (uri === TUTORIAL) return file(TUTORIAL + '/index.html');
+  if (p.length === 3 && '/' + p[1] === TUTORIAL && LESSON.test(p[2])) return file(TUTORIAL + '/' + p[2] + '/index.html');
   return file(uri);
 }
 
@@ -276,7 +312,7 @@ export class SiteStack extends Stack {
       functionName: `mopm-${c.stage}-site-router`,
       comment: 'mopm site routes: pages, app shell, docs, package name redirects, the 404 page',
       runtime: cloudfront.FunctionRuntime.JS_2_0,
-      code: cloudfront.FunctionCode.fromInline(siteRouterSource(siteFiles(siteDir))),
+      code: cloudfront.FunctionCode.fromInline(siteRouterSource(servedFiles(c, siteFiles(siteDir)))),
     });
 
     // Generated at creation and never committed: the template holds a dynamic reference to it, which CloudFormation
@@ -346,10 +382,12 @@ export class SiteStack extends Stack {
     });
 
     // Then the pages (everything but assets/), pruned so a removed page goes, and the cache invalidated. `exclude` keeps
-    // assets/ out of the upload and out of the prune.
+    // assets/ out of the upload and out of the prune. A stage that does not serve the tutorial (servesTutorial) uploads
+    // none of its pages, and the prune removes any an earlier deploy left.
+    const held = servesTutorial(c) ? [] : [TUTORIAL_DIR, `${TUTORIAL_DIR}/**`];
     const pages = new deploy.BucketDeployment(this, 'Pages', {
       destinationBucket: this.bucket,
-      sources: [deploy.Source.asset(siteDir, { exclude: ['assets', 'assets/**'] })],
+      sources: [deploy.Source.asset(siteDir, { exclude: ['assets', 'assets/**', ...held] })],
       exclude: ['assets/*'],
       prune: true,
       cacheControl: [deploy.CacheControl.fromString(PAGES_CACHE_CONTROL)],

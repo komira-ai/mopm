@@ -372,7 +372,8 @@ describe('signInHref', () => {
   // As mopm_core's tests/return_to_routes.rs: a path is kept exactly when the edge router serves a page for it.
   test("the site's route vectors: a path is kept exactly when the site serves a page for it", () => {
     const doc = JSON.parse(readFileSync(join(__dirname, 'fixtures', 'routes.json'), 'utf8')) as { vectors: { path: string; edge: string }[] };
-    const page = (edge: string) => edge === '/index.html' || edge === '/app.html' || (edge.startsWith('/docs/') && edge.endsWith('index.html'));
+    const page = (edge: string) =>
+      edge === '/index.html' || edge === '/app.html' || (/^\/(docs|tutorial)\//.test(edge) && edge.endsWith('index.html'));
     const got = doc.vectors.map((v) => [v.path, isReturnPath(v.path)]);
     expect(got).toEqual(doc.vectors.map((v) => [v.path, page(v.edge)]));
     const kept = got.filter(([, k]) => k).length;

@@ -19,9 +19,11 @@ Account ids come from the CDK environment at deploy time and are never committed
 - **Site.** The site stack serves the site build (`site/dist`; deploy.yml builds it before `cdk deploy`, and synth
   refuses to run without it). Hashed assets are uploaded first and never pruned, then the pages, pruned and invalidated
   (`/*`), so a rollback is a deploy of the earlier commit: its pages find their assets still in the bucket (which is
-  also versioned). A CloudFront Function, generated from the site's route grammar and the build's file list, routes app
-  and docs paths, redirects non-normalised package names and answers anything that is no file of the build with the
-  404 page and status 404. `/api/*` on the site host goes to the stage's API with an `x-mopm-edge` origin header from
+  also versioned). A CloudFront Function, generated from the site's route grammar and the build's file list, routes app,
+  docs and tutorial paths, redirects non-normalised package names and answers anything that is no file of the build
+  with the 404 page and status 404. The tutorial's pages (`site/dist/tutorial/`) are uploaded and routed only on a
+  stage whose `service/config/<stage>.json` names `tutorial.e2bTemplateId` (`servesTutorial`); elsewhere they are left
+  out of the upload, so the pages' prune removes any, and out of the router. `/api/*` on the site host goes to the stage's API with an `x-mopm-edge` origin header from
   the generated secret `mopm/<stage>/edge-origin`. What it serves and why: `site/README.md`, "How it is served".
 - **Health endpoint.** `/api/v1/health` reports `stage`, `version` and `commit` (`-c commit=<git sha>`), so the e2e
   workflow can prove the deployed commit equals the one it was asked to test.
