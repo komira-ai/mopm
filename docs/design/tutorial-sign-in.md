@@ -129,8 +129,8 @@ E2B_API_KEY=<a key from your own E2B account> \
 ```
 
 It prints its address (`http://127.0.0.1:<port>/tutorial`, the port picked by the system). That address shows the
-tutorial page once tu-S2's build writes `dist/tutorial.html` (signed out: the lesson text and the sign-in card, no
-editor), and the site's 404 page when the build wrote no tutorial page. In the `signed-in`
+tutorial's index, `dist/tutorial/index.html`, and `/tutorial/<lesson>` a lesson's page, `dist/tutorial/<lesson>/index.html`
+(signed out: the lesson text and the sign-in card, no editor). In the `signed-in`
 scenario, `GET /api/v2/auth/web/session` answers a fixed login and CSRF value. `POST /api/v2/tutorial/sandbox` makes the
 same checks as the real route (the CSRF header, `Origin`, `Sec-Fetch-Site`, no body). With `E2B_API_KEY` set, it sends
 E2B the same create body as the Rust function (section 4): the same JSON, from a second, TypeScript implementation
@@ -505,9 +505,10 @@ address. The site distribution's standard logs stay off.
 
 ## 7. The tutorial pages
 
-- **Page and routes**: a new shell page `tutorial.html`, PageKind `tutorial`, and an area stylesheet `tutorial.css`
-  within the 16 KiB area budget. Routes `/tutorial` and `/tutorial/<lesson>` (`^[a-z0-9]+(-[a-z0-9]+)*$`) go into
-  `site/src/routes.ts`, and from there into the edge router.
+- **Pages and routes**: prerendered pages of PageKind `tutorial`, one for the index and one per lesson (below), on the
+  shared stylesheet until the tutorial needs an area stylesheet of its own (within the 16 KiB area budget). Routes
+  `/tutorial` and `/tutorial/<lesson>` (`^[a-z0-9]+(-[a-z0-9]+)*$`) are in `site/src/routes.ts`, and from there in the
+  edge router.
 - **Lesson text** is prerendered from `tutorial/lessons/<id>/lesson.md` by the site's restricted Markdown renderer, so
   it works without scripts and without a session.
   - The site build checks every lesson against the schema and its rules first (`site/tools/lessons.ts`), and fails on
@@ -520,7 +521,7 @@ address. The site distribution's standard logs stay off.
 - **The E2B SDK** is the site's first runtime dependency. `site/README.md` rule 1 gains one written exception: `e2b`,
   pinned exactly, on the tutorial pages only.
   - A pinned `esbuild` dev dependency bundles `site/src/tutorial/main.ts` with it into one hashed asset, which only
-    `tutorial.html` loads.
+    the lesson pages load.
   - Every other page stays as it is: `tsc` output, no bundle, and `check-dist.ts` still checks the whole tree.
   - `e2b` 2.64.0 imports six `node:*` modules at the top of its bundle, so esbuild with `--platform=browser` fails
     until tu-S2 aliases them to an empty module; they are used only by the SDK's template builder (section 4.1).

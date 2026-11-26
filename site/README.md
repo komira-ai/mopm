@@ -145,7 +145,8 @@ own origin and `https://*.e2b.app`. It answers `GET /api/v2/auth/web/session`, `
 `route_not_found`. The sandbox and sign-out routes make the real route's checks: no `Authorization` header, a session,
 `X-Mopm-CSRF` equal to the session's value, `Origin` equal to the page's origin, `Sec-Fetch-Site: same-origin`, and no
 body. A sign-out ends the fake session until the preview is started again. `/tutorial` and `/tutorial/<lesson>` serve
-`tutorial.html` once the build has one, and the 404 page until then.
+`dist/tutorial/index.html` and `dist/tutorial/<lesson>/index.html`, as the edge router does on a stage that serves the
+tutorial; with a trailing slash, or for a lesson the build has no page for, they are the 404 page.
 
 `E2B_API_KEY` is the one setting read from the environment, because it is secret material; the preview sends it to E2B
 and never prints or writes it. Get a key from your own E2B account. With it, the signed-in scenario sends E2B the
