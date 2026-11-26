@@ -294,6 +294,8 @@ describe('HTML comments render nothing', () => {
     expect(r.html).toBe('<p>&lt;!-- mojo-hidden oops</p><h1 id="readme-install">Install</h1><p>mopm add x</p>');
     expect(r.fallbacks).toBe(0);
     expect(md('a <!-- open\n\nb --> c')).toBe('<p>a &lt;!-- open</p><p>b --&gt; c</p>');
+    // At a line start it still begins a new paragraph, as a comment line does.
+    expect(md('foo\n<!-- bar\nbaz')).toBe('<p>foo</p><p>&lt;!-- bar\nbaz</p>');
     // With a '>' after it, it is the raw tag it always was: text, counted.
     expect(mdFull('x <!-- a > b')).toEqual({ html: '<p>x &lt;!-- a &gt; b</p>', fallbacks: 1 });
   });

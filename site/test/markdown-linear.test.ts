@@ -74,6 +74,9 @@ const inputs: [string, string, boolean?][] = [
   ['comment openers after a comment line', '<!-- a --> ' + fill('<!--')],
   ['quoted unclosed comment lines', fill('> <!--\n')],
   ['list items of comments', fill('- <!-- a\n  -->\n')],
+  // Each container level builds its own table of comment ends over its lines: held to the nested bound.
+  ['deeply quoted comment lines', fill('>'.repeat(MAX_DEPTH) + ' <!-- a\n'), true],
+  ['deeply quoted unclosed comments then one close', fill('>'.repeat(MAX_DEPTH) + ' <!--\n') + '-->', true],
   ['hash lines', fill('#\n')],
   ['fence openers', fill('```\n')],
   ['setext-looking lines', fill('a\n=\n')],

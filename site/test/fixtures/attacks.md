@@ -95,9 +95,6 @@ ipt>alert(1)</script>
 %%% comment closed early inside a tag
 <!-- a --><b title="--> <script>alert(1)</script>">y</b>
 
-%%% unterminated comment hiding nothing
-<!-- <script>alert(1)</script>
-
 %%% comment inside a link
 [<!-- c -->x<!-- d -->](javascript:alert(1)) [<!--](https://mopm.dev/-->)
 
@@ -134,3 +131,6 @@ ipt>alert(1)</script>
 
 %%% empty link text
 [](https://mopm.dev) [ ](https://mopm.dev/x)
+
+%%% unterminated comment hiding nothing (last, so in the whole corpus no later --> closes it)
+<!-- <script>alert(1)</script>

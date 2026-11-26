@@ -11,7 +11,9 @@
 // HTML comments render nothing: a line that starts with `<!--` (indented at most 3 spaces) begins a comment that runs
 // to the first `-->`, on that line or a later one, as CommonMark's HTML block of type 2 does, and inside a paragraph a
 // `<!--` runs to the first `-->` in it (inline.ts). Text after the `-->` on a comment's last line is the start of a
-// paragraph. A `<!--` with no `-->` after it is not a comment and stays text, so it never hides the rest of a readme.
+// paragraph. As in CommonMark, a stray `<!--` therefore hides everything up to the next `-->`, wherever it is. A `<!--`
+// with no `-->` after it is not a comment and stays text, so it never hides the rest of a readme; at a line start it
+// still begins a new paragraph, as any comment line ends a paragraph or a lazy quote or list line.
 // (komira's README examples keep their test-only lines in `<!-- mojo-hidden ... -->`.)
 // Everything else stays literal text: other raw HTML (a `raw` node, counted in `fallbacks`), setext heading
 // underlines and reference definitions (counted too), reference-style links, and entities (never decoded).
