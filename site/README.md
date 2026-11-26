@@ -39,7 +39,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/tutorial/view.ts` | the tutorial page's nodes, a pure function of `page.ts`'s `PageView` through a `Doc`: the sign-in card, a `<textarea>` per editable file, Run and Test (disabled while running), each error's message, the exit code and the output as text nodes in a `<pre>`; and the lesson's files and commands as the build prerenders them into the lesson page's `#lesson-runner` (`lessonSource`) and the page script reads them back (`readLesson`) |
 | `src/tutorial/start.ts` | starting the tutorial page against a small DOM port: reads the lesson from `#lesson-runner`, starts `page.ts`'s controller, puts each new view there (not again while the reader only types, so the editor keeps its caret), keeps focus on the same control, and forwards clicks and typing |
 | `src/tutorial/main.ts` | the tutorial page's script, the entry of `tutorial.js`: connects `start.ts` to the real document, the gate (same-origin), the e2b runner, `localStorage` (looked up on each call) and the clock |
-| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them, held out of `dist/` (see below); `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
+| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them into `dist/tutorial/` (see below); `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
 
 ## Rules
 
@@ -104,8 +104,8 @@ tree with a missing page, a dangling asset or import, markup its tag scanner can
 comment, a `<` inside a tag, an unclosed tag), a script that is not an empty `<script src="/assets/...">`, a
 style element or attribute, an event-handler attribute, a `javascript:`, `data:` or `vbscript:` URL, a file
 other than `.html`, `.js` or `.css`, JavaScript that names a source map, `tutorial.js` loaded by a page that is not a
-tutorial page (one under `tutorial/`, as the held tutorial pages are), or JavaScript or CSS over its size budget (64 KiB a module and
-128 KiB in all for the `tsc` modules; 320 KiB for `tutorial.js`, `TUTORIAL_JS_MAX_BYTES`, set from its first measurement
+tutorial page (one under `tutorial/`), or JavaScript or CSS over its size budget (64 KiB a module and 128 KiB in all for
+the `tsc` modules; 320 KiB for `tutorial.js`, `TUTORIAL_JS_MAX_BYTES`, set from its first measurement
 of 309,160 bytes; for CSS, the design note's 24 KiB for the shared `site.css`, 16 KiB for each area stylesheet, and 30 KiB for
 the stylesheets one page links together, down from the 32 KiB the single stylesheet had).
 
