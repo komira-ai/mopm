@@ -691,11 +691,15 @@ Operator:
 
 Go-live:
 
-- **tu-S3 (S)** The edge router routes `/tutorial` and `/tutorial/<lesson>`, and the build writes the tutorial's held
-  pages to `dist/` (section 7), per stage: the site stack uploads and routes them only on a stage whose configuration
-  names the tutorial's E2B template, which is tu-O2's last step, so a stage goes live when its sandbox can be created
-  and not before. The docs page "What mopm.dev stores", from section 6, names E2B and what it sees (done with that
-  page). This is the step users see.
+- **tu-S3 (S)** The edge router routes `/tutorial` and `/tutorial/<lesson>`, and the build writes the tutorial's pages
+  to `dist/` (section 7), per stage: the site stack uploads and routes them only on a stage whose configuration names
+  the tutorial's E2B template, which is tu-O2's last step, so a stage goes live when its sandbox can be created and not
+  before. The docs page "What mopm.dev stores", from section 6, names E2B and what it sees (done with that page). This
+  is the step users see. Done: beta serves the tutorial, and gamma and prod answer 404 on every tutorial path until
+  their tu-O2 sets a template id. Measured anonymously after the deploy: `/tutorial` and `/tutorial/hello` are 200 with
+  the pages and the CSP's `connect-src 'self' https://*.e2b.app`; the session and sandbox routes are 401
+  `session_required`; the sign-in start is a 302 to GitHub with beta's callback. What only a signed-in person can check
+  is the "Go-live check" below.
   - Tests: the route fixtures (`site/test/fixtures/routes.json`) and the site-router test, with a router of the build
     without its tutorial files; the site stack's test of both kinds of stage; the template diff naming what serving the
     tutorial changes.
@@ -704,6 +708,17 @@ Go-live:
   the pages of a stage that does not serve the tutorial without it (`site/tools/tutorial-link.ts`); a page without the
   link, or with another link to the tutorial, stops the synth, since it would lead to the 404 page there.
   - Tests: the layout test for the header on every kind of page; the site stack's test of both kinds of stage.
+
+**Go-live check** (a signed-in person, on each stage that serves the tutorial). The deploy's checks are anonymous, so
+they stop where a session starts: before the GitHub callback, and before the sandbox route reads the E2B key. One
+person signs in and walks one lesson:
+
+- open `/tutorial/hello` signed out, follow "Sign in with GitHub", approve, and land back on `/tutorial/hello` with the
+  login in the header. This is the first check of tu-O1: the OAuth app's callback URL and a current `client_secret`;
+- press Run: the sandbox route answers a grant, and the lesson's command runs with its output and exit code on the
+  page and no CSP violation in the browser's console. This is the first check of tu-O2 (the `e2b` secret and the
+  template id) and of E2B under the page's CSP on the deployed site;
+- press Sign out: the header and the page show signed out again.
 
 **Order**:
 
