@@ -4,6 +4,8 @@
 // leads with mopm's own install lines (`mopm add <namespace>/<name>`, then the mopm.toml line and "then run mopm
 // sync") and a link to install mopm, and names no other tool; then the readme and the versions section, one row per
 // release line with a link to the full list; the side panel lists the same release lines with their state.
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { INSTALL_NOTE, MOPM_INSTALL_PATH, packageView, README_MAX_BYTES, SIDE_LINES } from '../src/views/package';
 import { PLANNED, WORKING_TODAY } from '../tools/pages';
 import { hrefs, html, packageFixture, sdoc, text, uniqueIds } from './view-helpers';
@@ -526,6 +528,20 @@ describe('the readme', () => {
     expect(out).not.toContain('<script');
     expect(hrefs(out).some((h) => h.toLowerCase().startsWith('javascript'))).toBe(false);
     expect(out.match(/<h1>/g)).toHaveLength(1);
+  });
+
+  // komira's readmes hold their examples' test-only imports in `<!-- mojo-hidden ... -->` comments, and the registry
+  // stores a readme as published: the komira-ai/json readme (test/fixtures/komira-json-readme.md) has five.
+  test('HTML comments in a readme (the mojo-hidden test lines) leave no trace on the page', () => {
+    const readme = readFileSync(join(__dirname, 'fixtures', 'komira-json-readme.md'), 'utf8');
+    const out = render(packageFixture((r) => Object.assign(r, { readme })));
+    const prose = out.slice(out.indexOf('<div class="prose">'), out.indexOf('id="versions-heading"'));
+    expect(prose).toContain('<h4 id="readme-examples">Examples</h4>');
+    expect(prose.match(/<code class="language-mojo">/g)).toHaveLength(5);
+    expect(out).not.toContain('mojo-hidden');
+    expect(out).not.toContain('std.testing');
+    expect(out).not.toContain('&lt;!--');
+    expect(out).not.toContain('<!--');
   });
 
   test('a readme heading never takes an id the page uses, and an in-readme link reaches the readme heading', () => {

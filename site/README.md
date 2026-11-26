@@ -31,7 +31,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/account.ts` | the header's account box: the sign-in link back to the page (`returnPathOf`), then the login and Sign out once the session route answers, against a small DOM port; and the banner of a refused sign-in on `/tutorial?error=<code>`, where the sign-in sends it |
 | `src/enhance.ts` | what the page script adds once a page is on screen: the copy buttons and the home page's recently updated list, against a small DOM port |
 | `src/main.ts` | the page script: connects `app.ts`, `mount.ts`, `enhance.ts` and `account.ts` to the real document, plus the read-only banner and `/` to focus search |
-| `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
+| `static/` | the stylesheets: `site.css`, shared by every page (tokens, header, footer, buttons, code, cards, the pager), and one per area (`home.css`, `package.css` for package and version pages, `search.css`, `docs.css`); `tools/layout.ts` says which page loads which |
 | `src/tutorial/gate.ts` | the tutorial's gate: `session.ts`'s session, sign-in link and sign-out, plus the sandbox route, and `replayGate`, a fake that replays recorded answers; `main.js` does not import it (`test/preview-not-shipped.test.ts`) |
 | `src/tutorial/runner.ts` | the tutorial's runner, `page.ts`'s `Runner` for one lesson over E2B's SDK, from each run's sandbox grant alone (the `Sandbox` constructor with the sandbox's access token, no API key): writes its edited files into the lesson's directory and runs its command, giving the exit code and output, or `{kind: 'SandboxNotRunning'}` / `{kind: 'SandboxUnreachable'}`; bundled with `e2b` into `tutorial.js` |
 | `src/tutorial/node-stub.ts` | the empty module the bundle gives `e2b`'s six `node:*` imports, which only its template builder uses |
@@ -39,7 +39,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/tutorial/view.ts` | the tutorial page's nodes, a pure function of `page.ts`'s `PageView` through a `Doc`: the sign-in card, a `<textarea>` per editable file, Run and Test (disabled while running), each error's message, the exit code and the output as text nodes in a `<pre>`; and the lesson's files and commands as the build prerenders them into the lesson page's `#lesson-runner` (`lessonSource`) and the page script reads them back (`readLesson`) |
 | `src/tutorial/start.ts` | starting the tutorial page against a small DOM port: reads the lesson from `#lesson-runner`, starts `page.ts`'s controller, puts each new view there (not again while the reader only types, so the editor keeps its caret), keeps focus on the same control, and forwards clicks and typing |
 | `src/tutorial/main.ts` | the tutorial page's script, the entry of `tutorial.js`: connects `start.ts` to the real document, the gate (same-origin), the e2b runner, `localStorage` (looked up on each call) and the clock |
-| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them, held out of `dist/` (see below); `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
+| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them into `dist/tutorial/` (see below); `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
 
 ## Rules
 
@@ -79,7 +79,9 @@ tutorial's pages from them: `/tutorial` and `/tutorial/<lesson>`, as `tutorial/i
 tutorial's E2B template (`service/infra/stacks/lib/site-stack.ts`, `servesTutorial`); elsewhere `/tutorial` is the 404
 page. No page outside the tutorial links to it yet. A lesson's page holds, in its `#lesson-runner`, the
 lesson's editable files (their text from `project/`) and its commands, readable without scripts, and loads `tutorial.js`
-after `main.js`, which reads the lesson from there and puts the sign-in card or the editor in its place. An editable file
+after `main.js`, which reads the lesson from there and puts the sign-in card or the editor in its place. Below it are
+links to the lesson before it and the lesson after it, in the index's order, in the HTML (no script builds them): the
+first lesson has only Next, the last only Previous, a tutorial of one lesson neither. An editable file
 holding a carriage return or a NUL, or bytes that are not UTF-8, fails the build: the page's HTML cannot carry it as it is.
 
 On the build farm the same commands are Buck2 targets (`site/BUCK`, run from the repository root), over
@@ -104,8 +106,8 @@ tree with a missing page, a dangling asset or import, markup its tag scanner can
 comment, a `<` inside a tag, an unclosed tag), a script that is not an empty `<script src="/assets/...">`, a
 style element or attribute, an event-handler attribute, a `javascript:`, `data:` or `vbscript:` URL, a file
 other than `.html`, `.js` or `.css`, JavaScript that names a source map, `tutorial.js` loaded by a page that is not a
-tutorial page (one under `tutorial/`, as the held tutorial pages are), or JavaScript or CSS over its size budget (64 KiB a module and
-128 KiB in all for the `tsc` modules; 320 KiB for `tutorial.js`, `TUTORIAL_JS_MAX_BYTES`, set from its first measurement
+tutorial page (one under `tutorial/`), or JavaScript or CSS over its size budget (64 KiB a module and 128 KiB in all for
+the `tsc` modules; 320 KiB for `tutorial.js`, `TUTORIAL_JS_MAX_BYTES`, set from its first measurement
 of 309,160 bytes; for CSS, the design note's 24 KiB for the shared `site.css`, 16 KiB for each area stylesheet, and 30 KiB for
 the stylesheets one page links together, down from the 32 KiB the single stylesheet had).
 
@@ -120,6 +122,9 @@ The home page copy is held to `README.md`, `src/cli/main.zig`, `VERSION` and `st
 names, the verification commands or the version series change there, the page has to change too. The page names the
 version series (`0.0.x`), never a patch number, because a release is cut on every merge. Route vectors are in `test/fixtures/routes.json`; the
 site stack's edge router is tested against the same file. The Markdown attack corpus is `test/fixtures/attacks.md`.
+A readme's HTML comments render nothing (komira's README examples keep their test-only lines in
+`<!-- mojo-hidden ... -->`), while other raw HTML shows as text; `test/fixtures/komira-json-readme.md` is komira's
+`src/komira_json/README.md`, a real readme with five of them.
 
 ## Preview
 
