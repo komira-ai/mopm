@@ -1,0 +1,161 @@
+{
+  "about": "Readme marker comments: an HTML comment whose text starts with a marker word (mojo-hidden or any <lang>-hidden, include, not-tested) renders nothing, and the fence after it renders whole. A comment with no marker word renders as every other comment does (nothing). A marker word inside code, or in a <!-- that is not a comment, stays text. Written here from the rule in komira's docs/design/documentation_tests.md in komira-ai/komira (\"Include, fill and freshness\", \"Decisions to take\"); to be replaced by the vector file komira publishes for the same rule. Each vector: name; markdown, a readme; marker, the marker word its comment starts with, or null when the readme holds no marker comment (a comment with no marker word, or a marker word that is not in a comment); html, what the readme renderer emits for it.",
+  "vectors": [
+    {
+      "name": "mojo-hidden, one line, before a mojo fence",
+      "markdown": "Read a document:\n\n<!-- mojo-hidden from std.testing import assert_equal -->\n```mojo\nvar x = 1\n```\n",
+      "marker": "mojo-hidden",
+      "html": "<p>Read a document:</p><pre tabindex=\"0\"><code class=\"language-mojo\">var x = 1</code></pre>"
+    },
+    {
+      "name": "mojo-hidden over several lines, before a mojo fence",
+      "markdown": "<!-- mojo-hidden\nfrom std.testing import assert_equal\nfrom json import parse_json_value\n-->\n```mojo\nvar x = 1\n```\n",
+      "marker": "mojo-hidden",
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">var x = 1</code></pre>"
+    },
+    {
+      "name": "python-hidden, another language's hidden lines",
+      "markdown": "<!-- python-hidden import komira -->\n```python\nprint(1)\n```\n",
+      "marker": "python-hidden",
+      "html": "<pre tabindex=\"0\"><code class=\"language-python\">print(1)</code></pre>"
+    },
+    {
+      "name": "zig-hidden over several lines",
+      "markdown": "<!-- zig-hidden\nconst std = @import(\"std\");\n-->\n```zig\nstd.debug.print(\"x\", .{});\n```\n",
+      "marker": "zig-hidden",
+      "html": "<pre tabindex=\"0\"><code class=\"language-zig\">std.debug.print(\"x\", .{});</code></pre>"
+    },
+    {
+      "name": "include, before the fence it fills",
+      "markdown": "Parse a file:\n\n<!-- include examples/parse.mojo -->\n```mojo\ndef main() raises:\n    print(1)\n```\n",
+      "marker": "include",
+      "html": "<p>Parse a file:</p><pre tabindex=\"0\"><code class=\"language-mojo\">def main() raises:\n    print(1)</code></pre>"
+    },
+    {
+      "name": "include, before a longer fence (the file holds a backtick run)",
+      "markdown": "<!-- include examples/fence.mojo -->\n````mojo\nvar s = \"```\"\n````\n",
+      "marker": "include",
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">var s = \"```\"</code></pre>"
+    },
+    {
+      "name": "include of a text file, before a tilde fence",
+      "markdown": "<!-- include examples/out.txt -->\n~~~text\n1\n~~~\n",
+      "marker": "include",
+      "html": "<pre tabindex=\"0\"><code class=\"language-text\">1</code></pre>"
+    },
+    {
+      "name": "not-tested with its reason, before a text fence",
+      "markdown": "It prints:\n\n<!-- not-tested: the output names the host -->\n```text\nhost: example\n```\n",
+      "marker": "not-tested",
+      "html": "<p>It prints:</p><pre tabindex=\"0\"><code class=\"language-text\">host: example</code></pre>"
+    },
+    {
+      "name": "not-tested over several lines",
+      "markdown": "<!-- not-tested:\nneeds a Postgres server,\nwhich the check does not have -->\n```python\nconnect()\n```\n",
+      "marker": "not-tested",
+      "html": "<pre tabindex=\"0\"><code class=\"language-python\">connect()</code></pre>"
+    },
+    {
+      "name": "a marker word with no space after <!--",
+      "markdown": "<!--include examples/a.mojo-->\n```mojo\nx\n```\n",
+      "marker": "include",
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    },
+    {
+      "name": "a marker comment indented three spaces",
+      "markdown": "   <!-- mojo-hidden from a import b -->\n```mojo\nx\n```\n",
+      "marker": "mojo-hidden",
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    },
+    {
+      "name": "a marker comment directly after a paragraph line ends the paragraph",
+      "markdown": "Build one:\n<!-- include examples/build.mojo -->\n```mojo\nx\n```\n",
+      "marker": "include",
+      "html": "<p>Build one:</p><pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    },
+    {
+      "name": "a marker comment in a list item, before its fence",
+      "markdown": "- Step one:\n\n  <!-- mojo-hidden\n  from a import b\n  -->\n  ```mojo\n  x\n  ```\n",
+      "marker": "mojo-hidden",
+      "html": "<ul><li><p>Step one:</p><pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre></li></ul>"
+    },
+    {
+      "name": "a marker comment in a block quote, before its fence",
+      "markdown": "> <!-- include examples/a.mojo -->\n> ```mojo\n> x\n> ```\n",
+      "marker": "include",
+      "html": "<blockquote><pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre></blockquote>"
+    },
+    {
+      "name": "a marker comment with CRLF line ends",
+      "markdown": "<!-- mojo-hidden\r\nfrom a import b\r\n-->\r\n```mojo\r\nx\r\n```\r\n",
+      "marker": "mojo-hidden",
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    },
+    {
+      "name": "two marker comments before one fence",
+      "markdown": "<!-- not-tested: needs a server -->\n<!-- mojo-hidden from a import b -->\n```mojo\nx\n```\n",
+      "marker": "not-tested",
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    },
+    {
+      "name": "a comment with no marker word renders as any comment does",
+      "markdown": "<!-- a note to the maintainers -->\n```mojo\nx\n```\n",
+      "marker": null,
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    },
+    {
+      "name": "a word that only starts like a marker is no marker",
+      "markdown": "<!-- includes the setup below -->\n```mojo\nx\n```\n",
+      "marker": null,
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    },
+    {
+      "name": "a bare hidden, with no language, is no marker",
+      "markdown": "<!-- hidden -->\n```mojo\nx\n```\n",
+      "marker": null,
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    },
+    {
+      "name": "a marker word later in a comment is no marker",
+      "markdown": "<!-- TODO: include examples/a.mojo -->\n```mojo\nx\n```\n",
+      "marker": null,
+      "html": "<pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    },
+    {
+      "name": "a marker comment inside a fence is the fence's text",
+      "markdown": "```text\n<!-- mojo-hidden from a import b -->\n<!-- include examples/a.mojo -->\n```\n",
+      "marker": null,
+      "html": "<pre tabindex=\"0\"><code class=\"language-text\">&lt;!-- mojo-hidden from a import b --&gt;\n&lt;!-- include examples/a.mojo --&gt;</code></pre>"
+    },
+    {
+      "name": "a marker comment inside a tilde fence is the fence's text",
+      "markdown": "~~~markdown\n<!-- not-tested: why -->\n```mojo\nx\n```\n~~~\n",
+      "marker": null,
+      "html": "<pre tabindex=\"0\"><code class=\"language-markdown\">&lt;!-- not-tested: why --&gt;\n```mojo\nx\n```</code></pre>"
+    },
+    {
+      "name": "a marker comment inside a code span is the span's text",
+      "markdown": "Write `<!-- include examples/a.mojo -->` before the fence.\n",
+      "marker": null,
+      "html": "<p>Write <code>&lt;!-- include examples/a.mojo --&gt;</code> before the fence.</p>"
+    },
+    {
+      "name": "a marker comment in indented code is the code's text",
+      "markdown": "    <!-- mojo-hidden from a import b -->\n",
+      "marker": null,
+      "html": "<pre tabindex=\"0\"><code>&lt;!-- mojo-hidden from a import b --&gt;</code></pre>"
+    },
+    {
+      "name": "an escaped <!-- is text",
+      "markdown": "\\<!-- include examples/a.mojo -->\n",
+      "marker": null,
+      "html": "<p>&lt;!-- include examples/a.mojo --&gt;</p>"
+    },
+    {
+      "name": "an unterminated <!-- is not a comment and stays text",
+      "markdown": "<!-- mojo-hidden from a import b\n\n```mojo\nx\n```\n",
+      "marker": null,
+      "html": "<p>&lt;!-- mojo-hidden from a import b</p><pre tabindex=\"0\"><code class=\"language-mojo\">x</code></pre>"
+    }
+  ]
+}

@@ -128,6 +128,12 @@ A readme's HTML comments render nothing (komira's README examples keep their tes
 `<!-- mojo-hidden ... -->`), while other raw HTML shows as text; `test/fixtures/komira-json-readme.md` is komira's
 `src/komira_json/README.md`, a real readme with five of them.
 
+Every HTML comment renders nothing, so the marker comments of komira's documentation tests (a comment starting with
+`mojo-hidden` or any `<lang>-hidden`, `include` or `not-tested`, set directly before a fence) never show, and the
+fence after one renders whole. `test/fixtures/marker-comments.json` holds vectors for that rule, which
+`test/marker-comments.test.ts` runs. They are written from `docs/design/documentation_tests.md` in komira-ai/komira,
+to be replaced by the vector file komira publishes for the same rule.
+
 ## Preview
 
 `npm run preview` serves the built site on `127.0.0.1` and plays our side of the tutorial's sign-in and sandbox
