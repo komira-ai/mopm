@@ -24,6 +24,11 @@ const UNMARKED = VECTORS.filter((v) => v.marker === null);
 // at a space, a ':' or the comment's end.
 const MARKER_WORD = /^(?:[a-z0-9+#]+(?:-[a-z0-9+#]+)*-hidden|include|not-tested)(?=[ \t\r\n:]|--|$)/;
 
+/** `s` as a literal inside a RegExp: every metacharacter, the backslash included, escaped. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[\\^$.*+?()[\]{}|-]/g, '\\$&');
+}
+
 describe('readme marker comments', () => {
   // The first two tests lint the fixture, not the renderer: they keep the file complete and true to the rule.
   test('the vectors cover every marker word, comments with none, and marker words inside code', () => {
@@ -39,7 +44,7 @@ describe('readme marker comments', () => {
   // A marked vector's comment opens with its word, and the word is a marker word.
   test.each(MARKED.map((v) => [v.name, v] as const))('%s: the comment starts with a marker word', (_name, v) => {
     expect(v.marker).toMatch(MARKER_WORD);
-    expect(v.markdown).toMatch(new RegExp(`<!--[ \\t\\r\\n]*${v.marker!.replace(/[+]/g, '\\+')}(?=[ \\t\\r\\n:]|--)`));
+    expect(v.markdown).toMatch(new RegExp(`<!--[ \\t\\r\\n]*${escapeRegExp(v.marker!)}(?=[ \\t\\r\\n:]|--)`));
   });
 
   // The renderer: its exact output, so the comment shows nothing and the fence after it renders whole.
