@@ -68,6 +68,9 @@ Two builds describe the same program, and both stay.
   `//:signin_e2e` is the check that the smoke-linux job of `e2e.yml` runs after every deploy against the website's sign-in and
   sandbox routes (`tests/drivers/signin_e2e.zig`, `mopm-signin-e2e`), here against a loopback site host and API host that answer
   correctly and then wrong in each way the check names.
+  The `readme-e2e` job of `e2e.yml` runs `site/tools/readme-e2e.ts` after every deploy: the package page's shell and the
+  view the site's own code builds from the API's readme, failing when the readme shows `mojo-hidden`
+  (`site/README.md`, "Smoke test"); `site/test/readme-e2e.test.ts` runs it against a fake site (`//site:test`).
   `//:native_static` (farm only, with `tests/drivers/mojo_compile_shim.zig` as the toolchain's `mojo_compile`) takes a
   static archive in an empty-module package from `mopm pack` and `mopm lock` to a test linked by `mopm unit test`.
   `//:native_workspace` is the walk of a user whose workspace member ships its own C library (`[native.<id>]` with `srcs`, fixture

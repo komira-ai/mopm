@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Duration, Stack, StackProps } from 'aws-cdk-lib';
+import { Duration, FileSystem, Stack, StackProps } from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
@@ -26,6 +26,8 @@ import {
 } from '../../../../site/src/routes';
 // The site's security headers: the local preview (site/tools/preview.ts) sends the same ones, from the same builder.
 import { HSTS_MAX_AGE_SECONDS, PERMISSIONS_POLICY, contentSecurityPolicy as sitePolicy } from '../../../../site/tools/headers';
+// The header's Tutorial entry, which every page of the build holds and a stage that does not serve the tutorial removes.
+import { withoutTutorialLink } from '../../../../site/tools/tutorial-link';
 import { StageConfig, edgeOriginSecretName, siteBucketName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 import { e2bDomain } from './stage-settings';
@@ -81,7 +83,8 @@ export const TUTORIAL_DIR = 'tutorial';
  * Whether a stage serves the tutorial's pages: exactly when its configuration names the E2B template the tutorial's
  * sandboxes start from (`tutorial.e2bTemplateId`, service/config/<stage>.json). Without one the sandbox route answers
  * every signed-in user `tutorial_unavailable`, so a lesson's Run could never work there, and the stage serves no
- * tutorial page: they stay out of its bucket and its router, and `/tutorial` is the 404 page.
+ * tutorial page: they stay out of its bucket and its router, `/tutorial` is the 404 page, and no page's header has the
+ * Tutorial entry (writeServedPages).
  */
 export function servesTutorial(c: StageConfig): boolean {
   return c.tutorial?.e2bTemplateId !== undefined;
@@ -90,6 +93,24 @@ export function servesTutorial(c: StageConfig): boolean {
 /** The files of a build (siteFiles) a stage serves: every one, less those under TUTORIAL_DIR where servesTutorial is false. */
 export function servedFiles(c: StageConfig, files: readonly string[]): string[] {
   return servesTutorial(c) ? [...files] : files.filter((f) => !f.startsWith(`/${TUTORIAL_DIR}/`));
+}
+
+/**
+ * Writes the pages of the build at `siteDir` to `outDir` as stage `c` serves them: every file of servedFiles but those
+ * under assets/ (the other upload's), at the same path. On a stage that serves the tutorial each is the build's, byte for
+ * byte. On one that does not, each page (.html) is the build's without the header's Tutorial entry, so no page links to
+ * /tutorial where it is the 404 page; a page without the entry, or with another link to the tutorial, is refused
+ * (withoutTutorialLink) and the stack does not synthesize. Any other file (install.sh) is copied as it is.
+ */
+export function writeServedPages(c: StageConfig, siteDir: string, outDir: string): void {
+  for (const uri of servedFiles(c, siteFiles(siteDir))) {
+    if (uri.startsWith('/assets/')) continue;
+    const rel = uri.slice(1);
+    const to = path.join(outDir, rel);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    if (servesTutorial(c) || !rel.endsWith('.html')) fs.copyFileSync(path.join(siteDir, rel), to);
+    else fs.writeFileSync(to, withoutTutorialLink(rel, fs.readFileSync(path.join(siteDir, rel), 'utf8')));
+  }
 }
 
 /** Every file of a site build as the URI that names it ('/index.html', '/assets/<id>/main.js'), sorted. */
@@ -382,12 +403,14 @@ export class SiteStack extends Stack {
     });
 
     // Then the pages (everything but assets/), pruned so a removed page goes, and the cache invalidated. `exclude` keeps
-    // assets/ out of the upload and out of the prune. A stage that does not serve the tutorial (servesTutorial) uploads
-    // none of its pages, and the prune removes any an earlier deploy left.
-    const held = servesTutorial(c) ? [] : [TUTORIAL_DIR, `${TUTORIAL_DIR}/**`];
+    // assets/ out of the prune. The pages are the stage's (writeServedPages): a stage that does not serve the tutorial
+    // (servesTutorial) uploads none of its pages, and the prune removes any an earlier deploy left, and its pages have no
+    // Tutorial entry in the header. They are written to a new directory, which the asset copies into the assembly.
+    const served = FileSystem.mkdtemp('mopm-site-pages');
+    writeServedPages(c, siteDir, served);
     const pages = new deploy.BucketDeployment(this, 'Pages', {
       destinationBucket: this.bucket,
-      sources: [deploy.Source.asset(siteDir, { exclude: ['assets', 'assets/**', ...held] })],
+      sources: [deploy.Source.asset(served)],
       exclude: ['assets/*'],
       prune: true,
       cacheControl: [deploy.CacheControl.fromString(PAGES_CACHE_CONTROL)],

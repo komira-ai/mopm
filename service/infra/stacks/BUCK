@@ -7,7 +7,9 @@
 # recorded wire goldens, and the stages' configuration; the synths also take the API handler bundle (service/api:dist).
 # The site stack deploys the site build (//site:dist, at site/dist), generates its edge router
 # from the site's route grammar (site/src/routes.ts), takes its security headers from the site's
-# (site/tools/headers.ts) and is tested against the site's route vectors (site/test/fixtures/routes.json).
+# (site/tools/headers.ts), takes the header's Tutorial entry out of the pages of a stage that does not
+# serve the tutorial (site/tools/tutorial-link.ts) and is tested against the site's route vectors
+# (site/test/fixtures/routes.json).
 
 load("@buildrules//rules/node:modules.bzl", "cdk_synth", "jest_test", "npm_modules", "tsc_check")
 load("@buildrules//rules/coverage:jest_cover.bzl", "jest_coverage_floor")
@@ -46,6 +48,7 @@ _DATA = {
     "site/dist": "//site:dist",
     "site/src/routes.ts": "//site:routes.ts",
     "site/tools/headers.ts": "//site:headers.ts",
+    "site/tools/tutorial-link.ts": "//site:tutorial-link.ts",
     "site/test/fixtures/routes.json": "//site:routes.json",
     "spec": "//:spec",
 }

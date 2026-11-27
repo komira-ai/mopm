@@ -12,6 +12,7 @@ import { MOPM_INSTALL_PATH } from '../src/views/package';
 import { tagsIn } from '../tools/check-dist';
 import { renderPage } from '../tools/layout';
 import { ASSET_PATTERN, INSTALL_COMMAND, OPENING_SENTENCE, PLANNED, RELEASE_SERIES, TARGETS, VERIFY, WORKING_TODAY } from '../tools/pages';
+import { TUTORIAL_NAV_ID, TUTORIAL_NAV_ITEM } from '../tools/tutorial-link';
 import { cleanup, type Fixture, fixture, REPO_ROOT } from './build-fixture';
 
 let f: Fixture;
@@ -48,10 +49,10 @@ function byId(html: string, id: string): string {
 // The pages the build writes: the home page, the 404, the app shell, the docs index, one page per doc, and the
 // tutorial's index and one page per lesson.
 const DOC_HTML = ['docs/why/index.html', 'docs/getting-started/index.html', 'docs/configuration/index.html', 'docs/examples/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html', 'docs/publish-workspace/index.html', 'docs/what-mopm-stores/index.html'];
-const TUTORIAL_HTML = ['tutorial/index.html', 'tutorial/hello/index.html'];
+const TUTORIAL_HTML = ['tutorial/index.html', 'tutorial/hello/index.html', 'tutorial/tests/index.html', 'tutorial/structs/index.html'];
 const ALL_PAGES = ['404.html', 'app.html', 'docs/index.html', ...DOC_HTML, 'index.html', ...TUTORIAL_HTML];
 
-test('the fourteen pages are built', () => {
+test('the sixteen pages are built', () => {
   expect([...pages].sort()).toEqual([...ALL_PAGES].sort());
 });
 
@@ -92,6 +93,18 @@ describe.each(ALL_PAGES)('%s', (page) => {
     expect(html).toContain('<nav aria-label="Footer">');
   });
 
+  // The header's Tutorial entry is on every page the build writes (the site stack takes it out of every page of a stage
+  // that does not serve the tutorial, and refuses a page without it): as TUTORIAL_NAV_ITEM outside the tutorial, the
+  // current page on /tutorial and its parent on a lesson's page. Defect caught: a page without the entry, which would
+  // stop the stack; a page whose entry the stack could not find to take out.
+  test("the header's Tutorial entry, once", () => {
+    // Every lesson's page is below the entry, whichever lessons the repository has.
+    const current = page === 'tutorial/index.html' ? 'page' : page.startsWith('tutorial/') ? 'true' : null;
+    const entry = current === null ? TUTORIAL_NAV_ITEM : TUTORIAL_NAV_ITEM.replace('">Tutorial', `" aria-current="${current}">Tutorial`);
+    expect(html.split(entry)).toHaveLength(2);
+    expect(html.split(`id="${TUTORIAL_NAV_ID}"`)).toHaveLength(2);
+  });
+
   // The header's account box (src/account.ts) is the sign-in link back to the page's own path on every page, and holds
   // nothing of a signed-in user: the pages are cached for every visitor, so who is signed in is the script's to fill in.
   // The 404 page has no path of its own ('/', as the start route would send an unknown path to /tutorial, which a stage
@@ -106,6 +119,8 @@ describe.each(ALL_PAGES)('%s', (page) => {
       'docs/index.html': '/docs/',
       'tutorial/index.html': '/tutorial',
       'tutorial/hello/index.html': '/tutorial/hello',
+      'tutorial/tests/index.html': '/tutorial/tests',
+      'tutorial/structs/index.html': '/tutorial/structs',
     };
     const path = own[page] ?? `/${page.replace(/index\.html$/, '')}`;
     expect(byId(html, 'site-account')).toBe(
@@ -142,6 +157,8 @@ describe.each(ALL_PAGES)('%s', (page) => {
       '404.html': ['site.css'],
       'tutorial/index.html': ['site.css'],
       'tutorial/hello/index.html': ['site.css'],
+      'tutorial/tests/index.html': ['site.css'],
+      'tutorial/structs/index.html': ['site.css'],
     };
     const sheets = tags.filter(([t, a]) => t === 'link' && a.some(([k, v]) => k === 'rel' && v === 'stylesheet')).map(([, a]) => (a.find(([k]) => k === 'href') as [string, string])[1]);
     expect(sheets.map((h) => h.replace(/^\/assets\/[0-9a-f]{16}\//, ''))).toEqual(want[page] ?? ['site.css', 'docs.css']);
@@ -179,7 +196,7 @@ describe.each(ALL_PAGES)('%s', (page) => {
     }
     expect(count('style')).toBe(0);
     // main.js; a lesson's page also loads the tutorial bundle (test/tutorial.test.ts holds which).
-    expect(count('script')).toBe(page === 'tutorial/hello/index.html' ? 2 : 1);
+    expect(count('script')).toBe(/^tutorial\/[^/]+\/index\.html$/.test(page) ? 2 : 1);
   });
 
   test('every id is unique', () => {

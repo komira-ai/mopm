@@ -4,6 +4,10 @@
 // openers_bottom, so the look-back is amortised linear), a bracket stack for links, a table of backtick runs indexed
 // once by length, and link-destination ends precomputed in two passes. No step rescans the input, so the work is
 // linear in the length of the text; `st.steps` counts the loop iterations.
+//
+// An HTML comment (`<!--` to the first `-->` after it, CommonMark's `<!-->` and `<!--->` included) is dropped: it
+// emits no node. Each `<!--` finds its `-->` through a cursor that only moves forward, so unclosed openers never
+// rescan the text; a `<!--` with no `-->` after it stays text, as other raw HTML does.
 
 export type Inline =
   | { t: 'text'; v: string }
@@ -100,6 +104,8 @@ class InlineScanner {
   private segEnd: Int32Array | null = null;
   private depth: Int32Array | null = null;
   private nextQuote: Map<string, Int32Array> = new Map();
+  // The first '-->' at or after the last search start; -2 before any search, -1 when there is none.
+  private commentClose = -2;
 
   constructor(private readonly s: string, private readonly st: State) {
     this.n = s.length;
@@ -160,6 +166,9 @@ class InlineScanner {
         flush(i);
         i = this.closeBracket(i);
         textStart = i;
+      } else if (c === '<' && s[i + 1] === '!' && s[i + 2] === '-' && s[i + 3] === '-' && this.commentEnd(i) > i) {
+        flush(i);
+        textStart = i = this.commentEnd(i);
       } else if (c === '<') {
         const end = this.angle(i, () => flush(i));
         if (end > i) textStart = i = end;
@@ -507,6 +516,16 @@ class InlineScanner {
     }
     this.nextQuote.set(ch, a);
     return a;
+  }
+
+  /**
+   * At a '<!--' at i: the position just after the comment's first '-->' (which may overlap the opener, as in
+   * '<!-->'), or -1 when no '-->' follows. Searches start past the previous match, so the text is scanned once.
+   */
+  private commentEnd(i: number): number {
+    const from = i + 2;
+    if (this.commentClose !== -1 && this.commentClose < from) this.commentClose = this.s.indexOf('-->', from);
+    return this.commentClose < 0 ? -1 : this.commentClose + 3;
   }
 
   /** At '<': an autolink or a raw HTML tag; returns the position after it, or i when it is neither. */

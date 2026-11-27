@@ -39,7 +39,7 @@ which `src/main.ts` fills from one call to the registry API version 2 (`src/app.
 | `src/tutorial/view.ts` | the tutorial page's nodes, a pure function of `page.ts`'s `PageView` through a `Doc`: the sign-in card, a `<textarea>` per editable file, Run and Test (disabled while running), each error's message, the exit code and the output as text nodes in a `<pre>`; and the lesson's files and commands as the build prerenders them into the lesson page's `#lesson-runner` (`lessonSource`) and the page script reads them back (`readLesson`) |
 | `src/tutorial/start.ts` | starting the tutorial page against a small DOM port: reads the lesson from `#lesson-runner`, starts `page.ts`'s controller, puts each new view there (not again while the reader only types, so the editor keeps its caret), keeps focus on the same control, and forwards clicks and typing |
 | `src/tutorial/main.ts` | the tutorial page's script, the entry of `tutorial.js`: connects `start.ts` to the real document, the gate (same-origin), the e2b runner, `localStorage` (looked up on each call) and the clock |
-| `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them into `dist/tutorial/` (see below); `headers.ts`, the security headers the site stack sends; `preview.ts`, the local preview |
+| `tools/` | the build (Node, run at build time only, but for `readme-e2e.ts`): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/`; `lessons.ts` and `tutorial.ts`, the tutorial's lessons checked against `spec/tutorial-lesson.schema.json` and its pages rendered from them into `dist/tutorial/` (see below); `headers.ts`, the security headers the site stack sends; `tutorial-link.ts`, the header's Tutorial entry and its removal, which the site stack applies on a stage that does not serve the tutorial; `preview.ts`, the local preview; `readme-e2e.ts`, the check after each deploy that a package page shows no `mojo-hidden` line (see "Smoke test") |
 
 ## Rules
 
@@ -77,7 +77,9 @@ tutorial's pages from them: `/tutorial` and `/tutorial/<lesson>`, as `tutorial/i
 `tutorial/<lesson>/index.html` in `dist/`, checked by the same page rules as every page. Every stage deploys the same
 `dist/`, but the site stack uploads and routes the tutorial's pages only on a stage whose configuration names the
 tutorial's E2B template (`service/infra/stacks/lib/site-stack.ts`, `servesTutorial`); elsewhere `/tutorial` is the 404
-page. No page outside the tutorial links to it yet. A lesson's page holds, in its `#lesson-runner`, the
+page. The header of every page has "Tutorial", a link to `/tutorial` (`tools/tutorial-link.ts`); on a stage that does
+not serve the tutorial the site stack uploads every page without it, and refuses a page that lacks it or links to the
+tutorial anywhere else. A lesson's page holds, in its `#lesson-runner`, the
 lesson's editable files (their text from `project/`) and its commands, readable without scripts, and loads `tutorial.js`
 after `main.js`, which reads the lesson from there and puts the sign-in card or the editor in its place. Below it are
 links to the lesson before it and the lesson after it, in the index's order, in the HTML (no script builds them): the
@@ -122,6 +124,9 @@ The home page copy is held to `README.md`, `src/cli/main.zig`, `VERSION` and `st
 names, the verification commands or the version series change there, the page has to change too. The page names the
 version series (`0.0.x`), never a patch number, because a release is cut on every merge. Route vectors are in `test/fixtures/routes.json`; the
 site stack's edge router is tested against the same file. The Markdown attack corpus is `test/fixtures/attacks.md`.
+A readme's HTML comments render nothing (komira's README examples keep their test-only lines in
+`<!-- mojo-hidden ... -->`), while other raw HTML shows as text; `test/fixtures/komira-json-readme.md` is komira's
+`src/komira_json/README.md`, a real readme with five of them.
 
 ## Preview
 
@@ -180,7 +185,7 @@ or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.m
   every namespace, or for a namespace's packages when `<x>` is a namespace and no name (`src/routes.ts`
   `flatSearchPath`). `/tutorial` and `/tutorial/<lesson>` are the tutorial's `index.html` on a stage that serves the
   tutorial (its configuration names `tutorial.e2bTemplateId`); with a trailing slash, or on any other stage, they are
-  the 404 page, and there the tutorial's pages are not uploaded either. A file of the build goes to the bucket as it
+  the 404 page, and there the tutorial's pages are not uploaded either, nor the header's Tutorial entry. A file of the build goes to the bucket as it
   is, and so does an asset under an id that is not this build's (an earlier build's, which the bucket keeps).
 - **Not found.** Anything else (an unknown page, a docs slug with no page, a file the build does not have, including
   one under this build's `assets/<id>/`) is rewritten to `404.html`, and the same function turns that response's 200
@@ -203,4 +208,15 @@ or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.m
 - **Smoke test.** e2e.yml checks the site host after every deploy: the home page and one of its assets, the app shell
   for a package route, a 404 for an unknown file, and the CSP's `connect-src`. Then the sign-in and sandbox routes of
   `/api/*`, signed out, and the sign-in start through the site and straight at the API host
-  (`tests/drivers/signin_e2e.zig`, tested by `//:signin_e2e`).
+  (`tests/drivers/signin_e2e.zig`, tested by `//:signin_e2e`). Its `readme-e2e` job loads a package page the way a
+  browser does, without one: the shell the site host serves for the package's address, then the view `main.ts` would
+  build there, made by this package's own `app.ts` through its client on the site's `/api/v2` into a `StringDoc`
+  (`tools/readme-e2e.ts`, run as `node build/tools/tools/readme-e2e.js --stage <stage> --site https://<site host> --dist dist`
+  after `npm run build`). The shell must load the same `/assets/<id>/main.js` as this commit's `dist/app.html`, so the
+  renderer it runs is the one the stage serves. It fails when the readme's text holds `mojo-hidden`, the marker of komira's hidden test
+  lines, which the renderer drops as HTML comments. The package is `komira-ai/json` on prod, and `zz-e2e/zz_e2e_app` on
+  beta and gamma, which the `group-e2e` job publishes with one such line. It SKIPs, with a warning and the reason in the
+  job summary, when beta or gamma holds no such package, or the readme is missing, holds no marker, or is over the
+  page's 64 KiB; prod must hold `komira-ai/json`. Transient answers (none, 429, 5xx) are tried five times.
+  `test/readme-e2e.test.ts` runs it against a fake site, including a renderer that keeps a comment as text, as the
+  parser did before komira-ai/mopm#408, to show the check fails then.

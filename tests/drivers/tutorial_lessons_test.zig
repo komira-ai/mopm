@@ -1,6 +1,7 @@
 //! //:tutorial_lessons: the lessons under tutorial/lessons pass their contract (spec/tutorial-lesson.schema.json and
-//! tests/drivers/tutorial_lessons.zig), the schema refuses what it must, the checker refuses a broken lesson, and the
-//! committed mopm.lock of each lesson is what `mopm lock` writes.
+//! tests/drivers/tutorial_lessons.zig), the schema refuses what it must, the checker refuses a broken lesson, the
+//! output blocks of lesson.md read as //:autolink reads them (tests/drivers/lesson_output.zig), and the committed
+//! mopm.lock of each lesson is what `mopm lock` writes.
 //!
 //! Run by Buck2 from the repository root; MOPM is the built CLI (only the last test needs it). Every broken lesson is
 //! a copy in a test's own temporary directory, so the committed files are never written to.
@@ -8,6 +9,7 @@
 const std = @import("std");
 const c = @import("contract.zig");
 const h = @import("harness.zig");
+const lo = @import("lesson_output.zig");
 const tl = @import("tutorial_lessons.zig");
 const Value = std.json.Value;
 const Allocator = std.mem.Allocator;
@@ -358,6 +360,139 @@ test "the checker refuses a file among the lessons, a tree with no lesson, and a
     const found = try tl.lessonsProblems(a, try tl.loadSchemas(a), gone);
     try std.testing.expectEqual(@as(usize, 1), found.items.len);
     try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "{s}: cannot open the lessons directory (FileNotFound)", .{gone}), found.items[0]);
+}
+
+// ------------------------------------------------------------------ the output blocks of lesson.md
+
+/// The blocks and problems `lo.outputBlocks` reads from `md`, one line each: `<action>@<line>: <text with \n as |>`
+/// for a block, the problem as it is for a problem.
+fn readBlocks(a: Allocator, md: []const u8) ![]const u8 {
+    const p = try lo.outputBlocks(a, md);
+    var out = std.ArrayList(u8).init(a);
+    for (p.blocks) |b| try out.writer().print("{s}@{d}: {s}\n", .{ b.action, b.line, try std.mem.replaceOwned(u8, a, b.text, "\n", "|") });
+    for (p.problems) |e| try out.writer().print("{s}\n", .{e});
+    return out.items;
+}
+
+test "output blocks: run and test, read with their lines, and no other fenced block" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const md =
+        \\Text.
+        \\
+        \\```mojo
+        \\```output run
+        \\print("not a fence: inside a mojo block")
+        \\```
+        \\
+        \\```output run
+        \\Hello, world!
+        \\
+        \\  indented
+        \\```
+        \\
+        \\~~~~ output  test
+        \\mopm test: 1 tests
+        \\~~~
+        \\~~~~
+        \\```
+        \\plain
+        \\```
+        \\
+    ;
+    // The tilde block holds a shorter tilde line as text; the plain block names no output.
+    try std.testing.expectEqualStrings("run@8: Hello, world!||  indented|\ntest@14: mopm test: 1 tests|~~~|\n", try readBlocks(a, md));
+}
+
+test "output blocks: a fence indented by up to three spaces, whose indent its lines lose, and what is no fence" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Two backticks, a backtick in a backtick fence's info, an empty line and four spaces are no fence.
+    const md = "``output run\n```output run`\n\n    ```output test\n   ```output run\n   two\n     four\n one\n   ```\n";
+    try std.testing.expectEqualStrings("run@5: two|  four|one|\n", try readBlocks(a, md));
+    // A line of spaces only, shorter than the indent, keeps nothing; the block may end with the text.
+    try std.testing.expectEqualStrings("run@1: |x|\n", try readBlocks(a, "  ```output run\n \n  x\n  ```"));
+}
+
+test "output blocks: no action, more than one, never closed, and a second block for one action are problems" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("line 1: the output block names no action: write ```output run or ```output test\n", try readBlocks(a, "```output\nx\n```\n"));
+    try std.testing.expectEqualStrings("line 1: the output block's info string is more than `output <action>`: output run now\n", try readBlocks(a, "```output run now\nx\n```\n"));
+    try std.testing.expectEqualStrings(
+        "run@1: a|\nline 4: a second output block for run (the first is on line 1)\n",
+        try readBlocks(a, "```output run\na\n```\n```output run\nb\n```\n"),
+    );
+    try std.testing.expectEqualStrings("line 2: the output block is never closed\n", try readBlocks(a, "x\n```output run\nHello\n"));
+    // A plain block never closed takes the rest of the text, an output fence in it too.
+    try std.testing.expectEqualStrings("", try readBlocks(a, "```\n```output run\nHello\n"));
+}
+
+test "sameOutput: blank lines at the start, white space at the end and a test's time do not count; anything else does" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expect(try lo.sameOutput(a, "mopm test: 2 tests\n", "\nmopm test: 2 tests\n"));
+    try std.testing.expect(try lo.sameOutput(a, "(1, 2)\n(4, 6)\n", " \t\r\n\n(1, 2)\n(4, 6)\r\n  \n"));
+    try std.testing.expect(try lo.sameOutput(a, "", "\n \n"));
+    try std.testing.expect(!try lo.sameOutput(a, "Hello, world!\n", "Hello, World!\n"));
+    try std.testing.expect(!try lo.sameOutput(a, "Hello, world!\n", ""));
+    // Inside the output: the indent of the first line, a blank line between lines, and an extra line all count.
+    try std.testing.expect(!try lo.sameOutput(a, "x\n", "  x\n"));
+    try std.testing.expect(!try lo.sameOutput(a, "a\nb\n", "a\n\nb\n"));
+    try std.testing.expect(!try lo.sameOutput(a, "a\n", "a\nwarning: b\n"));
+    // A test's time: any digits before " ms)" match, and only there.
+    try std.testing.expect(try lo.sameOutput(a, "PASS t (81 ms)\n", "PASS t (1203 ms)\n"));
+    try std.testing.expect(!try lo.sameOutput(a, "PASS t (81 ms)\n", "PASS t (81 s)\n"));
+    try std.testing.expect(!try lo.sameOutput(a, "PASS t (81 ms)\n", "PASS t ( ms)\n"));
+    try std.testing.expect(!try lo.sameOutput(a, "(1, 2)\n", "(1, 3)\n"));
+    try std.testing.expect(!try lo.sameOutput(a, "x (8", "x (9"));
+}
+
+test "the checker refuses a lesson.md with no output block for an action, a block for an action it does not have, or a broken block" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var t = try Tree.init(a, &.{"hello"});
+    defer t.deinit();
+    try t.put(a, "hello/lesson.md", "Press **Run**.\n");
+    try t.expectProblems(a, &.{"{r}/hello: lesson.md has no ```output run block: what `mopm run src/main.mojo` prints, which //:autolink compares with what it does print"});
+    try t.put(a, "hello/lesson.md", "```output run\nHello, world!\n```\n\n```output test\nmopm test: 1 tests\n```\n");
+    try t.expectProblems(a, &.{"{r}/hello: lesson.md: line 5: the output block names test, which is not an action of lesson.json"});
+    // With a test action, the run block alone is not enough.
+    try t.put(a, "hello/lesson.md", "```output run\nHello, world!\n```\n");
+    try t.putLesson(a, "hello", "actions.test", "\"mopm test\"");
+    try t.expectProblems(a, &.{"{r}/hello: lesson.md has no ```output test block: what `mopm test` prints, which //:autolink compares with what it does print"});
+    try t.put(a, "hello/lesson.md", "```output run\nHello, world!\n```\n```output test\nok\n");
+    try t.expectProblems(a, &.{
+        "{r}/hello: lesson.md: line 4: the output block is never closed",
+        "{r}/hello: lesson.md has no ```output test block: what `mopm test` prints, which //:autolink compares with what it does print",
+    });
+}
+
+test "the lessons in the repository show an output block for every action, and the tests lesson has a test action" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var lessons = try std.fs.cwd().openDir("tutorial/lessons", .{ .iterate = true });
+    defer lessons.close();
+    var it = lessons.iterate();
+    var n: usize = 0;
+    while (try it.next()) |e| : (n += 1) {
+        const dir = try h.join(a, &.{ "tutorial/lessons", e.name });
+        const doc = try c.loadJson(a, try h.join(a, &.{ dir, "lesson.json" }));
+        const shown = try lo.outputBlocks(a, try h.readFile(a, try h.join(a, &.{ dir, "lesson.md" })));
+        try std.testing.expectEqual(@as(usize, 0), shown.problems.len);
+        const actions = c.get(doc, "actions").?.object;
+        try std.testing.expectEqual(actions.count(), shown.blocks.len);
+        for (shown.blocks) |b| try std.testing.expect(actions.get(b.action) != null);
+    }
+    try std.testing.expect(n >= 3);
+    const tests_doc = try c.loadJson(a, "tutorial/lessons/tests/lesson.json");
+    try std.testing.expectEqualStrings("mopm test", c.get(c.get(tests_doc, "actions").?, "test").?.string);
 }
 
 // ------------------------------------------------------------------ the lock is mopm's

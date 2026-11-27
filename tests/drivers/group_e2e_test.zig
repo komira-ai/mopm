@@ -1606,6 +1606,10 @@ test "the workspace: each member depends on the one below it, by path and by ver
     const program = g.readmeProgram(readme).?;
     try std.testing.expect(std.mem.startsWith(u8, program, "from zz_e2e_app import total\n"));
     try std.testing.expect(std.mem.indexOf(u8, program, "```") == null);
+    // The hidden line sits on the line before the block's fence, outside the program, once.
+    try std.testing.expect(std.mem.indexOf(u8, readme, g.readme_hidden_line ++ "\n```mojo\n") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, readme, "mojo-hidden"));
+    try std.testing.expect(std.mem.indexOf(u8, program, "mojo-hidden") == null);
     try std.testing.expect(g.readmeProgram(try g.readmeOf(a, g.pkg_core)) == null);
     try std.testing.expect(g.readmeProgram("```mojo\nno closing fence") == null);
     // The writer puts every file of every member in place.

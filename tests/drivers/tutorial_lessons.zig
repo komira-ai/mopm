@@ -11,6 +11,9 @@
 //!   - each editable path names a file under project/ (the schema has already refused `..`, absolute paths and
 //!     backslashes, so the path names nothing outside project/; a symbolic link in it is followed, as a copy does);
 //!   - the order is written as an integer (the schema's `integer` also takes 1.0);
+//!   - lesson.md shows the output of each action of lesson.json in a block ```output <action>``` (lesson_output.zig),
+//!     well formed, one per action and none for an action the lesson does not have: //:autolink runs every action with
+//!     the real Mojo and compares what it prints with that block;
 //!   - no two lessons share an order.
 //! A file directly under tutorial/lessons is refused, and so is a tree with no lesson.
 //!
@@ -19,6 +22,7 @@
 
 const std = @import("std");
 const c = @import("contract.zig");
+const lo = @import("lesson_output.zig");
 const Value = std.json.Value;
 const Allocator = std.mem.Allocator;
 
@@ -107,11 +111,29 @@ fn lessonProblems(a: Allocator, schemas: Schemas, lessons: std.fs.Dir, id: []con
         const rel = try std.fmt.allocPrint(a, "project/{s}", .{p.string});
         if (fileSize(dir, rel) == null) try c.problem(a, out, "{s}: the editable file {s} is not a file under project/", .{ where, p.string });
     }
+    // An empty or missing lesson.md is already a problem.
+    if (fileSize(dir, "lesson.md")) |size| {
+        if (size != 0) try outputProblems(a, try dir.readFileAlloc(a, "lesson.md", 1 << 20), c.get(doc, "actions").?, where, out);
+    }
     // The schema's integer is any whole number, 1.0 and 1e30 too; the builds read an integer.
     return c.getInt(doc, "order") orelse {
         try c.problem(a, out, "{s}: lesson.json: /order: write the order as an integer, such as 1", .{where});
         return null;
     };
+}
+
+/// Appends the problems of lesson.md's output blocks (`markdown`) against lesson.json's `actions` to `out`.
+fn outputProblems(a: Allocator, markdown: []const u8, actions: Value, where: []const u8, out: *c.Problems) !void {
+    const parsed = try lo.outputBlocks(a, markdown);
+    for (parsed.problems) |p| try c.problem(a, out, "{s}: lesson.md: {s}", .{ where, p });
+    for (parsed.blocks) |b| {
+        if (actions.object.get(b.action) == null) try c.problem(a, out, "{s}: lesson.md: line {d}: the output block names {s}, which is not an action of lesson.json", .{ where, b.line, b.action });
+    }
+    var it = actions.object.iterator();
+    while (it.next()) |e| {
+        const name = e.key_ptr.*;
+        if (lo.find(parsed.blocks, name) == null) try c.problem(a, out, "{s}: lesson.md has no ```output {s} block: what `{s}` prints, which //:autolink compares with what it does print", .{ where, name, e.value_ptr.string });
+    }
 }
 
 /// The size of the file `rel` of `dir` (a link is followed), or null when there is no file there (nothing, a directory,

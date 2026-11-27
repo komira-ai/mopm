@@ -164,6 +164,13 @@ export_file(
     visibility = ["//service/infra/stacks:"],
 )
 
+# The header's Tutorial entry, which the site stack takes out of the pages of a stage that does not serve the tutorial.
+export_file(
+    name = "tutorial-link.ts",
+    src = "tools/tutorial-link.ts",
+    visibility = ["//service/infra/stacks:"],
+)
+
 export_file(
     name = "routes.json",
     src = "test/fixtures/routes.json",
