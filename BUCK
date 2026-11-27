@@ -37,7 +37,10 @@ _TOOLS = {
 
 # The files each root imports by a relative name (all siblings of the root).
 # src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig, std-modules.txt by src/core/names.zig and src/core/std_modules.zig.
-_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json", "src/core/toolchain/*.txt"])
+# The committed toolchain files. The unit tests that hold the Mojo closures (mojo-*.json) and native catalogs
+# (natives-*.json) to the committed locks also read them at run time (src/core/closure.zig, src/core/native_catalog.zig).
+_TOOLCHAIN_FILES = glob(["src/core/toolchain/*.json", "src/core/toolchain/*.txt"])
+_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + _TOOLCHAIN_FILES
 _CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig", "src/cli/build_options.zig"])
 _FAKE_SRCS = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig"])
 
@@ -781,7 +784,8 @@ zig_test_bin(
 host_run(
     name = "core_test_macos",
     exe = ":core_test_macos_bin",
-    data = _UNIT_DATA,
+    # What core_test reads at run time: its data, and the toolchain files it has among its imports.
+    data = _UNIT_DATA + _TOOLCHAIN_FILES,
     env_tools = {"MOPM_TEST_CHILD": ":proc-child_macos"},
     exec_compatible_with = MACOS_AARCH64,
     labels = ["macos-farm"],
