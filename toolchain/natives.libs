@@ -25,12 +25,12 @@ linux-64 libsqlite c294029f893d05286f1061bbab85b820f1eea73dd859af4bcc619197bcc34
 linux-64 libsqlite c294029f893d05286f1061bbab85b820f1eea73dd859af4bcc619197bcc34810 lib/libsqlite3.so.0 -> libsqlite3.so.3.54.1
 linux-64 libzlib eb8a0db0aa570124f7d2a93d7c7f596e3390df5e047818d873baad32985fc736 lib/libz.so.1.3.2
 linux-64 libzlib eb8a0db0aa570124f7d2a93d7c7f596e3390df5e047818d873baad32985fc736 lib/libz.so.1 -> libz.so.1.3.2
-linux-64 lz4-c b8c0e930183e6b7f83cd35ace102f2b8c2f0faae41dc05255dc72f247dfc556a lib/liblz4.so -> liblz4.so.1.10.0
-linux-64 lz4-c b8c0e930183e6b7f83cd35ace102f2b8c2f0faae41dc05255dc72f247dfc556a lib/liblz4.so.1 -> liblz4.so.1.10.0
-linux-64 lz4-c b8c0e930183e6b7f83cd35ace102f2b8c2f0faae41dc05255dc72f247dfc556a lib/liblz4.so.1.10.0
-linux-64 snappy a724d5312f1c8fe84be83b176b20fa171b3106cdfec1648cc3f32888397ecb09 lib/libsnappy.so -> libsnappy.so.1
-linux-64 snappy a724d5312f1c8fe84be83b176b20fa171b3106cdfec1648cc3f32888397ecb09 lib/libsnappy.so.1 -> libsnappy.so.1.3.1
-linux-64 snappy a724d5312f1c8fe84be83b176b20fa171b3106cdfec1648cc3f32888397ecb09 lib/libsnappy.so.1.3.1
+linux-64 lz4-c e66dc54f3f3547f1988dc3ef606f2790d7fde24037ffd0a19b4f58e2895f4183 lib/liblz4.so -> liblz4.so.1
+linux-64 lz4-c e66dc54f3f3547f1988dc3ef606f2790d7fde24037ffd0a19b4f58e2895f4183 lib/liblz4.so.1 -> liblz4.so.1.11.1
+linux-64 lz4-c e66dc54f3f3547f1988dc3ef606f2790d7fde24037ffd0a19b4f58e2895f4183 lib/liblz4.so.1.11.1
+linux-64 snappy a50c3bfa89bf2ca57e3d9eab8990d2e0e9f58dcf3a758a95dbf769a222d4d608 lib/libsnappy.so -> libsnappy.so.1
+linux-64 snappy a50c3bfa89bf2ca57e3d9eab8990d2e0e9f58dcf3a758a95dbf769a222d4d608 lib/libsnappy.so.1 -> libsnappy.so.1.3.1
+linux-64 snappy a50c3bfa89bf2ca57e3d9eab8990d2e0e9f58dcf3a758a95dbf769a222d4d608 lib/libsnappy.so.1.3.1
 linux-64 zstd 47d682b9f6d6ec9eb1a6e6c3e75ea6273e899e78fb7fc59f81d39745009fbc60 lib/libzstd.so -> libzstd.so.1
 linux-64 zstd 47d682b9f6d6ec9eb1a6e6c3e75ea6273e899e78fb7fc59f81d39745009fbc60 lib/libzstd.so.1 -> libzstd.so.1.5.7
 linux-64 zstd 47d682b9f6d6ec9eb1a6e6c3e75ea6273e899e78fb7fc59f81d39745009fbc60 lib/libzstd.so.1.5.7
@@ -50,12 +50,12 @@ linux-aarch64 libsqlite 61a67f7085f497fa7622c6e1ae8611b8b2796a2eca70dcecc8d9124c
 linux-aarch64 libsqlite 61a67f7085f497fa7622c6e1ae8611b8b2796a2eca70dcecc8d9124ca4f0d46b lib/libsqlite3.so -> libsqlite3.so.3.54.1
 linux-aarch64 libzlib 76efa6cc9d7e6f5ee3bbca0939f64054af2bdfb3c3632531f8e633cf6c2ea41e lib/libz.so.1.3.2
 linux-aarch64 libzlib 76efa6cc9d7e6f5ee3bbca0939f64054af2bdfb3c3632531f8e633cf6c2ea41e lib/libz.so.1 -> libz.so.1.3.2
-linux-aarch64 lz4-c e8392843a18954fef038f2721fde65c4dbe7693fcd07677e5e74fca85b1a690c lib/liblz4.so -> liblz4.so.1.10.0
-linux-aarch64 lz4-c e8392843a18954fef038f2721fde65c4dbe7693fcd07677e5e74fca85b1a690c lib/liblz4.so.1 -> liblz4.so.1.10.0
-linux-aarch64 lz4-c e8392843a18954fef038f2721fde65c4dbe7693fcd07677e5e74fca85b1a690c lib/liblz4.so.1.10.0
-linux-aarch64 snappy 3edbb28329f34e3effc8e7da37349fc55998faf8c8a8c30304c9737b479cf10c lib/libsnappy.so -> libsnappy.so.1
-linux-aarch64 snappy 3edbb28329f34e3effc8e7da37349fc55998faf8c8a8c30304c9737b479cf10c lib/libsnappy.so.1 -> libsnappy.so.1.3.1
-linux-aarch64 snappy 3edbb28329f34e3effc8e7da37349fc55998faf8c8a8c30304c9737b479cf10c lib/libsnappy.so.1.3.1
+linux-aarch64 lz4-c ea5441ecbbeac408e6e50d7a961be887846032e9097fbed14d01ed0eba7fb1af lib/liblz4.so -> liblz4.so.1
+linux-aarch64 lz4-c ea5441ecbbeac408e6e50d7a961be887846032e9097fbed14d01ed0eba7fb1af lib/liblz4.so.1 -> liblz4.so.1.11.1
+linux-aarch64 lz4-c ea5441ecbbeac408e6e50d7a961be887846032e9097fbed14d01ed0eba7fb1af lib/liblz4.so.1.11.1
+linux-aarch64 snappy aa7973ef19fd61c5956e3f307a50997656915b8e9cb61dd5144e6aaa0a06e3ad lib/libsnappy.so -> libsnappy.so.1
+linux-aarch64 snappy aa7973ef19fd61c5956e3f307a50997656915b8e9cb61dd5144e6aaa0a06e3ad lib/libsnappy.so.1 -> libsnappy.so.1.3.1
+linux-aarch64 snappy aa7973ef19fd61c5956e3f307a50997656915b8e9cb61dd5144e6aaa0a06e3ad lib/libsnappy.so.1.3.1
 linux-aarch64 zstd 427fd14bcb3b8659796fecc682716617409350fb5a98e5b7b47558a10d1a2fc7 lib/libzstd.so -> libzstd.so.1
 linux-aarch64 zstd 427fd14bcb3b8659796fecc682716617409350fb5a98e5b7b47558a10d1a2fc7 lib/libzstd.so.1 -> libzstd.so.1.5.7
 linux-aarch64 zstd 427fd14bcb3b8659796fecc682716617409350fb5a98e5b7b47558a10d1a2fc7 lib/libzstd.so.1.5.7
@@ -73,12 +73,12 @@ osx-arm64 libsqlite c49adf700ad17332b938ac627845a3fdc70a0810660d3ec3814de25b156f
 osx-arm64 libsqlite c49adf700ad17332b938ac627845a3fdc70a0810660d3ec3814de25b156fbf60 lib/libsqlite3.0.dylib -> libsqlite3.3.54.1.dylib
 osx-arm64 libzlib a18fa5d5bac452401459f966cf0d872224e8080c4ff93c77e168d43ab42ef9d7 lib/libz.1.dylib -> libz.1.3.2.dylib
 osx-arm64 libzlib a18fa5d5bac452401459f966cf0d872224e8080c4ff93c77e168d43ab42ef9d7 lib/libz.1.3.2.dylib
-osx-arm64 lz4-c 1887867b393eb3c2b336deaffcf228574821ea1e0dcb9ef7bf6c9f59cec40f03 lib/liblz4.1.10.0.dylib
-osx-arm64 lz4-c 1887867b393eb3c2b336deaffcf228574821ea1e0dcb9ef7bf6c9f59cec40f03 lib/liblz4.1.dylib -> liblz4.1.10.0.dylib
-osx-arm64 lz4-c 1887867b393eb3c2b336deaffcf228574821ea1e0dcb9ef7bf6c9f59cec40f03 lib/liblz4.dylib -> liblz4.1.10.0.dylib
-osx-arm64 snappy daba756c5a0af883023d2c3884f03220da1b6b3dd05061d941e4d98d0edd506b lib/libsnappy.1.3.1.dylib
-osx-arm64 snappy daba756c5a0af883023d2c3884f03220da1b6b3dd05061d941e4d98d0edd506b lib/libsnappy.1.dylib -> libsnappy.1.3.1.dylib
-osx-arm64 snappy daba756c5a0af883023d2c3884f03220da1b6b3dd05061d941e4d98d0edd506b lib/libsnappy.dylib -> libsnappy.1.dylib
+osx-arm64 lz4-c 9f37a2d03a872312ff1d183fa3d9c1652906e0f9f7391ab90130e49b14976d3f lib/liblz4.1.11.1.dylib
+osx-arm64 lz4-c 9f37a2d03a872312ff1d183fa3d9c1652906e0f9f7391ab90130e49b14976d3f lib/liblz4.1.dylib -> liblz4.1.11.1.dylib
+osx-arm64 lz4-c 9f37a2d03a872312ff1d183fa3d9c1652906e0f9f7391ab90130e49b14976d3f lib/liblz4.dylib -> liblz4.1.dylib
+osx-arm64 snappy 95824ec37222ab9a2888a22ca1b074406154d3008953a693ba5e9b75a8160a4f lib/libsnappy.1.3.1.dylib
+osx-arm64 snappy 95824ec37222ab9a2888a22ca1b074406154d3008953a693ba5e9b75a8160a4f lib/libsnappy.1.dylib -> libsnappy.1.3.1.dylib
+osx-arm64 snappy 95824ec37222ab9a2888a22ca1b074406154d3008953a693ba5e9b75a8160a4f lib/libsnappy.dylib -> libsnappy.1.dylib
 osx-arm64 zstd da867f5092eb0cb746d353694f0098031fd9817a4ce7d5743121209ae0f406ca lib/libzstd.1.5.7.dylib
 osx-arm64 zstd da867f5092eb0cb746d353694f0098031fd9817a4ce7d5743121209ae0f406ca lib/libzstd.1.dylib -> libzstd.1.5.7.dylib
 osx-arm64 zstd da867f5092eb0cb746d353694f0098031fd9817a4ce7d5743121209ae0f406ca lib/libzstd.dylib -> libzstd.1.dylib
