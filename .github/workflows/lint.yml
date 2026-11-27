@@ -1,14 +1,19 @@
 # The repository's own lints, on a GitHub-hosted runner for every pull request (forks
-# included) and for every push to main. They are the Zig tests behind the Buck2 targets
-# //:hygiene, //:workflows, //:autopin_workflows, //:lint_selftest, //:agents and //:api_gen_test (plus //:actionlint, the pinned actionlint over every workflow), run here with the Zig ci.yml installs.
+# included), every merge group of the merge queue and every push to main. They are the Zig tests behind the Buck2 targets
+# //:hygiene, //:workflows, //:autopin_workflows, //:merge_group_workflows, //:lint_selftest, //:agents and //:api_gen_test (plus //:actionlint, the pinned actionlint over every workflow), run here with the Zig ci.yml installs.
 # This job holds no secret, no id-token and a read-only token, so a fork's pull request
 # gets the same check as a branch of this repository; farm.yml runs the same targets on
-# the farm when it is configured, but is neither required nor run for a fork.
+# the farm when it is configured (its `build` is one of the checks a merge group runs, tests/drivers/merge_group_lint.zig),
+# but is skipped for a fork's pull request, so this job is the check a fork gets.
 # Without BUILDRULES_TEST_WORK the lints read the files git tracks in the checkout.
 name: lint
 
 on:
   pull_request:
+  # The merge queue's check of a merge group: the same job on the group's head commit (tests/drivers/merge_group_lint.zig).
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
   push:
     branches: [main]
 
@@ -19,6 +24,8 @@ permissions:
   contents: read
 
 concurrency:
+  # A merge group has no pull request number: its group falls back to the commit, its own, and only a pull request's run is ever
+  # cancelled (by a newer push to it).
   group: lint-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -49,6 +56,9 @@ jobs:
       - name: autopin lint (the Dependabot pin-update workflows, R1-R4, M2/M2b; each rule goes red on a faulty variant)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/autopin_lint_test.zig
+      - name: merge queue lint (every required check runs on a merge group, cannot be skipped there, and no merge group run is cancelled)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/merge_group_lint_test.zig
       - name: AGENTS.md (its shared core is the hashed canonical copy; CLAUDE.md imports it)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/agents_check_test.zig

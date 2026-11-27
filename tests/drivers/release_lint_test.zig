@@ -585,7 +585,7 @@ test "defect: the minos check reads another file than the tarball's binary, or c
 
 /// The macOS switch (MACOS_ON_FARM): the matrix expression of ci.yml's switched jobs, as the real file spells it.
 const switched_os_line = "        os: " ++ rl.switched_os ++ "\n";
-const unswitched_os_line = "        os: ${{ fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]') }}\n";
+const unswitched_os_line = "        os: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[\"ubuntu-24.04\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]') }}\n";
 
 test "defect: the macOS switch drops another leg than macos-15, or is missing from a job the farm covers" {
     try defectAfter(ci_path, "\n  test:\n", "switch on drops linux arm64 too", "'[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]'", "'[\"ubuntu-24.04\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]'", "test: matrix.os is");
@@ -598,7 +598,7 @@ test "defect: the macOS switch drops another leg than macos-15, or is missing fr
 
 test "defect: the macOS switch reaches a beta-tier leg the farm does not run" {
     try defectIn(ci_path, "mojo-e2e switched too", "        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]\n", "        os: ${{ fromJSON(vars.MACOS_ON_FARM == 'true' && '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\",\"macos-15\"]') }}\n", "is named 3 times outside comments, expected 2");
-    try defectAfter(ci_path, "\n  installer:\n", "installer skipped by the switch", "    if: github.event_name != 'pull_request'\n", "    if: github.event_name != 'pull_request' && vars.MACOS_ON_FARM != 'true'\n", "is named 3 times outside comments, expected 2");
+    try defectAfter(ci_path, "\n  installer:\n", "installer skipped by the switch", "    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'\n", "    if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && vars.MACOS_ON_FARM != 'true'\n", "is named 3 times outside comments, expected 2");
 }
 
 test "the macOS switch named in a comment of ci.yml is not counted" {

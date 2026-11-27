@@ -250,6 +250,15 @@ test "the pull-request tier: unit on a pull request, beta only after the merge" 
     // The exact guard passes, bare or in ${{ }}.
     try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request'\n", &.{});
     try expectStructure("ci.yml", guard_head ++ "${{ github.event_name != 'pull_request' }}\n", &.{});
+    // In a workflow that runs on a merge group, only the guard that names the merge group too keeps a beta job out of the merge queue.
+    const mg_guard_head = header ++ "on: [pull_request, merge_group, push]\njobs:\n  test:\n    runs-on: ubuntu-24.04\n  registry-build:\n    runs-on: ubuntu-24.04\n  pack-conformance:\n    runs-on: ubuntu-24.04\n    if: ";
+    try expectStructure("ci.yml", mg_guard_head ++ "github.event_name != 'pull_request'\n", &.{"job pack-conformance is not a unit job, so its `if:` must be exactly `github.event_name != 'pull_request' && github.event_name != 'merge_group'`"});
+    try expectStructure("ci.yml", mg_guard_head ++ "github.event_name != 'pull_request' && github.event_name != 'merge_group' || true\n", &.{"job pack-conformance is not a unit job"});
+    try expectStructure("ci.yml", mg_guard_head ++ "github.event_name != 'pull_request' && github.event_name != 'merge_group'\n", &.{});
+    try expectStructure("ci.yml", mg_guard_head ++ "${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}\n", &.{});
+    // The stronger guard is fine without a merge group trigger, and a workflow on merge_group alone is held to the guard too.
+    try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request' && github.event_name != 'merge_group'\n", &.{});
+    try expectStructure("ci.yml", header ++ "on: [merge_group]\njobs:\n  installer:\n    runs-on: ubuntu-24.04\n", &.{"job installer is not a unit job"});
     // lint.yml must run the release lint test on every pull request.
     const lint_head = header ++ "on: [pull_request, push]\njobs:\n  lint:\n    runs-on: ubuntu-24.04\n    steps:\n";
     const lint_step = "      - run: zig test tests/drivers/release_lint_test.zig\n";
@@ -515,6 +524,10 @@ test "farm.yml: a push to main or a pull request from this repository, no secret
         \\
     ;
     try expectStructure("farm.yml", farm, &.{});
+    // A merge group of the merge queue may be added (merge_group_lint.zig requires it and holds its types and branches).
+    try expectStructure("farm.yml", header ++ "on:\n  pull_request:\n    branches: [main]\n  merge_group:\n    types: [checks_requested]\n    branches: [main]\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: ubuntu-24.04\n", &.{});
+    try expectStructure("farm.yml", header ++ "on:\n  pull_request:\n  merge_group:\n  push:\n    branches: [main]\n  workflow_dispatch:\njobs:\n  build:\n    runs-on: ubuntu-24.04\n", &.{"triggers must be exactly pull_request and push of branches [main] (and merge_group)"});
+    try expectStructure("farm.yml", header ++ "on:\n  merge_group:\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: ubuntu-24.04\n", &.{"triggers must be exactly"});
     // A push to any branch, a push without branches, a pull request alone and a third trigger are refused.
     inline for ([_][]const u8{
         "on:\n  pull_request:\n  push:\n    branches: ['*']\n",
@@ -1036,6 +1049,17 @@ test "a pull_request workflow names Linux x86_64 runners only; the other platfor
     try expectStructure("ci.yml", header ++ matrix ++ expr_arm, &.{arm_msg});
     const expr_label = "        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '[\"ubuntu-24.04\",\"macos-15\"]' || '[\"ubuntu-24.04\"]') }}\n";
     try expectStructure("ci.yml", header ++ matrix ++ expr_label, &.{"job test: matrix.os is an expression the lint cannot read"});
+    // With a merge group trigger the first list must be the one a pull request and a merge group get; the pull request's alone would
+    // give a merge group the full matrix (macOS included). The combined form is read in a workflow without the trigger too.
+    const mg_matrix = "on: [pull_request, merge_group]\njobs:\n  test:\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n";
+    const expr_mg = "        os: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[\"ubuntu-24.04\"]' || '[\"ubuntu-24.04\",\"macos-15\"]') }}\n";
+    const expr_mg_arm = "        os: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\"]') }}\n";
+    try expectStructure("ci.yml", header ++ mg_matrix ++ expr_mg, &.{});
+    try expectStructure("ci.yml", header ++ matrix ++ expr_mg, &.{});
+    try expectStructure("ci.yml", header ++ mg_matrix ++ expr_mg_arm, &.{arm_msg});
+    try expectStructure("ci.yml", header ++ mg_matrix ++ expr, &.{"job test: matrix.os is an expression the lint cannot read; write it as fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group')"});
+    // A workflow on merge_group alone is held to Linux x86_64 too.
+    try expectStructure("service-ci.yml", header ++ "on: [merge_group]\njobs:\n  test:\n    runs-on: macos-15\n", &.{"job test runs on macos-15 for a pull request"});
     // A beta job (guarded so it never runs on a pull request), a job with no runs-on (a reusable workflow) and a workflow with no pull_request trigger are free.
     try expectStructure("ci.yml", header ++ "on: [pull_request, push]\njobs:\n  mojo-e2e:\n    if: github.event_name != 'pull_request'\n    runs-on: macos-15\n", &.{});
     try expectStructure("ci.yml", header ++ "on: [pull_request]\njobs:\n  test:\n    uses: ./.github/workflows/x.yml\n", &.{});

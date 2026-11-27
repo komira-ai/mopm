@@ -263,7 +263,8 @@ const pr_files = [_][]const u8{ "ci.yml", "lint.yml", "farm.yml", "service-ci.ym
 /// pull request, and the one workflow outside the deploy ones that declares an environment (`autopin`, holding the App's key). It has
 /// no id-token. autopin_lint.zig holds the rest (the gate, the token's scope, the order of its steps).
 const autopin_commit_file = "autopin-commit.yml";
-/// The jobs of ci.yml that run on a pull request (the unit tier). Every other job of ci.yml is beta and must say `if: github.event_name != 'pull_request'`.
+/// The jobs of ci.yml that run on a pull request (the unit tier). Every other job of ci.yml is beta and must say `if: github.event_name != 'pull_request'`,
+/// or, in a workflow that also runs on a merge group, `if: github.event_name != 'pull_request' && github.event_name != 'merge_group'`.
 const ci_unit_jobs = [_][]const u8{ "test", "registry-build" };
 
 fn isOidcFile(base: []const u8) bool {
@@ -295,11 +296,17 @@ fn jobEntries(a: Allocator, doc: Value) ![]const Job {
     return out.items;
 }
 
-/// The whole `if:` is the guard (optionally in `${{ }}`): a substring test would pass `... || true`.
-fn isBetaGuard(expr: []const u8) bool {
+/// The guard of a beta job that never runs on a pull request, and the one that never runs on a pull request or a merge group.
+const beta_guard = "github.event_name != 'pull_request'";
+const beta_guard_merge_group = beta_guard ++ " && github.event_name != 'merge_group'";
+
+/// The whole `if:` is the guard (optionally in `${{ }}`): a substring test would pass `... || true`. In a workflow that runs on a merge
+/// group only the second form keeps a beta job out of the merge queue's check (a merge group is not a pull request).
+fn isBetaGuard(expr: []const u8, merge_group: bool) bool {
     var e = std.mem.trim(u8, expr, " \r\n\t");
     if (std.mem.startsWith(u8, e, "${{") and std.mem.endsWith(u8, e, "}}")) e = std.mem.trim(u8, e[3 .. e.len - 2], " ");
-    return std.mem.eql(u8, e, "github.event_name != 'pull_request'");
+    if (std.mem.eql(u8, e, beta_guard_merge_group)) return true;
+    return !merge_group and std.mem.eql(u8, e, beta_guard);
 }
 
 fn jobIf(a: Allocator, job: Value) ![]const u8 {
@@ -312,20 +319,31 @@ fn isLinuxX64Runner(r: []const u8) bool {
     return std.mem.startsWith(u8, r, "ubuntu-") and std.mem.indexOf(u8, r, "arm") == null;
 }
 
+/// The condition before the first list of a matrix expression, for a pull request, and for a pull request or a merge group.
+const pr_matrix_key = "github.event_name == 'pull_request' && '[";
+const pr_merge_group_matrix_key = "(github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[";
+
 /// The runners a pull request can reach in a job whose `runs-on` is `${{ matrix.os }}`: the list of `matrix.os`, the `os` of each `include`, and
-/// for a `fromJSON(github.event_name == 'pull_request' && '[...]' || '[...]')` expression the first list, the one a pull request gets.
-fn matrixRunners(a: Allocator, f: []const u8, job: Job, out: *Out) ![]const []const u8 {
+/// for a `fromJSON(github.event_name == 'pull_request' && '[...]' || '[...]')` expression the first list, the one a pull request gets. In a
+/// workflow that runs on a merge group the expression must be `fromJSON((github.event_name == 'pull_request' || github.event_name ==
+/// 'merge_group') && '[...]' || '[...]')`, so a merge group gets the pull request's list too (and its required checks report under the same names).
+fn matrixRunners(a: Allocator, f: []const u8, job: Job, merge_group: bool, out: *Out) ![]const []const u8 {
     var found = std.ArrayList([]const u8).init(a);
     const matrix = c.get(c.get(job.node, "strategy"), "matrix") orelse return found.items;
     if (c.get(matrix, "os")) |os| {
         if (c.str(os)) |expr| {
-            const key = "github.event_name == 'pull_request' && '[";
-            const at = std.mem.indexOf(u8, expr, key);
-            const end = if (at) |i| std.mem.indexOfPos(u8, expr, i + key.len, "]'") else null;
-            if (at == null or end == null) {
-                try c.problem(a, out, prefix ++ "{s}: job {s}: matrix.os is an expression the lint cannot read; write it as fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\"]' || '[...]') so the runners of a pull request are visible", .{ f, job.name });
+            const both = std.mem.indexOf(u8, expr, pr_merge_group_matrix_key);
+            const pr_only = if (merge_group) null else std.mem.indexOf(u8, expr, pr_matrix_key);
+            const key_end: ?usize = if (both) |i| i + pr_merge_group_matrix_key.len else if (pr_only) |i| i + pr_matrix_key.len else null;
+            const end = if (key_end) |k| std.mem.indexOfPos(u8, expr, k, "]'") else null;
+            if (key_end == null or end == null) {
+                if (merge_group) {
+                    try c.problem(a, out, prefix ++ "{s}: job {s}: matrix.os is an expression the lint cannot read; write it as fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[\"ubuntu-24.04\"]' || '[...]') so the runners of a pull request and a merge group are visible", .{ f, job.name });
+                } else {
+                    try c.problem(a, out, prefix ++ "{s}: job {s}: matrix.os is an expression the lint cannot read; write it as fromJSON(github.event_name == 'pull_request' && '[\"ubuntu-24.04\"]' || '[...]') so the runners of a pull request are visible", .{ f, job.name });
+                }
             } else {
-                var parts = std.mem.splitScalar(u8, expr[at.? + key.len .. end.?], '"');
+                var parts = std.mem.splitScalar(u8, expr[key_end.?..end.?], '"');
                 var in_quotes = false;
                 while (parts.next()) |part| : (in_quotes = !in_quotes) {
                     if (in_quotes) try found.append(part);
@@ -341,13 +359,13 @@ fn matrixRunners(a: Allocator, f: []const u8, job: Job, out: *Out) ![]const []co
     return found.items;
 }
 
-/// The runners of every job a pull request runs (a job guarded by `github.event_name != 'pull_request'` never does) must be hosted Linux x86_64.
-fn prRunnerProblems(a: Allocator, f: []const u8, jobs: []const Job, out: *Out) !void {
+/// The runners of every job a pull request (or a merge group) runs must be hosted Linux x86_64; a job with the beta guard never runs there.
+fn prRunnerProblems(a: Allocator, f: []const u8, jobs: []const Job, merge_group: bool, out: *Out) !void {
     for (jobs) |j| {
-        if (isBetaGuard(try jobIf(a, j.node))) continue;
+        if (isBetaGuard(try jobIf(a, j.node), merge_group)) continue;
         const runs_on = c.str(c.get(j.node, "runs-on")) orelse continue;
         if (std.mem.eql(u8, runs_on, "${{ matrix.os }}")) {
-            for (try matrixRunners(a, f, j, out)) |r| {
+            for (try matrixRunners(a, f, j, merge_group, out)) |r| {
                 if (!isLinuxX64Runner(r)) try c.problem(a, out, prefix ++ "{s}: job {s} runs on {s} for a pull request; a pull request runs on Linux x86_64 (ubuntu-*, not -arm) only, and the other platforms are the beta stage of release.yml", .{ f, j.name, r });
             }
         } else if (!isLinuxX64Runner(runs_on)) {
@@ -389,15 +407,17 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
 
     if (std.mem.eql(u8, base, farm_file)) {
         // pull_request, and push to main alone (the farm must be configured there: the job fails
-        // when it is not, so a merge never goes unbuilt).
+        // when it is not, so a merge never goes unbuilt), and a merge group of the merge queue, which
+        // merge_group_lint.zig requires and holds to the same.
         const push = c.get(c.onValue(doc), "push");
-        const pr_and_push = on.len == 2 and c.containsStr(on, "pull_request") and c.containsStr(on, "push");
+        const extra: usize = if (c.containsStr(on, "merge_group")) 1 else 0;
+        const pr_and_push = on.len == 2 + extra and c.containsStr(on, "pull_request") and c.containsStr(on, "push");
         const push_main = push != null and push.? == .object and push.?.object.count() == 1 and blk: {
             const br = c.get(push, "branches") orelse break :blk false;
             break :blk br == .array and br.array.items.len == 1 and c.isStr(br.array.items[0], "main");
         };
         if (!(pr_and_push and push_main)) {
-            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly pull_request and push of branches [main]", .{f});
+            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly pull_request and push of branches [main] (and merge_group)", .{f});
         }
         if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
             try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
@@ -523,12 +543,17 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     if (c.containsStr(on, "pull_request") and !c.containsStr(&pr_files, base) and !isOidcFile(base)) {
         try c.problem(a, out, prefix ++ "{s}: a pull request runs build and unit tests only, so only ci.yml, lint.yml, farm.yml and service-ci.yml may run on pull_request", .{f});
     }
-    if (c.containsStr(on, "pull_request")) try prRunnerProblems(a, f, jobs, out);
-    if (std.mem.eql(u8, base, "ci.yml") and c.containsStr(on, "pull_request")) {
+    const merge_group = c.containsStr(on, "merge_group");
+    if (c.containsStr(on, "pull_request") or merge_group) try prRunnerProblems(a, f, jobs, merge_group, out);
+    if (std.mem.eql(u8, base, "ci.yml") and (c.containsStr(on, "pull_request") or merge_group)) {
         for (jobs) |j| {
             if (c.containsStr(&ci_unit_jobs, j.name)) continue;
-            if (!isBetaGuard(try jobIf(a, j.node))) {
-                try c.problem(a, out, prefix ++ "{s}: job {s} is not a unit job, so its `if:` must be exactly `github.event_name != 'pull_request'` (beta runs after the merge, never on a pull request; any `||` clause would let it run)", .{ f, j.name });
+            if (!isBetaGuard(try jobIf(a, j.node), merge_group)) {
+                if (merge_group) {
+                    try c.problem(a, out, prefix ++ "{s}: job {s} is not a unit job, so its `if:` must be exactly `" ++ beta_guard_merge_group ++ "` (beta runs after the merge, never on a pull request or a merge group; any `||` clause would let it run)", .{ f, j.name });
+                } else {
+                    try c.problem(a, out, prefix ++ "{s}: job {s} is not a unit job, so its `if:` must be exactly `" ++ beta_guard ++ "` (beta runs after the merge, never on a pull request; any `||` clause would let it run)", .{ f, j.name });
+                }
             }
         }
     }

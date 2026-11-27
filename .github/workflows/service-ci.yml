@@ -1,11 +1,15 @@
 name: service-ci
 
-# Tests for the service stacks, the registry API package and the access stack. Runs for pull requests and for
-# pushes to main with a read-only token and no id-token: it never holds AWS credentials.
+# Tests for the service stacks, the registry API package and the access stack. Runs for pull requests, for merge groups
+# of the merge queue and for pushes to main with a read-only token and no id-token: it never holds AWS credentials.
 # There is deliberately no path filter, so these checks always report and can be required.
 
 on:
   pull_request:
+  # The merge queue's check of a merge group, on the group's head commit (tests/drivers/merge_group_lint.zig).
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
   push:
     branches: [main]
 
@@ -13,8 +17,10 @@ permissions:
   contents: read
 
 concurrency:
+  # A newer push to a pull request or to main cancels the older run of the same ref. A merge group's run is never cancelled:
+  # the merge queue reads its result, and a cancelled required check takes the group out of the queue.
   group: service-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   stacks:

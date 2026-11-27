@@ -1573,6 +1573,14 @@ zig_test(  # buck-only: the Dependabot autopin workflows (tests/drivers/autopin_
     **_TOOLS
 )
 
+zig_test(  # buck-only: the merge queue lint (tests/drivers/merge_group_lint.zig): every required check runs on a merge group, under its name, unskipped and uncancelled, with a faulty variant per rule
+    name = "merge_group_workflows",
+    src = "tests/drivers/merge_group_lint_test.zig",
+    imports = _LINT_LIBS + ["tests/drivers/merge_group_lint.zig"],
+    data = {f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])},
+    **_TOOLS
+)
+
 zig_test(  # buck-only: both lints over the fixtures, against the table in the test
     name = "lint_selftest",
     src = "tests/drivers/lint_selftest_test.zig",
@@ -1829,7 +1837,7 @@ zig_coverage(
     name = "drivers_coverage",
     blocks = False,
     floor = "coverage/drivers.txt",
-    test_targets = [":contract", ":lock_golden", ":validator_corpus", ":hygiene", ":workflows", ":release_workflow", ":autopin_workflows", ":lint_selftest", ":gen_errors_current"],
+    test_targets = [":contract", ":lock_golden", ":validator_corpus", ":hygiene", ":workflows", ":release_workflow", ":autopin_workflows", ":merge_group_workflows", ":lint_selftest", ":gen_errors_current"],
     expect = [
         "tests/drivers/autopin_lint.zig",
         "tests/drivers/contract.zig",
@@ -1838,6 +1846,7 @@ zig_coverage(
         "tests/drivers/hygiene.zig",
         "tests/drivers/jsonschema.zig",
         "tests/drivers/lint_common.zig",
+        "tests/drivers/merge_group_lint.zig",
         "tests/drivers/openapi_check.zig",
         "tests/drivers/regex.zig",
         "tests/drivers/release_lint.zig",
