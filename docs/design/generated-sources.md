@@ -60,7 +60,7 @@ could not name a hash that does not exist yet.
 lib = { path = "generated/plan_proto" }
 
 [generated.plan_proto]
-generator = "protoc-gen-mojo 1"
+generator = "protoc-gen-mojo 2"
 inputs = ["*.proto"]
 out = "generated/plan_proto"
 ```
@@ -94,7 +94,7 @@ it is the right one: an older mopm would otherwise plan the library without its 
   "generated": [
     {
       "id": "plan_proto",
-      "generator": "protoc-gen-mojo 1",
+      "generator": "protoc-gen-mojo 2",
       "out": "generated/plan_proto",
       "inputs": [{"path": "bound_source.proto", "sha256": "..."}, ...],
       "outputs": [{"path": "generated/plan_proto/__init__.mojo", "sha256": "..."}, ...]
@@ -159,7 +159,7 @@ Each table is a unit of kind `generate`, `generate:<full name>/<id>` (like a nat
   "import": "plan_proto",
   "version": "0.1.0",
   "kind": "generate",
-  "generator": "protoc-gen-mojo 1",
+  "generator": "protoc-gen-mojo 2",
   "out": "src/plan_proto/generated/plan_proto",
   "srcs": [{"path": "src/plan_proto/plan.proto", "sha256": "..."}, ...],
   "deps": [],
@@ -220,14 +220,17 @@ output differs from the record, which is what komira's `<name>_fresh` gate gives
   release's `mopm stage` job, which reads the tree; buildrules' `mojo_conda` stages no library directory
   (`rules/mojo/pack.bzl:37-87`, `workspace_tree`: "Nothing else of the package is staged"), so the packages it packs
   carry no digest today (`source_digest.zig:96-110`), and this does not change that.
-- The commands that compile a package from the tree themselves (`mopm build`, `mopm test`) take
-  `--generated <full name>/<id>=<dir>` for each table of the package and of its path dependencies, check every file
+- The commands that compile from the tree themselves, `mopm build` and `mopm test` and also `mopm run`, `mopm repl`
+  and `mopm build <file>` (which put each path dependency's directory on the import path,
+  `build_cmd.importDirsHere`), take `--generated <full name>/<id>=<dir>` for each table of the package and of its
+  path dependencies, check every file
   of `<dir>` against the record as `mopm unit build` does (the same refusals), copy the library with the outputs at
   their recorded paths into a scratch tree under `.mopm/`, and compile that. Without the option they refuse such a
   package, naming the table and the option. A person without a build system runs the generator by hand and mopm
   checks the bytes; mopm still runs no generator.
-- `mopm lock`, `update`, `sync`, `add`, `remove` and `tree`, and `metadata` and `link-plan`, parse the table (the
-  manifest must parse), ignore it, and do not touch the record; `pack` reads it only for the digest (above).
+- `mopm lock`, `update`, `sync`, `add`, `remove`, `tree` and `metadata` parse the table (the manifest must parse),
+  ignore it, and do not touch the record; `pack` reads it only for the digest (above). `link-plan` reads installed
+  packages' `.mopm.json` and no manifest.
 
 ### Every reader of the graph format, and what each must learn
 
@@ -278,8 +281,9 @@ unit; a dependent names the declaring package's alias. Unlike `check_provided_na
 which fails when the package loads, this check is a validation of the build (with `:check`), so that a package whose
 table does not yet have the unit still loads (the first conversion, below). It declares `generated_<id>`, an alias
 of the target, for each entry the package's own tables name, and `generated`, a directory of every such output, both
-from the attribute alone and not from the graph, which `sync` builds. The `:lib` compile, the one
-`mopm unit build` of the library unit (`rules/mojo/defs.bzl:59-60`), will take the directories as inputs and pass
+from the attribute alone and not from the graph, which `sync` builds. The library's compile, `:lib_ungated`, the one
+`mopm unit build` of the library unit (`rules/mojo/defs.bzl:798`; `:lib` is the same `.mojoc` held until the tests
+pass, `defs.bzl:10`), will take the directories as inputs and pass
 `--generated <generate id>=<dir>`. The test, coverage, profile and bitcode builds (`defs.bzl:831`, `:870`,
 `unit.bzl:537`) are builds of test units, which import the library's `.mojoc` and take no `--generated`. The coverage
 tree, which stages the library's sources at the names its line tables use (`_coverage_tree`, `unit.bzl:438`), will
@@ -287,11 +291,16 @@ take the generated files among its inputs. The generated sources will not be in 
 `unit.bzl:112` (`the graph names the source ... but the target's srcs do not include it`) will skip a source with
 `generated`.
 
-**The first conversion of a package.** One pull request adds the table, the `generated` entry and deletes the
-directory; `buildrules mojo sync` then builds `generated` (declared from the attribute, so it exists although the
-committed table has no `generate` unit), records, and plans, and the new table has the unit. Until the sync has run,
-the package loads and its build fails the validation with the sync command. Adding, renaming or removing a table
-later is the same order.
+**The first conversion of a package.** One pull request adds the table and the `generated` entry and deletes the
+directory; `buildrules mojo sync`, run before the pull request is pushed, then builds `generated` (declared from the
+attribute, so it exists although the committed table has no `generate` unit), records, and plans, and the new table
+has the unit. For that build the package must load while its old table still names the deleted files. Today
+`mojo_package` passes each source of the graph to the unit as a path string (`defs.bzl:613`), and a path that names
+no file can stop the package from loading; buildrules' pull request makes `mojo_package` take a unit's sources
+through a `glob` of the graph's paths, so a missing file is refused when the unit is built, by the check at
+`unit.bzl:112` (`the graph names the source ... but the target's srcs do not include it`), and the package loads.
+That is the message a build gives between the deletion and the sync, beside the validation's, which names the sync.
+Adding, renaming or removing a table later is the same order.
 
 **One execution platform.** The generate action runs on Linux x86_64 whatever the target platform. komira's
 generator actions name no execution platform today (only `attrs.exec_dep`, so Buck2 picks one, and the farm has Mac
@@ -357,21 +366,38 @@ and stay committed with their header; the coverage rule below names that directo
    (section 2). The macros keep building the nine mopm packages from their committed directory, by a list of the
    nine that is temporary: it shrinks by one package in step 4 and is removed in step 5. The header is not changed
    here, so what this step compares is exact (section 4).
-2. The generated header's regeneration clause is reworded, in its own pull request, so that the records of steps 4
+2. The generated header's regeneration clause is deleted, in its own pull request, so that the records of steps 4
    and 5 are made once from the final header. The clause is spelled in three emitters,
    `tools/build/proto-codegen/src/header.rs:25`, `tools/build/cloud/aws_act.zig:39` and
-   `tools/build/mojo/tools/proto_gen.zig:39` (held equal by `tools/build/gen:command_agreement`). The line stays and
-   only its clause changes (`Regenerate with ./buck2 run komira//tools/build/gen:regen -- <library target>` becomes
-   `Made by the build; not committed`), so no line of any generated file moves. The pull request regenerates the
-   nine committed directories and the 18 goldens with `regen`, and runs `buildrules mojo sync` for the nine packages
-   and commits their `buildrules.mojo.lock.bzl`, so it is green by itself: `:check`, `:table` and `<name>_fresh` of
-   the nine pass on it. The three packages that plan one of them (below) list no source of it, because
-   `graph_norm` drops a path dependency's sources, and their tables do not change.
+   `tools/build/mojo/tools/proto_gen.zig:39`. The line stays and loses only the clause: `DO NOT EDIT. Regenerate with
+   ./buck2 run komira//tools/build/gen:regen -- <library target>. Generated by ...` becomes `DO NOT EDIT. Generated
+   by ...`, which is true of a committed file and of a build output alike, and no line of any generated file moves.
+   The generator versions are bumped, as `header.rs` asks when the text emitted for the same inputs changes:
+   `PLUGIN_GENERATOR_VERSION` 1 to 2, `emit_aws::AWS_GENERATOR_VERSION` 15 to 16
+   (`tools/build/proto-codegen/src/emit_aws/mod.rs:121`), and the `version 1` of the two Zig emitters' `__init__.mojo`
+   text to 2; the tables of steps 4 and 5 then say `protoc-gen-mojo 2`. `tools/build/gen:command_agreement` keeps
+   holding the command where it is still spelled (`tools/build/gen/defs.bzl`, `regen.zig`) and no longer the
+   emitters. What the pull request updates, each the way it is updated today:
+   - the nine committed directories, with `regen`, which acts on the `<name>_fresh` libraries only;
+   - the 18 goldens of `tools/build/tests/functional/aws_codegen/golden/`, by building each test's `[gen]` output
+     and copying it over the golden (`tools/build/tests/functional/aws_codegen/defs.bzl:12-13`);
+   - the 38 `.golden` files of `tools/build/tests/functional/proto_codegen/golden/` and
+     `tools/build/proto-codegen/routes/golden/`, the same way (`tools/build/proto-codegen/routes/BUCK:11`);
+   - the tests that hold the header text: `generated_header_tests.rs`, `routes/tests.rs`,
+     `main_aws_conformance_gen_test.rs`, `emit_aws/endpoint.rs`, `emit_dbstorable.rs` (under
+     `tools/build/proto-codegen/src/`), `tools/build/cloud/aws_act_test.zig`,
+     `tools/build/mojo/tools/proto_gen_test.zig`, `tools/build/tests/functional/aws_act/driver_test.zig`,
+     `tools/build/gen/command_agreement_test.zig`, `tools/build/gen/fresh_test.zig` and
+     `tools/build/tests/functional/gen_tools/fresh_driver_test.zig` (by `git grep` for `gen:regen`).
+   It also runs `buildrules mojo sync` for the nine packages and commits their `buildrules.mojo.lock.bzl`, so it is
+   green by itself: `:check`, `:table` and `<name>_fresh` of the nine pass on it. The three packages that plan one of
+   them (below) list no source of it, because `graph_norm` drops a path dependency's sources, and their tables do
+   not change.
 3. When mopm and buildrules have released the generated source: komira pins them.
 4. `plan_proto` first: its `[generated.plan_proto]`, its `mopm-generated.lock`, `mojo_package(generated = ...)`, its
    adopted library's `srcs` from the generator's output instead of `glob(["generated/plan_proto/**/*.mojo"])`,
    `mojo_conda`'s `dir` the package directory, `src/plan_proto` (buildrules resolves `members` such as
-   `../proto_codec` against `dir`, `rules/mojo/pack.bzl:23-35`, so the empty default would fail with "leaves the
+   `../proto_codec` against `dir`, `rules/mojo/pack.bzl:58-62`, so the empty default would fail with "leaves the
    repository"), `plan_proto` out of the macros' list, and the directory deleted, in the order of "The first
    conversion" (section 2).
 5. The other eight proto packages the same way. The three packages that plan one of them as a path dependency
@@ -388,7 +414,11 @@ and stay committed with their header; the coverage rule below names that directo
    (`tests//negative/mojo_gcp_client:rest_reaches_plugin`, `tests//negative/proto:tasks_db_wrong_outs`) build from
    their generator, now the only way, and stay red as before. `tools/build/mopm_migrate` refuses a package with a
    `generated/` directory (`plan.zig:359`); with none left, the refusal and its case (`mopm_migrate_test.zig:857`)
-   become a package whose manifest has `[generated]`.
+   become a package whose manifest has `[generated]`. The code that built from a committed directory goes with it:
+   the committed branch of each macro (`_committed_client` in `tools/build/cloud/aws.bzl`, the branch at
+   `gcp.bzl:346`, `_committed_proto_library` and the branches at `tools/build/mojo/proto.bzl:510` and `:638`), and the
+   helpers of `tools/build/gen/defs.bzl` (`generated_state`, `committed_sources`, `committed_data`, `declare_fresh`,
+   `declare_unmigrated`, `declare_uncommitted`, `_in_transition`), so each macro has one path, from `<name>_gen`.
 
 **What replaces the freshness gate and `regen`.** For the libraries komira builds itself, nothing is needed: the
 library is compiled from the generator's output, so there is nothing to be stale. For the nine mopm packages, the
@@ -404,8 +434,9 @@ directory named as exempt (the goldens above; a test holds the list to that one 
 (`tools/build/coverage/covcheck/manifest.mojo`) parses the manifest strictly and accepts a dotted table name such
 as `generated.plan_proto` (line 263), so the new table needs no change there.
 
-**`generated_sources.md`.** Its status becomes "decided: a generated-source input in the package graph (2026-11-28),
-because generated code is not checked in", and its sections change so:
+**`generated_sources.md`.** Step 1 changes its status to "decided: a generated-source input in the package graph
+(2026-11-28), because generated code is not checked in", and says that the nine mopm packages stay committed, with
+their gate and `regen`, until steps 4 and 5. Step 6, when the machinery is gone, changes its sections so:
 
 - the line limit: a generated file is no longer a file of the repository, but Mojo still hangs on very large files,
   so the generator keeps splitting a large module into `_parts/`;
@@ -414,19 +445,24 @@ because generated code is not checked in", and its sections change so:
   `NOTICE` entry stays, because the build still compiles code derived from them;
 - the transition ledger, the single-path rule and the size projection: removed, with the machinery they describe.
 
-Its other mentions go with step 6: `tools/build/gen/README.md`, `tools/build/mojo/README.md` ("Committed generated
-sources"), `tools/build/ns_rename/README.md` and `docs/design/object_store.md` (by `git grep` for `gen:regen`,
-`gen_fresh` and `_fresh`).
+The other documents that describe committed generated sources (by `git grep` for `gen:regen`) change with the step
+that makes them false: the READMEs of `wkt` (`src/wkt/README.md:160-163`) and `proto_codec`
+(`src/proto_codec/README.md:169-170`), whose test protos step 1 stops committing; the README of each of the nine
+proto packages, with the step that converts it (4 or 5); and `tools/build/README.md:20`,
+`tools/build/gen/README.md`, `tools/build/mojo/README.md` ("Committed generated sources") and
+`tools/build/ns_rename/README.md`, with step 6.
 
 **The root files of the check set.** Every pull request that adds or deletes a target (steps 1, 4 and 5: the
 `<name>_fresh` targets, the generator aliases) rewrites `ci/roots/` and `ci/test_roots/` with the command in
 `tools/build/ci/README.md` (`tools/build/ci/targets.bxl:generate`), which the guard names when they are out of date.
 
-**Repositories that use komira as a cell.** A mopm pin bump edits no `BUCK` file: the version is a row of
-buildrules' table (`rules/mopm/pins.bzl`, which buildrules' pull request extends), and komira's
-`tools/build/cells/toolchains/mopm_pins.bzl` is written by `buildrules mojo sync`. A repository that copies
-`tools/build/cells/toolchains/BUCK` (its header asks a repository using komira as a cell to copy it) needs no edit to
-that copy; after step 3 it moves its pointer to komira and its buildrules pin, and syncs, as a step of its own.
+**Repositories that use komira as a cell.** A mopm pin bump edits komira's own `BUCK` files where they name the
+mopm (each `mojo_conda(mopm = ...)`, brief 5), but not the toolchains cell's `tools/build/cells/toolchains/BUCK`:
+that file reads the version from buildrules' table (`rules/mopm/pins.bzl`, which buildrules' pull request extends)
+and from `mojo_pins.bzl` and `mopm_pins.bzl` beside it, which `buildrules mojo sync` writes. A repository that copies
+that `BUCK` (its header asks a repository using komira as a cell to copy it) keeps the two `.bzl` files beside its
+copy and needs no edit to the copy itself; after step 3 it moves its pointer to komira and its buildrules pin, and
+syncs, as a step of its own.
 
 ## 4. Package publication
 
@@ -467,7 +503,8 @@ no equality. A dependent's lock pins the `.conda` by sha256 and never needs the 
 
 Not committing the generated files removes their 105 conflicts, but what the lock files record decides what still
 conflicts. Sections 1 to 4, 6 and 7 are written for the first way. The owner is choosing; if he takes the second way,
-the table at the end of this section is the whole edit, each row naming the text that changes and what it becomes.
+the table at the end of this section is the edit, row by row, and this section then shrinks to the decision and the
+second way's costs.
 The design of komira-ai/komira#2509 expects a member pull request to change only the `.proto` and its claim; under
 either way that holds for the files a person edits, not for the lock lines.
 
@@ -502,28 +539,46 @@ version (in the manifest) and its inputs, which `plan` hashes offline from the t
 - What it saves: no `mopm record-generated` and no record file; `buildrules mojo sync` builds no generator; the
   first-conversion order goes, since the table changes by a plain sync.
 
-**The edit for the second way.**
+**The edit for the second way.** Each row names the text as it stands and what it becomes. Every use of
+`mopm-generated.lock`, `record-generated`, "record" and "stale" in sections 1 to 4, 6 and 7 is in a row, or holds in
+both ways, as the last rows say. If the owner takes the first way instead, the only edit is this section: it shrinks
+to the decision and the first way's costs.
 
 | where | the text now | becomes |
 |---|---|---|
-| "The decision and why", fourth paragraph | "a lock file records the sha256 of every output file; the unit graph lists the outputs with those hashes, as it lists any source; ... mopm refuses to compile from output whose bytes are not the recorded ones. A lock still names every byte a build compiles" | "the unit graph names each generator by its name, version and the sha256 of its inputs; the build system runs the generator and compiles what it writes. The lock names the generator and its inputs, not the output bytes" |
-| "What changes", the bullets "A package with them" and "A person changing a `.proto`" | "a new file `mopm-generated.lock` ... records the output"; "the changed hashes in the two lock files ... remade by `buildrules mojo sync`, which builds the generator and records its output. The build fails with that command when the record is stale" | the record clause deleted; "the changed input hash in `buildrules.mojo.lock.bzl`, remade by `buildrules mojo sync`" |
-| section 1, "The record: `mopm-generated.lock`" | the whole subsection | deleted |
-| section 1, "`plan`" | the **stale** bullet | deleted (inputs are hashed from the tree at every plan); the **refused** bullet stays |
+| "The decision and why", first paragraph | "keeps the fourth (the compile is the check)" | "keeps the fourth (a library is compiled from the generator's output of the same build, so nothing compiled is stale)" |
+| "The decision and why", third paragraph | "a lock file records the sha256 of every output file; the unit graph lists the outputs with those hashes, as it lists any source; the build system runs the generator, and mopm refuses to compile from output whose bytes are not the recorded ones. A lock still names every byte a build compiles" | "the unit graph names each generator by its name, version and the sha256 of its inputs; the build system runs the generator and compiles what it writes. The lock names the generator and its inputs, not the output bytes" |
+| "What changes", "A package with them" | "a new file `mopm-generated.lock` beside `mopm.toml` records the output, and" | "and" |
+| "What changes", "A person without Buck2" | "and check it against the record" | "and mopm compiles it" |
+| "What changes", "A person changing a `.proto`" | "the changed hashes in the two lock files (with the second way of section 5, in one). The lock is remade by `buildrules mojo sync`, which builds the generator and records its output. The build fails with that command when the record is stale, as komira's freshness gate does today." | "the changed input hash in `buildrules.mojo.lock.bzl`, remade by `buildrules mojo sync`, which `buildrules mojo check` asks for when the input hash is stale." |
+| section 1, title | "the manifest, the record and the graph" | "the manifest and the graph" |
+| section 1, "The manifest", `generator` | "mopm compares it and records it; it never runs or fetches it. Changing it makes the record stale, so a generator's version bump forces a new record." | "mopm puts it in the graph, where it moves the key of the `generate` unit and of the library; it never runs or fetches it." |
+| section 1, "The manifest", `inputs` | "They let `plan` see, offline, that the record was made from other inputs than the tree holds now." | "`plan` hashes them into the `generate` unit, so an input edit moves the library's key." |
+| section 1, "The manifest", the paragraph after the bullets | "which the record holds and the build checks" | "which the build makes" |
+| section 1, "The record: `mopm-generated.lock`" | the whole subsection, with `mopm record-generated` | deleted |
+| section 1, "`plan`" | "reads each member's `mopm-generated.lock` as it reads its manifest. Before it prints a graph:" and the **stale** bullet | "Before it prints a graph:", with the **refused** bullet only (inputs are hashed from the tree at every plan) |
+| section 1, "`plan`", the paragraph after the bullets | "but not below an `out`, plus the recorded outputs" | "but not below an `out`; the outputs are not listed" |
 | section 1, "The graph: format 7" | the library unit lists each output in `srcs` with `generated`, and "The key rule does not change ..." | the library unit has `"generated": ["generate:<full name>/<id>", ...]` and no output in `srcs`; its key hashes the key of each unit it names, as it hashes a built native's |
-| section 1, "Where generation runs" | `mopm unit build` checks every generated source against the graph's sha256 ...; the error text; "This is the freshness proof ..." | `mopm unit build` stages every `.mojo` file of `<dir>` under the library root, refusing a symbolic link, a name starting with `.` and a missing or unused `--generated`; no hash is checked and there is no freshness proof |
-| section 1, "The other mopm commands", digest and `mopm build` bullets | the outputs' lines from the record; "check every file of `<dir>` against the record" | the digest takes, for each table, a line of the generator's text and the inputs' lines; `mopm build` and `test` stage `<dir>` without a check |
-| section 1, readers table and "Older and newer readers" | "read the records"; the record among the hashed files | "read the inputs"; no record |
-| section 2, "The first conversion of a package" and "The sync hashes an output it must first build" | both paragraphs | deleted; "`buildrules mojo sync` plans as today" |
-| section 2, "The freshness proof" | first sentence; "The record will be one of the files of `MANIFEST_SHA256` ..." | "There is no freshness proof: the library is compiled from the generator's output of the same build."; the record sentence deleted |
-| section 3, "What replaces the freshness gate" | "For the nine mopm packages, the compile of the library (section 1), and `buildrules mojo sync` in place of `regen`" | "For the nine mopm packages, nothing either; `buildrules mojo sync` remakes the table when an input changes" |
-| section 3, step 2 | "so that the records of steps 4 and 5 are made once from the final header" | "so that steps 4 and 5 are made once from the final header" |
+| section 1, "Where generation runs" | "mopm checks every generated source in `<dir>` against the graph's sha256, and refuses a file of `<dir>` the graph does not list", the error text, and "This is the freshness proof: ... `<name>_fresh` gate gives today." | "mopm stages every `.mojo` file of `<dir>` under the library root, refusing a symbolic link, a name starting with `.`, and a missing or unused `--generated`. No hash is checked." |
+| section 1, "The other mopm commands", digest bullet | "For the generated files it takes the record: the line of each output is `<recorded sha256> <path>`, ... equals the digest of the same bytes in the tree." | "For each table it takes a line of the generator's text and the inputs' lines; the generated bytes are not in the digest." |
+| section 1, "The other mopm commands", `mopm build` bullet | "check every file of `<dir>` against the record as `mopm unit build` does (the same refusals), copy the library with the outputs at their recorded paths" and "mopm checks the bytes" | "copy the library with the `.mojo` files of `<dir>` below its `out`" and "mopm compiles them" |
+| section 1, "The other mopm commands", last bullet | "and do not touch the record; `pack` reads it only for the digest (above)" | "; `pack` reads it for the digest (above)" |
+| section 1, readers table | "read the records" (mopm, writer); "the record is one of the hashed manifest files" (buildrules, checks) | "hash the inputs"; "a generated source is not a file of the tree" |
+| section 2, "A target's output as a source" | "(the first conversion, below)" and ", which `sync` builds" | deleted |
+| section 2, "The first conversion of a package" | the whole paragraph | "A package's first conversion adds the table and the `generated` entry, deletes the directory and runs `buildrules mojo sync`; a unit's sources are taken through a `glob` of the graph's paths, so the package loads while its old table names the deleted files." |
+| section 2, "One execution platform" | "and the record is the same for every platform's graph. A macOS compile checks that output's bytes like any other, so a generator that wrote other bytes on another host would be refused, not compiled." | "A macOS compile uses that output; nothing compares it with another host's." |
+| section 2, "The sync hashes an output it must first build" | the whole paragraph | "`buildrules mojo sync` plans as today and builds no generator." |
+| section 2, "The freshness proof" | the whole paragraph up to "buildrules' own coverage rule" | "There is no freshness proof: the library is compiled from the generator's output of the same build. `buildrules mojo check` verifies the inputs' hashes and that no file lies below an `out`; the graph names no output, so `//ci:lock_hashes` reads nothing new." |
+| section 3, step 2 | "so that the records of steps 4 and 5 are made once from the final header" and "the tables of steps 4 and 5 then say `protoc-gen-mojo 2`" | "so that steps 4 and 5 convert under the final header" and "the manifests of steps 4 and 5 then say `protoc-gen-mojo 2`" |
 | section 3, step 4 | "its `mopm-generated.lock`," | deleted |
-| section 4, "What a conversion compares" | "the record's output hashes equal to the source hashes of the table it replaces" | deleted |
-| section 6, pull requests 1 and 4 | "`mopm-generated.lock`, `mopm record-generated`"; "the sync step" | deleted |
-| section 7, brief 1 | the record format, `record-generated`, the stale exit, the record's refusals, the hash cases of `unit build` and `mopm build`, the digest from the record | deleted; the digest from the generator text and inputs |
-| section 7, brief 4 | the sync step, `rules/mojo/sync.bzl`, the record in `:check` and `:table`, the first-conversion fixture, the stale-record and changed-output tests | deleted |
-| section 7, briefs 6 and 7 | "`mopm-generated.lock`"; "the record's output hashes equal ..."; "a changed `.proto` without a sync failing ... the build" | deleted; "a changed `.proto` without a sync failing `buildrules mojo check`" |
+| section 3, "What replaces the freshness gate" | "For the nine mopm packages, the compile of the library (section 1), and `buildrules mojo sync` in place of `regen`." | "For the nine mopm packages, nothing either; `buildrules mojo sync` remakes the table when an input changes." |
+| section 4, "What a conversion compares" | "for the nine, the record's output hashes equal to the source hashes of the table it replaces;" | deleted |
+| section 6, pull request 1 | "`mopm-generated.lock`, `mopm record-generated`,", "the digest from the record" and "can plan and check a library" | deleted; "the digest from the generator and its inputs"; "can plan and build a library" |
+| section 6, pull request 4 | "the sync step," | deleted |
+| section 7, brief 1 | "the `mopm-generated.lock` format ...; `mopm record-generated <id>=<dir>...`;", "read each member's record, exit 3 when it is stale and", "`source_sha256` from the record", and the tests of the stale cases, the record command, a changed byte and an extra file | deleted, but "`source_sha256` from the generator and its inputs" |
+| section 7, brief 4 | "stage the record for `:check` and `:table` ...", "build the `generated` targets and run `mopm record-generated` ... not an input);", "teach ... `//ci:lock_hashes` the generated entry", and the tests of a stale record, a changed output and `lock_hashes` | deleted |
+| section 7, briefs 6 and 7 | "its record against the old table," and "and the build with the sync command" | deleted |
+| holds in both ways | section 3, step 2's sync of the nine packages and brief 3's: until they are converted, the nine directories are committed sources, hashed in their tables like any other, so the header change needs that sync in either way; "stale" in the first paragraph's reasons and in "nothing to be stale" (section 3); "a stale table" (section 2, the sync action) | unchanged |
 
 ## 6. The pull requests, in order
 
@@ -558,13 +613,14 @@ Each lands alone. Pull requests 1 and 2 can start at once, in parallel.
 `mopm record-generated <id>=<dir>...`; in `plan`, read each member's record, exit 3 when it is stale and 4 when a
 file lies below an `out`, and print `generate` units, `generated` sources and format 7 only when there is one;
 `mopm unit build` and `unit test` read formats 6 and 7, and `unit build` of a `lib` unit takes `--generated`;
-`source_sha256` from the record in `stage`, `publish` and `pack`; `mopm build` and `test` take `--generated` and
-refuse such a package without it. Update `spec/unit-graph.md`, `spec/mopm-toml.md`, `spec/lock.md` (a pointer) and
+`source_sha256` from the record in `stage`, `publish` and `pack`; `mopm build`, `test`, `run` and `repl` take
+`--generated` and refuse such a package, or a path dependency with a table, without it. Update `spec/unit-graph.md`, `spec/mopm-toml.md`, `spec/lock.md` (a pointer) and
 the changelog. Tests: graph goldens for a package with a generated source alone, below hand-written files, and as a
 path dependency; each stale case and the committed-copy refusal with its exact message; the record command's
 refusals (symbolic link, a file that is not `.mojo`, a test-file name, empty directory, unknown id); `unit build`
 with a changed byte, an extra file, a missing and an unused `--generated`, and `--generated` on a `test` unit;
-`mopm build` and `test` with the same cases and without the option; a path dependency whose library directory is an
+`mopm build` and `test` with the same cases and without the option; `mopm run` and `mopm build <file>` with a path
+dependency that has a table, with and without the option; a path dependency whose library directory is an
 `out`; a format 6 graph read unchanged; the digest equal to that of the same files on disk; `//:compat_generated`
 (the previous release's core readers on new data, and these readers on the previous release's); `unit_cmd`'s
 format test for 7 and 8.
@@ -575,31 +631,34 @@ temporary: briefs 6 and 7 shrink and remove it), with `exec_compatible_with` Lin
 actions, which name no execution platform today; delete the 33 directories under `src/` and the 14 generated ones
 under `tools/build/` (not the hand-written fixture of `tools/build/tests/functional/gen_tools`, nor the 18 goldens
 of `aws_codegen`), their `<name>_fresh` targets and their census `generated` lines; leave the header as it is;
-rewrite the root files of the check set (`tools/build/ci/targets.bxl:generate`); rewrite
-`docs/design/generated_sources.md` as section 3 says. Tests: each library's existing tests, now on the generator's
+rewrite the root files of the check set (`tools/build/ci/targets.bxl:generate`); change the status of
+`docs/design/generated_sources.md` and the READMEs of `wkt` and `proto_codec` as section 3 says. Tests: each library's existing tests, now on the generator's
 output; the build of every deleted library's dependents; the comparisons of section 4 for every deleted directory
 and for the `.conda` of `gcp_cloudresourcemanager`, `gcp_iam` and `gcp_run` in the release's second set; a negative
 case that a committed directory beside a library built from its generator is refused.
 
-**3. komira (komira-ai/komira): reword the generated header's regeneration clause.** In `header.rs`, `aws_act.zig`
-and `proto_gen.zig`, change the clause and keep the line (section 3, step 2); regenerate the nine committed
-directories and the 18 goldens with `regen`; run `buildrules mojo sync` for the nine packages and commit their
-`buildrules.mojo.lock.bzl`. Tests: the emitters' own tests and goldens with the new text; `:check`, `:table` and
-`<name>_fresh` of the nine green on the pull request; `:command_agreement` on the new text; no change to the tables
-of `calendar`, `calendar_ics` and `supervisor_proto`.
+**3. komira (komira-ai/komira): delete the generated header's regeneration clause.** In `header.rs`, `aws_act.zig`
+and `proto_gen.zig`, delete the clause and keep the line, and bump the generator versions (section 3, step 2);
+regenerate the nine committed directories with `regen`; update the 18 `aws_codegen` goldens and the 38 proto
+`.golden` files by building their `[gen]` outputs and copying them; run `buildrules mojo sync` for the nine packages
+and commit their `buildrules.mojo.lock.bzl`. Tests: the tests section 3 lists, on the new text and versions; the
+golden tests on the copied goldens; `:check`, `:table` and `<name>_fresh` of the nine green on the pull request;
+`:command_agreement` holding the command where it is still spelled; no change to the tables of `calendar`,
+`calendar_ics` and `supervisor_proto`.
 
 **4. buildrules (komira-ai/buildrules): build a mopm package that has generated sources.** Read format 7 in the CLI
 (`mojo_lock.zig`, `graph_norm.zig`, `mojo_cmd.zig`) and the rules (`NEWEST_FORMAT`, `compile_format`,
 `unit_slice`); `graph_norm.zig` drops a path dependency's `generate` unit's `srcs` and `key` and keeps the unit; add
 `generated = {id: target}` to `mojo_package` with the checks both ways as a validation (not a load failure), the
-`generated_<id>` and `generated` targets declared from the attribute, `--generated` on the `:lib` compile, and the
-generated files among the inputs of the coverage tree; stage the record for `:check` and `:table`, for the package
+`generated_<id>` and `generated` targets declared from the attribute, a unit's sources taken through a `glob` of the
+graph's paths (so a missing file is refused at `unit.bzl:112`, not at load), `--generated` on the `:lib_ungated`
+compile, and the generated files among the inputs of the coverage tree; stage the record for `:check` and `:table`, for the package
 and its path dependencies; build the `generated` targets and run `mopm record-generated` in `buildrules mojo sync`
 and in `rules/mojo/sync.bzl` (the record among the action's outputs and in `committed`, the old record not an
 input); teach `buildrules mojo check` and `//ci:lock_hashes` the generated entry; pin the mopm release; convert
 `examples/mojo/generated` to a generator that is a build target. Tests: a format 7 fixture through sync, check and
-the rules; the first conversion (a package whose `generated` entry its committed table lacks loads, fails the
-validation with the sync command, and builds after a sync); a missing and an extra `generated` entry; a stale record
+the rules; the first conversion (a package whose `generated` entry its committed table lacks, and whose table
+names a deleted file, loads, fails at `unit.bzl:112` and the validation, and builds after a sync); a missing and an extra `generated` entry; a stale record
 through `check`; a changed output refused by the build; a package with a coverage floor and a generated source
 through `:coverage`; `lock_hashes` on a generated entry; with a fake execer, that sync runs the generator build with
 no local-execution flag (that the real farm build ran nothing locally is the summary line,
@@ -608,22 +667,25 @@ no local-execution flag (that the real farm build ran nothing locally is the sum
 
 **5. komira (komira-ai/komira): pin the new mopm and buildrules.** Bump `.buckconfig`'s buildrules commit, the
 mopm version of every `src/*/mopm-toolchain.toml`, the mopm label of `release/readme_e2e/packages.bzl` and of each
-`mojo_conda(mopm = ...)`, and run `buildrules mojo sync`. Tests: the existing build; no graph changes but the
-`MOPM` line.
+`mojo_conda(mopm = ...)`, and run `buildrules mojo sync`. The bump spans every release between the pins: komira
+pins mopm 0.0.138 and a buildrules commit 10 commits behind buildrules' main at this writing (mopm is at 0.0.149).
+Tests: the existing build; the tables unchanged but the `MOPM` line, which is all the pull request holds unchanged.
 
 **6. komira (komira-ai/komira): `plan_proto` builds from its generator.** Section 3, step 4; delete its census
-`generated` lines; rewrite the root files of the check set. Tests: `plan_proto`'s tests and its dependents' builds;
+`generated` lines; update its README; rewrite the root files of the check set. Tests: `plan_proto`'s tests and its dependents' builds;
 the comparisons of section 4 for `plan_proto` (its output against the deleted directory, its record against the old
 table, its `.conda` in both release sets); a changed `.proto` without a sync failing `buildrules mojo check` and the
 build with the sync command; the darwin part of the check building `plan_proto` from the Linux output.
 
 **7. komira (komira-ai/komira): the other eight proto packages build from their generators.** Section 3, step 5,
-with the `generated` entries of `calendar`, `calendar_ics` and `supervisor_proto`; remove the macros' list; rewrite
-the root files of the check set. Tests: as for 6, for each package and for those three.
+with the `generated` entries of `calendar`, `calendar_ics` and `supervisor_proto`; remove the macros' list; update
+the eight READMEs; rewrite the root files of the check set. Tests: as for 6, for each package and for those three.
 
 **8. komira (komira-ai/komira): remove what served committed generated sources.** Section 3, step 6, with every
 file it names; the coverage gate refuses a committed `.mojo` whose line 1 is the generated header, except below the
 one exempt directory of the `aws_codegen` goldens, and `generated_paths` and the census lines go; `mopm_migrate`'s
-refusal moves to a manifest with `[generated]`; update the documents section 3 names. Tests: the gate's refusal, the
+refusal moves to a manifest with `[generated]`; the macros' committed branches and the helpers of
+`tools/build/gen/defs.bzl` go; rewrite the sections of `generated_sources.md` and update the documents section 3
+gives to step 6. Tests: the gate's refusal, the
 exemption held to that one directory, and that a file with the token elsewhere is measured; the two ledger negative
 tests still red, built from their generator; `mopm_migrate`'s new case.
